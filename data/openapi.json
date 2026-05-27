@@ -1,0 +1,168 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Private Drop API",
+    "version": "0.1.0",
+    "description": "A self-hosted private long-text/file drop box API. Perfect for GPT Actions integration."
+  },
+  "servers": [{"url": "/", "description": "Current server"}],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+    },
+    "schemas": {
+      "HealthResponse": {
+        "type": "object",
+        "properties": {"status": {"type": "string"}, "version": {"type": "string"}},
+        "required": ["status", "version"]
+      },
+      "Channel": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "display_name": {"type": "string"},
+          "message_count": {"type": "integer"}
+        },
+        "required": ["name", "display_name", "message_count"]
+      },
+      "Message": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "channel": {"type": "string"},
+          "kind": {"type": "string", "enum": ["text", "file"]},
+          "title": {"type": "string", "nullable": true},
+          "text": {"type": "string", "nullable": true},
+          "file_name": {"type": "string", "nullable": true},
+          "file_path": {"type": "string", "nullable": true},
+          "file_size": {"type": "integer", "nullable": true},
+          "mime_type": {"type": "string", "nullable": true},
+          "created_at": {"type": "integer"},
+          "expires_at": {"type": "integer", "nullable": true}
+        },
+        "required": ["id", "channel", "kind", "created_at"]
+      },
+      "CreateMessageRequest": {
+        "type": "object",
+        "properties": {
+          "channel": {"type": "string"},
+          "title": {"type": "string"},
+          "text": {"type": "string"}
+        },
+        "required": ["channel", "text"]
+      },
+      "MessageListResponse": {
+        "type": "object",
+        "properties": {
+          "messages": {"type": "array", "items": {"$ref": "#/components/schemas/Message"}},
+          "total": {"type": "integer"},
+          "has_more": {"type": "boolean"}
+        },
+        "required": ["messages", "total", "has_more"]
+      }
+    }
+  },
+  "security": [{"bearerAuth": []}],
+  "paths": {
+    "/api/health": {
+      "get": {
+        "operationId": "healthCheck",
+        "summary": "Health check",
+        "tags": ["health"],
+        "security": [],
+        "responses": {
+          "200": {"description": "Health status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthResponse"}}}}
+        }
+      }
+    },
+    "/api/channels": {
+      "get": {
+        "operationId": "listChannels",
+        "summary": "List all channels",
+        "tags": ["channels"],
+        "responses": {
+          "200": {"description": "List of channels", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Channel"}}}}}
+        }
+      }
+    },
+    "/api/messages": {
+      "get": {
+        "operationId": "listMessages",
+        "summary": "List messages",
+        "tags": ["messages"],
+        "parameters": [
+          {"name": "channel", "in": "query", "schema": {"type": "string"}, "description": "Filter by channel"},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 50, "maximum": 200}, "description": "Max messages"},
+          {"name": "before", "in": "query", "schema": {"type": "integer"}, "description": "Before timestamp"}
+        ],
+        "responses": {
+          "200": {"description": "List of messages", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MessageListResponse"}}}}
+        }
+      },
+      "post": {
+        "operationId": "createMessage",
+        "summary": "Create a text message",
+        "tags": ["messages"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateMessageRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Created message", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}},
+          "400": {"description": "Bad request"},
+          "413": {"description": "Payload too large"}
+        }
+      }
+    },
+    "/api/messages/{id}": {
+      "get": {
+        "operationId": "getMessage",
+        "summary": "Get a message by ID",
+        "tags": ["messages"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Message details", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}},
+          "404": {"description": "Not found"}
+        }
+      },
+      "delete": {
+        "operationId": "deleteMessage",
+        "summary": "Delete a message",
+        "tags": ["messages"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "Deleted"},
+          "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/api/files": {
+      "post": {
+        "operationId": "uploadFile",
+        "summary": "Upload a file",
+        "tags": ["files"],
+        "parameters": [{"name": "channel", "in": "query", "schema": {"type": "string", "default": "files"}}],
+        "requestBody": {
+          "required": true,
+          "content": {"multipart/form-data": {"schema": {"type": "object", "properties": {"file": {"type": "string", "format": "binary"}}, "required": ["file"]}}}
+        },
+        "responses": {
+          "200": {"description": "File uploaded", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}},
+          "413": {"description": "File too large"}
+        }
+      }
+    },
+    "/api/files/{id}": {
+      "get": {
+        "operationId": "downloadFile",
+        "summary": "Download a file",
+        "tags": ["files"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {
+          "200": {"description": "File content"},
+          "404": {"description": "Not found"}
+        }
+      }
+    }
+  }
+}

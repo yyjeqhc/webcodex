@@ -629,16 +629,36 @@ pub async fn download_file(req: &mut Request, depot: &mut Depot, res: &mut Respo
         return;
     }
     let filename = message.file_name.unwrap_or_else(|| "download".to_string());
-    res.add_header(
-        "content-disposition",
-        &format!("attachment; filename=\"{}\"", filename),
-        true,
-    )
-    .ok();
-    if let Some(mime) = message.mime_type {
-        res.add_header("content-type", &mime, true).ok();
+    // Sanitize filename for Content-Disposition: strip path separators and control chars
+    let safe_display_name: String = filename
+        .chars()
+        .filter(|c| !matches!(c, '/' | '\\' | '\0' | '\r' | '\n'))
+        .collect();
+    let content_type = message
+        .mime_type
+        .unwrap_or_else(|| "application/octet-stream".to_string());
+
+    match std::fs::read(&canonical) {
+        Ok(bytes) => {
+            res.add_header(
+                "content-disposition",
+                &format!(
+                    "attachment; filename=\"{}\"",
+                    safe_display_name.replace('"', "_")
+                ),
+                true,
+            )
+            .ok();
+            res.add_header("content-type", &content_type, true).ok();
+            res.add_header("content-length", &bytes.len().to_string(), true)
+                .ok();
+            res.body(bytes);
+        }
+        Err(_) => {
+            res.status_code(StatusCode::NOT_FOUND);
+            res.render(json_error(StatusCode::NOT_FOUND, "File not found on disk"));
+        }
     }
-    res.send_file(canonical, req.headers()).await;
 }
 
 #[handler]
@@ -659,12 +679,7 @@ fn html_escape(s: &str) -> String {
         .replace('\'', "&#x27;")
 }
 
-fn base_html(title: &str, content: &str, show_nav: bool) -> String {
-    let nav = if show_nav {
-        r#"<div class="nav"><a href="/">Home</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a></div>"#
-    } else {
-        ""
-    };
+fn app_shell(title: &str, page_js: &str) -> String {
     format!(
         r#"<!DOCTYPE html>
 <html lang="en">
@@ -703,319 +718,263 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 .alert-error{{background:#f8d7da;color:#721c24}}
 .alert-success{{background:#d4edda;color:#155724}}
 .channel-badge{{display:inline-block;padding:2px 8px;background:#ecf0f1;border-radius:12px;font-size:0.8em}}
+.loading{{text-align:center;padding:40px;color:#666}}
 @media(max-width:600px){{.container{{padding:8px}}.header{{padding:12px}}.card{{padding:12px}}}}
 </style>
 </head>
 <body>
 <div class="container">
 <div class="header"><h1>Private Drop</h1></div>
-{nav}
-{content}
+<div class="nav"><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a></div>
+<div id="app"><div class="loading">Loading...</div></div>
 </div>
 <script>
 function getToken(){{return localStorage.getItem('drop_token')||''}}
 function setToken(t){{localStorage.setItem('drop_token',t)}}
 function clearToken(){{localStorage.removeItem('drop_token')}}
-async function apiCall(url,options={{}}){{const token=getToken();const headers={{...options.headers}};if(token)headers['Authorization']='Bearer '+token;const resp=await fetch(url,{{...options,headers}});if(resp.status===401){{clearToken();window.location.href='/login';return null}}return resp}}
-async function deleteMessage(id){{if(!confirm('Are you sure?'))return;const resp=await apiCall('/api/messages/'+id,{{method:'DELETE'}});if(resp&&resp.ok)window.location.reload()}}
+function requireToken(){{if(!getToken()){{window.location.href='/login';return false}}return true}}
+async function apiCall(url,options={{}}){{const token=getToken();if(!token){{window.location.href='/login';return null}}const headers={{...options.headers}};headers['Authorization']='Bearer '+token;const resp=await fetch(url,{{...options,headers}});if(resp.status===401){{clearToken();window.location.href='/login';return null}}return resp}}
+function escapeHtml(s){{const d=document.createElement('div');d.textContent=s;return d.innerHTML}}
+function formatSize(b){{if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'}}
+function fmtTime(ts){{const d=new Date(ts*1000);return d.toLocaleString()}}
+async function deleteMsg(id){{if(!confirm('Delete this message?'))return;const r=await apiCall('/api/messages/'+id,{{method:'DELETE'}});if(r&&r.ok)window.location.reload()}}
 function copyText(t){{navigator.clipboard.writeText(t).then(()=>alert('Copied!'))}}
+{page_js}
 </script>
 </body>
 </html>"#,
         title = html_escape(title),
-        content = content,
-        nav = nav
-    )
-}
-
-fn format_size(size: i64) -> String {
-    if size < 1024 {
-        format!("{} B", size)
-    } else if size < 1024 * 1024 {
-        format!("{:.1} KB", size as f64 / 1024.0)
-    } else if size < 1024 * 1024 * 1024 {
-        format!("{:.1} MB", size as f64 / (1024.0 * 1024.0))
-    } else {
-        format!("{:.2} GB", size as f64 / (1024.0 * 1024.0 * 1024.0))
-    }
-}
-
-fn mime_icon(mime: Option<&str>) -> &'static str {
-    match mime {
-        Some(m) if m.starts_with("image/") => "🖼",
-        Some(m) if m.starts_with("video/") => "🎥",
-        Some(m) if m.starts_with("audio/") => "🎵",
-        Some(m) if m.starts_with("text/") => "📄",
-        Some(m) if m.contains("pdf") => "📕",
-        Some(m) if m.contains("zip") || m.contains("rar") => "📦",
-        _ => "📎",
-    }
-}
-
-fn render_card(m: &Message, show_channel: bool) -> String {
-    let ch = if show_channel {
-        format!(
-            r#"<span class="channel-badge">{}</span>"#,
-            html_escape(&m.channel)
-        )
-    } else {
-        String::new()
-    };
-    let title = m
-        .title
-        .as_ref()
-        .map(|t| html_escape(t))
-        .unwrap_or_else(|| match &m.kind {
-            MessageKind::Text => "Text".to_string(),
-            MessageKind::File => m
-                .file_name
-                .as_ref()
-                .map(|f| html_escape(f))
-                .unwrap_or_else(|| "File".to_string()),
-        });
-    let content = match &m.kind {
-        MessageKind::Text => {
-            let text = m.text.as_deref().unwrap_or("");
-            let preview = if text.len() > 200 {
-                format!("{}...", &text[..200])
-            } else {
-                text.to_string()
-            };
-            format!(r#"<div class="card-text">{}</div>"#, html_escape(&preview))
-        }
-        MessageKind::File => {
-            let size = m.file_size.unwrap_or(0);
-            format!(
-                r#"<div class="file-info"><span class="file-icon">{}</span><div><div style="font-weight:bold">{}</div><div class="file-size">{}</div></div></div>"#,
-                mime_icon(m.mime_type.as_deref()),
-                html_escape(m.file_name.as_deref().unwrap_or("unknown")),
-                format_size(size)
-            )
-        }
-    };
-    let actions = match &m.kind {
-        MessageKind::Text => format!(
-            r#"<button class="btn btn-sm btn-primary" onclick="copyText(document.getElementById('t-{}').textContent)">Copy</button> <button class="btn btn-sm btn-danger" onclick="deleteMessage('{}')">Del</button>"#,
-            m.id, m.id
-        ),
-        MessageKind::File => format!(
-            r#"<a href="/api/files/{}" class="btn btn-sm btn-success" download>Download</a> <button class="btn btn-sm btn-danger" onclick="deleteMessage('{}')">Del</button>"#,
-            m.id, m.id
-        ),
-    };
-    let ts = chrono::DateTime::from_timestamp(m.created_at, 0)
-        .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
-        .unwrap_or_default();
-    format!(
-        r#"<div class="card" id="t-{}"><div class="card-header"><div><div class="card-title">{}<a href="/m/{}" style="color:inherit;text-decoration:none">{}</a></div><div class="card-meta">{}</div></div><div class="form-actions">{}</div></div>{}</div>"#,
-        m.id, ch, m.id, title, ts, actions, content
+        page_js = page_js
     )
 }
 
 #[handler]
-pub async fn login_page(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(config) = get_config(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        return;
-    };
-    if !config.is_auth_enabled() {
-        res.render(Redirect::found("/"));
-        return;
-    }
-    let error = req
-        .query::<String>("error")
-        .map(|e| {
-            format!(
-                r#"<div class="alert alert-error">{}</div>"#,
-                html_escape(&e)
-            )
-        })
-        .unwrap_or_default();
-    let content = format!(
-        r#"<div class="token-form"><div class="card"><h2 style="margin-bottom:16px">Login</h2>{error}<form onsubmit="event.preventDefault();setToken(document.getElementById('token').value);window.location.href='/'"><div class="form-group"><label for="token">Access Token</label><input type="password" id="token" placeholder="Enter your token" required autofocus></div><div class="form-actions"><button type="submit" class="btn btn-primary">Login</button></div></form></div></div>"#
-    );
-    res.render(Text::Html(base_html("Login", &content, false)));
+pub async fn login_page(_req: &mut Request, _depot: &mut Depot, res: &mut Response) {
+    let page_js = r#"
+(function(){
+    if(getToken()){window.location.href='/c/inbox';return}
+    document.getElementById('app').innerHTML=
+        '<div class="token-form"><div class="card">'+
+        '<h2 style="margin-bottom:16px">Login</h2>'+
+        '<div id="err"></div>'+
+        '<form id="lf">'+
+        '<div class="form-group"><label for="token">Access Token</label>'+
+        '<input type="password" id="token" placeholder="Enter your token" required autofocus></div>'+
+        '<div class="form-actions"><button type="submit" class="btn btn-primary">Login</button></div>'+
+        '</form></div></div>';
+    document.getElementById('lf').addEventListener('submit',function(e){
+        e.preventDefault();
+        var t=document.getElementById('token').value.trim();
+        if(!t)return;
+        setToken(t);
+        window.location.href='/c/inbox';
+    });
+})()
+"#;
+    res.render(Text::Html(app_shell("Login", page_js)));
 }
 
 #[handler]
-pub async fn home_page(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(config) = get_config(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        return;
-    };
-    let Some(db) = get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        return;
-    };
-    if !check_auth(req, &config) {
-        res.render(Redirect::found("/login"));
-        return;
-    }
-    let channels = db.list_channels().unwrap_or_default();
-    let (messages, _) = db.list_messages(None, 20, None).unwrap_or_default();
-    let ch_html: String = channels.iter().map(|c| format!(r#"<a href="/c/{}" style="display:flex;justify-content:space-between;align-items:center;background:white;padding:12px;margin-bottom:8px;border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,0.1);text-decoration:none;color:#333"><span style="font-weight:bold">{}</span><span style="color:#666;font-size:0.9em">{} messages</span></a>"#, html_escape(&c.name), html_escape(&c.display_name), c.message_count)).collect();
-    let msg_html: String = messages.iter().map(|m| render_card(m, true)).collect();
-    let content = format!(
-        r#"<h2 style="margin-bottom:16px">Channels</h2>{ch_html}<h2 style="margin:16px 0">Recent Messages</h2>{msg_html}"#
-    );
-    res.render(Text::Html(base_html("Home", &content, true)));
+pub async fn home_page(_req: &mut Request, _depot: &mut Depot, res: &mut Response) {
+    // Client-side: redirect to /c/inbox if logged in, else /login
+    let page_js = r#"
+(function(){
+    if(!getToken()){window.location.href='/login';return}
+    window.location.href='/c/inbox';
+})()
+"#;
+    res.render(Text::Html(app_shell("Home", page_js)));
 }
 
 #[handler]
-pub async fn channel_page(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(config) = get_config(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        return;
-    };
-    let Some(db) = get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        return;
-    };
-    if !check_auth(req, &config) {
-        res.render(Redirect::found("/login"));
-        return;
-    }
+pub async fn channel_page(req: &mut Request, _depot: &mut Depot, res: &mut Response) {
     let channel = req.param::<String>("channel").unwrap_or_default();
-    let (messages, has_more) = db
-        .list_messages(Some(&channel), 50, None)
-        .unwrap_or_default();
-    let msg_html: String = messages.iter().map(|m| render_card(m, false)).collect();
-    let more = if has_more {
-        let before = messages.last().map(|m| m.created_at).unwrap_or(0);
-        format!(
-            r#"<div style="text-align:center;margin-top:16px"><a href="/c/{}?before={}" class="btn btn-primary">Load More</a></div>"#,
-            html_escape(&channel),
-            before
-        )
-    } else {
-        String::new()
-    };
-    let content = format!(
-        r#"<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2>{}</h2><a href="/send?channel={}" class="btn btn-primary">Send</a></div>{}{}"#,
-        html_escape(&channel),
-        html_escape(&channel),
-        msg_html,
-        more
+    let page_js = format!(
+        r#"
+(async function(){{
+    if(!requireToken())return;
+    var ch={channel_json};
+    var app=document.getElementById('app');
+    try{{
+        var r=await apiCall('/api/messages?channel='+encodeURIComponent(ch)+'&limit=50');
+        if(!r)return;
+        if(!r.ok){{var d=await r.json();app.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to load')+'</div>';return}}
+        var data=await r.json();
+        var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
+            '<h2>'+escapeHtml(ch)+'</h2>'+
+            '<a href="/send?channel='+encodeURIComponent(ch)+'" class="btn btn-primary">Send</a></div>';
+        if(data.messages.length===0){{
+            html+='<div class="card"><p style="color:#666;text-align:center">No messages yet</p></div>';
+        }}else{{
+            data.messages.forEach(function(m){{
+                var title=m.title||(m.kind==='file'?(m.file_name||'File'):'Text');
+                var ts=fmtTime(m.created_at);
+                var body='';
+                if(m.kind==='text'){{
+                    var t=m.text||'';
+                    body='<div class="card-text">'+escapeHtml(t.length>200?t.substring(0,200)+'...':t)+'</div>';
+                }}else{{
+                    body='<div class="file-info"><span class="file-icon">📎</span><div>'+
+                        '<div style="font-weight:bold">'+escapeHtml(m.file_name||'unknown')+'</div>'+
+                        '<div class="file-size">'+formatSize(m.file_size||0)+'</div></div></div>';
+                }}
+                var actions='';
+                if(m.kind==='text'){{
+                    actions='<button class="btn btn-sm btn-primary" onclick="copyText(document.getElementById(\\'t-'+m.id+'\\').textContent)">Copy</button> '+
+                        '<button class="btn btn-sm btn-danger" onclick="deleteMsg(\\''+m.id+'\\')">Del</button>';
+                }}else{{
+                    actions='<a href="/api/files/'+m.id+'" class="btn btn-sm btn-success" download>Download</a> '+
+                        '<button class="btn btn-sm btn-danger" onclick="deleteMsg(\\''+m.id+'\\')">Del</button>';
+                }}
+                html+='<div class="card" id="t-'+m.id+'"><div class="card-header"><div>'+
+                    '<div class="card-title"><a href="/m/'+m.id+'" style="color:inherit;text-decoration:none">'+escapeHtml(title)+'</a></div>'+
+                    '<div class="card-meta">'+ts+'</div></div>'+
+                    '<div class="form-actions">'+actions+'</div></div>'+body+'</div>';
+            }});
+        }}
+        app.innerHTML=html;
+    }}catch(e){{
+        app.innerHTML='<div class="alert alert-error">Error: '+escapeHtml(e.message)+'</div>';
+    }}
+}})()
+"#,
+        channel_json = serde_json::to_string(&channel).unwrap()
     );
-    res.render(Text::Html(base_html(&channel, &content, true)));
+    res.render(Text::Html(app_shell(&channel, &page_js)));
 }
 
 #[handler]
-pub async fn message_page(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(config) = get_config(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        return;
-    };
-    let Some(db) = get_db(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        return;
-    };
-    if !check_auth(req, &config) {
-        res.render(Redirect::found("/login"));
-        return;
-    }
+pub async fn message_page(req: &mut Request, _depot: &mut Depot, res: &mut Response) {
     let id = req.param::<String>("id").unwrap_or_default();
-    let message = match db.get_message(&id) {
-        Ok(Some(m)) => m,
-        _ => {
-            res.status_code(StatusCode::NOT_FOUND);
-            res.render(Text::Html(base_html(
-                "Not Found",
-                r#"<div class="card"><h2>Message not found</h2></div>"#,
-                true,
-            )));
-            return;
-        }
-    };
-    let ts = chrono::DateTime::from_timestamp(message.created_at, 0)
-        .map(|d| d.format("%Y-%m-%d %H:%M:%S").to_string())
-        .unwrap_or_default();
-    let content = match &message.kind {
-        MessageKind::Text => {
-            let text = message.text.as_deref().unwrap_or("");
-            format!(
-                r#"<div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div><span class="channel-badge">{}</span> <span class="card-meta">{}</span></div><div class="form-actions"><button class="btn btn-sm btn-primary" onclick="copyText(document.getElementById('ft').textContent)">Copy</button><button class="btn btn-sm btn-danger" onclick="deleteMessage('{}')">Del</button></div></div><div id="ft" class="card-text" style="max-height:none">{}</div></div>"#,
-                html_escape(&message.channel),
-                ts,
-                message.id,
-                html_escape(text)
-            )
-        }
-        MessageKind::File => {
-            let size = message.file_size.unwrap_or(0);
-            format!(
-                r#"<div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:12px"><div><span class="channel-badge">{}</span> <span class="card-meta">{}</span></div><div class="form-actions"><a href="/api/files/{}" class="btn btn-sm btn-success" download>Download</a><button class="btn btn-sm btn-danger" onclick="deleteMessage('{}')">Del</button></div></div><div class="file-info" style="font-size:1.2em"><span class="file-icon" style="font-size:48px">{}</span><div><div style="font-weight:bold;font-size:1.2em">{}</div><div class="file-size">{}</div><div class="file-size">{}</div></div></div></div>"#,
-                html_escape(&message.channel),
-                ts,
-                message.id,
-                message.id,
-                mime_icon(message.mime_type.as_deref()),
-                html_escape(message.file_name.as_deref().unwrap_or("unknown")),
-                format_size(size),
-                message.mime_type.as_deref().unwrap_or("unknown")
-            )
-        }
-    };
-    let title = message.title.as_deref().unwrap_or("Message");
-    res.render(Text::Html(base_html(
-        title,
-        &format!(
-            r#"<h2 style="margin-bottom:16px">{}</h2>{}"#,
-            html_escape(title),
-            content
-        ),
-        true,
-    )));
+    let page_js = format!(
+        r#"
+(async function(){{
+    if(!requireToken())return;
+    var msgId={id_json};
+    var app=document.getElementById('app');
+    try{{
+        var r=await apiCall('/api/messages/'+msgId);
+        if(!r)return;
+        if(!r.ok){{app.innerHTML='<div class="alert alert-error">Message not found</div>';return}}
+        var m=await r.json();
+        var ts=fmtTime(m.created_at);
+        var html='<div class="card"><div style="display:flex;justify-content:space-between;margin-bottom:12px">'+
+            '<div><span class="channel-badge">'+escapeHtml(m.channel)+'</span> <span class="card-meta">'+ts+'</span></div>'+
+            '<div class="form-actions">';
+        if(m.kind==='text'){{
+            html+='<button class="btn btn-sm btn-primary" onclick="copyText(document.getElementById(\\'ft\\').textContent)">Copy</button> ';
+        }}else{{
+            html+='<a href="/api/files/'+m.id+'" class="btn btn-sm btn-success" download>Download</a> ';
+        }}
+        html+='<button class="btn btn-sm btn-danger" onclick="deleteMsg(\\''+m.id+'\\')">Del</button></div></div>';
+        if(m.kind==='text'){{
+            html+='<div id="ft" class="card-text" style="max-height:none">'+escapeHtml(m.text||'')+'</div>';
+        }}else{{
+            html+='<div class="file-info" style="font-size:1.2em"><span class="file-icon" style="font-size:48px">📎</span>'+
+                '<div><div style="font-weight:bold;font-size:1.2em">'+escapeHtml(m.file_name||'unknown')+'</div>'+
+                '<div class="file-size">'+formatSize(m.file_size||0)+'</div>'+
+                '<div class="file-size">'+escapeHtml(m.mime_type||'')+'</div></div></div>';
+        }}
+        html+='</div>';
+        var title=m.title||(m.kind==='file'?(m.file_name||'File'):'Message');
+        app.innerHTML='<h2 style="margin-bottom:16px">'+escapeHtml(title)+'</h2>'+html;
+    }}catch(e){{
+        app.innerHTML='<div class="alert alert-error">Error: '+escapeHtml(e.message)+'</div>';
+    }}
+}})()
+"#,
+        id_json = serde_json::to_string(&id).unwrap()
+    );
+    res.render(Text::Html(app_shell("Message", &page_js)));
 }
 
 #[handler]
-pub async fn send_page(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(config) = get_config(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        return;
-    };
-    if !check_auth(req, &config) {
-        res.render(Redirect::found("/login"));
-        return;
-    }
-    let channel = req
+pub async fn send_page(req: &mut Request, _depot: &mut Depot, res: &mut Response) {
+    let default_channel = req
         .query::<String>("channel")
         .unwrap_or_else(|| "inbox".to_string());
-    let success = req
-        .query::<String>("success")
-        .map(|s| {
-            format!(
-                r#"<div class="alert alert-success">{}</div>"#,
-                html_escape(&s)
-            )
-        })
-        .unwrap_or_default();
-    let error = req
-        .query::<String>("error")
-        .map(|e| {
-            format!(
-                r#"<div class="alert alert-error">{}</div>"#,
-                html_escape(&e)
-            )
-        })
-        .unwrap_or_default();
-    let sel = |ch: &str| if channel == ch { "selected" } else { "" };
-    let content = format!(
-        r#"<h2 style="margin-bottom:16px">Send Message</h2>{success}{error}
-<div class="card"><h3 style="margin-bottom:12px">Text Message</h3><form id="textForm" onsubmit="sendText(event)"><div class="form-group"><label for="channel">Channel</label><select id="channel"><option value="inbox" {}>inbox</option><option value="xline" {}>xline</option><option value="thesis" {}>thesis</option><option value="packfix" {}>packfix</option><option value="omo" {}>omo</option><option value="files" {}>files</option></select></div><div class="form-group"><label for="title">Title (optional)</label><input type="text" id="title" placeholder="Message title"></div><div class="form-group"><label for="text">Text</label><textarea id="text" placeholder="Paste your text here..." rows="10" required></textarea></div><div class="form-actions"><button type="submit" class="btn btn-primary">Send</button></div></form></div>
-<div class="card" style="margin-top:16px"><h3 style="margin-bottom:12px">Upload File</h3><form id="fileForm" onsubmit="uploadFile(event)"><div class="form-group"><label for="file">File</label><input type="file" id="file" required></div><div class="form-actions"><button type="submit" class="btn btn-success">Upload</button></div></form></div>
-<script>
-async function sendText(e){{e.preventDefault();const resp=await apiCall('/api/messages',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{channel:document.getElementById('channel').value,title:document.getElementById('title').value||null,text:document.getElementById('text').value}})}});if(resp&&resp.ok)window.location.href='/send?success=Message+sent';else if(resp){{const d=await resp.json();window.location.href='/send?error='+encodeURIComponent(d.error||'Failed')}}}}
-async function uploadFile(e){{e.preventDefault();const fd=new FormData();fd.append('file',document.getElementById('file').files[0]);const resp=await apiCall('/api/files?channel='+document.getElementById('channel').value,{{method:'POST',body:fd}});if(resp&&resp.ok)window.location.href='/send?success=File+uploaded';else if(resp){{const d=await resp.json();window.location.href='/send?error='+encodeURIComponent(d.error||'Failed')}}}}
-</script>"#,
-        sel("inbox"),
-        sel("xline"),
-        sel("thesis"),
-        sel("packfix"),
-        sel("omo"),
-        sel("files")
+    let page_js = format!(
+        r#"
+(async function(){{
+    if(!requireToken())return;
+    var defCh={channel_json};
+    var app=document.getElementById('app');
+    app.innerHTML=
+        '<h2 style="margin-bottom:16px">Send Message</h2>'+
+        '<div id="msg"></div>'+
+        '<div class="card"><h3 style="margin-bottom:12px">Text Message</h3>'+
+        '<form id="sf">'+
+        '<div class="form-group"><label for="channel">Channel</label>'+
+        '<select id="channel">'+
+        '<option value="inbox">inbox</option>'+
+        '<option value="xline">xline</option>'+
+        '<option value="thesis">thesis</option>'+
+        '<option value="packfix">packfix</option>'+
+        '<option value="omo">omo</option>'+
+        '<option value="files">files</option>'+
+        '</select></div>'+
+        '<div class="form-group"><label for="title">Title (optional)</label>'+
+        '<input type="text" id="title" placeholder="Message title"></div>'+
+        '<div class="form-group"><label for="text">Text</label>'+
+        '<textarea id="text" placeholder="Paste your text here..." rows="10" required></textarea></div>'+
+        '<div class="form-actions"><button type="submit" class="btn btn-primary">Send</button></div>'+
+        '</form></div>'+
+        '<div class="card" style="margin-top:16px"><h3 style="margin-bottom:12px">Upload File</h3>'+
+        '<form id="ff">'+
+        '<div class="form-group"><label for="file">File</label>'+
+        '<input type="file" id="file" required></div>'+
+        '<div class="form-actions"><button type="submit" class="btn btn-success">Upload</button></div>'+
+        '</form></div>';
+    document.getElementById('channel').value=defCh;
+    document.getElementById('sf').addEventListener('submit',async function(e){{
+        e.preventDefault();
+        var ch=document.getElementById('channel').value;
+        var title=document.getElementById('title').value||null;
+        var text=document.getElementById('text').value;
+        var msgEl=document.getElementById('msg');
+        try{{
+            var r=await apiCall('/api/messages',{{
+                method:'POST',
+                headers:{{'Content-Type':'application/json'}},
+                body:JSON.stringify({{channel:ch,title:title,text:text}})
+            }});
+            if(!r)return;
+            if(r.ok){{
+                window.location.href='/c/'+encodeURIComponent(ch);
+            }}else{{
+                var d=await r.json();
+                msgEl.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to send')+'</div>';
+            }}
+        }}catch(err){{
+            msgEl.innerHTML='<div class="alert alert-error">'+escapeHtml(err.message)+'</div>';
+        }}
+    }});
+    document.getElementById('ff').addEventListener('submit',async function(e){{
+        e.preventDefault();
+        var ch=document.getElementById('channel').value;
+        var fileInput=document.getElementById('file');
+        var msgEl=document.getElementById('msg');
+        if(!fileInput.files[0])return;
+        var fd=new FormData();
+        fd.append('file',fileInput.files[0]);
+        try{{
+            var r=await apiCall('/api/files?channel='+encodeURIComponent(ch),{{method:'POST',body:fd}});
+            if(!r)return;
+            if(r.ok){{
+                window.location.href='/c/'+encodeURIComponent(ch);
+            }}else{{
+                var d=await r.json();
+                msgEl.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to upload')+'</div>';
+            }}
+        }}catch(err){{
+            msgEl.innerHTML='<div class="alert alert-error">'+escapeHtml(err.message)+'</div>';
+        }}
+    }});
+}})()
+"#,
+        channel_json = serde_json::to_string(&default_channel).unwrap()
     );
-    res.render(Text::Html(base_html("Send", &content, true)));
+    res.render(Text::Html(app_shell("Send", &page_js)));
 }
 
 // ============================================================================
@@ -1096,4 +1055,108 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("OpenAPI: http://localhost:{}/openapi.json", port);
     Server::new(acceptor).serve(router).await;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_uuid_generation_not_empty() {
+        let id = Uuid::new_v4().to_string();
+        assert!(!id.is_empty());
+        assert_eq!(id.len(), 36); // UUID v4 with hyphens
+        assert!(id.contains('-'));
+    }
+
+    #[test]
+    fn test_uuid_generation_unique() {
+        let id1 = Uuid::new_v4().to_string();
+        let id2 = Uuid::new_v4().to_string();
+        assert_ne!(id1, id2);
+    }
+
+    #[test]
+    fn test_config_from_env_defaults() {
+        // Clear env vars to test defaults
+        std::env::remove_var("DROP_ADDR");
+        std::env::remove_var("DROP_DATA");
+        std::env::remove_var("DROP_TOKEN");
+
+        let config = Config::from_env();
+        assert_eq!(config.addr, "0.0.0.0:8080");
+        assert_eq!(config.data_dir, PathBuf::from("./data"));
+        assert_eq!(config.token, None);
+        assert!(!config.is_auth_enabled());
+        assert_eq!(config.max_text_size, 2 * 1024 * 1024);
+        assert_eq!(config.max_file_size, 100 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_config_validate_token() {
+        let config = Config {
+            addr: "0.0.0.0:8080".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret123".to_string()),
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+        };
+        assert!(config.is_auth_enabled());
+        assert!(config.validate_token("secret123"));
+        assert!(!config.validate_token("wrong"));
+        assert!(!config.validate_token(""));
+    }
+
+    #[test]
+    fn test_config_validate_token_none() {
+        let config = Config {
+            addr: "0.0.0.0:8080".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: None,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+        };
+        assert!(!config.is_auth_enabled());
+        // When no token is set, validation always returns false
+        assert!(!config.validate_token("anything"));
+    }
+
+    #[test]
+    fn test_filename_sanitization() {
+        // Test that path separators are stripped from display names
+        let filename = "test/file\\name.txt";
+        let safe: String = filename
+            .chars()
+            .filter(|c| !matches!(c, '/' | '\\' | '\0' | '\r' | '\n'))
+            .collect();
+        assert_eq!(safe, "testfilename.txt");
+    }
+
+    #[test]
+    fn test_filename_sanitization_quotes() {
+        let filename = "file\"name.txt";
+        let safe = filename.replace('"', "_");
+        assert_eq!(safe, "file_name.txt");
+    }
+
+    #[test]
+    fn test_message_serialization() {
+        let msg = Message {
+            id: "test-id".to_string(),
+            channel: "inbox".to_string(),
+            kind: MessageKind::Text,
+            title: Some("Test".to_string()),
+            text: Some("Hello".to_string()),
+            file_name: None,
+            file_path: None,
+            file_size: None,
+            mime_type: None,
+            created_at: 1234567890,
+            expires_at: None,
+        };
+        let json = serde_json::to_string(&msg).unwrap();
+        assert!(json.contains("test-id"));
+        assert!(json.contains("inbox"));
+        assert!(json.contains("text"));
+    }
 }

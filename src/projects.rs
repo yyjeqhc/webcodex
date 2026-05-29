@@ -31,6 +31,8 @@ pub struct ProjectConfig {
     pub allow_patch: bool,
     pub allowed_checks: Vec<String>,
     pub checks: Option<ProjectChecks>,
+    #[serde(default)]
+    pub commands: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]

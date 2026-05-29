@@ -248,6 +248,29 @@
         },
         "required": ["success", "project", "operation", "duration_ms", "truncated"]
       },
+      "CommandRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "command": {"type": "string", "description": "Command id configured under [projects.<name>.commands]"}
+        },
+        "required": ["project", "command"]
+      },
+      "CommandResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "project": {"type": "string"},
+          "command": {"type": "string"},
+          "exit_code": {"type": "integer", "nullable": true},
+          "duration_ms": {"type": "integer"},
+          "stdout_tail": {"type": "string", "nullable": true},
+          "stderr_tail": {"type": "string", "nullable": true},
+          "truncated": {"type": "boolean"},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "project", "command", "duration_ms", "truncated"]
+      },
       "CheckRequest": {
         "type": "object",
         "properties": {
@@ -477,6 +500,22 @@
           "200": {"description": "Git result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitResponse"}}}},
           "400": {"description": "Bad request"},
           "403": {"description": "Git mutation not allowed"}
+        }
+      }
+    },
+    "/api/codex/command": {
+      "post": {
+        "operationId": "runProjectCommand",
+        "summary": "Run a whitelisted project command",
+        "description": "Run a command configured in projects.toml under [projects.<name>.commands]. The request only chooses a command id; it does not accept arbitrary shell commands.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Command result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResponse"}}}},
+          "400": {"description": "Bad request or unknown command"}
         }
       }
     },

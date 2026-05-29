@@ -105,6 +105,12 @@ pub struct GitRequest {
     pub paths: Vec<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CommandRequest {
+    pub project: String,
+    pub command: String,
+}
+
 fn default_channel() -> String {
     "omo".to_string()
 }
@@ -183,6 +189,22 @@ pub struct GitResponse {
     pub success: bool,
     pub project: String,
     pub operation: String,
+    pub exit_code: Option<i32>,
+    pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_tail: Option<String>,
+    pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CommandResponse {
+    pub success: bool,
+    pub project: String,
+    pub command: String,
     pub exit_code: Option<i32>,
     pub duration_ms: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -2670,6 +2692,92 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
 }
 
 #[handler]
+pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(CommandResponse {
+            success: false,
+            project: String::new(),
+            command: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            stdout_tail: None,
+            stderr_tail: None,
+            truncated: false,
+            error: Some("Projects not configured".to_string()),
+        }));
+        return;
+    };
+    let body: CommandRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandResponse {
+                success: false,
+                project: String::new(),
+                command: String::new(),
+                exit_code: None,
+                duration_ms: 0,
+                stdout_tail: None,
+                stderr_tail: None,
+                truncated: false,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(command_error(&body.project, &body.command, e)));
+            return;
+        }
+    };
+    let cmd = match get_project_command(proj, &body.command) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(command_error(&body.project, &body.command, e)));
+            return;
+        }
+    };
+    let (code, stdout, stderr, duration_ms) =
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
+    let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
+    let truncated = stdout_trunc || stderr_trunc;
+    let success = code == 0;
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "runProjectCommand",
+        project = %body.project,
+        command = %body.command,
+        executor = if proj.is_ssh() { "ssh" } else { "local" },
+        success = success,
+        exit_code = code,
+        duration_ms = duration_ms,
+        ssh_calls = if proj.is_ssh() { 1 } else { 0 },
+        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+        "codex_command_completed"
+    );
+    res.render(Json(CommandResponse {
+        success,
+        project: body.project,
+        command: body.command,
+        exit_code: Some(code),
+        duration_ms,
+        stdout_tail: Some(stdout_tail),
+        stderr_tail: Some(stderr_tail),
+        truncated,
+        error: if success {
+            None
+        } else {
+            Some("command failed".to_string())
+        },
+    }));
+}
+
+#[handler]
 pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(projects) = get_projects(depot) else {
         res.render(Json(CheckResponse {
@@ -2959,6 +3067,38 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_command_name_accepts_safe_ids() {
+        assert!(validate_command_name("clippy").is_ok());
+        assert!(validate_command_name("doc.build-1").is_ok());
+    }
+
+    #[test]
+    fn test_validate_command_name_rejects_shell_like_text() {
+        assert!(validate_command_name("").is_err());
+        assert!(validate_command_name("cargo test").is_err());
+        assert!(validate_command_name("test;rm").is_err());
+        assert!(validate_command_name(&"a".repeat(101)).is_err());
+    }
+
+    #[test]
+    fn test_get_project_command_returns_configured_command() {
+        let mut commands = HashMap::new();
+        commands.insert("smoke".to_string(), "echo ok".to_string());
+        let proj = ProjectConfig {
+            path: "/tmp/project".to_string(),
+            executor: crate::projects::Executor::Local,
+            host: None,
+            user: None,
+            allow_patch: true,
+            allowed_checks: vec![],
+            checks: None,
+            commands,
+        };
+        assert_eq!(get_project_command(&proj, "smoke").unwrap(), "echo ok");
+        assert!(get_project_command(&proj, "missing").is_err());
+    }
+
+    #[test]
     fn test_git_command_status_and_diff_are_fixed() {
         let status = GitRequest {
             project: "p".to_string(),
@@ -3093,6 +3233,7 @@ mod tests {
             allow_patch: false,
             allowed_checks: vec![],
             checks: None,
+            commands: HashMap::new(),
         };
         assert_eq!(proj.ssh_target().unwrap(), "root@msi");
 
@@ -3104,6 +3245,7 @@ mod tests {
             allow_patch: false,
             allowed_checks: vec![],
             checks: None,
+            commands: HashMap::new(),
         };
         assert_eq!(proj_no_user.ssh_target().unwrap(), "msi");
     }
@@ -3118,6 +3260,7 @@ mod tests {
             allow_patch: false,
             allowed_checks: vec![],
             checks: None,
+            commands: HashMap::new(),
         };
         assert!(proj.ssh_target().is_err());
     }
@@ -3132,6 +3275,7 @@ mod tests {
             allow_patch: false,
             allowed_checks: vec![],
             checks: None,
+            commands: HashMap::new(),
         };
         assert!(!proj.is_ssh());
     }
@@ -3426,6 +3570,51 @@ mod tests {
         assert_eq!(result["success"], false);
         assert!(result["error"].as_str().unwrap().contains("sensitive"));
     }
+}
+
+fn command_error(project: &str, command: &str, error: String) -> CommandResponse {
+    CommandResponse {
+        success: false,
+        project: project.to_string(),
+        command: command.to_string(),
+        exit_code: None,
+        duration_ms: 0,
+        stdout_tail: None,
+        stderr_tail: None,
+        truncated: false,
+        error: Some(error),
+    }
+}
+
+fn validate_command_name(command: &str) -> Result<(), String> {
+    if command.is_empty() {
+        return Err("command cannot be empty".to_string());
+    }
+    if command.len() > 100 {
+        return Err("command is too long; maximum is 100 characters".to_string());
+    }
+    if !command
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+    {
+        return Err(
+            "command may only contain ASCII letters, digits, underscore, dash, and dot".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn get_project_command(proj: &ProjectConfig, command: &str) -> Result<String, String> {
+    validate_command_name(command)?;
+    proj.commands.get(command).cloned().ok_or_else(|| {
+        let mut commands = proj.commands.keys().cloned().collect::<Vec<_>>();
+        commands.sort();
+        format!(
+            "Command '{}' is not configured. Available: {}",
+            command,
+            commands.join(", ")
+        )
+    })
 }
 
 fn git_operation_name(operation: &GitOperation) -> &'static str {

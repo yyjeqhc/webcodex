@@ -674,3 +674,30 @@ Example:
 ```
 
 Paths are relative to the project root and use the same sensitive path checks as the edit API. `.env`, `.git`, `target`, `node_modules`, private key paths, absolute paths, and `..` traversal are rejected. The API does not accept arbitrary Git subcommands or shell snippets.
+
+
+## Codex whitelisted command API
+
+`POST /api/codex/command` runs a project-level command configured in `projects.toml` under `[projects.<name>.commands]`.
+The request only supplies a command id; it cannot submit arbitrary shell text.
+
+Example configuration:
+
+```toml
+[projects.private-drop-v4.commands]
+clippy = "cargo clippy --all-targets -- -D warnings"
+doc = "cargo doc --no-deps"
+```
+
+Example request:
+
+```json
+{
+  "project": "private-drop-v4",
+  "command": "clippy"
+}
+```
+
+The response includes `success`, `exit_code`, `duration_ms`, `stdout_tail`, `stderr_tail`, and `truncated`. SSH projects use the existing SSH executor path and therefore benefit from configured ControlMaster reuse.
+
+Command ids may only contain ASCII letters, digits, `_`, `-`, and `.` and must be configured in `projects.toml`. This endpoint is intended for project-specific checks such as `clippy`, `doc`, `pytest`, `lint`, or smoke tests while avoiding arbitrary command execution from API requests.

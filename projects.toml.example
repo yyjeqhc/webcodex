@@ -22,6 +22,12 @@ build = "cargo build --release"
 e2e = "bash scripts/e2e_test.sh"
 full = "cargo fmt --check && cargo test && cargo build --release && bash scripts/e2e_test.sh"
 
+# Optional extra project-level commands for /api/codex/command.
+# Requests can only choose one of these ids; they cannot provide arbitrary shell.
+[projects.private-drop.commands]
+clippy = "cargo clippy --all-targets -- -D warnings"
+doc = "cargo doc --no-deps"
+
 # SSH executor: commands run on a remote machine via SSH
 # Use this when private-drop is deployed on a gateway (e.g., SG4) but
 # the actual project lives on a different machine (reachable via Tailscale).
@@ -42,3 +48,7 @@ full = "cargo fmt --check && cargo test && cargo build --release && bash scripts
 # test = "cargo test"
 # build = "cargo build --release"
 # e2e = "bash scripts/e2e_test.sh"
+#
+# [projects.private-drop.commands]
+# clippy = "cargo clippy --all-targets -- -D warnings"
+# doc = "cargo doc --no-deps"

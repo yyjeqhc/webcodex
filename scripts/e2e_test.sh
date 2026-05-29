@@ -31,6 +31,49 @@ s.close()
 PORT=$(find_free_port)
 BASE="http://127.0.0.1:$PORT"
 
+# ============================================================================
+# Create test project for Codex API
+# ============================================================================
+TEST_PROJECT_DIR="$TMPDIR_DATA/test-project"
+mkdir -p "$TEST_PROJECT_DIR/src"
+cd "$TEST_PROJECT_DIR"
+git init -b main 2>&1
+git config user.email "test@test.com"
+git config user.name "Test"
+
+echo "# Test Project" > README.md
+echo 'fn main() { println!("hello"); }' > src/main.rs
+echo "line1" > test.txt
+echo "line2" >> test.txt
+echo "line3" >> test.txt
+
+cat > check.sh << 'CHECKEOF'
+#!/bin/bash
+echo "check passed"
+exit 0
+CHECKEOF
+chmod +x check.sh
+
+git add -A
+git commit -m "init" 2>&1
+cd "$PROJECT_DIR"
+
+# Generate projects.toml for test
+PROJECTS_TOML="$TMPDIR_DATA/projects.toml"
+cat > "$PROJECTS_TOML" << EOF
+[projects.test-project]
+path = "$TEST_PROJECT_DIR"
+allow_patch = true
+allowed_checks = ["fmt", "test", "build", "e2e", "full"]
+
+[projects.test-project.checks]
+fmt = "echo fmt-ok"
+test = "echo test-ok"
+build = "echo build-ok"
+e2e = "bash check.sh"
+full = "echo fmt-ok && echo test-ok && bash check.sh"
+EOF
+
 cleanup() {
     echo ""
     echo "=== Cleanup ==="
@@ -161,6 +204,7 @@ echo "  Log file: $LOGFILE"
 DROP_TOKEN="$TOKEN" \
 DROP_ADDR="127.0.0.1:$PORT" \
 DROP_DATA="$TMPDIR_DATA" \
+PROJECTS_CONFIG="$PROJECTS_TOML" \
     ./target/release/private-drop > "$LOGFILE" 2>&1 &
 SERVER_PID=$!
 echo "  Server PID: $SERVER_PID"
@@ -366,6 +410,211 @@ BODY=$(curl -sf "$BASE/send")
 assert_contains "Send page calls POST /api/messages" "/api/messages" "$BODY"
 assert_contains "Send page uses Authorization" "Authorization" "$BODY"
 assert_contains "Send page uses Bearer" "Bearer" "$BODY"
+
+# ============================================================================
+# Codex API Tests
+# ============================================================================
+echo ""
+echo "=== Codex API Tests ==="
+
+CODEX="$BASE/api/codex"
+
+# --- 18. Codex: Unauthorized access ---
+echo ""
+echo "--- 18. Codex Auth ---"
+assert_http_code "POST /api/codex/context without token returns 401" "401" "$CODEX/context" \
+    -X POST -H "Content-Type: application/json" -d '{"project":"test-project","mode":"overview"}'
+assert_http_code "POST /api/codex/apply_patch without token returns 401" "401" "$CODEX/apply_patch" \
+    -X POST -H "Content-Type: application/json" -d '{"project":"test-project","patch":"x"}'
+assert_http_code "POST /api/codex/check without token returns 401" "401" "$CODEX/check" \
+    -X POST -H "Content-Type: application/json" -d '{"project":"test-project","suite":"test"}'
+assert_http_code "POST /api/codex/report without token returns 401" "401" "$CODEX/report" \
+    -X POST -H "Content-Type: application/json" -d '{"project":"test-project","status":"completed","title":"t","summary":"s"}'
+
+# --- 19. Codex: Unknown project ---
+echo ""
+echo "--- 19. Codex Unknown Project ---"
+RESP=$(curl -s -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"nonexistent","mode":"overview"}')
+HAS_ERR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d.get('error') else 'no')")
+assert_eq "Unknown project returns error" "yes" "$HAS_ERR"
+
+# --- 20. Codex: getProjectContext mode=overview ---
+echo ""
+echo "--- 20. Codex Context Overview ---"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"overview"}')
+CTX_SUCCESS=$(pyget "$RESP" "success")
+CTX_MODE=$(pyget "$RESP" "mode")
+CTX_CONTENT=$(pyget "$RESP" "content")
+assert_eq "Overview success" "True" "$CTX_SUCCESS"
+assert_eq "Overview mode" "overview" "$CTX_MODE"
+assert_contains "Overview contains project name" "test-project" "$CTX_CONTENT"
+assert_contains "Overview contains branch info" "main" "$CTX_CONTENT"
+
+# --- 21. Codex: getProjectContext mode=tree ---
+echo ""
+echo "--- 21. Codex Context Tree ---"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"tree"}')
+CTX_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Tree success" "True" "$CTX_SUCCESS"
+HAS_README=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('yes' if any('README' in i for i in items) else 'no')")
+assert_contains "Tree contains README.md" "yes" "$HAS_README"
+HAS_MAIN=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('yes' if any('main.rs' in i for i in items) else 'no')")
+assert_contains "Tree contains main.rs" "yes" "$HAS_MAIN"
+
+# --- 22. Codex: getProjectContext mode=read_file ---
+echo ""
+echo "--- 22. Codex Context Read File ---"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"test.txt"}')
+CTX_SUCCESS=$(pyget "$RESP" "success")
+CTX_CONTENT=$(pyget "$RESP" "content")
+assert_eq "Read file success" "True" "$CTX_SUCCESS"
+assert_contains "Read file contains line1" "line1" "$CTX_CONTENT"
+assert_contains "Read file contains line2" "line2" "$CTX_CONTENT"
+
+# --- 23. Codex: getProjectContext mode=search ---
+echo ""
+echo "--- 23. Codex Context Search ---"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"search","query":"println"}')
+CTX_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Search success" "True" "$CTX_SUCCESS"
+HAS_RESULT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('yes' if len(items)>0 else 'no')")
+assert_contains "Search found println" "yes" "$HAS_RESULT"
+
+# --- 24. Codex: getProjectContext mode=git_status ---
+echo ""
+echo "--- 24. Codex Context Git Status ---"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"git_status"}')
+CTX_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Git status success" "True" "$CTX_SUCCESS"
+
+# --- 25. Codex: applyProjectPatch ---
+echo ""
+echo "--- 25. Codex Apply Patch ---"
+# Create a simple patch that adds a line to test.txt
+PATCH_FILE="$TMPDIR_DATA/test.patch"
+cat > "$PATCH_FILE" << 'PATCHEOF'
+diff --git a/test.txt b/test.txt
+--- a/test.txt
++++ b/test.txt
+@@ -1,3 +1,4 @@
+ line1
+ line2
+ line3
++line4
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$PATCH_FILE').read()
+print(json.dumps({'project':'test-project','patch':patch,'reason':'add line4'}))
+")")
+PATCH_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Apply patch success" "True" "$PATCH_SUCCESS"
+# Verify the file was modified
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"test.txt"}')
+CTX_CONTENT=$(pyget "$RESP" "content")
+assert_contains "Patch added line4" "line4" "$CTX_CONTENT"
+
+# --- 26. Codex: applyProjectPatch blocked sensitive path ---
+echo ""
+echo "--- 26. Codex Apply Patch Blocked ---"
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","patch":"diff --git a/.env b/.env\n--- /dev/null\n+++ b/.env\n@@ -0,0 +1 @@\n+SECRET=x\n","reason":"evil"}')
+PATCH_SUCCESS=$(pyget "$RESP" "success")
+PATCH_ERROR=$(pyget "$RESP" "error")
+assert_eq "Patch .env blocked" "False" "$PATCH_SUCCESS"
+assert_contains "Error mentions sensitive" "sensitive" "$PATCH_ERROR"
+
+# --- 27. Codex: runProjectCheck ---
+echo ""
+echo "--- 27. Codex Run Check ---"
+RESP=$(curl -sf -X POST "$CODEX/check" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","suite":"test"}')
+CHECK_SUCCESS=$(pyget "$RESP" "success")
+CHECK_SUITE=$(pyget "$RESP" "suite")
+CHECK_EXIT=$(pyget "$RESP" "exit_code")
+assert_eq "Check test success" "True" "$CHECK_SUCCESS"
+assert_eq "Check suite is test" "test" "$CHECK_SUITE"
+assert_eq "Check exit code 0" "0" "$CHECK_EXIT"
+
+# --- 28. Codex: runProjectCheck unknown suite ---
+echo ""
+echo "--- 28. Codex Check Unknown Suite ---"
+RESP=$(curl -s -X POST "$CODEX/check" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","suite":"unknown_suite"}')
+CHECK_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Unknown suite rejected" "False" "$CHECK_SUCCESS"
+
+# --- 29. Codex: writeProjectReport ---
+echo ""
+echo "--- 29. Codex Write Report ---"
+RESP=$(curl -sf -X POST "$CODEX/report" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","status":"completed","title":"E2E Test Report","summary":"All tests passed","channel":"omo"}')
+REPORT_SUCCESS=$(pyget "$RESP" "success")
+REPORT_ID=$(pyget "$RESP" "report_id")
+REPORT_MSG_ID=$(pyget "$RESP" "message_id")
+REPORT_PATH=$(pyget "$RESP" "path")
+assert_eq "Report success" "True" "$REPORT_SUCCESS"
+assert_not_empty "Report has report_id" "$REPORT_ID"
+assert_not_empty "Report has message_id" "$REPORT_MSG_ID"
+assert_not_empty "Report has path" "$REPORT_PATH"
+
+# Verify report message is in the channel
+RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/messages?channel=omo&limit=10")
+FOUND=$(echo "$RESP" | python3 -c "
+import sys, json
+data = json.load(sys.stdin)
+print('yes' if any(m['id'] == '$REPORT_MSG_ID' for m in data.get('messages', [])) else 'no')
+")
+assert_eq "Report message found in omo channel" "yes" "$FOUND"
+
+# --- 30. Codex: OpenAPI spec has codex operations ---
+echo ""
+echo "--- 30. Codex OpenAPI Spec ---"
+RESP=$(curl -sf "$BASE/openapi.json")
+HAS_CTX=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'getProjectContext' in sys.stdin.read() else 'no')")
+HAS_PATCH=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectPatch' in sys.stdin.read() else 'no')")
+HAS_CHECK=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCheck' in sys.stdin.read() else 'no')")
+HAS_REPORT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'writeProjectReport' in sys.stdin.read() else 'no')")
+assert_contains "OpenAPI has getProjectContext" "yes" "$HAS_CTX"
+assert_contains "OpenAPI has applyProjectPatch" "yes" "$HAS_PATCH"
+assert_contains "OpenAPI has runProjectCheck" "yes" "$HAS_CHECK"
+assert_contains "OpenAPI has writeProjectReport" "yes" "$HAS_REPORT"
+
+# Also verify old operations are still there
+HAS_CREATE=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createMessage' in sys.stdin.read() else 'no')")
+assert_contains "OpenAPI still has createMessage" "yes" "$HAS_CREATE"
 
 # ============================================================================
 # Summary

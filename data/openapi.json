@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Private Drop API",
-    "version": "0.1.0",
-    "description": "A self-hosted private long-text/file drop box API. Perfect for GPT Actions integration."
+    "version": "0.2.0",
+    "description": "A self-hosted private long-text/file drop box API with Codex-like Project API for GPT Actions integration."
   },
   "servers": [{"url": "/", "description": "Current server"}],
   "components": {
@@ -59,6 +59,95 @@
           "has_more": {"type": "boolean"}
         },
         "required": ["messages", "total", "has_more"]
+      },
+      "ContextRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "mode": {"type": "string", "enum": ["overview", "tree", "search", "read_file", "git_status", "git_diff"], "description": "Context retrieval mode"},
+          "path": {"type": "string", "description": "File path (for read_file mode)"},
+          "query": {"type": "string", "description": "Search query (for search mode)"},
+          "start_line": {"type": "integer", "default": 1, "description": "Start line for read_file (1-based)"},
+          "limit": {"type": "integer", "default": 200, "description": "Max lines/items to return"}
+        },
+        "required": ["project", "mode"]
+      },
+      "ContextResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "project": {"type": "string"},
+          "mode": {"type": "string"},
+          "content": {"type": "string", "nullable": true, "description": "Text content (for overview, read_file, git_status, git_diff)"},
+          "items": {"type": "array", "items": {"type": "string"}, "nullable": true, "description": "List items (for tree, search)"},
+          "truncated": {"type": "boolean"},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "project", "mode", "truncated"]
+      },
+      "PatchRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "patch": {"type": "string", "description": "Unified diff patch content"},
+          "reason": {"type": "string", "description": "Optional explanation for the patch"}
+        },
+        "required": ["project", "patch"]
+      },
+      "PatchResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "changed_files": {"type": "array", "items": {"type": "string"}, "nullable": true},
+          "stdout": {"type": "string", "nullable": true},
+          "stderr": {"type": "string", "nullable": true},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success"]
+      },
+      "CheckRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "suite": {"type": "string", "enum": ["fmt", "test", "build", "e2e", "full"], "description": "Check suite to run"}
+        },
+        "required": ["project", "suite"]
+      },
+      "CheckResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "suite": {"type": "string", "nullable": true},
+          "exit_code": {"type": "integer", "nullable": true},
+          "duration_ms": {"type": "integer", "nullable": true},
+          "stdout_tail": {"type": "string", "nullable": true, "description": "Last part of stdout (max 50000 chars)"},
+          "stderr_tail": {"type": "string", "nullable": true, "description": "Last part of stderr (max 50000 chars)"},
+          "truncated": {"type": "boolean"},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "truncated"]
+      },
+      "ReportRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "status": {"type": "string", "enum": ["completed", "failed", "blocked"], "description": "Operation status"},
+          "title": {"type": "string", "description": "Report title"},
+          "summary": {"type": "string", "description": "Detailed summary"},
+          "channel": {"type": "string", "default": "omo", "description": "Channel to post message to"}
+        },
+        "required": ["project", "status", "title", "summary"]
+      },
+      "ReportResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "report_id": {"type": "string", "nullable": true},
+          "message_id": {"type": "string", "nullable": true},
+          "path": {"type": "string", "nullable": true},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success"]
       }
     }
   },
@@ -161,6 +250,72 @@
         "responses": {
           "200": {"description": "File content"},
           "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/api/codex/context": {
+      "post": {
+        "operationId": "getProjectContext",
+        "summary": "Read-only project observation",
+        "description": "Observe a whitelisted project: get overview, file tree, search, read files, git status/diff.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Context response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextResponse"}}}},
+          "400": {"description": "Bad request"}
+        }
+      }
+    },
+    "/api/codex/apply_patch": {
+      "post": {
+        "operationId": "applyProjectPatch",
+        "summary": "Apply a unified diff patch",
+        "description": "Apply a unified diff patch to a whitelisted project. Only modifies project files, blocks sensitive paths.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PatchRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Patch result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PatchResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Patch not allowed for this project"}
+        }
+      }
+    },
+    "/api/codex/check": {
+      "post": {
+        "operationId": "runProjectCheck",
+        "summary": "Run a project check suite",
+        "description": "Run a pre-configured check command (fmt, test, build, e2e, full) on a whitelisted project.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CheckRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Check result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CheckResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Check suite not allowed"}
+        }
+      }
+    },
+    "/api/codex/report": {
+      "post": {
+        "operationId": "writeProjectReport",
+        "summary": "Write an operation report",
+        "description": "Write a GPT/Codex operation report to local storage and post a summary message to a channel.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReportRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Report result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReportResponse"}}}},
+          "400": {"description": "Bad request"}
         }
       }
     }

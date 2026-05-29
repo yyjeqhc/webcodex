@@ -1,0 +1,11 @@
+[projects.private-drop]
+path = "/root/git/private-drop"
+allow_patch = true
+allowed_checks = ["fmt", "test", "build", "e2e", "full"]
+
+[projects.private-drop.checks]
+fmt = "cargo fmt --check"
+test = "cargo test"
+build = "cargo build --release"
+e2e = "bash scripts/e2e_test.sh"
+full = "cargo fmt --check && cargo test && cargo build --release && bash scripts/e2e_test.sh"

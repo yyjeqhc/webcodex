@@ -6,6 +6,9 @@ use std::sync::{Arc, Mutex};
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+mod codex;
+mod projects;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum MessageKind {
@@ -1006,6 +1009,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set max payload size to 2MB for text messages
     salvo::http::request::set_global_secure_max_size(config.max_text_size);
 
+    // Load projects config for Codex API
+    let projects_config = match projects::ProjectsConfig::load() {
+        Ok(cfg) => {
+            tracing::info!(
+                "Loaded projects config with {} projects",
+                cfg.projects.len()
+            );
+            Some(Arc::new(cfg))
+        }
+        Err(e) => {
+            tracing::warn!(
+                "Projects config not loaded: {}. Codex API will be disabled.",
+                e
+            );
+            None
+        }
+    };
+
     let cors = Cors::permissive();
     let config = Arc::new(config);
     let db = Arc::new(db);
@@ -1039,13 +1060,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
 
-    let router = Router::new()
+    let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
         .hoop(affix_state::inject(db.clone()))
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)
         .push(web_router);
+
+    // Add Codex API routes if projects config is loaded
+    if let Some(projects_cfg) = projects_config {
+        router = router.hoop(affix_state::inject(projects_cfg)).push(
+            Router::with_path("api/codex")
+                .hoop(AuthMiddleware)
+                .push(Router::with_path("context").post(codex::codex_context))
+                .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
+                .push(Router::with_path("check").post(codex::codex_check))
+                .push(Router::with_path("report").post(codex::codex_report)),
+        );
+    }
 
     let acceptor = TcpListener::new(addr.clone()).bind().await;
     tracing::info!("Server started successfully!");

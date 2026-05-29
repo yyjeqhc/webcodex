@@ -228,6 +228,90 @@ cargo test
 
 8 unit tests covering UUID generation, config defaults, token validation, filename sanitization, and message serialization.
 
+## Codex-like GPT Actions API
+
+Private Drop includes a set of coarse-grained APIs designed for ChatGPT GPT Actions to operate on whitelisted projects. These APIs enable GPT to act as a "Codex brain" — observing projects, generating patches, running checks, and writing reports.
+
+### Why 4 Coarse Interfaces?
+
+Instead of exposing fine-grained dangerous APIs (readFile, writeFile, runShell, deleteFile), we expose 4 coarse operations:
+
+1. **getProjectContext** — Read-only observation (overview, tree, search, read_file, git_status, git_diff)
+2. **applyProjectPatch** — Apply a unified diff to a whitelisted project
+3. **runProjectCheck** — Run pre-configured check commands (fmt, test, build, e2e, full)
+4. **writeProjectReport** — Write operation reports and post messages to channels
+
+This design prevents arbitrary shell access, arbitrary file I/O, and git push while still giving GPT enough capability to complete code review and fix workflows.
+
+### Configuration
+
+Create `projects.toml` (or set `PROJECTS_CONFIG` env var to its path):
+
+```toml
+[projects.private-drop]
+path = "/root/git/private-drop"
+allow_patch = true
+allowed_checks = ["fmt", "test", "build", "e2e", "full"]
+
+[projects.private-drop.checks]
+fmt = "cargo fmt --check"
+test = "cargo test"
+build = "cargo build --release"
+e2e = "bash scripts/e2e_test.sh"
+full = "cargo fmt --check && cargo test && cargo build --release && bash scripts/e2e_test.sh"
+```
+
+If `projects.toml` is missing, the Codex API returns clear errors but the original message/file APIs remain fully functional.
+
+### API Examples
+
+```bash
+# Get project overview
+curl -X POST http://localhost:8080/api/codex/context \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"private-drop","mode":"overview"}'
+
+# Search for code
+curl -X POST http://localhost:8080/api/codex/context \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"private-drop","mode":"search","query":"fn main"}'
+
+# Apply a patch
+curl -X POST http://localhost:8080/api/codex/apply_patch \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"private-drop","patch":"diff --git a/...","reason":"fix bug"}'
+
+# Run checks
+curl -X POST http://localhost:8080/api/codex/check \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"private-drop","suite":"test"}'
+
+# Write a report
+curl -X POST http://localhost:8080/api/codex/report \
+  -H "Authorization: Bearer your-secret-token" \
+  -H "Content-Type: application/json" \
+  -d '{"project":"private-drop","status":"completed","title":"Fix X","summary":"Changed Y, tests pass","channel":"omo"}'
+```
+
+### GPT Actions Setup
+
+1. Import `https://your-server/openapi.json` into your GPT Actions
+2. Set authentication to API Key / Bearer with your `DROP_TOKEN`
+3. GPT can use the 4 `codex` operationIds: `getProjectContext`, `applyProjectPatch`, `runProjectCheck`, `writeProjectReport`
+
+### Security Boundaries
+
+- **No arbitrary shell**: Only pre-configured check commands from `projects.toml`
+- **No git push**: Only `git apply` for patches, no commit or push
+- **No arbitrary path access**: All paths are canonicalized and verified to be within project root
+- **Sensitive files blocked**: `.git/`, `.env`, `*.pem`, `*.key`, `id_rsa`, `target/`, `node_modules/` cannot be modified
+- **Output truncated**: All outputs capped at 50K characters to avoid overwhelming GPT Actions
+- **Project whitelist only**: Only projects listed in `projects.toml` are accessible
+
 ## Security Notes
 
 - Always set `DROP_TOKEN` in production

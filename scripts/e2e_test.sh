@@ -549,6 +549,20 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
 CTX_SUCCESS=$(pyget "$RESP" "success")
 assert_eq "Git status success" "True" "$CTX_SUCCESS"
 
+# --- 24b. Codex: getProjectContextBatch ---
+echo ""
+echo "--- 24b. Codex Context Batch ---"
+RESP=$(curl -sf -X POST "$CODEX/context_batch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","requests":[{"mode":"overview"},{"mode":"read_file","path":"test.txt","limit":2},{"mode":"git_status"}]}')
+BATCH_SUCCESS=$(pyget "$RESP" "success")
+BATCH_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('results', [])))")
+BATCH_HAS_LINE1=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if 'line1' in d['results'][1].get('content','') else 'no')")
+assert_eq "Context batch success" "True" "$BATCH_SUCCESS"
+assert_eq "Context batch has 3 results" "3" "$BATCH_COUNT"
+assert_eq "Context batch read_file contains line1" "yes" "$BATCH_HAS_LINE1"
+
 # --- 25. Codex: applyProjectPatch ---
 echo ""
 echo "--- 25. Codex Apply Patch ---"

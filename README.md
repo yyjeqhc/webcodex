@@ -629,3 +629,23 @@ Examples of logged fields include:
 - `control_master`
 
 For SSH projects, `getProjectContext(mode="overview")` should report `ssh_calls=1` because overview is batched into a single remote command. `read_file`, `search`, `git_status`, `git_diff`, `check`, and `edit` also log their per-request duration so you can identify remaining slow operations.
+
+
+## Codex context batch API
+
+`POST /api/codex/context_batch` runs multiple read-only context observations for one project in a single authenticated Codex API call.
+
+Example:
+
+```json
+{
+  "project": "private-drop-v4",
+  "requests": [
+    {"mode": "overview"},
+    {"mode": "git_status"},
+    {"mode": "read_file", "path": "README.md", "start_line": 1, "limit": 40}
+  ]
+}
+```
+
+The response contains `results`, one normal context response per request, plus `duration_ms` and `ssh_calls`. Batches are limited to 20 items. This reduces GPT Action round trips; SSH projects still execute one remote command per item, but reuse ControlMaster connections when configured.

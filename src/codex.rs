@@ -36,6 +36,25 @@ pub struct ContextRequest {
     pub limit: usize,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ContextBatchItem {
+    pub mode: ContextMode,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub query: Option<String>,
+    #[serde(default = "default_start_line")]
+    pub start_line: usize,
+    #[serde(default = "default_limit")]
+    pub limit: usize,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ContextBatchRequest {
+    pub project: String,
+    pub requests: Vec<ContextBatchItem>,
+}
+
 fn default_start_line() -> usize {
     1
 }
@@ -82,6 +101,17 @@ pub struct ContextResponse {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub items: Option<Vec<String>>,
     pub truncated: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ContextBatchResponse {
+    pub success: bool,
+    pub project: String,
+    pub results: Vec<ContextResponse>,
+    pub duration_ms: u64,
+    pub ssh_calls: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -1281,6 +1311,288 @@ fn ssh_apply_patch(
     }
 }
 
+fn mode_name(mode: &ContextMode) -> &'static str {
+    match mode {
+        ContextMode::Overview => "overview",
+        ContextMode::Tree => "tree",
+        ContextMode::Search => "search",
+        ContextMode::ReadFile => "read_file",
+        ContextMode::GitStatus => "git_status",
+        ContextMode::GitDiff => "git_diff",
+    }
+}
+
+fn context_error(project: &str, mode: &ContextMode, error: String) -> ContextResponse {
+    ContextResponse {
+        success: false,
+        project: project.to_string(),
+        mode: mode_name(mode).to_string(),
+        content: None,
+        items: None,
+        truncated: false,
+        error: Some(error),
+    }
+}
+
+fn execute_context_item(
+    proj: &ProjectConfig,
+    project_name: &str,
+    item: &ContextBatchItem,
+    ssh_config: Option<&SshConfig>,
+) -> (ContextResponse, u64) {
+    if proj.is_ssh() {
+        let resp = match item.mode {
+            ContextMode::Overview => ssh_overview(proj, project_name, ssh_config),
+            ContextMode::Tree => ssh_tree(proj, project_name, ssh_config),
+            ContextMode::Search => match &item.query {
+                Some(query) => ssh_search(proj, project_name, query, ssh_config),
+                None => context_error(
+                    project_name,
+                    &item.mode,
+                    "query parameter is required for search mode".to_string(),
+                ),
+            },
+            ContextMode::ReadFile => match &item.path {
+                Some(path) => ssh_read_file(
+                    proj,
+                    project_name,
+                    path,
+                    item.start_line,
+                    item.limit,
+                    ssh_config,
+                ),
+                None => context_error(
+                    project_name,
+                    &item.mode,
+                    "path parameter is required for read_file mode".to_string(),
+                ),
+            },
+            ContextMode::GitStatus => {
+                let (code, stdout, stderr, _) =
+                    run_project_cmd(proj, "git status --short", 10, ssh_config);
+                if code == 0 {
+                    let (content, truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
+                    ContextResponse {
+                        success: true,
+                        project: project_name.to_string(),
+                        mode: "git_status".to_string(),
+                        content: Some(content),
+                        items: None,
+                        truncated,
+                        error: None,
+                    }
+                } else {
+                    context_error(
+                        project_name,
+                        &item.mode,
+                        format!("git status failed: {}", stderr.trim()),
+                    )
+                }
+            }
+            ContextMode::GitDiff => {
+                let (code, stdout, stderr, _) = run_project_cmd(proj, "git diff", 30, ssh_config);
+                if code == 0 {
+                    let (content, truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
+                    ContextResponse {
+                        success: true,
+                        project: project_name.to_string(),
+                        mode: "git_diff".to_string(),
+                        content: Some(content),
+                        items: None,
+                        truncated,
+                        error: None,
+                    }
+                } else {
+                    context_error(
+                        project_name,
+                        &item.mode,
+                        format!("git diff failed: {}", stderr.trim()),
+                    )
+                }
+            }
+        };
+        return (resp, 1);
+    }
+
+    let root = proj.root();
+    if !root.exists() {
+        return (
+            context_error(
+                project_name,
+                &item.mode,
+                format!("Project root does not exist: {:?}", root),
+            ),
+            0,
+        );
+    }
+    match item.mode {
+        ContextMode::Overview => {
+            let branch = run_command("git rev-parse --abbrev-ref HEAD", &root, 10)
+                .1
+                .trim()
+                .to_string();
+            let status = run_command("git status --short", &root, 10)
+                .1
+                .trim()
+                .to_string();
+            let important_files = [
+                "README.md",
+                "TODO.md",
+                "Cargo.toml",
+                "scripts/e2e_test.sh",
+                "src/main.rs",
+            ];
+            let mut content = format!("Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:", project_name, root.display(), branch, status, proj.allowed_checks.join(", "));
+            for f in &important_files {
+                let exists = root.join(f).exists();
+                content.push_str(&format!("\n  {}: {}", f, if exists { "yes" } else { "no" }));
+            }
+            (
+                ContextResponse {
+                    success: true,
+                    project: project_name.to_string(),
+                    mode: "overview".to_string(),
+                    content: Some(content),
+                    items: None,
+                    truncated: false,
+                    error: None,
+                },
+                0,
+            )
+        }
+        ContextMode::Tree => {
+            let mut items = Vec::new();
+            collect_tree(&root, &root, &mut items, MAX_TREE_ITEMS);
+            let truncated = items.len() >= MAX_TREE_ITEMS;
+            (
+                ContextResponse {
+                    success: true,
+                    project: project_name.to_string(),
+                    mode: "tree".to_string(),
+                    content: None,
+                    items: Some(items),
+                    truncated,
+                    error: None,
+                },
+                0,
+            )
+        }
+        ContextMode::Search => match &item.query {
+            Some(query) => {
+                let results = simple_search(&root, query, MAX_SEARCH_RESULTS);
+                let truncated = results.len() >= MAX_SEARCH_RESULTS;
+                (
+                    ContextResponse {
+                        success: true,
+                        project: project_name.to_string(),
+                        mode: "search".to_string(),
+                        content: None,
+                        items: Some(results),
+                        truncated,
+                        error: None,
+                    },
+                    0,
+                )
+            }
+            None => (
+                context_error(
+                    project_name,
+                    &item.mode,
+                    "query parameter is required for search mode".to_string(),
+                ),
+                0,
+            ),
+        },
+        ContextMode::ReadFile => match &item.path {
+            Some(rel_path) => {
+                let full_path = root.join(rel_path);
+                match canonicalize_and_verify(&full_path, &root) {
+                    Ok(canonical) => match std::fs::read_to_string(&canonical) {
+                        Ok(content) => {
+                            let lines: Vec<&str> = content.lines().collect();
+                            let total = lines.len();
+                            let start = item.start_line.max(1) - 1;
+                            let end = (start + item.limit).min(total);
+                            let selected: Vec<String> = if start < total {
+                                lines[start..end]
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(i, l)| format!("{:4} | {}", start + i + 1, l))
+                                    .collect()
+                            } else {
+                                Vec::new()
+                            };
+                            let (output, truncated) =
+                                truncate_string(selected.join("\n"), MAX_OUTPUT_LEN);
+                            (
+                                ContextResponse {
+                                    success: true,
+                                    project: project_name.to_string(),
+                                    mode: "read_file".to_string(),
+                                    content: Some(output),
+                                    items: None,
+                                    truncated,
+                                    error: None,
+                                },
+                                0,
+                            )
+                        }
+                        Err(e) => (
+                            context_error(
+                                project_name,
+                                &item.mode,
+                                format!("Failed to read file: {}", e),
+                            ),
+                            0,
+                        ),
+                    },
+                    Err(e) => (context_error(project_name, &item.mode, e), 0),
+                }
+            }
+            None => (
+                context_error(
+                    project_name,
+                    &item.mode,
+                    "path parameter is required for read_file mode".to_string(),
+                ),
+                0,
+            ),
+        },
+        ContextMode::GitStatus => {
+            let output = run_command("git status --short", &root, 10);
+            let (content, truncated) = truncate_string(output.1, MAX_OUTPUT_LEN);
+            (
+                ContextResponse {
+                    success: true,
+                    project: project_name.to_string(),
+                    mode: "git_status".to_string(),
+                    content: Some(content),
+                    items: None,
+                    truncated,
+                    error: None,
+                },
+                0,
+            )
+        }
+        ContextMode::GitDiff => {
+            let output = run_command("git diff", &root, 30);
+            let (content, truncated) = truncate_string(output.1, MAX_OUTPUT_LEN);
+            (
+                ContextResponse {
+                    success: true,
+                    project: project_name.to_string(),
+                    mode: "git_diff".to_string(),
+                    content: Some(content),
+                    items: None,
+                    truncated,
+                    error: None,
+                },
+                0,
+            )
+        }
+    }
+}
+
 // =============================================================================
 // Handlers
 // =============================================================================
@@ -1636,6 +1948,96 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             }));
         }
     }
+}
+
+#[handler]
+pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(ContextBatchResponse {
+            success: false,
+            project: String::new(),
+            results: Vec::new(),
+            duration_ms: 0,
+            ssh_calls: 0,
+            error: Some(
+                "Projects not configured. Set PROJECTS_CONFIG or create projects.toml".to_string(),
+            ),
+        }));
+        return;
+    };
+    let body: ContextBatchRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(ContextBatchResponse {
+                success: false,
+                project: String::new(),
+                results: Vec::new(),
+                duration_ms: 0,
+                ssh_calls: 0,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    if body.requests.is_empty() || body.requests.len() > 20 {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(ContextBatchResponse {
+            success: false,
+            project: body.project,
+            results: Vec::new(),
+            duration_ms: 0,
+            ssh_calls: 0,
+            error: Some("requests must contain 1-20 items".to_string()),
+        }));
+        return;
+    }
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(ContextBatchResponse {
+                success: false,
+                project: body.project,
+                results: Vec::new(),
+                duration_ms: 0,
+                ssh_calls: 0,
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+
+    let start = Instant::now();
+    let mut ssh_calls = 0;
+    let mut results = Vec::with_capacity(body.requests.len());
+    for item in &body.requests {
+        let (resp, calls) = execute_context_item(proj, &body.project, item, projects.ssh.as_ref());
+        ssh_calls += calls;
+        results.push(resp);
+    }
+    let success = results.iter().all(|r| r.success);
+    let duration_ms = start.elapsed().as_millis() as u64;
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "getProjectContextBatch",
+        project = %body.project,
+        executor = if proj.is_ssh() { "ssh" } else { "local" },
+        success = success,
+        request_count = results.len(),
+        duration_ms = duration_ms,
+        ssh_calls = ssh_calls,
+        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+        "codex_context_batch_completed"
+    );
+    res.render(Json(ContextBatchResponse {
+        success,
+        project: body.project,
+        results,
+        duration_ms,
+        ssh_calls,
+        error: None,
+    }));
 }
 
 #[handler]

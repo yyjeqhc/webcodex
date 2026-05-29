@@ -85,6 +85,37 @@
         },
         "required": ["success", "project", "mode", "truncated"]
       },
+      "ContextBatchItem": {
+        "type": "object",
+        "properties": {
+          "mode": {"type": "string", "enum": ["overview", "tree", "search", "read_file", "git_status", "git_diff"]},
+          "path": {"type": "string", "description": "File path for read_file mode"},
+          "query": {"type": "string", "description": "Search query for search mode"},
+          "start_line": {"type": "integer", "default": 1},
+          "limit": {"type": "integer", "default": 200}
+        },
+        "required": ["mode"]
+      },
+      "ContextBatchRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "requests": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"$ref": "#/components/schemas/ContextBatchItem"}}
+        },
+        "required": ["project", "requests"]
+      },
+      "ContextBatchResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "project": {"type": "string"},
+          "results": {"type": "array", "items": {"$ref": "#/components/schemas/ContextResponse"}},
+          "duration_ms": {"type": "integer"},
+          "ssh_calls": {"type": "integer"},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "project", "results", "duration_ms", "ssh_calls"]
+      },
       "PatchRequest": {
         "type": "object",
         "properties": {
@@ -353,6 +384,22 @@
         },
         "responses": {
           "200": {"description": "Context response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextResponse"}}}},
+          "400": {"description": "Bad request"}
+        }
+      }
+    },
+    "/api/codex/context_batch": {
+      "post": {
+        "operationId": "getProjectContextBatch",
+        "summary": "Run multiple project context observations in one request",
+        "description": "Batch up to 20 context observations for one whitelisted project. Useful for reducing GPT Action round trips; SSH projects also benefit from ControlMaster reuse.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextBatchRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Batch context response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextBatchResponse"}}}},
           "400": {"description": "Bad request"}
         }
       }

@@ -723,6 +723,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
     spec["info"] = serde_json::json!({"title":"Private Drop Codex API","version":env!("CARGO_PKG_VERSION"),"description":"Codex-only project API. Message, file, and channel APIs are excluded."});
     spec["paths"] = serde_json::json!({
         "/api/codex/context": spec["paths"]["/api/codex/context"].clone(),
+        "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
         "/api/codex/apply_patch": spec["paths"]["/api/codex/apply_patch"].clone(),
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
@@ -731,6 +732,9 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
     spec["components"]["schemas"] = serde_json::json!({
         "ContextRequest": spec["components"]["schemas"]["ContextRequest"].clone(),
         "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
+        "ContextBatchItem": spec["components"]["schemas"]["ContextBatchItem"].clone(),
+        "ContextBatchRequest": spec["components"]["schemas"]["ContextBatchRequest"].clone(),
+        "ContextBatchResponse": spec["components"]["schemas"]["ContextBatchResponse"].clone(),
         "PatchRequest": spec["components"]["schemas"]["PatchRequest"].clone(),
         "PatchResponse": spec["components"]["schemas"]["PatchResponse"].clone(),
         "ReplaceTextEdit": spec["components"]["schemas"]["ReplaceTextEdit"].clone(),
@@ -747,6 +751,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
     });
     for name in [
         "ContextRequest",
+        "ContextBatchRequest",
         "PatchRequest",
         "EditRequest",
         "CheckRequest",
@@ -1208,6 +1213,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Router::with_path("api/codex")
                 .hoop(AuthMiddleware)
                 .push(Router::with_path("context").post(codex::codex_context))
+                .push(Router::with_path("context_batch").post(codex::codex_context_batch))
                 .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
                 .push(Router::with_path("edit").post(codex::codex_edit))
                 .push(Router::with_path("check").post(codex::codex_check))

@@ -359,6 +359,50 @@ curl -X POST http://localhost:8080/api/codex/report \
 
 **Edit operation types:**
 
+#### Quick examples
+
+Preview a change without writing files by setting `dry_run=true`:
+
+```json
+{
+  "project": "private-drop-v4",
+  "dry_run": true,
+  "edits": [{
+    "type": "replace_text",
+    "path": "README.md",
+    "old_text": "old text",
+    "new_text": "new text"
+  }]
+}
+```
+
+Replace a unique text snippet in an existing file:
+
+```json
+{
+  "project": "private-drop-v4",
+  "edits": [{
+    "type": "replace_text",
+    "path": "src/main.rs",
+    "old_text": "Router::new()",
+    "new_text": "Router::new().hoop(logging)"
+  }]
+}
+```
+
+Append text to an existing file:
+
+```json
+{
+  "project": "private-drop-v4",
+  "edits": [{
+    "type": "append_file",
+    "path": "README.md",
+    "text": "\n## Notes\n\nNew note added by GPT.\n"
+  }]
+}
+```
+
 #### replace_text — Find and replace text in an existing file
 
 ```bash
@@ -518,3 +562,52 @@ For simple edits (fix a bug, add a function, update a config value), `applyProje
 ## License
 
 MIT
+
+
+## SSH executor performance tuning
+
+Projects using `executor = "ssh"` can optionally enable SSH connection reuse in `projects.toml`.
+This reduces the repeated SSH handshake cost for Codex API calls such as `overview`, `read_file`,
+`search`, `check`, and `edit`.
+
+Example global SSH configuration:
+
+```toml
+[ssh]
+batch_mode = true
+connect_timeout_secs = 10
+control_master = true
+control_persist = "10m"
+control_path = "/tmp/private-drop-ssh-%C"
+server_alive_interval = 30
+server_alive_count_max = 3
+```
+
+When `control_master = true`, private-drop adds SSH options equivalent to:
+
+```text
+-o BatchMode=yes
+-o ConnectTimeout=10
+-o ControlMaster=auto
+-o ControlPersist=10m
+-o ControlPath=/tmp/private-drop-ssh-%C
+-o ServerAliveInterval=30
+-o ServerAliveCountMax=3
+```
+
+`BatchMode=yes` is also added when `batch_mode = true`, even if ControlMaster is disabled.
+All SSH options are passed as separate `std::process::Command` arguments; user request text is
+not interpolated into SSH options.
+
+If reused SSH connections behave unexpectedly, remove stale sockets with:
+
+```sh
+rm -f /tmp/private-drop-ssh-*
+```
+
+Alternatively set `control_master = false` or remove the `[ssh]` section to return to the
+previous one-SSH-process-per-call behavior.
+
+For SSH projects, `getProjectContext(mode="overview")` is batched into one SSH call that gathers
+the branch, `git status --short`, allowed checks, and important-file presence in a single remote
+command.

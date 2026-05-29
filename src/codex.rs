@@ -1,4 +1,4 @@
-use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig};
+use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig, SshConfig};
 use crate::{Database, Message, MessageKind};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -412,16 +412,66 @@ fn build_ssh_target(proj: &ProjectConfig) -> Result<String, String> {
     proj.ssh_target()
 }
 
+fn ssh_option_args(config: Option<&SshConfig>) -> Vec<String> {
+    let Some(config) = config else {
+        return Vec::new();
+    };
+    let mut args = Vec::new();
+    if config.batch_mode || config.control_master {
+        args.push("-o".to_string());
+        args.push("BatchMode=yes".to_string());
+    }
+    if let Some(secs) = config.connect_timeout_secs {
+        args.push("-o".to_string());
+        args.push(format!("ConnectTimeout={secs}"));
+    }
+    if config.control_master {
+        args.push("-o".to_string());
+        args.push("ControlMaster=auto".to_string());
+        if let Some(v) = &config.control_persist {
+            args.push("-o".to_string());
+            args.push(format!("ControlPersist={v}"));
+        }
+        if let Some(v) = &config.control_path {
+            args.push("-o".to_string());
+            args.push(format!("ControlPath={v}"));
+        }
+    }
+    if let Some(secs) = config.server_alive_interval {
+        args.push("-o".to_string());
+        args.push(format!("ServerAliveInterval={secs}"));
+    }
+    if let Some(max) = config.server_alive_count_max {
+        args.push("-o".to_string());
+        args.push(format!("ServerAliveCountMax={max}"));
+    }
+    args
+}
+
+fn build_ssh_command(
+    ssh_target: &str,
+    remote_cmd: &str,
+    config: Option<&SshConfig>,
+) -> std::process::Command {
+    let mut command = std::process::Command::new("ssh");
+    for arg in ssh_option_args(config) {
+        command.arg(arg);
+    }
+    command.arg(ssh_target).arg("--").arg(remote_cmd);
+    command
+}
+
 /// Run a command on a remote host via SSH.
 /// The command is passed as separate arguments to ssh (no local shell wrapping).
 /// Remote shell interprets the command string.
-fn run_ssh(ssh_target: &str, remote_cmd: &str, _timeout_secs: u64) -> (i32, String, String, u64) {
+fn run_ssh(
+    ssh_target: &str,
+    remote_cmd: &str,
+    _timeout_secs: u64,
+    ssh_config: Option<&SshConfig>,
+) -> (i32, String, String, u64) {
     let start = Instant::now();
-    let result = std::process::Command::new("ssh")
-        .arg(ssh_target)
-        .arg("--")
-        .arg(remote_cmd)
-        .output();
+    let result = build_ssh_command(ssh_target, remote_cmd, ssh_config).output();
 
     match result {
         Ok(output) => {
@@ -450,14 +500,15 @@ fn run_project_cmd(
     proj: &ProjectConfig,
     cmd: &str,
     timeout_secs: u64,
+    ssh_config: Option<&SshConfig>,
 ) -> (i32, String, String, u64) {
     if proj.is_ssh() {
         let ssh_target = match build_ssh_target(proj) {
             Ok(t) => t,
             Err(e) => return (-1, String::new(), e, 0),
         };
-        let remote_cmd = format!("cd {} && {}", proj.path, cmd);
-        run_ssh(&ssh_target, &remote_cmd, timeout_secs)
+        let remote_cmd = format!("cd {} && {}", shell_escape(&proj.path), cmd);
+        run_ssh(&ssh_target, &remote_cmd, timeout_secs, ssh_config)
     } else {
         run_command(cmd, &proj.root(), timeout_secs)
     }
@@ -471,6 +522,7 @@ fn run_ssh_patch(
     _project_path: &str,
     patch: &str,
     remote_cmd_template: &str,
+    ssh_config: Option<&SshConfig>,
 ) -> (i32, String, String, u64) {
     let patch_id = uuid::Uuid::new_v4();
     let remote_patch = format!("/tmp/private-drop-patch-{}.diff", patch_id);
@@ -481,10 +533,7 @@ fn run_ssh_patch(
         remote_patch
     );
     let start = Instant::now();
-    let result = std::process::Command::new("ssh")
-        .arg(ssh_target)
-        .arg("--")
-        .arg(&remote_cmd)
+    let result = build_ssh_command(ssh_target, &remote_cmd, ssh_config)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -785,7 +834,11 @@ main()
 "#####;
 
 /// Run edit operations on a remote SSH project by piping JSON to a python3 script.
-fn ssh_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditResponse {
+fn ssh_apply_project_edit(
+    proj: &ProjectConfig,
+    body: &EditRequest,
+    ssh_config: Option<&SshConfig>,
+) -> EditResponse {
     let ssh_target = match build_ssh_target(proj) {
         Ok(t) => t,
         Err(e) => return edit_error(e),
@@ -807,21 +860,42 @@ fn ssh_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRespo
     );
 
     let start = Instant::now();
-    let result = std::process::Command::new("ssh")
-        .arg(&ssh_target)
-        .arg("--")
-        .arg(&remote_cmd)
+    let mut child = match build_ssh_command(&ssh_target, &remote_cmd, ssh_config)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         .spawn()
-        .and_then(|mut child| {
-            if let Some(mut stdin) = child.stdin.take() {
-                use std::io::Write;
-                let _ = stdin.write_all(body_json.as_bytes());
+    {
+        Ok(child) => child,
+        Err(e) => return edit_error(format!("Failed to spawn SSH edit: {}", e)),
+    };
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        if let Err(e) = stdin.write_all(body_json.as_bytes()) {
+            let _ = child.kill();
+            return edit_error(format!("Failed to write SSH edit payload: {}", e));
+        }
+    }
+
+    let result = loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => break child.wait_with_output(),
+            Ok(None) if start.elapsed() > std::time::Duration::from_secs(CHECK_TIMEOUT_SECS) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return edit_error(format!(
+                    "SSH edit timed out after {} seconds",
+                    CHECK_TIMEOUT_SECS
+                ));
             }
-            child.wait_with_output()
-        });
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+            Err(e) => {
+                let _ = child.kill();
+                return edit_error(format!("Failed while waiting for SSH edit: {}", e));
+            }
+        }
+    };
 
     match result {
         Ok(output) => {
@@ -848,21 +922,20 @@ fn ssh_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRespo
                 ));
             }
 
-            // Truncate stdout to avoid oversized responses
-            let (truncated_stdout, was_truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
-            let mut resp: EditResponse = match serde_json::from_str(&truncated_stdout) {
+            let mut resp: EditResponse = match serde_json::from_str(&stdout) {
                 Ok(r) => r,
                 Err(e) => {
                     return edit_error(format!(
                         "Failed to parse remote edit response: {}. Raw: {}",
                         e,
-                        truncated_stdout.chars().take(200).collect::<String>()
+                        stdout.chars().take(500).collect::<String>()
                     ))
                 }
             };
-            if was_truncated {
-                resp.warnings
-                    .push("Remote output was truncated".to_string());
+            let (truncated_diff, diff_truncated) = truncate_string(resp.diff, MAX_OUTPUT_LEN);
+            resp.diff = truncated_diff;
+            if diff_truncated {
+                resp.warnings.push("Remote diff was truncated".to_string());
             }
             if !stderr.is_empty() {
                 resp.warnings.push(format!(
@@ -909,15 +982,25 @@ fn validate_ssh_read_path(rel_path: &str) -> Result<(), String> {
 // SSH context helpers
 // =============================================================================
 
-fn ssh_overview(proj: &ProjectConfig, project_name: &str) -> ContextResponse {
-    let branch = run_project_cmd(proj, "git rev-parse --abbrev-ref HEAD", 10)
-        .1
-        .trim()
-        .to_string();
-    let status = run_project_cmd(proj, "git status --short", 10)
-        .1
-        .trim()
-        .to_string();
+fn ssh_overview(
+    proj: &ProjectConfig,
+    project_name: &str,
+    ssh_config: Option<&SshConfig>,
+) -> ContextResponse {
+    let ssh_target = match build_ssh_target(proj) {
+        Ok(t) => t,
+        Err(e) => {
+            return ContextResponse {
+                success: false,
+                project: project_name.to_string(),
+                mode: "overview".to_string(),
+                content: None,
+                items: None,
+                truncated: false,
+                error: Some(e),
+            }
+        }
+    };
     let important_files = [
         "README.md",
         "TODO.md",
@@ -925,17 +1008,61 @@ fn ssh_overview(proj: &ProjectConfig, project_name: &str) -> ContextResponse {
         "scripts/e2e_test.sh",
         "src/main.rs",
     ];
+    let file_args = important_files
+        .iter()
+        .map(|f| shell_escape(f))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let remote_cmd = format!(
+        "cd {} || exit 2; printf '__BRANCH__\\n'; git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\\n'; printf '__STATUS__\\n'; git status --short 2>/dev/null || true; printf '__FILES__\\n'; for f in {}; do if test -f \"$f\"; then printf '%s=yes\\n' \"$f\"; else printf '%s=no\\n' \"$f\"; fi; done",
+        shell_escape(&proj.path),
+        file_args
+    );
+    let (code, stdout, stderr, _) = run_ssh(&ssh_target, &remote_cmd, 15, ssh_config);
+    if code != 0 {
+        return ContextResponse {
+            success: false,
+            project: project_name.to_string(),
+            mode: "overview".to_string(),
+            content: None,
+            items: None,
+            truncated: false,
+            error: Some(format!("SSH overview failed: {}", stderr.trim())),
+        };
+    }
+
+    let mut section = "";
+    let mut branch = "unknown".to_string();
+    let mut status_lines: Vec<String> = Vec::new();
+    let mut file_status: HashMap<String, String> = HashMap::new();
+    for line in stdout.lines() {
+        match line {
+            "__BRANCH__" => section = "branch",
+            "__STATUS__" => section = "status",
+            "__FILES__" => section = "files",
+            _ => match section {
+                "branch" if !line.trim().is_empty() => branch = line.trim().to_string(),
+                "status" => status_lines.push(line.to_string()),
+                "files" => {
+                    if let Some((path, exists)) = line.split_once('=') {
+                        file_status.insert(path.to_string(), exists.to_string());
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+    let status = status_lines.join("\n");
     let mut content = format!(
         "Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:",
         project_name,
         proj.path,
         branch,
-        status,
+        status.trim(),
         proj.allowed_checks.join(", ")
     );
     for f in &important_files {
-        let check_cmd = format!("test -f '{}' && echo yes || echo no", f);
-        let exists = run_project_cmd(proj, &check_cmd, 5).1.trim().to_string();
+        let exists = file_status.get(*f).map(String::as_str).unwrap_or("no");
         content.push_str(&format!(
             "\n  {}: {}",
             f,
@@ -953,7 +1080,11 @@ fn ssh_overview(proj: &ProjectConfig, project_name: &str) -> ContextResponse {
     }
 }
 
-fn ssh_tree(proj: &ProjectConfig, project_name: &str) -> ContextResponse {
+fn ssh_tree(
+    proj: &ProjectConfig,
+    project_name: &str,
+    ssh_config: Option<&SshConfig>,
+) -> ContextResponse {
     // Build find exclusions
     let mut excludes = String::new();
     for dir in IGNORED_DIRS {
@@ -961,9 +1092,14 @@ fn ssh_tree(proj: &ProjectConfig, project_name: &str) -> ContextResponse {
     }
     let cmd = format!(
         "cd {} && find . -mindepth 1 -maxdepth 8{} -type f -print | sort | head -n {} | sed 's|^\\./||'",
-        proj.path, excludes, MAX_TREE_ITEMS
+        shell_escape(&proj.path), excludes, MAX_TREE_ITEMS
     );
-    let (code, stdout, stderr, _) = run_ssh(&build_ssh_target(proj).unwrap_or_default(), &cmd, 30);
+    let (code, stdout, stderr, _) = run_ssh(
+        &build_ssh_target(proj).unwrap_or_default(),
+        &cmd,
+        30,
+        ssh_config,
+    );
     if code != 0 {
         return ContextResponse {
             success: false,
@@ -993,7 +1129,12 @@ fn ssh_tree(proj: &ProjectConfig, project_name: &str) -> ContextResponse {
     }
 }
 
-fn ssh_search(proj: &ProjectConfig, project_name: &str, query: &str) -> ContextResponse {
+fn ssh_search(
+    proj: &ProjectConfig,
+    project_name: &str,
+    query: &str,
+    ssh_config: Option<&SshConfig>,
+) -> ContextResponse {
     // Build grep exclusions
     let mut excludes = String::new();
     for dir in IGNORED_DIRS {
@@ -1003,9 +1144,17 @@ fn ssh_search(proj: &ProjectConfig, project_name: &str, query: &str) -> ContextR
     let escaped_query = query.replace('\'', "'\\''");
     let cmd = format!(
         "cd {} && grep -rn{} --include='*' '{}' . 2>/dev/null | head -n {} | sed 's|^\\./||'",
-        proj.path, excludes, escaped_query, MAX_SEARCH_RESULTS
+        shell_escape(&proj.path),
+        excludes,
+        escaped_query,
+        MAX_SEARCH_RESULTS
     );
-    let (code, stdout, stderr, _) = run_ssh(&build_ssh_target(proj).unwrap_or_default(), &cmd, 30);
+    let (code, stdout, stderr, _) = run_ssh(
+        &build_ssh_target(proj).unwrap_or_default(),
+        &cmd,
+        30,
+        ssh_config,
+    );
     // grep returns 1 if no match, that's ok
     if code != 0 && code != 1 {
         return ContextResponse {
@@ -1041,6 +1190,7 @@ fn ssh_read_file(
     rel_path: &str,
     start_line: usize,
     limit: usize,
+    ssh_config: Option<&SshConfig>,
 ) -> ContextResponse {
     if let Err(e) = validate_ssh_read_path(rel_path) {
         return ContextResponse {
@@ -1055,11 +1205,8 @@ fn ssh_read_file(
     }
     let end_line = start_line + limit - 1;
     let escaped_path = rel_path.replace('\'', "'\\''");
-    let cmd = format!(
-        "cd {} && sed -n '{},{}p' '{}'",
-        proj.path, start_line, end_line, escaped_path
-    );
-    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 30);
+    let cmd = format!("sed -n '{},{}p' '{}'", start_line, end_line, escaped_path);
+    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 30, ssh_config);
     if code != 0 {
         return ContextResponse {
             success: false,
@@ -1095,6 +1242,7 @@ fn ssh_apply_patch(
     _project_name: &str,
     patch: &str,
     changed: Vec<String>,
+    ssh_config: Option<&SshConfig>,
 ) -> PatchResponse {
     let ssh_target = match build_ssh_target(proj) {
         Ok(t) => t,
@@ -1110,9 +1258,10 @@ fn ssh_apply_patch(
     };
     let remote_cmd = format!(
         "cd {} && git apply --check __PATCH__ && git apply __PATCH__",
-        proj.path
+        shell_escape(&proj.path)
     );
-    let (code, stdout, stderr, _) = run_ssh_patch(&ssh_target, &proj.path, patch, &remote_cmd);
+    let (code, stdout, stderr, _) =
+        run_ssh_patch(&ssh_target, &proj.path, patch, &remote_cmd, ssh_config);
     if code == 0 {
         PatchResponse {
             success: true,
@@ -1187,9 +1336,10 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
 
     // For SSH executor, dispatch to SSH helpers
     if proj.is_ssh() {
+        let ssh_config = projects.ssh.as_ref();
         let resp = match body.mode {
-            ContextMode::Overview => ssh_overview(proj, &body.project),
-            ContextMode::Tree => ssh_tree(proj, &body.project),
+            ContextMode::Overview => ssh_overview(proj, &body.project, ssh_config),
+            ContextMode::Tree => ssh_tree(proj, &body.project, ssh_config),
             ContextMode::Search => {
                 let Some(query) = &body.query else {
                     res.status_code(StatusCode::BAD_REQUEST);
@@ -1204,7 +1354,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                     }));
                     return;
                 };
-                ssh_search(proj, &body.project, query)
+                ssh_search(proj, &body.project, query, ssh_config)
             }
             ContextMode::ReadFile => {
                 let Some(rel_path) = &body.path else {
@@ -1220,10 +1370,18 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                     }));
                     return;
                 };
-                ssh_read_file(proj, &body.project, rel_path, body.start_line, body.limit)
+                ssh_read_file(
+                    proj,
+                    &body.project,
+                    rel_path,
+                    body.start_line,
+                    body.limit,
+                    ssh_config,
+                )
             }
             ContextMode::GitStatus => {
-                let (code, stdout, stderr, _) = run_project_cmd(proj, "git status --short", 10);
+                let (code, stdout, stderr, _) =
+                    run_project_cmd(proj, "git status --short", 10, ssh_config);
                 if code != 0 {
                     ContextResponse {
                         success: false,
@@ -1248,7 +1406,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 }
             }
             ContextMode::GitDiff => {
-                let (code, stdout, stderr, _) = run_project_cmd(proj, "git diff", 30);
+                let (code, stdout, stderr, _) = run_project_cmd(proj, "git diff", 30, ssh_config);
                 if code != 0 {
                     ContextResponse {
                         success: false,
@@ -1544,7 +1702,13 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
 
     if proj.is_ssh() {
         // SSH executor: pipe patch via stdin
-        let resp = ssh_apply_patch(proj, &body.project, &body.patch, changed);
+        let resp = ssh_apply_patch(
+            proj,
+            &body.project,
+            &body.patch,
+            changed,
+            projects.ssh.as_ref(),
+        );
         res.render(Json(resp));
         return;
     }
@@ -1700,7 +1864,8 @@ pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Respons
             return;
         }
     };
-    let (code, stdout, stderr, duration_ms) = run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS);
+    let (code, stdout, stderr, duration_ms) =
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
     let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
     let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
     let truncated = stdout_trunc || stderr_trunc;
@@ -2626,8 +2791,92 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
         }
     }
     if proj.is_ssh() {
-        res.render(Json(ssh_apply_project_edit(proj, &body)));
+        res.render(Json(ssh_apply_project_edit(
+            proj,
+            &body,
+            projects.ssh.as_ref(),
+        )));
         return;
     }
     res.render(Json(local_apply_project_edit(proj, &body)));
+}
+
+#[cfg(test)]
+mod ssh_command_tests {
+    use super::*;
+
+    fn ssh_config() -> SshConfig {
+        SshConfig {
+            batch_mode: false,
+            connect_timeout_secs: None,
+            control_master: false,
+            control_persist: None,
+            control_path: None,
+            server_alive_interval: None,
+            server_alive_count_max: None,
+        }
+    }
+
+    fn command_args(command: &std::process::Command) -> Vec<String> {
+        command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().to_string())
+            .collect()
+    }
+
+    #[test]
+    fn default_ssh_config_does_not_add_controlmaster() {
+        let args = ssh_option_args(None);
+        assert!(!args.iter().any(|arg| arg.contains("ControlMaster")));
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn control_master_adds_reuse_options() {
+        let mut cfg = ssh_config();
+        cfg.control_master = true;
+        cfg.control_persist = Some("10m".into());
+        cfg.control_path = Some("/tmp/private-drop-ssh-%C".into());
+        let args = ssh_option_args(Some(&cfg));
+        assert!(args.contains(&"BatchMode=yes".to_string()));
+        assert!(args.contains(&"ControlMaster=auto".to_string()));
+        assert!(args.contains(&"ControlPersist=10m".to_string()));
+        assert!(args.contains(&"ControlPath=/tmp/private-drop-ssh-%C".to_string()));
+    }
+
+    #[test]
+    fn batch_mode_without_control_master_adds_batchmode_only() {
+        let mut cfg = ssh_config();
+        cfg.batch_mode = true;
+        let args = ssh_option_args(Some(&cfg));
+        assert!(args.contains(&"BatchMode=yes".to_string()));
+        assert!(!args.iter().any(|arg| arg.contains("ControlMaster")));
+    }
+
+    #[test]
+    fn connect_timeout_and_keepalive_options_are_rendered() {
+        let mut cfg = ssh_config();
+        cfg.connect_timeout_secs = Some(10);
+        cfg.server_alive_interval = Some(30);
+        cfg.server_alive_count_max = Some(3);
+        let args = ssh_option_args(Some(&cfg));
+        assert!(args.contains(&"ConnectTimeout=10".to_string()));
+        assert!(args.contains(&"ServerAliveInterval=30".to_string()));
+        assert!(args.contains(&"ServerAliveCountMax=3".to_string()));
+    }
+
+    #[test]
+    fn ssh_command_uses_args_not_local_shell() {
+        let mut cfg = ssh_config();
+        cfg.batch_mode = true;
+        let command = build_ssh_command("root@example", "cd /repo && git status", Some(&cfg));
+        assert_eq!(command.get_program().to_string_lossy(), "ssh");
+        let args = command_args(&command);
+        assert_eq!(
+            args.last().map(String::as_str),
+            Some("cd /repo && git status")
+        );
+        assert!(args.contains(&"root@example".to_string()));
+        assert!(!args.iter().any(|arg| arg == "sh" || arg == "-c"));
+    }
 }

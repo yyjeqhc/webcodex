@@ -1,3 +1,14 @@
+# Optional global SSH tuning for SSH executor projects.
+# ControlMaster reuses SSH connections and reduces per-request handshake cost.
+# [ssh]
+# batch_mode = true
+# connect_timeout_secs = 10
+# control_master = true
+# control_persist = "10m"
+# control_path = "/tmp/private-drop-ssh-%C"
+# server_alive_interval = 30
+# server_alive_count_max = 3
+
 # Local executor: commands run on the same machine as private-drop
 [projects.private-drop]
 path = "/root/git/private-drop"

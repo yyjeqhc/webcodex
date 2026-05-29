@@ -664,10 +664,81 @@ pub async fn download_file(req: &mut Request, depot: &mut Depot, res: &mut Respo
     }
 }
 
+fn public_url() -> String {
+    std::env::var("DROP_PUBLIC_URL")
+        .ok()
+        .map(|s| s.trim().trim_end_matches('/').to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "http://localhost:8080".to_string())
+}
+
 #[handler]
 pub async fn openapi_json(res: &mut Response) {
-    let json_str = include_str!("../data/openapi.json");
-    res.render(Text::Json(json_str.to_string()));
+    match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
+        Ok(mut spec) => {
+            spec["openapi"] = serde_json::Value::String("3.1.0".to_string());
+            spec["servers"] = serde_json::json!([{
+                "url": public_url(),
+                "description": "Public server"
+            }]);
+            res.render(Json(spec));
+        }
+        Err(e) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(json_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                &format!("Invalid OpenAPI schema: {}", e),
+            ));
+        }
+    }
+}
+
+#[handler]
+pub async fn codex_openapi_json(res: &mut Response) {
+    let mut spec =
+        match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
+            Ok(spec) => spec,
+            Err(e) => {
+                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                res.render(json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &e.to_string(),
+                ));
+                return;
+            }
+        };
+    spec["openapi"] = serde_json::json!("3.1.0");
+    spec["servers"] = serde_json::json!([{ "url": public_url(), "description": "Public server" }]);
+    spec["info"] = serde_json::json!({"title":"Private Drop Codex API","version":env!("CARGO_PKG_VERSION"),"description":"Codex-only project API. Message, file, and channel APIs are excluded."});
+    spec["paths"] = serde_json::json!({
+        "/api/codex/context": spec["paths"]["/api/codex/context"].clone(),
+        "/api/codex/apply_patch": spec["paths"]["/api/codex/apply_patch"].clone(),
+        "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
+        "/api/codex/report": spec["paths"]["/api/codex/report"].clone()
+    });
+    spec["components"]["schemas"] = serde_json::json!({
+        "ContextRequest": spec["components"]["schemas"]["ContextRequest"].clone(),
+        "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
+        "PatchRequest": spec["components"]["schemas"]["PatchRequest"].clone(),
+        "PatchResponse": spec["components"]["schemas"]["PatchResponse"].clone(),
+        "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
+        "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
+        "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
+        "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone()
+    });
+    for name in [
+        "ContextRequest",
+        "PatchRequest",
+        "CheckRequest",
+        "ReportRequest",
+    ] {
+        spec["components"]["schemas"][name]["properties"]["project"]["enum"] =
+            serde_json::json!(["private-drop", "private-drop-v4", "gpt-sandbox", "paper"]);
+        spec["components"]["schemas"][name]["properties"]["project"]["description"] = serde_json::json!("Whitelisted project name; not a report channel such as omo, inbox, xline, thesis, packfix, or files.");
+    }
+    spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
+        serde_json::json!("Report channel; not the project field.");
+    res.render(Json(spec));
 }
 
 // ============================================================================
@@ -728,7 +799,7 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 <body>
 <div class="container">
 <div class="header"><h1>Private Drop</h1></div>
-<div class="nav"><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a></div>
+<div class="nav"><a href="/channels">Channels</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a></div>
 <div id="app"><div class="loading">Loading...</div></div>
 </div>
 <script>
@@ -783,10 +854,38 @@ pub async fn home_page(_req: &mut Request, _depot: &mut Depot, res: &mut Respons
     let page_js = r#"
 (function(){
     if(!getToken()){window.location.href='/login';return}
-    window.location.href='/c/inbox';
+    window.location.href='/channels';
 })()
 "#;
     res.render(Text::Html(app_shell("Home", page_js)));
+}
+
+#[handler]
+pub async fn channels_page(_req: &mut Request, _depot: &mut Depot, res: &mut Response) {
+    let page_js = r#"
+(async function(){
+    if(!requireToken())return;
+    var app=document.getElementById('app');
+    try{
+        var r=await apiCall('/api/channels');
+        if(!r)return;
+        if(!r.ok){var d=await r.json();app.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to load channels')+'</div>';return}
+        var channels=await r.json();
+        var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2>Channels</h2><a href="/send" class="btn btn-primary">Send</a></div>';
+        if(channels.length===0){
+            html+='<div class="card"><p style="color:#666;text-align:center">No channels yet</p></div>';
+        }else{
+            channels.forEach(function(ch){
+                html+='<a href="/c/'+encodeURIComponent(ch.name)+'" style="color:inherit;text-decoration:none"><div class="card"><div class="card-header"><div><div class="card-title">'+escapeHtml(ch.display_name||ch.name)+'</div><div class="card-meta">'+escapeHtml(ch.name)+'</div></div><span class="channel-badge">'+ch.message_count+' message'+(ch.message_count===1?'':'s')+'</span></div></div></a>';
+            });
+        }
+        app.innerHTML=html;
+    }catch(e){
+        app.innerHTML='<div class="alert alert-error">Error: '+escapeHtml(e.message)+'</div>';
+    }
+})()
+"#;
+    res.render(Text::Html(app_shell("Channels", page_js)));
 }
 
 #[handler]
@@ -804,7 +903,8 @@ pub async fn channel_page(req: &mut Request, _depot: &mut Depot, res: &mut Respo
         if(!r.ok){{var d=await r.json();app.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to load')+'</div>';return}}
         var data=await r.json();
         var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
-            '<h2>'+escapeHtml(ch)+'</h2>'+
+            '<div><a href="/channels" style="display:inline-block;margin-bottom:8px;color:#3498db;text-decoration:none">← Back to Channels</a>'+
+            '<h2>'+escapeHtml(ch)+'</h2></div>'+
             '<a href="/send?channel='+encodeURIComponent(ch)+'" class="btn btn-primary">Send</a></div>';
         if(data.messages.length===0){{
             html+='<div class="card"><p style="color:#666;text-align:center">No messages yet</p></div>';
@@ -1065,12 +1165,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let web_router = Router::new()
         .push(Router::with_path("login").get(login_page))
+        .push(Router::with_path("channels").get(channels_page))
         .push(Router::with_path("send").get(send_page))
         .push(Router::with_path("c/{channel}").get(channel_page))
         .push(Router::with_path("m/{id}").get(message_page))
         .push(Router::with_path("").get(home_page));
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
+    let codex_openapi_router = Router::with_path("codex-openapi.json").get(codex_openapi_json);
 
     let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
@@ -1078,6 +1180,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)
+        .push(codex_openapi_router)
         .push(web_router);
 
     // Add Codex API routes if projects config is loaded
@@ -1098,6 +1201,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Web UI: http://localhost:{}", port);
     tracing::info!("API: http://localhost:{}/api", port);
     tracing::info!("OpenAPI: http://localhost:{}/openapi.json", port);
+    tracing::info!(
+        "Codex OpenAPI: http://localhost:{}/codex-openapi.json",
+        port
+    );
     Server::new(acceptor).serve(router).await;
     Ok(())
 }

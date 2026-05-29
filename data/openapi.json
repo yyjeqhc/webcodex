@@ -1,11 +1,11 @@
 {
-  "openapi": "3.0.3",
+  "openapi": "3.1.0",
   "info": {
     "title": "Private Drop API",
     "version": "0.2.0",
     "description": "A self-hosted private long-text/file drop box API with Codex-like Project API for GPT Actions integration."
   },
-  "servers": [{"url": "/", "description": "Current server"}],
+  "servers": [{"url": "http://localhost:8080", "description": "Public server; runtime output uses DROP_PUBLIC_URL when set"}],
   "components": {
     "securitySchemes": {
       "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}

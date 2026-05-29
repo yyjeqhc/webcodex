@@ -1,4 +1,4 @@
-use crate::projects::{canonicalize_and_verify, ProjectsConfig};
+use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig};
 use crate::{Database, Message, MessageKind};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -288,7 +288,7 @@ fn parse_changed_files_from_patch(patch: &str) -> Vec<String> {
     files
 }
 
-fn is_sensitive_path(path: &str) -> bool {
+pub fn is_sensitive_path(path: &str) -> bool {
     let lower = path.to_lowercase();
     for sensitive in SENSITIVE_PATHS {
         if *sensitive == ".env" {
@@ -351,6 +351,362 @@ fn run_command(cmd: &str, cwd: &Path, _timeout_secs: u64) -> (i32, String, Strin
 }
 
 // =============================================================================
+// SSH helpers
+// =============================================================================
+
+/// Build SSH target string [user@]host from project config.
+fn build_ssh_target(proj: &ProjectConfig) -> Result<String, String> {
+    proj.ssh_target()
+}
+
+/// Run a command on a remote host via SSH.
+/// The command is passed as separate arguments to ssh (no local shell wrapping).
+/// Remote shell interprets the command string.
+fn run_ssh(ssh_target: &str, remote_cmd: &str, _timeout_secs: u64) -> (i32, String, String, u64) {
+    let start = Instant::now();
+    let result = std::process::Command::new("ssh")
+        .arg(ssh_target)
+        .arg("--")
+        .arg(remote_cmd)
+        .output();
+
+    match result {
+        Ok(output) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let code = output.status.code().unwrap_or(-1);
+            (code, stdout, stderr, elapsed)
+        }
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            (
+                -1,
+                String::new(),
+                format!("Failed to execute SSH command: {}", e),
+                elapsed,
+            )
+        }
+    }
+}
+
+/// Run a command in the project directory.
+/// For SSH: wraps with `cd <path> && <cmd>`.
+/// For local: delegates to run_command with cwd.
+fn run_project_cmd(
+    proj: &ProjectConfig,
+    cmd: &str,
+    timeout_secs: u64,
+) -> (i32, String, String, u64) {
+    if proj.is_ssh() {
+        let ssh_target = match build_ssh_target(proj) {
+            Ok(t) => t,
+            Err(e) => return (-1, String::new(), e, 0),
+        };
+        let remote_cmd = format!("cd {} && {}", proj.path, cmd);
+        run_ssh(&ssh_target, &remote_cmd, timeout_secs)
+    } else {
+        run_command(cmd, &proj.root(), timeout_secs)
+    }
+}
+
+/// Run an SSH command that receives patch data via stdin.
+/// Writes local patch content to a remote temp file via SSH stdin,
+/// then runs the remote command with the temp file path.
+fn run_ssh_patch(
+    ssh_target: &str,
+    _project_path: &str,
+    patch: &str,
+    remote_cmd_template: &str,
+) -> (i32, String, String, u64) {
+    let patch_id = uuid::Uuid::new_v4();
+    let remote_patch = format!("/tmp/private-drop-patch-{}.diff", patch_id);
+    let remote_cmd = format!(
+        "cat > '{}' && {} && rm -f '{}'",
+        remote_patch,
+        remote_cmd_template.replace("__PATCH__", &remote_patch),
+        remote_patch
+    );
+    let start = Instant::now();
+    let result = std::process::Command::new("ssh")
+        .arg(ssh_target)
+        .arg("--")
+        .arg(&remote_cmd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .and_then(|mut child| {
+            if let Some(mut stdin) = child.stdin.take() {
+                use std::io::Write;
+                let _ = stdin.write_all(patch.as_bytes());
+                // stdin is dropped here, closing the pipe
+            }
+            child.wait_with_output()
+        });
+
+    match result {
+        Ok(output) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+            let code = output.status.code().unwrap_or(-1);
+            (code, stdout, stderr, elapsed)
+        }
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            (
+                -1,
+                String::new(),
+                format!("Failed to execute SSH patch: {}", e),
+                elapsed,
+            )
+        }
+    }
+}
+
+/// Validate a path for SSH read_file operations.
+fn validate_ssh_read_path(rel_path: &str) -> Result<(), String> {
+    if rel_path.starts_with('/') {
+        return Err("Absolute paths are not allowed".to_string());
+    }
+    if rel_path.contains("..") {
+        return Err("Path traversal (..) is not allowed".to_string());
+    }
+    if is_sensitive_path(rel_path) {
+        return Err(format!("Cannot access sensitive path: {}", rel_path));
+    }
+    Ok(())
+}
+
+// =============================================================================
+// SSH context helpers
+// =============================================================================
+
+fn ssh_overview(proj: &ProjectConfig, project_name: &str) -> ContextResponse {
+    let branch = run_project_cmd(proj, "git rev-parse --abbrev-ref HEAD", 10)
+        .1
+        .trim()
+        .to_string();
+    let status = run_project_cmd(proj, "git status --short", 10)
+        .1
+        .trim()
+        .to_string();
+    let important_files = [
+        "README.md",
+        "TODO.md",
+        "Cargo.toml",
+        "scripts/e2e_test.sh",
+        "src/main.rs",
+    ];
+    let mut content = format!(
+        "Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:",
+        project_name,
+        proj.path,
+        branch,
+        status,
+        proj.allowed_checks.join(", ")
+    );
+    for f in &important_files {
+        let check_cmd = format!("test -f '{}' && echo yes || echo no", f);
+        let exists = run_project_cmd(proj, &check_cmd, 5).1.trim().to_string();
+        content.push_str(&format!(
+            "\n  {}: {}",
+            f,
+            if exists == "yes" { "yes" } else { "no" }
+        ));
+    }
+    ContextResponse {
+        success: true,
+        project: project_name.to_string(),
+        mode: "overview".to_string(),
+        content: Some(content),
+        items: None,
+        truncated: false,
+        error: None,
+    }
+}
+
+fn ssh_tree(proj: &ProjectConfig, project_name: &str) -> ContextResponse {
+    // Build find exclusions
+    let mut excludes = String::new();
+    for dir in IGNORED_DIRS {
+        excludes.push_str(&format!(" -not -path '*/{}/*'", dir));
+    }
+    let cmd = format!(
+        "cd {} && find . -mindepth 1 -maxdepth 8{} -type f -print | sort | head -n {} | sed 's|^\\./||'",
+        proj.path, excludes, MAX_TREE_ITEMS
+    );
+    let (code, stdout, stderr, _) = run_ssh(&build_ssh_target(proj).unwrap_or_default(), &cmd, 30);
+    if code != 0 {
+        return ContextResponse {
+            success: false,
+            project: project_name.to_string(),
+            mode: "tree".to_string(),
+            content: None,
+            items: None,
+            truncated: false,
+            error: Some(format!("SSH tree failed: {}", stderr.trim())),
+        };
+    }
+    let mut items: Vec<String> = stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    let truncated = items.len() >= MAX_TREE_ITEMS;
+    items.truncate(MAX_TREE_ITEMS);
+    ContextResponse {
+        success: true,
+        project: project_name.to_string(),
+        mode: "tree".to_string(),
+        content: None,
+        items: Some(items),
+        truncated,
+        error: None,
+    }
+}
+
+fn ssh_search(proj: &ProjectConfig, project_name: &str, query: &str) -> ContextResponse {
+    // Build grep exclusions
+    let mut excludes = String::new();
+    for dir in IGNORED_DIRS {
+        excludes.push_str(&format!(" --exclude-dir='{}'", dir));
+    }
+    // Use grep -rn, then head to limit results
+    let escaped_query = query.replace('\'', "'\\''");
+    let cmd = format!(
+        "cd {} && grep -rn{} --include='*' '{}' . 2>/dev/null | head -n {} | sed 's|^\\./||'",
+        proj.path, excludes, escaped_query, MAX_SEARCH_RESULTS
+    );
+    let (code, stdout, stderr, _) = run_ssh(&build_ssh_target(proj).unwrap_or_default(), &cmd, 30);
+    // grep returns 1 if no match, that's ok
+    if code != 0 && code != 1 {
+        return ContextResponse {
+            success: false,
+            project: project_name.to_string(),
+            mode: "search".to_string(),
+            content: None,
+            items: None,
+            truncated: false,
+            error: Some(format!("SSH search failed: {}", stderr.trim())),
+        };
+    }
+    let items: Vec<String> = stdout
+        .lines()
+        .filter(|l| !l.is_empty())
+        .map(|l| l.to_string())
+        .collect();
+    let truncated = items.len() >= MAX_SEARCH_RESULTS;
+    ContextResponse {
+        success: true,
+        project: project_name.to_string(),
+        mode: "search".to_string(),
+        content: None,
+        items: Some(items),
+        truncated,
+        error: None,
+    }
+}
+
+fn ssh_read_file(
+    proj: &ProjectConfig,
+    project_name: &str,
+    rel_path: &str,
+    start_line: usize,
+    limit: usize,
+) -> ContextResponse {
+    if let Err(e) = validate_ssh_read_path(rel_path) {
+        return ContextResponse {
+            success: false,
+            project: project_name.to_string(),
+            mode: "read_file".to_string(),
+            content: None,
+            items: None,
+            truncated: false,
+            error: Some(e),
+        };
+    }
+    let end_line = start_line + limit - 1;
+    let escaped_path = rel_path.replace('\'', "'\\''");
+    let cmd = format!(
+        "cd {} && sed -n '{},{}p' '{}'",
+        proj.path, start_line, end_line, escaped_path
+    );
+    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 30);
+    if code != 0 {
+        return ContextResponse {
+            success: false,
+            project: project_name.to_string(),
+            mode: "read_file".to_string(),
+            content: None,
+            items: None,
+            truncated: false,
+            error: Some(format!("Failed to read file: {}", stderr.trim())),
+        };
+    }
+    // Add line numbers like the local version
+    let lines: Vec<String> = stdout
+        .lines()
+        .enumerate()
+        .map(|(i, l)| format!("{:4} | {}", start_line + i, l))
+        .collect();
+    let output = lines.join("\n");
+    let (output, truncated) = truncate_string(output, MAX_OUTPUT_LEN);
+    ContextResponse {
+        success: true,
+        project: project_name.to_string(),
+        mode: "read_file".to_string(),
+        content: Some(output),
+        items: None,
+        truncated,
+        error: None,
+    }
+}
+
+fn ssh_apply_patch(
+    proj: &ProjectConfig,
+    _project_name: &str,
+    patch: &str,
+    changed: Vec<String>,
+) -> PatchResponse {
+    let ssh_target = match build_ssh_target(proj) {
+        Ok(t) => t,
+        Err(e) => {
+            return PatchResponse {
+                success: false,
+                changed_files: Some(changed),
+                stdout: None,
+                stderr: None,
+                error: Some(e),
+            }
+        }
+    };
+    let remote_cmd = format!(
+        "cd {} && git apply --check __PATCH__ && git apply __PATCH__",
+        proj.path
+    );
+    let (code, stdout, stderr, _) = run_ssh_patch(&ssh_target, &proj.path, patch, &remote_cmd);
+    if code == 0 {
+        PatchResponse {
+            success: true,
+            changed_files: Some(changed),
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+            error: None,
+        }
+    } else {
+        PatchResponse {
+            success: false,
+            changed_files: Some(changed),
+            stdout: Some(stdout),
+            stderr: Some(stderr),
+            error: Some("git apply failed".to_string()),
+        }
+    }
+}
+
+// =============================================================================
 // Handlers
 // =============================================================================
 
@@ -402,6 +758,100 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             return;
         }
     };
+
+    // For SSH executor, dispatch to SSH helpers
+    if proj.is_ssh() {
+        let resp = match body.mode {
+            ContextMode::Overview => ssh_overview(proj, &body.project),
+            ContextMode::Tree => ssh_tree(proj, &body.project),
+            ContextMode::Search => {
+                let Some(query) = &body.query else {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(ContextResponse {
+                        success: false,
+                        project: body.project,
+                        mode: "search".to_string(),
+                        content: None,
+                        items: None,
+                        truncated: false,
+                        error: Some("query parameter is required for search mode".to_string()),
+                    }));
+                    return;
+                };
+                ssh_search(proj, &body.project, query)
+            }
+            ContextMode::ReadFile => {
+                let Some(rel_path) = &body.path else {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(ContextResponse {
+                        success: false,
+                        project: body.project,
+                        mode: "read_file".to_string(),
+                        content: None,
+                        items: None,
+                        truncated: false,
+                        error: Some("path parameter is required for read_file mode".to_string()),
+                    }));
+                    return;
+                };
+                ssh_read_file(proj, &body.project, rel_path, body.start_line, body.limit)
+            }
+            ContextMode::GitStatus => {
+                let (code, stdout, stderr, _) = run_project_cmd(proj, "git status --short", 10);
+                if code != 0 {
+                    ContextResponse {
+                        success: false,
+                        project: body.project.clone(),
+                        mode: "git_status".to_string(),
+                        content: None,
+                        items: None,
+                        truncated: false,
+                        error: Some(format!("git status failed: {}", stderr.trim())),
+                    }
+                } else {
+                    let (content, truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
+                    ContextResponse {
+                        success: true,
+                        project: body.project.clone(),
+                        mode: "git_status".to_string(),
+                        content: Some(content),
+                        items: None,
+                        truncated,
+                        error: None,
+                    }
+                }
+            }
+            ContextMode::GitDiff => {
+                let (code, stdout, stderr, _) = run_project_cmd(proj, "git diff", 30);
+                if code != 0 {
+                    ContextResponse {
+                        success: false,
+                        project: body.project.clone(),
+                        mode: "git_diff".to_string(),
+                        content: None,
+                        items: None,
+                        truncated: false,
+                        error: Some(format!("git diff failed: {}", stderr.trim())),
+                    }
+                } else {
+                    let (content, truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
+                    ContextResponse {
+                        success: true,
+                        project: body.project.clone(),
+                        mode: "git_diff".to_string(),
+                        content: Some(content),
+                        items: None,
+                        truncated,
+                        error: None,
+                    }
+                }
+            }
+        };
+        res.render(Json(resp));
+        return;
+    }
+
+    // Local executor
     let root = proj.root();
     if !root.exists() {
         res.render(Json(ContextResponse {
@@ -638,17 +1088,6 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
         }));
         return;
     }
-    let root = proj.root();
-    if !root.exists() {
-        res.render(Json(PatchResponse {
-            success: false,
-            changed_files: None,
-            stdout: None,
-            stderr: None,
-            error: Some("Project root does not exist".to_string()),
-        }));
-        return;
-    }
     if body.patch.is_empty() {
         res.status_code(StatusCode::BAD_REQUEST);
         res.render(Json(PatchResponse {
@@ -675,6 +1114,26 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
             }));
             return;
         }
+    }
+
+    if proj.is_ssh() {
+        // SSH executor: pipe patch via stdin
+        let resp = ssh_apply_patch(proj, &body.project, &body.patch, changed);
+        res.render(Json(resp));
+        return;
+    }
+
+    // Local executor
+    let root = proj.root();
+    if !root.exists() {
+        res.render(Json(PatchResponse {
+            success: false,
+            changed_files: None,
+            stdout: None,
+            stderr: None,
+            error: Some("Project root does not exist".to_string()),
+        }));
+        return;
     }
 
     // Write patch to temp file, run git apply
@@ -815,8 +1274,7 @@ pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Respons
             return;
         }
     };
-    let root = proj.root();
-    let (code, stdout, stderr, duration_ms) = run_command(&cmd, &root, CHECK_TIMEOUT_SECS);
+    let (code, stdout, stderr, duration_ms) = run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS);
     let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
     let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
     let truncated = stdout_trunc || stderr_trunc;
@@ -963,4 +1421,100 @@ pub async fn codex_report(req: &mut Request, depot: &mut Depot, res: &mut Respon
         path: Some(report_path.to_string_lossy().to_string()),
         error: None,
     }));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_ssh_path_rejects_absolute() {
+        assert!(validate_ssh_read_path("/etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_validate_ssh_path_rejects_traversal() {
+        assert!(validate_ssh_read_path("../evil.txt").is_err());
+        assert!(validate_ssh_read_path("src/../../../etc/passwd").is_err());
+    }
+
+    #[test]
+    fn test_validate_ssh_path_rejects_sensitive() {
+        assert!(validate_ssh_read_path(".env").is_err());
+        assert!(validate_ssh_read_path("secret.pem").is_err());
+        assert!(validate_ssh_read_path(".git/config").is_err());
+        assert!(validate_ssh_read_path("target/debug/binary").is_err());
+        assert!(validate_ssh_read_path("node_modules/pkg/index.js").is_err());
+    }
+
+    #[test]
+    fn test_validate_ssh_path_allows_normal() {
+        assert!(validate_ssh_read_path("src/main.rs").is_ok());
+        assert!(validate_ssh_read_path("README.md").is_ok());
+        assert!(validate_ssh_read_path("src/lib/helper.rs").is_ok());
+    }
+
+    #[test]
+    fn test_is_sensitive_path_variants() {
+        assert!(is_sensitive_path(".env"));
+        assert!(is_sensitive_path(".env.local"));
+        assert!(is_sensitive_path("secret.pem"));
+        assert!(is_sensitive_path("id_rsa"));
+        assert!(is_sensitive_path(".git/config"));
+        assert!(!is_sensitive_path("src/main.rs"));
+        assert!(!is_sensitive_path("README.md"));
+    }
+
+    #[test]
+    fn test_build_ssh_target() {
+        let proj = ProjectConfig {
+            path: "/tmp/test".to_string(),
+            executor: crate::projects::Executor::Ssh,
+            host: Some("msi".to_string()),
+            user: Some("root".to_string()),
+            allow_patch: false,
+            allowed_checks: vec![],
+            checks: None,
+        };
+        assert_eq!(proj.ssh_target().unwrap(), "root@msi");
+
+        let proj_no_user = ProjectConfig {
+            path: "/tmp/test".to_string(),
+            executor: crate::projects::Executor::Ssh,
+            host: Some("msi".to_string()),
+            user: None,
+            allow_patch: false,
+            allowed_checks: vec![],
+            checks: None,
+        };
+        assert_eq!(proj_no_user.ssh_target().unwrap(), "msi");
+    }
+
+    #[test]
+    fn test_build_ssh_target_no_host() {
+        let proj = ProjectConfig {
+            path: "/tmp/test".to_string(),
+            executor: crate::projects::Executor::Ssh,
+            host: None,
+            user: None,
+            allow_patch: false,
+            allowed_checks: vec![],
+            checks: None,
+        };
+        assert!(proj.ssh_target().is_err());
+    }
+
+    #[test]
+    fn test_local_executor_is_default() {
+        let proj = ProjectConfig {
+            path: "/tmp/test".to_string(),
+            executor: crate::projects::Executor::default(),
+            host: None,
+            user: None,
+            allow_patch: false,
+            allowed_checks: vec![],
+            checks: None,
+        };
+        assert!(!proj.is_ssh());
+    }
 }

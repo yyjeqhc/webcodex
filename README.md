@@ -263,6 +263,45 @@ full = "cargo fmt --check && cargo test && cargo build --release && bash scripts
 
 If `projects.toml` is missing, the Codex API returns clear errors but the original message/file APIs remain fully functional.
 
+### SSH Executor (Remote Projects)
+
+When private-drop is deployed on a gateway machine (e.g., SG4 as a public HTTPS entry point) but the actual project lives on a different machine (reachable via Tailscale), use the SSH executor:
+
+```toml
+[projects.private-drop]
+executor = "ssh"
+host = "msi"
+user = "root"
+path = "/root/git/private-drop"
+allow_patch = true
+allowed_checks = ["fmt", "test", "build", "e2e"]
+
+[projects.private-drop.checks]
+fmt = "cargo fmt --check"
+test = "cargo test"
+build = "cargo build --release"
+e2e = "bash scripts/e2e_test.sh"
+```
+
+**Architecture:**
+- SG4 runs private-drop with HTTPS (public entry point)
+- SSH commands go to the remote machine (e.g., `msi` via Tailscale)
+- All Codex API operations (context, apply_patch, check) execute on the remote machine
+- Reports are written locally on SG4
+
+**How it works:**
+- `executor = "ssh"`: Commands run via `ssh <host> -- <remote command>`
+- `host`: SSH hostname (from `projects.toml`, not user input)
+- `user`: SSH user (optional, defaults to current user)
+- `path`: Project root on the remote machine
+- All path safety checks (no `..`, no absolute paths, no sensitive files) are enforced before SSH commands are constructed
+- Patches are piped via SSH stdin to a temp file on the remote machine
+
+**Before using SSH executor, verify connectivity:**
+```bash
+ssh msi 'cd /root/git/private-drop && cargo test'
+```
+
 ### API Examples
 
 ```bash

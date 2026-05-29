@@ -823,11 +823,11 @@ pub async fn channel_page(req: &mut Request, _depot: &mut Depot, res: &mut Respo
                 }}
                 var actions='';
                 if(m.kind==='text'){{
-                    actions='<button class="btn btn-sm btn-primary" onclick="copyText(document.getElementById(\\'t-'+m.id+'\\').textContent)">Copy</button> '+
-                        '<button class="btn btn-sm btn-danger" onclick="deleteMsg(\\''+m.id+'\\')">Del</button>';
+                    actions='<button class="btn btn-sm btn-primary js-copy" data-text-id="t-'+m.id+'">Copy</button> '+
+                        '<button class="btn btn-sm btn-danger js-delete" data-delete-id="'+m.id+'">Del</button>';
                 }}else{{
                     actions='<a href="/api/files/'+m.id+'" class="btn btn-sm btn-success" download>Download</a> '+
-                        '<button class="btn btn-sm btn-danger" onclick="deleteMsg(\\''+m.id+'\\')">Del</button>';
+                        '<button class="btn btn-sm btn-danger js-delete" data-delete-id="'+m.id+'">Del</button>';
                 }}
                 html+='<div class="card" id="t-'+m.id+'"><div class="card-header"><div>'+
                     '<div class="card-title"><a href="/m/'+m.id+'" style="color:inherit;text-decoration:none">'+escapeHtml(title)+'</a></div>'+
@@ -836,6 +836,12 @@ pub async fn channel_page(req: &mut Request, _depot: &mut Depot, res: &mut Respo
             }});
         }}
         app.innerHTML=html;
+        app.addEventListener('click',function(e){{
+            var btn=e.target.closest('.js-copy');
+            if(btn){{var el=document.getElementById(btn.getAttribute('data-text-id'));if(el)copyText(el.textContent);return}}
+            btn=e.target.closest('.js-delete');
+            if(btn){{deleteMsg(btn.getAttribute('data-delete-id'));return}}
+        }});
     }}catch(e){{
         app.innerHTML='<div class="alert alert-error">Error: '+escapeHtml(e.message)+'</div>';
     }}
@@ -865,11 +871,11 @@ pub async fn message_page(req: &mut Request, _depot: &mut Depot, res: &mut Respo
             '<div><span class="channel-badge">'+escapeHtml(m.channel)+'</span> <span class="card-meta">'+ts+'</span></div>'+
             '<div class="form-actions">';
         if(m.kind==='text'){{
-            html+='<button class="btn btn-sm btn-primary" onclick="copyText(document.getElementById(\\'ft\\').textContent)">Copy</button> ';
+            html+='<button class="btn btn-sm btn-primary js-copy" data-text-id="ft">Copy</button> ';
         }}else{{
             html+='<a href="/api/files/'+m.id+'" class="btn btn-sm btn-success" download>Download</a> ';
         }}
-        html+='<button class="btn btn-sm btn-danger" onclick="deleteMsg(\\''+m.id+'\\')">Del</button></div></div>';
+        html+='<button class="btn btn-sm btn-danger js-delete" data-delete-id="'+m.id+'">Del</button></div></div>';
         if(m.kind==='text'){{
             html+='<div id="ft" class="card-text" style="max-height:none">'+escapeHtml(m.text||'')+'</div>';
         }}else{{
@@ -881,6 +887,12 @@ pub async fn message_page(req: &mut Request, _depot: &mut Depot, res: &mut Respo
         html+='</div>';
         var title=m.title||(m.kind==='file'?(m.file_name||'File'):'Message');
         app.innerHTML='<h2 style="margin-bottom:16px">'+escapeHtml(title)+'</h2>'+html;
+        app.addEventListener('click',function(e){{
+            var btn=e.target.closest('.js-copy');
+            if(btn){{var el=document.getElementById(btn.getAttribute('data-text-id'));if(el)copyText(el.textContent);return}}
+            btn=e.target.closest('.js-delete');
+            if(btn){{deleteMsg(btn.getAttribute('data-delete-id'));return}}
+        }});
     }}catch(e){{
         app.innerHTML='<div class="alert alert-error">Error: '+escapeHtml(e.message)+'</div>';
     }}

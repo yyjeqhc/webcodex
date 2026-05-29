@@ -2,6 +2,14 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug, Deserialize, Clone, Default, PartialEq)]
+#[serde(rename_all = "lowercase")]
+pub enum Executor {
+    #[default]
+    Local,
+    Ssh,
+}
+
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProjectChecks {
     pub fmt: Option<String>,
@@ -14,6 +22,12 @@ pub struct ProjectChecks {
 #[derive(Debug, Deserialize, Clone)]
 pub struct ProjectConfig {
     pub path: String,
+    #[serde(default)]
+    pub executor: Executor,
+    #[serde(default)]
+    pub host: Option<String>,
+    #[serde(default)]
+    pub user: Option<String>,
     pub allow_patch: bool,
     pub allowed_checks: Vec<String>,
     pub checks: Option<ProjectChecks>,
@@ -78,6 +92,22 @@ impl ProjectConfig {
             _ => None,
         }
         .ok_or_else(|| format!("Check '{}' has no command configured", suite))
+    }
+
+    pub fn is_ssh(&self) -> bool {
+        self.executor == Executor::Ssh
+    }
+
+    /// Build SSH target: [user@]host
+    pub fn ssh_target(&self) -> Result<String, String> {
+        let host = self
+            .host
+            .as_ref()
+            .ok_or("SSH executor requires 'host' in projects.toml")?;
+        match &self.user {
+            Some(user) => Ok(format!("{}@{}", user, host)),
+            None => Ok(host.clone()),
+        }
     }
 }
 

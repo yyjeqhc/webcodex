@@ -388,6 +388,11 @@ BODY=$(curl -sf "$BASE/")
 assert_contains "Home page references drop_token" "drop_token" "$BODY"
 assert_contains "Home page references /c/inbox" "/c/inbox" "$BODY"
 
+HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/channels")
+assert_eq "GET /channels returns 200" "200" "$HTTP_CODE"
+BODY=$(curl -sf "$BASE/channels")
+assert_contains "Channels page contains Channels" "Channels" "$BODY"
+
 # --- 15. Web UI: Channel page ---
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/c/inbox")
 assert_eq "GET /c/inbox returns 200" "200" "$HTTP_CODE"

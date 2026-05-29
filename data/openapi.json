@@ -105,6 +105,27 @@
         },
         "required": ["success"]
       },
+      "EditRequest": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "reason": {"type": "string"},
+          "dry_run": {"type": "boolean", "default": false},
+          "edits": {"type": "array", "items": {"type": "object", "description": "Edit operation: replace_text, replace_range, append_file, create_file, or write_file"}}
+        },
+        "required": ["project", "edits"]
+      },
+      "EditResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "changed_files": {"type": "array", "items": {"type": "string"}},
+          "diff": {"type": "string"},
+          "warnings": {"type": "array", "items": {"type": "string"}},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "changed_files", "diff", "warnings"]
+      },
       "CheckRequest": {
         "type": "object",
         "properties": {
@@ -283,6 +304,24 @@
           "200": {"description": "Patch result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PatchResponse"}}}},
           "400": {"description": "Bad request"},
           "403": {"description": "Patch not allowed for this project"}
+        }
+      }
+    },
+    "/api/codex/edit": {
+      "post": {
+        "operationId": "applyProjectEdit",
+        "summary": "Apply safe structured file edits",
+        "description": "Apply replace_text, replace_range, append_file, create_file, or guarded write_file edits to a whitelisted project. Returns a diff and supports dry_run.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EditRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Edit result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EditResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Edit not allowed or unsafe path"},
+          "413": {"description": "Edit payload too large"}
         }
       }
     },

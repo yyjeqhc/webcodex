@@ -672,6 +672,16 @@ fn public_url() -> String {
         .unwrap_or_else(|| "http://localhost:8080".to_string())
 }
 
+fn project_enum_from_depot(depot: &Depot) -> serde_json::Value {
+    if let Ok(projects) = depot.obtain::<Arc<projects::ProjectsConfig>>() {
+        let mut names: Vec<String> = projects.projects.keys().cloned().collect();
+        names.sort();
+        serde_json::json!(names)
+    } else {
+        serde_json::json!(["private-drop", "private-drop-v4", "gpt-sandbox", "paper"])
+    }
+}
+
 #[handler]
 pub async fn openapi_json(res: &mut Response) {
     match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
@@ -694,7 +704,8 @@ pub async fn openapi_json(res: &mut Response) {
 }
 
 #[handler]
-pub async fn codex_openapi_json(res: &mut Response) {
+pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
+    let project_enum = project_enum_from_depot(depot);
     let mut spec =
         match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
             Ok(spec) => spec,
@@ -713,6 +724,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
     spec["paths"] = serde_json::json!({
         "/api/codex/context": spec["paths"]["/api/codex/context"].clone(),
         "/api/codex/apply_patch": spec["paths"]["/api/codex/apply_patch"].clone(),
+        "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
         "/api/codex/report": spec["paths"]["/api/codex/report"].clone()
     });
@@ -721,6 +733,8 @@ pub async fn codex_openapi_json(res: &mut Response) {
         "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
         "PatchRequest": spec["components"]["schemas"]["PatchRequest"].clone(),
         "PatchResponse": spec["components"]["schemas"]["PatchResponse"].clone(),
+        "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
+        "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
         "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
         "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
@@ -729,11 +743,11 @@ pub async fn codex_openapi_json(res: &mut Response) {
     for name in [
         "ContextRequest",
         "PatchRequest",
+        "EditRequest",
         "CheckRequest",
         "ReportRequest",
     ] {
-        spec["components"]["schemas"][name]["properties"]["project"]["enum"] =
-            serde_json::json!(["private-drop", "private-drop-v4", "gpt-sandbox", "paper"]);
+        spec["components"]["schemas"][name]["properties"]["project"]["enum"] = project_enum.clone();
         spec["components"]["schemas"][name]["properties"]["project"]["description"] = serde_json::json!("Whitelisted project name; not a report channel such as omo, inbox, xline, thesis, packfix, or files.");
     }
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
@@ -1190,6 +1204,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .hoop(AuthMiddleware)
                 .push(Router::with_path("context").post(codex::codex_context))
                 .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
+                .push(Router::with_path("edit").post(codex::codex_edit))
                 .push(Router::with_path("check").post(codex::codex_check))
                 .push(Router::with_path("report").post(codex::codex_report)),
         );

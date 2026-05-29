@@ -2,7 +2,8 @@ use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig};
 use crate::{Database, Message, MessageKind};
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::collections::{BTreeSet, HashMap};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -129,6 +130,56 @@ pub struct ReportResponse {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+pub struct EditRequest {
+    pub project: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub dry_run: bool,
+    pub edits: Vec<EditOperation>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum EditOperation {
+    ReplaceText {
+        path: String,
+        old_text: String,
+        new_text: String,
+        occurrence: Option<usize>,
+    },
+    ReplaceRange {
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        new_text: String,
+    },
+    AppendFile {
+        path: String,
+        text: String,
+    },
+    CreateFile {
+        path: String,
+        content: String,
+    },
+    WriteFile {
+        path: String,
+        content: String,
+        #[serde(default)]
+        allow_overwrite: bool,
+    },
+}
+
+#[derive(Debug, Serialize)]
+pub struct EditResponse {
+    pub success: bool,
+    pub changed_files: Vec<String>,
+    pub diff: String,
+    pub warnings: Vec<String>,
+    pub error: Option<String>,
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -146,6 +197,8 @@ const MAX_TREE_ITEMS: usize = 300;
 const MAX_SEARCH_RESULTS: usize = 50;
 const MAX_OUTPUT_LEN: usize = 50_000;
 const CHECK_TIMEOUT_SECS: u64 = 300;
+const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
+const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
 
 const SENSITIVE_PATHS: &[&str] = &[
     ".git",
@@ -1517,4 +1570,402 @@ mod tests {
         };
         assert!(!proj.is_ssh());
     }
+}
+
+fn edit_error(error: String) -> EditResponse {
+    EditResponse {
+        success: false,
+        changed_files: Vec::new(),
+        diff: String::new(),
+        warnings: Vec::new(),
+        error: Some(error),
+    }
+}
+
+fn edit_path(edit: &EditOperation) -> &str {
+    match edit {
+        EditOperation::ReplaceText { path, .. }
+        | EditOperation::ReplaceRange { path, .. }
+        | EditOperation::AppendFile { path, .. }
+        | EditOperation::CreateFile { path, .. }
+        | EditOperation::WriteFile { path, .. } => path,
+    }
+}
+
+fn edit_text_len(edit: &EditOperation) -> usize {
+    match edit {
+        EditOperation::ReplaceText { new_text, .. } => new_text.len(),
+        EditOperation::ReplaceRange { new_text, .. } => new_text.len(),
+        EditOperation::AppendFile { text, .. } => text.len(),
+        EditOperation::CreateFile { content, .. } => content.len(),
+        EditOperation::WriteFile { content, .. } => content.len(),
+    }
+}
+
+fn validate_edit_path(rel_path: &str) -> Result<(), String> {
+    if rel_path.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    if rel_path.starts_with('/') {
+        return Err("Absolute paths are not allowed".to_string());
+    }
+    if rel_path.contains("..") {
+        return Err("Path traversal (..) is not allowed".to_string());
+    }
+    if is_sensitive_path(rel_path) {
+        return Err(format!("Cannot modify sensitive path: {}", rel_path));
+    }
+    Ok(())
+}
+
+fn simple_file_diff(path: &str, old: Option<&str>, new: &str) -> String {
+    let mut out = format!("diff --git a/{0} b/{0}\n--- a/{0}\n+++ b/{0}\n", path);
+    out.push_str("@@\n");
+    if let Some(old) = old {
+        for line in old.lines() {
+            out.push_str(&format!("-{}\n", line));
+        }
+    } else {
+        out.push_str("--- /dev/null\n");
+    }
+    for line in new.lines() {
+        out.push_str(&format!("+{}\n", line));
+    }
+    out
+}
+
+fn resolve_edit_path(root: &Path, rel_path: &str, must_exist: bool) -> Result<PathBuf, String> {
+    validate_edit_path(rel_path)?;
+    let full_path = root.join(rel_path);
+    if must_exist {
+        return canonicalize_and_verify(&full_path, root);
+    }
+    let parent = full_path
+        .parent()
+        .ok_or_else(|| "path has no parent directory".to_string())?;
+    let canonical_parent = canonicalize_and_verify(parent, root)?;
+    let file_name = full_path
+        .file_name()
+        .ok_or_else(|| "path has no file name".to_string())?;
+    Ok(canonical_parent.join(file_name))
+}
+
+fn read_edit_file(path: &Path) -> Result<String, String> {
+    let meta = std::fs::metadata(path).map_err(|e| format!("Failed to stat file: {}", e))?;
+    if meta.len() > MAX_EDIT_FILE_SIZE {
+        return Err(format!(
+            "File is too large for edit API: {} bytes",
+            meta.len()
+        ));
+    }
+    std::fs::read_to_string(path).map_err(|e| format!("Failed to read UTF-8 text file: {}", e))
+}
+
+fn replace_nth(
+    content: &str,
+    old_text: &str,
+    new_text: &str,
+    occurrence: Option<usize>,
+) -> Result<String, String> {
+    if old_text.is_empty() {
+        return Err("old_text cannot be empty".to_string());
+    }
+    let matches: Vec<usize> = content
+        .match_indices(old_text)
+        .map(|(idx, _)| idx)
+        .collect();
+    if matches.is_empty() {
+        return Err("old_text was not found".to_string());
+    }
+    let selected = match occurrence {
+        Some(n) if n == 0 => return Err("occurrence is 1-based and must be >= 1".to_string()),
+        Some(n) if n <= matches.len() => matches[n - 1],
+        Some(n) => {
+            return Err(format!(
+                "occurrence {} exceeds match count {}",
+                n,
+                matches.len()
+            ))
+        }
+        None if matches.len() == 1 => matches[0],
+        None => {
+            return Err(format!(
+                "old_text matched {} times; specify occurrence",
+                matches.len()
+            ))
+        }
+    };
+    let mut output = String::new();
+    output.push_str(&content[..selected]);
+    output.push_str(new_text);
+    output.push_str(&content[selected + old_text.len()..]);
+    Ok(output)
+}
+
+fn replace_line_range(
+    content: &str,
+    start_line: usize,
+    end_line: usize,
+    new_text: &str,
+) -> Result<String, String> {
+    if start_line == 0 || end_line == 0 || start_line > end_line {
+        return Err(
+            "start_line and end_line must be 1-based and start_line <= end_line".to_string(),
+        );
+    }
+    let had_trailing_newline = content.ends_with('\n');
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+    if end_line > lines.len() {
+        return Err(format!(
+            "line range {}-{} exceeds file line count {}",
+            start_line,
+            end_line,
+            lines.len()
+        ));
+    }
+    let replacement: Vec<String> = if new_text.is_empty() {
+        Vec::new()
+    } else {
+        new_text
+            .trim_end_matches('\n')
+            .lines()
+            .map(|l| l.to_string())
+            .collect()
+    };
+    lines.splice(start_line - 1..end_line, replacement);
+    let mut output = lines.join("\n");
+    if had_trailing_newline || new_text.ends_with('\n') {
+        output.push('\n');
+    }
+    Ok(output)
+}
+
+fn load_edit_content(
+    root: &Path,
+    rel_path: &str,
+    paths: &mut HashMap<String, PathBuf>,
+    originals: &mut HashMap<String, Option<String>>,
+    current: &mut HashMap<String, Option<String>>,
+) -> Result<String, String> {
+    if let Some(Some(content)) = current.get(rel_path) {
+        return Ok(content.clone());
+    }
+    let full_path = resolve_edit_path(root, rel_path, true)?;
+    let content = read_edit_file(&full_path)?;
+    paths.insert(rel_path.to_string(), full_path);
+    originals
+        .entry(rel_path.to_string())
+        .or_insert_with(|| Some(content.clone()));
+    current.insert(rel_path.to_string(), Some(content.clone()));
+    Ok(content)
+}
+
+fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditResponse {
+    let root = proj.root();
+    if !root.exists() {
+        return edit_error("Project root does not exist".to_string());
+    }
+    let mut paths: HashMap<String, PathBuf> = HashMap::new();
+    let mut originals: HashMap<String, Option<String>> = HashMap::new();
+    let mut current: HashMap<String, Option<String>> = HashMap::new();
+    let mut changed = BTreeSet::new();
+    for edit in &body.edits {
+        let rel_path = edit_path(edit).to_string();
+        if let Err(e) = validate_edit_path(&rel_path) {
+            return edit_error(e);
+        }
+        if edit_text_len(edit) > MAX_EDIT_TEXT_SIZE {
+            return edit_error(format!(
+                "edit text for {} exceeds {} bytes",
+                rel_path, MAX_EDIT_TEXT_SIZE
+            ));
+        }
+        match edit {
+            EditOperation::ReplaceText {
+                old_text,
+                new_text,
+                occurrence,
+                ..
+            } => {
+                let before = match load_edit_content(
+                    &root,
+                    &rel_path,
+                    &mut paths,
+                    &mut originals,
+                    &mut current,
+                ) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                let after = match replace_nth(&before, old_text, new_text, *occurrence) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                current.insert(rel_path.clone(), Some(after));
+            }
+            EditOperation::ReplaceRange {
+                start_line,
+                end_line,
+                new_text,
+                ..
+            } => {
+                let before = match load_edit_content(
+                    &root,
+                    &rel_path,
+                    &mut paths,
+                    &mut originals,
+                    &mut current,
+                ) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                let after = match replace_line_range(&before, *start_line, *end_line, new_text) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                current.insert(rel_path.clone(), Some(after));
+            }
+            EditOperation::AppendFile { text, .. } => {
+                let mut before = match load_edit_content(
+                    &root,
+                    &rel_path,
+                    &mut paths,
+                    &mut originals,
+                    &mut current,
+                ) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                before.push_str(text);
+                current.insert(rel_path.clone(), Some(before));
+            }
+            EditOperation::CreateFile { content, .. } => {
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() || matches!(current.get(&rel_path), Some(Some(_))) {
+                    return edit_error(format!("File already exists: {}", rel_path));
+                }
+                paths.insert(rel_path.clone(), full_path);
+                originals.entry(rel_path.clone()).or_insert(None);
+                current.insert(rel_path.clone(), Some(content.clone()));
+            }
+            EditOperation::WriteFile {
+                content,
+                allow_overwrite,
+                ..
+            } => {
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                let old = if full_path.exists() {
+                    match read_edit_file(&full_path) {
+                        Ok(c) => Some(c),
+                        Err(e) => return edit_error(e),
+                    }
+                } else {
+                    None
+                };
+                paths.insert(rel_path.clone(), full_path);
+                originals.entry(rel_path.clone()).or_insert(old);
+                current.insert(rel_path.clone(), Some(content.clone()));
+            }
+        }
+        changed.insert(rel_path);
+    }
+    let changed_files: Vec<String> = changed.into_iter().collect();
+    let mut diff = String::new();
+    for path in &changed_files {
+        if let Some(Some(new_content)) = current.get(path) {
+            diff.push_str(&simple_file_diff(
+                path,
+                originals.get(path).and_then(|v| v.as_deref()),
+                new_content,
+            ));
+        }
+    }
+    if !body.dry_run {
+        for path in &changed_files {
+            if let (Some(full_path), Some(Some(new_content))) = (paths.get(path), current.get(path))
+            {
+                if let Err(e) = std::fs::write(full_path, new_content) {
+                    return edit_error(format!("Failed to write {}: {}", path, e));
+                }
+            }
+        }
+    }
+    EditResponse {
+        success: true,
+        changed_files,
+        diff,
+        warnings: Vec::new(),
+        error: None,
+    }
+}
+
+#[handler]
+pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(edit_error("Projects not configured".to_string())));
+        return;
+    };
+    let body: EditRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(edit_error(format!("Invalid JSON: {}", e))));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(edit_error(e)));
+            return;
+        }
+    };
+    if !proj.allow_patch() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(edit_error(
+            "Edit is not allowed for this project".to_string(),
+        )));
+        return;
+    }
+    if body.edits.is_empty() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(edit_error("edits cannot be empty".to_string())));
+        return;
+    }
+    for edit in &body.edits {
+        if let Err(e) = validate_edit_path(edit_path(edit)) {
+            res.status_code(StatusCode::FORBIDDEN);
+            res.render(Json(edit_error(e)));
+            return;
+        }
+        if edit_text_len(edit) > MAX_EDIT_TEXT_SIZE {
+            res.status_code(StatusCode::PAYLOAD_TOO_LARGE);
+            res.render(Json(edit_error(format!(
+                "edit text for {} exceeds {} bytes",
+                edit_path(edit),
+                MAX_EDIT_TEXT_SIZE
+            ))));
+            return;
+        }
+    }
+    if proj.is_ssh() {
+        res.render(Json(edit_error(
+            "SSH edit support requires remote python3 implementation".to_string(),
+        )));
+        return;
+    }
+    res.render(Json(local_apply_project_edit(proj, &body)));
 }

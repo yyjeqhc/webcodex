@@ -340,7 +340,7 @@ curl -X POST http://localhost:8080/api/codex/report \
 
 1. Import `https://your-server/openapi.json` into your GPT Actions
 2. Set authentication to API Key / Bearer with your `DROP_TOKEN`
-3. GPT can use the 4 `codex` operationIds: `getProjectContext`, `applyProjectPatch`, `runProjectCheck`, `writeProjectReport`
+3. GPT can use the `codex` operationIds: `getProjectContext`, `applyProjectEdit`, `applyProjectPatch`, `runProjectCheck`, `writeProjectReport`
 
 ### Security Boundaries
 

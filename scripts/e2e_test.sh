@@ -548,6 +548,8 @@ assert_http_code "POST /api/codex/command_approve without token returns 401" "40
     -X POST -H "Content-Type: application/json" -d '{"request_id":"missing"}'
 assert_http_code "POST /api/codex/command_reject without token returns 401" "401" "$CODEX/command_reject" \
     -X POST -H "Content-Type: application/json" -d '{"request_id":"missing"}'
+assert_http_code "POST /api/codex/job without token returns 401" "401" "$CODEX/job" \
+    -X POST -H "Content-Type: application/json" -d '{"project":"test-project","op":"list"}'
 assert_http_code "POST /api/codex/report without token returns 401" "401" "$CODEX/report" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","status":"completed","title":"t","summary":"s"}'
 
@@ -928,6 +930,90 @@ GOAL_LIST_SUCCESS=$(pyget "$RESP" "success")
 GOAL_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); ids={g['id'] for g in d.get('goals', [])}; print('yes' if '$GOAL_ID' in ids else 'no')")
 assert_eq "Command op list_goals active success" "True" "$GOAL_LIST_SUCCESS"
 assert_eq "Command op list_goals active has id" "yes" "$GOAL_LIST_HAS_ID"
+
+# --- 24e2. Codex Trusted Async Jobs ---
+echo ""
+echo "--- 24e2. Codex Trusted Async Jobs ---"
+RESP=$(curl -s -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"create","command":"echo no-goal"}')
+JOB_NO_GOAL_SUCCESS=$(pyget "$RESP" "success")
+JOB_NO_GOAL_ERROR=$(pyget "$RESP" "error")
+assert_eq "Job create without goal fails" "False" "$JOB_NO_GOAL_SUCCESS"
+assert_contains "Job create without goal error" "goal_id" "$JOB_NO_GOAL_ERROR"
+RESP=$(curl -s -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"create","goal_id":"missing-goal","command":"echo no-active"}')
+JOB_BAD_GOAL_SUCCESS=$(pyget "$RESP" "success")
+JOB_BAD_GOAL_ERROR=$(pyget "$RESP" "error")
+assert_eq "Job create non-active goal fails" "False" "$JOB_BAD_GOAL_SUCCESS"
+assert_contains "Job create non-active goal error" "Goal not found" "$JOB_BAD_GOAL_ERROR"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','command':'echo job-start; sleep 1; echo job-done','reason':'job smoke','max_runtime_secs':30}))")")
+JOB_SUCCESS=$(pyget "$RESP" "success")
+JOB_ID=$(pyget "$RESP" "job_id")
+assert_eq "Job create success" "True" "$JOB_SUCCESS"
+assert_not_empty "Job create returns job_id" "$JOB_ID"
+sleep 2
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'log','job_id':'$JOB_ID','tail_lines':20}))")")
+JOB_LOG_SUCCESS=$(pyget "$RESP" "success")
+JOB_LOG_STDOUT=$(pyget "$RESP" "stdout_tail")
+assert_eq "Job log success" "True" "$JOB_LOG_SUCCESS"
+assert_contains "Job log has output" "job-done" "$JOB_LOG_STDOUT"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'status','job_id':'$JOB_ID'}))")")
+JOB_STATUS_SUCCESS=$(pyget "$RESP" "success")
+JOB_STATUS_VALUE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job']['status'])")
+assert_eq "Job status success" "True" "$JOB_STATUS_SUCCESS"
+assert_eq "Job status completed" "completed" "$JOB_STATUS_VALUE"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create_batch','goal_id':'$GOAL_ID','commands':['echo batch-0','echo batch-1','echo batch-2'],'reason':'batch smoke','max_runtime_secs':30}))")")
+JOB_BATCH_SUCCESS=$(pyget "$RESP" "success")
+JOB_BATCH_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('job_ids', [])))")
+assert_eq "Job create_batch success" "True" "$JOB_BATCH_SUCCESS"
+assert_eq "Job create_batch count" "3" "$JOB_BATCH_COUNT"
+sleep 1
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'list','goal_id':'$GOAL_ID','limit':20}))")")
+JOB_LIST_SUCCESS=$(pyget "$RESP" "success")
+JOB_LIST_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('jobs', [])))")
+assert_eq "Job list success" "True" "$JOB_LIST_SUCCESS"
+assert_contains "Job list has jobs" "4" "$JOB_LIST_COUNT"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'summarize','goal_id':'$GOAL_ID','tail_lines':10}))")")
+JOB_SUMMARY_SUCCESS=$(pyget "$RESP" "success")
+JOB_SUMMARY=$(pyget "$RESP" "summary_markdown")
+assert_eq "Job summarize success" "True" "$JOB_SUMMARY_SUCCESS"
+assert_contains "Job summarize markdown" "Codex job summary" "$JOB_SUMMARY"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','command':'sleep 30','reason':'stop smoke','max_runtime_secs':60}))")")
+JOB_STOP_ID=$(pyget "$RESP" "job_id")
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'stop','job_id':'$JOB_STOP_ID'}))")")
+JOB_STOP_SUCCESS=$(pyget "$RESP" "success")
+JOB_STOP_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job']['status'])")
+assert_eq "Job stop success" "True" "$JOB_STOP_SUCCESS"
+assert_eq "Job stop status" "stopped" "$JOB_STOP_STATUS"
+
 RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -1093,6 +1179,7 @@ HAS_BATCH_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createCom
 HAS_REJECT_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'rejectCommandRequest' in sys.stdin.read() else 'no')")
 HAS_CHECK=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCheck' in sys.stdin.read() else 'no')")
 HAS_REPORT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'writeProjectReport' in sys.stdin.read() else 'no')")
+HAS_JOB=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runJobOp' in sys.stdin.read() else 'no')")
 assert_contains "OpenAPI has getProjectContext" "yes" "$HAS_CTX"
 assert_contains "OpenAPI has applyProjectPatch" "yes" "$HAS_PATCH"
 assert_contains "OpenAPI has applyProjectEdit" "yes" "$HAS_EDIT"
@@ -1106,6 +1193,7 @@ assert_contains "OpenAPI has createCommandRequestBatch" "yes" "$HAS_BATCH_REQ"
 assert_contains "OpenAPI has rejectCommandRequest" "yes" "$HAS_REJECT_REQ"
 assert_contains "OpenAPI has runProjectCheck" "yes" "$HAS_CHECK"
 assert_contains "OpenAPI has writeProjectReport" "yes" "$HAS_REPORT"
+assert_contains "OpenAPI has runJobOp" "yes" "$HAS_JOB"
 # Verify new edit schemas are present
 HAS_REPLACE_TEXT_SCHEMA=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'ReplaceTextEdit' in sys.stdin.read() else 'no')")
 assert_contains "OpenAPI has ReplaceTextEdit schema" "yes" "$HAS_REPLACE_TEXT_SCHEMA"
@@ -1157,7 +1245,7 @@ for path, methods in spec.get("paths", {}).items():
             ops.append(op["operationId"])
 print("\n".join(sorted(ops)))
 ')
-for op in getProjectContextBatch applyProjectEdit saveProjectArtifact runProjectGit runProjectCommand runCommandRequestOp runProjectCheck writeProjectReport; do
+for op in getProjectContextBatch applyProjectEdit saveProjectArtifact runProjectGit runProjectCommand runCommandRequestOp runJobOp runProjectCheck writeProjectReport; do
     HAS_OP=$(echo "$COMPACT_OPS" | python3 -c "import sys; op='$op'; print('yes' if op in sys.stdin.read().splitlines() else 'no')")
     assert_eq "codex-openapi-compact.json has $op" "yes" "$HAS_OP"
 done

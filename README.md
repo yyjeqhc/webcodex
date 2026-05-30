@@ -872,6 +872,43 @@ Recommended flow: GPT calls `create_goal` to propose a bounded task, the goal st
 This endpoint does not bypass existing safety checks. Raw commands still require `allow_raw_command_requests = true`, configured command requests still require `allow_command_requests = true`, approval remains atomic, and all executions use the stored `command_text` snapshot with SQLite audit records.
 
 
+## Trusted async shell jobs
+
+`POST /api/codex/job` (`runJobOp`) provides trusted, active-goal-scoped async shell jobs for experiments, training scripts, and longer reproduction tasks.
+
+Supported ops:
+
+- `create`: start one shell command in the background and return `job_id` immediately.
+- `create_batch`: start up to 20 shell commands under the same active goal.
+- `list`: list jobs for a project, optionally filtered by `goal_id` or `status`.
+- `status`: refresh and return one job status.
+- `log`: return stdout/stderr tails.
+- `stop`: kill only the recorded PID for that job and mark it stopped.
+- `summarize`: return a Markdown summary of jobs, commands, status, exit code, duration, and log tails.
+
+Permission model:
+
+- `create` and `create_batch` require `project` and `goal_id`.
+- The goal must belong to the same project.
+- The goal must be `active` and unexpired.
+- Within that active goal scope, job commands are trusted shell commands; they are not matched against configured command IDs and are not individually approved.
+- Every job is audited on disk under `.codex/jobs/<job_id>/` with `metadata.json`, `command.sh`, `stdout.log`, `stderr.log`, `pid`, `exit_code`, and `status`.
+
+Example:
+
+```json
+{
+  "project": "paper",
+  "op": "create",
+  "goal_id": "...",
+  "command": "python scripts/run_exp.py --seed 0",
+  "reason": "run seed 0",
+  "max_runtime_secs": 7200
+}
+```
+
+This endpoint supports both local and SSH executors. SSH jobs are created in the remote project directory and use the existing SSH/ControlMaster configuration.
+
 ## OpenAPI schema variants
 
 Private Drop exposes three OpenAPI schema variants:

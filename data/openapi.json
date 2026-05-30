@@ -480,6 +480,40 @@
         },
         "required": ["success", "op", "records"]
       },
+      "JobOpRequest": {
+        "type": "object",
+        "description": "Trusted active-goal scoped async shell jobs. create/create_batch require project and active goal_id; command text is audited to .codex/jobs/<job_id>.",
+        "properties": {
+          "op": {"type": "string", "enum": ["create", "create_batch", "list", "status", "log", "stop", "summarize"], "description": "Job operation"},
+          "project": {"type": "string", "nullable": true, "description": "Whitelisted project name"},
+          "goal_id": {"type": "string", "nullable": true, "description": "Active goal id required for create/create_batch; optional filter for list/summarize"},
+          "job_id": {"type": "string", "nullable": true, "description": "Job id for status/log/stop"},
+          "command": {"type": "string", "nullable": true, "maxLength": 8000, "description": "Shell command for op=create"},
+          "commands": {"type": "array", "items": {"type": "string"}, "maxItems": 20, "description": "Shell commands for op=create_batch"},
+          "reason": {"type": "string", "nullable": true, "description": "Reason recorded in metadata.json"},
+          "status": {"type": "string", "nullable": true, "enum": ["running", "completed", "failed", "stopped", "timeout"], "description": "Optional status filter for list/summarize"},
+          "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100},
+          "tail_lines": {"type": "integer", "default": 80, "minimum": 1, "maximum": 1000},
+          "max_runtime_secs": {"type": "integer", "nullable": true, "minimum": 1, "maximum": 604800, "description": "Maximum runtime before timeout stop is attempted"}
+        },
+        "required": ["op"]
+      },
+      "JobOpResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "op": {"type": "string"},
+          "job_id": {"type": "string", "nullable": true},
+          "job_ids": {"type": "array", "items": {"type": "string"}},
+          "job": {"type": "object", "nullable": true},
+          "jobs": {"type": "array", "items": {"type": "object"}},
+          "stdout_tail": {"type": "string", "nullable": true},
+          "stderr_tail": {"type": "string", "nullable": true},
+          "summary_markdown": {"type": "string", "nullable": true},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "op", "job_ids", "jobs"]
+      },
       "CommandResponse": {
         "type": "object",
         "properties": {
@@ -906,6 +940,23 @@
           "200": {"description": "Command request rejected", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
           "400": {"description": "Bad request"},
           "404": {"description": "Request not found"}
+        }
+      }
+    },
+    "/api/codex/job": {
+      "post": {
+        "operationId": "runJobOp",
+        "summary": "Run or manage trusted active-goal async shell jobs",
+        "description": "Active-goal scoped async shell jobs for trusted experiment/training/reproduction workflows. create/create_batch require an active, unexpired goal for the same project and audit all commands under .codex/jobs/<job_id>.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JobOpRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Job operation result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JobOpResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Goal not active or project mismatch"}
         }
       }
     },

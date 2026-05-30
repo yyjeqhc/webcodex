@@ -669,7 +669,18 @@ Example:
 }
 ```
 
-The response contains `results`, one normal context response per request, plus `duration_ms` and `ssh_calls`. Batches are limited to 20 items. This reduces GPT Action round trips; SSH projects still execute one remote command per item, but reuse ControlMaster connections when configured.
+The response contains `results`, one normal context response per request, plus `duration_ms` and `ssh_calls`. Batches are limited to 20 items. This reduces GPT Action round trips; SSH projects use a single aggregated remote command for supported modes and reuse ControlMaster connections when configured.
+
+Use `mode="agent_context"` at the start of a new GPT/Codex chat to load project alignment rules. It reads these fixed files when present and marks missing ones without failing:
+
+- `AGENTS.md`
+- `.codex/memory/project.md`
+- `.codex/memory/pitfalls.md`
+- `.codex/memory/workflows.md`
+- `.codex/memory/decisions.md`
+- `.codex/memory/user_preferences.md`
+
+A good startup batch for project work is `agent_context + overview + git_status`, then targeted `read_file` calls for the files relevant to the user's goal.
 
 
 ## Codex controlled Git API

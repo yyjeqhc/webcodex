@@ -20,6 +20,7 @@ pub enum ContextMode {
     Tree,
     Search,
     ReadFile,
+    AgentContext,
     GitStatus,
     GitDiff,
 }
@@ -1885,6 +1886,7 @@ fn mode_name(mode: &ContextMode) -> &'static str {
         ContextMode::Tree => "tree",
         ContextMode::Search => "search",
         ContextMode::ReadFile => "read_file",
+        ContextMode::AgentContext => "agent_context",
         ContextMode::GitStatus => "git_status",
         ContextMode::GitDiff => "git_diff",
     }
@@ -1917,6 +1919,65 @@ fn validate_read_file_range(start_line: usize, limit: usize) -> Result<usize, St
     start_line
         .checked_add(limit - 1)
         .ok_or_else(|| "start_line + limit - 1 overflowed".to_string())
+}
+
+const AGENT_CONTEXT_FILES: &[&str] = &[
+    "AGENTS.md",
+    ".codex/memory/project.md",
+    ".codex/memory/pitfalls.md",
+    ".codex/memory/workflows.md",
+    ".codex/memory/decisions.md",
+    ".codex/memory/user_preferences.md",
+];
+
+fn mode_content_response(
+    project_name: &str,
+    mode: &str,
+    content: String,
+    max_len: usize,
+) -> ContextResponse {
+    let (content, truncated) = truncate_string(content, max_len);
+    ContextResponse {
+        success: true,
+        project: project_name.to_string(),
+        mode: mode.to_string(),
+        content: Some(content),
+        items: None,
+        truncated,
+        error: None,
+    }
+}
+
+fn local_agent_context(root: &Path, project_name: &str) -> ContextResponse {
+    let mut content = format!(
+        "# Agent context for {}\n\nLoaded project rules and memory files for alignment before planning or editing.\n",
+        project_name
+    );
+    for rel in AGENT_CONTEXT_FILES {
+        content.push_str(&format!("\n## {}\n\n", rel));
+        let path = root.join(rel);
+        match canonicalize_and_verify(&path, root) {
+            Ok(canonical) => match std::fs::read_to_string(&canonical) {
+                Ok(text) => content.push_str(text.trim_end()),
+                Err(_) => content.push_str("(missing)"),
+            },
+            Err(_) => content.push_str("(missing)"),
+        }
+        content.push('\n');
+    }
+    mode_content_response(project_name, "agent_context", content, MAX_OUTPUT_LEN)
+}
+
+fn agent_context_shell_fragment() -> String {
+    let files = AGENT_CONTEXT_FILES
+        .iter()
+        .map(|f| shell_escape(f))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        " printf '# Agent context\\n\\nLoaded project rules and memory files for alignment before planning or editing.\\n'; for f in {}; do printf '\\n## %s\\n\\n' \"$f\"; if test -f \"$f\"; then sed -n '1,240p' -- \"$f\"; else printf '(missing)\\n'; fi; done;",
+        files
+    )
 }
 
 fn parse_ssh_batch_blocks(stdout: &str, count: usize, nonce: &str) -> Vec<String> {
@@ -2053,6 +2114,12 @@ fn ssh_batch_block_to_response(
                 error: None,
             }
         }
+        ContextMode::AgentContext => mode_content_response(
+            project_name,
+            "agent_context",
+            block.to_string(),
+            MAX_OUTPUT_LEN,
+        ),
         ContextMode::GitStatus => {
             let (content, truncated) = truncate_string(block.to_string(), MAX_OUTPUT_LEN);
             ContextResponse {
@@ -2158,6 +2225,9 @@ fn try_ssh_context_batch_once(
                 let escaped_path = shell_escape(path);
                 script.push_str(&format!(" if test -f {0}; then sed -n '{1},{2}p' -- {0}; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;", escaped_path, item.start_line, end_line));
             }
+            ContextMode::AgentContext => {
+                script.push_str(&agent_context_shell_fragment());
+            }
             ContextMode::GitStatus => {
                 script.push_str(" git status --short 2>/dev/null || true;");
             }
@@ -2219,6 +2289,19 @@ fn execute_context_item(
                     "path parameter is required for read_file mode".to_string(),
                 ),
             },
+            ContextMode::AgentContext => {
+                let (code, stdout, stderr, _) =
+                    run_project_cmd(proj, &agent_context_shell_fragment(), 10, ssh_config);
+                if code == 0 {
+                    mode_content_response(project_name, "agent_context", stdout, MAX_OUTPUT_LEN)
+                } else {
+                    context_error(
+                        project_name,
+                        &item.mode,
+                        format!("agent_context failed: {}", stderr.trim()),
+                    )
+                }
+            }
             ContextMode::GitStatus => {
                 let (code, stdout, stderr, _) =
                     run_project_cmd(proj, "git status --short", 10, ssh_config);
@@ -2417,6 +2500,7 @@ fn execute_context_item(
                 0,
             ),
         },
+        ContextMode::AgentContext => (local_agent_context(&root, project_name), 0),
         ContextMode::GitStatus => {
             let output = run_command("git status --short", &root, 10);
             let (content, truncated) = truncate_string(output.1, MAX_OUTPUT_LEN);
@@ -2550,6 +2634,23 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                     body.limit,
                     ssh_config,
                 )
+            }
+            ContextMode::AgentContext => {
+                let (code, stdout, stderr, _) =
+                    run_project_cmd(proj, &agent_context_shell_fragment(), 10, ssh_config);
+                if code != 0 {
+                    ContextResponse {
+                        success: false,
+                        project: body.project.clone(),
+                        mode: "agent_context".to_string(),
+                        content: None,
+                        items: None,
+                        truncated: false,
+                        error: Some(format!("agent_context failed: {}", stderr.trim())),
+                    }
+                } else {
+                    mode_content_response(&body.project, "agent_context", stdout, MAX_OUTPUT_LEN)
+                }
             }
             ContextMode::GitStatus => {
                 let (code, stdout, stderr, _) =
@@ -2795,6 +2896,9 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                     }));
                 }
             }
+        }
+        ContextMode::AgentContext => {
+            res.render(Json(local_agent_context(&root, &body.project)));
         }
         ContextMode::GitStatus => {
             let output = run_command("git status --short", &root, 10);

@@ -46,6 +46,37 @@ echo 'fn main() { println!("hello"); }' > src/main.rs
 echo "line1" > test.txt
 echo "line2" >> test.txt
 echo "line3" >> test.txt
+mkdir -p .codex/memory
+cat > AGENTS.md <<'EOF'
+# Test Agent Rules
+
+Use project rules before editing.
+EOF
+cat > .codex/memory/project.md <<'EOF'
+# Test Project Memory
+
+This project memory is loaded by agent_context.
+EOF
+cat > .codex/memory/pitfalls.md <<'EOF'
+# Test Pitfalls
+
+Avoid unsafe edits.
+EOF
+cat > .codex/memory/workflows.md <<'EOF'
+# Test Workflows
+
+Read rules, plan, edit, verify.
+EOF
+cat > .codex/memory/decisions.md <<'EOF'
+# Test Decisions
+
+Keep the workflow bounded.
+EOF
+cat > .codex/memory/user_preferences.md <<'EOF'
+# Test User Preferences
+
+Prefer focused changes.
+EOF
 python3 - <<'PY'
 from pathlib import Path
 Path('upload-source.bin').write_bytes(bytes([9, 8, 7, 6]))
@@ -608,6 +639,21 @@ assert_eq "Context batch success" "True" "$BATCH_SUCCESS"
 assert_eq "Context batch has 3 results" "3" "$BATCH_COUNT"
 assert_eq "Context batch read_file contains line1" "yes" "$BATCH_HAS_LINE1"
 
+# --- 24b2. Codex: getProjectContextBatch agent_context ---
+echo ""
+echo "--- 24b2. Codex Context Batch Agent Context ---"
+RESP=$(curl -sf -X POST "$CODEX/context_batch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","requests":[{"mode":"agent_context"},{"mode":"overview"},{"mode":"git_status"}]}')
+BATCH_SUCCESS=$(pyget "$RESP" "success")
+AGENT_MODE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['results'][0].get('mode'))")
+AGENT_CONTENT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['results'][0].get('content',''))")
+assert_eq "Context batch agent_context success" "True" "$BATCH_SUCCESS"
+assert_eq "Context batch agent_context mode" "agent_context" "$AGENT_MODE"
+assert_contains "Context batch agent_context has AGENTS" "Test Agent Rules" "$AGENT_CONTENT"
+assert_contains "Context batch agent_context has memory" "Test Project Memory" "$AGENT_CONTENT"
+
 # --- 24c. Codex: runProjectGit ---
 echo ""
 echo "--- 24c. Codex Git ---"
@@ -1098,7 +1144,9 @@ COMPACT_SERVER=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.std
 assert_eq "codex-openapi-compact.json loads" "yes" "$COMPACT_OK"
 assert_eq "codex-openapi-compact.json server url" "http://localhost:8080" "$COMPACT_SERVER"
 COMPACT_HAS_SAVE_GENERATED=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'save_generated' in sys.stdin.read() else 'no')")
+COMPACT_HAS_AGENT_CONTEXT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'agent_context' in sys.stdin.read() else 'no')")
 assert_eq "codex-openapi-compact.json has save_generated artifact mode" "yes" "$COMPACT_HAS_SAVE_GENERATED"
+assert_eq "codex-openapi-compact.json has agent_context mode" "yes" "$COMPACT_HAS_AGENT_CONTEXT"
 COMPACT_OPS=$(echo "$RESP" | python3 -c '
 import json, sys
 spec=json.load(sys.stdin)

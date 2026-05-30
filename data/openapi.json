@@ -64,7 +64,7 @@
         "type": "object",
         "properties": {
           "project": {"type": "string", "description": "Project name from whitelist"},
-          "mode": {"type": "string", "enum": ["overview", "tree", "search", "read_file", "git_status", "git_diff"], "description": "Context retrieval mode"},
+          "mode": {"type": "string", "enum": ["overview", "tree", "search", "read_file", "agent_context", "git_status", "git_diff"], "description": "Context retrieval mode. agent_context reads AGENTS.md and .codex/memory files for project alignment."},
           "path": {"type": "string", "description": "File path (for read_file mode)"},
           "query": {"type": "string", "description": "Search query (for search mode)"},
           "start_line": {"type": "integer", "default": 1, "description": "Start line for read_file (1-based)"},
@@ -78,7 +78,7 @@
           "success": {"type": "boolean"},
           "project": {"type": "string"},
           "mode": {"type": "string"},
-          "content": {"type": "string", "nullable": true, "description": "Text content (for overview, read_file, git_status, git_diff)"},
+          "content": {"type": "string", "nullable": true, "description": "Text content (for overview, read_file, agent_context, git_status, git_diff)"},
           "items": {"type": "array", "items": {"type": "string"}, "nullable": true, "description": "List items (for tree, search)"},
           "truncated": {"type": "boolean"},
           "error": {"type": "string", "nullable": true}
@@ -88,7 +88,7 @@
       "ContextBatchItem": {
         "type": "object",
         "properties": {
-          "mode": {"type": "string", "enum": ["overview", "tree", "search", "read_file", "git_status", "git_diff"]},
+          "mode": {"type": "string", "enum": ["overview", "tree", "search", "read_file", "agent_context", "git_status", "git_diff"]},
           "path": {"type": "string", "description": "File path for read_file mode"},
           "query": {"type": "string", "description": "Search query for search mode"},
           "start_line": {"type": "integer", "default": 1},

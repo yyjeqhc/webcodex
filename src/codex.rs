@@ -2,7 +2,9 @@ use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig, Ss
 use crate::{CodexGoalRecord, CommandAuditRecord, Config, Database, Message, MessageKind};
 use base64::Engine;
 use salvo::prelude::*;
+mod security;
 mod types;
+pub use security::is_sensitive_path;
 use std::collections::{BTreeSet, HashMap};
 use std::net::{IpAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -36,19 +38,6 @@ const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
 const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
 const URL_IMPORT_TIMEOUT_SECS: u64 = 10;
-
-const SENSITIVE_PATHS: &[&str] = &[
-    ".git",
-    ".env",
-    ".pem",
-    ".key",
-    "id_rsa",
-    "id_ed25519",
-    "target",
-    "node_modules",
-    "/etc",
-    "/root/.ssh",
-];
 
 // =============================================================================
 // Helpers
@@ -208,29 +197,6 @@ fn parse_changed_files_from_patch(patch: &str) -> Vec<String> {
         }
     }
     files
-}
-
-pub fn is_sensitive_path(path: &str) -> bool {
-    if path == ".gitignore" {
-        return false;
-    }
-    let lower = path.to_lowercase();
-    for sensitive in SENSITIVE_PATHS {
-        if *sensitive == ".env" {
-            // Match .env exactly or .env.* files
-            let parts: Vec<&str> = path.split('/').collect();
-            if parts.iter().any(|p| *p == ".env" || p.starts_with(".env.")) {
-                return true;
-            }
-        } else if *sensitive == ".pem" || *sensitive == ".key" {
-            if lower.ends_with(sensitive) {
-                return true;
-            }
-        } else if lower.contains(sensitive) {
-            return true;
-        }
-    }
-    false
 }
 
 fn sanitize_tail(s: &str, max_len: usize) -> (String, bool) {

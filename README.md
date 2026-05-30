@@ -907,6 +907,28 @@ Binary diagram or document artifacts can also be saved through `applyProjectEdit
 
 Base64 artifact writes keep the same project path safety checks as text edits, reject sensitive paths, default to no overwrite, and limit decoded content to 5MB. Use base64 when the image bytes are already available to the GPT workflow; use `source_file` only when the file exists on the Private Drop server, and use `source_url` only when the artifact is available at a public HTTP/HTTPS URL.
 
+### Save generated artifacts with `saveProjectArtifact`
+
+For generated images and other binary outputs, the higher-level Codex artifact endpoint is the recommended bridge:
+
+```json
+{
+  "project": "private-drop-v4",
+  "op": "save_base64",
+  "path": "data/tmp_images/generated.png",
+  "base64_content": "...",
+  "mime_type": "image/png"
+}
+```
+
+`saveProjectArtifact` supports three source modes:
+
+- `save_base64`: preferred when GPT already has image bytes/base64.
+- `save_upload`: use when the artifact file exists on the Private Drop server in an allowed upload/temp location.
+- `save_url`: use when the artifact is available from an external HTTP/HTTPS URL.
+
+Set `allow_overwrite=true` to replace an existing artifact. Internally this endpoint reuses the same binary edit implementation and safety checks as `applyProjectEdit`, including project path validation, sensitive path blocking, no-overwrite defaults, URL SSRF protections, and a 5MB decoded/downloaded size limit.
+
 
 ### Import generated or uploaded binary artifacts
 

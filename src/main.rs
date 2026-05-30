@@ -1190,6 +1190,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
         "/api/codex/apply_patch": spec["paths"]["/api/codex/apply_patch"].clone(),
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+        "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
         "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
         "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
         "/api/codex/command_request": spec["paths"]["/api/codex/command_request"].clone(),
@@ -1225,6 +1226,8 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
         "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
         "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+        "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
+        "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
         "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
         "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
         "CommandRequest": spec["components"]["schemas"]["CommandRequest"].clone(),
@@ -1253,6 +1256,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
             "ContextBatchRequest",
             "PatchRequest",
             "EditRequest",
+            "ArtifactRequest",
             "GitRequest",
             "CommandRequest",
             "CommandRequestCreate",
@@ -1293,6 +1297,7 @@ pub async fn codex_openapi_compact_json(depot: &mut Depot, res: &mut Response) {
     spec["paths"] = serde_json::json!({
         "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+        "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
         "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
         "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
         "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
@@ -1319,6 +1324,8 @@ pub async fn codex_openapi_compact_json(depot: &mut Depot, res: &mut Response) {
         "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
         "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
         "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+        "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
+        "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
         "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
         "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
         "CommandRequest": spec["components"]["schemas"]["CommandRequest"].clone(),
@@ -1336,6 +1343,7 @@ pub async fn codex_openapi_compact_json(depot: &mut Depot, res: &mut Response) {
         &[
             "ContextBatchRequest",
             "EditRequest",
+            "ArtifactRequest",
             "GitRequest",
             "CommandRequest",
             "CommandRequestOpRequest",
@@ -1811,6 +1819,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("context_batch").post(codex::codex_context_batch))
                 .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
                 .push(Router::with_path("edit").post(codex::codex_edit))
+                .push(Router::with_path("artifact").post(codex::codex_artifact))
                 .push(Router::with_path("git").post(codex::codex_git))
                 .push(Router::with_path("command").post(codex::codex_command))
                 .push(Router::with_path("command_request").post(codex::codex_command_request))

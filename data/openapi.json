@@ -316,6 +316,25 @@
         },
         "required": ["success", "changed_files", "diff", "warnings"]
       },
+      "ArtifactRequest": {
+        "type": "object",
+        "description": "Save a generated or imported binary artifact to a whitelisted project. Prefer save_base64 when GPT has image bytes/base64 available; use save_upload only for files visible to the Private Drop server; use save_url only for external HTTP/HTTPS URLs.",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "op": {"type": "string", "enum": ["save_base64", "save_upload", "save_url"], "description": "Artifact source mode"},
+          "path": {"type": "string", "description": "Relative destination path inside the project"},
+          "reason": {"type": "string", "nullable": true},
+          "allow_overwrite": {"type": "boolean", "default": false, "description": "If true, overwrite an existing artifact"},
+          "base64_content": {"type": "string", "nullable": true, "description": "Required for save_base64. Base64-encoded artifact bytes; decoded size max 5MB."},
+          "source_file": {"type": "string", "nullable": true, "description": "Required for save_upload. Server-accessible upload/temp file path; max 5MB."},
+          "source_url": {"type": "string", "nullable": true, "description": "Required for save_url. HTTP/HTTPS URL with SSRF protection; max 5MB."},
+          "mime_type": {"type": "string", "nullable": true, "description": "Optional caller-provided MIME hint for audit/UI purposes"}
+        },
+        "required": ["project", "op", "path"]
+      },
+      "ArtifactResponse": {
+        "allOf": [{"$ref": "#/components/schemas/EditResponse"}]
+      },
       "GitRequest": {
         "type": "object",
         "properties": {
@@ -696,6 +715,24 @@
           "400": {"description": "Bad request"},
           "403": {"description": "Edit not allowed or unsafe path"},
           "413": {"description": "Edit payload too large"}
+        }
+      }
+    },
+    "/api/codex/artifact": {
+      "post": {
+        "operationId": "saveProjectArtifact",
+        "summary": "Save a generated or imported project artifact",
+        "description": "Save a binary artifact to a whitelisted project from base64, a server-side upload/temp file, or an external HTTP/HTTPS URL. Internally reuses applyProjectEdit binary artifact safety checks.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Artifact save result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Artifact save not allowed or unsafe path"},
+          "413": {"description": "Artifact payload too large"}
         }
       }
     },

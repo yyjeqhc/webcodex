@@ -443,6 +443,33 @@ pub struct EditResponse {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+#[serde(rename_all = "snake_case")]
+pub enum ArtifactOperation {
+    SaveBase64,
+    SaveUpload,
+    SaveUrl,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct ArtifactRequest {
+    pub project: String,
+    pub op: ArtifactOperation,
+    pub path: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub allow_overwrite: bool,
+    #[serde(default)]
+    pub base64_content: Option<String>,
+    #[serde(default)]
+    pub source_file: Option<String>,
+    #[serde(default)]
+    pub source_url: Option<String>,
+    #[serde(default)]
+    pub mime_type: Option<String>,
+}
+
 // =============================================================================
 // Constants
 // =============================================================================
@@ -6930,6 +6957,114 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
     }
 }
 
+fn edit_request_from_artifact(body: &ArtifactRequest) -> Result<EditRequest, String> {
+    let edit = match body.op {
+        ArtifactOperation::SaveBase64 => {
+            let base64_content = body
+                .base64_content
+                .clone()
+                .ok_or_else(|| "base64_content is required for save_base64".to_string())?;
+            if body.allow_overwrite {
+                EditOperation::WriteBinaryArtifact {
+                    path: body.path.clone(),
+                    base64_content,
+                    allow_overwrite: true,
+                }
+            } else {
+                EditOperation::CreateBinaryArtifact {
+                    path: body.path.clone(),
+                    base64_content,
+                }
+            }
+        }
+        ArtifactOperation::SaveUpload => {
+            let source_file = body
+                .source_file
+                .clone()
+                .ok_or_else(|| "source_file is required for save_upload".to_string())?;
+            if body.allow_overwrite {
+                EditOperation::WriteBinaryFileFromUpload {
+                    path: body.path.clone(),
+                    source_file,
+                    allow_overwrite: true,
+                }
+            } else {
+                EditOperation::CreateBinaryFileFromUpload {
+                    path: body.path.clone(),
+                    source_file,
+                }
+            }
+        }
+        ArtifactOperation::SaveUrl => {
+            let source_url = body
+                .source_url
+                .clone()
+                .ok_or_else(|| "source_url is required for save_url".to_string())?;
+            if body.allow_overwrite {
+                EditOperation::WriteBinaryFileFromUrl {
+                    path: body.path.clone(),
+                    source_url,
+                    allow_overwrite: true,
+                }
+            } else {
+                EditOperation::CreateBinaryFileFromUrl {
+                    path: body.path.clone(),
+                    source_url,
+                }
+            }
+        }
+    };
+    Ok(EditRequest {
+        project: body.project.clone(),
+        reason: body.reason.clone(),
+        dry_run: false,
+        edits: vec![edit],
+    })
+}
+
+fn apply_edit_request_with_metrics(
+    projects: &ProjectsConfig,
+    proj: &ProjectConfig,
+    body: &EditRequest,
+    operation: &'static str,
+) -> EditResponse {
+    let edit_start = Instant::now();
+    if proj.is_ssh() {
+        let response = ssh_apply_project_edit(proj, body, projects.ssh.as_ref());
+        tracing::info!(
+            target: "codex.metrics",
+            operation = operation,
+            project = %body.project,
+            executor = "ssh",
+            success = response.success,
+            dry_run = body.dry_run,
+            edit_count = body.edits.len(),
+            changed_files = response.changed_files.len(),
+            duration_ms = edit_start.elapsed().as_millis() as u64,
+            ssh_calls = 1,
+            control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+            "codex_edit_completed"
+        );
+        return response;
+    }
+    let response = local_apply_project_edit(proj, body);
+    tracing::info!(
+        target: "codex.metrics",
+        operation = operation,
+        project = %body.project,
+        executor = "local",
+        success = response.success,
+        dry_run = body.dry_run,
+        edit_count = body.edits.len(),
+        changed_files = response.changed_files.len(),
+        duration_ms = edit_start.elapsed().as_millis() as u64,
+        ssh_calls = 0,
+        control_master = false,
+        "codex_edit_completed"
+    );
+    response
+}
+
 #[handler]
 pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(projects) = get_projects(depot) else {
@@ -6985,41 +7120,61 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     }
-    let edit_start = Instant::now();
-    if proj.is_ssh() {
-        let response = ssh_apply_project_edit(proj, &body, projects.ssh.as_ref());
-        tracing::info!(
-            target: "codex.metrics",
-            operation = "applyProjectEdit",
-            project = %body.project,
-            executor = "ssh",
-            success = response.success,
-            dry_run = body.dry_run,
-            edit_count = body.edits.len(),
-            changed_files = response.changed_files.len(),
-            duration_ms = edit_start.elapsed().as_millis() as u64,
-            ssh_calls = 1,
-            control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
-            "codex_edit_completed"
-        );
-        res.render(Json(response));
+    let response = apply_edit_request_with_metrics(&projects, proj, &body, "applyProjectEdit");
+    res.render(Json(response));
+}
+
+#[handler]
+pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(edit_error("Projects not configured".to_string())));
+        return;
+    };
+    let artifact_body: ArtifactRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(edit_error(format!("Invalid JSON: {}", e))));
+            return;
+        }
+    };
+    let edit_body = match edit_request_from_artifact(&artifact_body) {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(edit_error(e)));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&edit_body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(edit_error(e)));
+            return;
+        }
+    };
+    if !proj.allow_patch() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(edit_error(
+            "Artifact save is not allowed for this project".to_string(),
+        )));
         return;
     }
-    let response = local_apply_project_edit(proj, &body);
-    tracing::info!(
-        target: "codex.metrics",
-        operation = "applyProjectEdit",
-        project = %body.project,
-        executor = "local",
-        success = response.success,
-        dry_run = body.dry_run,
-        edit_count = body.edits.len(),
-        changed_files = response.changed_files.len(),
-        duration_ms = edit_start.elapsed().as_millis() as u64,
-        ssh_calls = 0,
-        control_master = false,
-        "codex_edit_completed"
-    );
+    if let Err(e) = validate_no_mixed_edit_kinds(&edit_body.edits) {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(edit_error(e)));
+        return;
+    }
+    for edit in &edit_body.edits {
+        if let Err(e) = validate_edit_path(edit_path(edit)) {
+            res.status_code(StatusCode::FORBIDDEN);
+            res.render(Json(edit_error(e)));
+            return;
+        }
+    }
+    let response =
+        apply_edit_request_with_metrics(&projects, proj, &edit_body, "saveProjectArtifact");
     res.render(Json(response));
 }
 

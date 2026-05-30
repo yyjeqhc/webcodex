@@ -495,6 +495,8 @@ assert_http_code "POST /api/codex/context without token returns 401" "401" "$COD
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","mode":"overview"}'
 assert_http_code "POST /api/codex/apply_patch without token returns 401" "401" "$CODEX/apply_patch" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","patch":"x"}'
+assert_http_code "POST /api/codex/artifact without token returns 401" "401" "$CODEX/artifact" \
+    -X POST -H "Content-Type: application/json" -d '{"project":"test-project","op":"save_base64","path":"x.bin","base64_content":"AAE="}'
 assert_http_code "POST /api/codex/check without token returns 401" "401" "$CODEX/check" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","suite":"test"}'
 assert_http_code "POST /api/codex/git without token returns 401" "401" "$CODEX/git" \
@@ -1035,6 +1037,7 @@ RESP=$(curl -sf "$BASE/openapi.json")
 HAS_CTX=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'getProjectContext' in sys.stdin.read() else 'no')")
 HAS_PATCH=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectPatch' in sys.stdin.read() else 'no')")
 HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEdit' in sys.stdin.read() else 'no')")
+HAS_ARTIFACT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'saveProjectArtifact' in sys.stdin.read() else 'no')")
 HAS_GIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectGit' in sys.stdin.read() else 'no')")
 HAS_CMD=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCommand' in sys.stdin.read() else 'no')")
 HAS_RAW_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createRawCommandRequest' in sys.stdin.read() else 'no')")
@@ -1047,6 +1050,7 @@ HAS_REPORT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'writeProject
 assert_contains "OpenAPI has getProjectContext" "yes" "$HAS_CTX"
 assert_contains "OpenAPI has applyProjectPatch" "yes" "$HAS_PATCH"
 assert_contains "OpenAPI has applyProjectEdit" "yes" "$HAS_EDIT"
+assert_contains "OpenAPI has saveProjectArtifact" "yes" "$HAS_ARTIFACT"
 assert_contains "OpenAPI has runProjectGit" "yes" "$HAS_GIT"
 assert_contains "OpenAPI has runProjectCommand" "yes" "$HAS_CMD"
 assert_contains "OpenAPI has createRawCommandRequest" "yes" "$HAS_RAW_REQ"
@@ -1067,6 +1071,7 @@ assert_contains "OpenAPI still has createMessage" "yes" "$HAS_CREATE"
 # Also check codex-only OpenAPI endpoint
 RESP=$(curl -sf "$BASE/codex-openapi.json")
 HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEdit' in sys.stdin.read() else 'no')")
+HAS_ARTIFACT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'saveProjectArtifact' in sys.stdin.read() else 'no')")
 HAS_GIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectGit' in sys.stdin.read() else 'no')")
 HAS_CMD=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCommand' in sys.stdin.read() else 'no')")
 HAS_RAW_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createRawCommandRequest' in sys.stdin.read() else 'no')")
@@ -1075,6 +1080,7 @@ HAS_LIST_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listComman
 HAS_BATCH_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createCommandRequestBatch' in sys.stdin.read() else 'no')")
 HAS_REJECT_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'rejectCommandRequest' in sys.stdin.read() else 'no')")
 assert_contains "codex-openapi.json has applyProjectEdit" "yes" "$HAS_EDIT"
+assert_contains "codex-openapi.json has saveProjectArtifact" "yes" "$HAS_ARTIFACT"
 assert_contains "codex-openapi.json has runProjectGit" "yes" "$HAS_GIT"
 assert_contains "codex-openapi.json has runProjectCommand" "yes" "$HAS_CMD"
 assert_contains "codex-openapi.json has createRawCommandRequest" "yes" "$HAS_RAW_REQ"
@@ -1101,7 +1107,7 @@ for path, methods in spec.get("paths", {}).items():
             ops.append(op["operationId"])
 print("\n".join(sorted(ops)))
 ')
-for op in getProjectContextBatch applyProjectEdit runProjectGit runProjectCommand runCommandRequestOp runProjectCheck writeProjectReport; do
+for op in getProjectContextBatch applyProjectEdit saveProjectArtifact runProjectGit runProjectCommand runCommandRequestOp runProjectCheck writeProjectReport; do
     HAS_OP=$(echo "$COMPACT_OPS" | python3 -c "import sys; op='$op'; print('yes' if op in sys.stdin.read().splitlines() else 'no')")
     assert_eq "codex-openapi-compact.json has $op" "yes" "$HAS_OP"
 done
@@ -1581,6 +1587,92 @@ EDIT_SUCCESS=$(pyget "$RESP" "success")
 EDIT_ERROR=$(pyget "$RESP" "error")
 assert_eq "oversized base64 artifact fails" "False" "$EDIT_SUCCESS"
 assert_contains "oversized base64 artifact error" "too large" "$EDIT_ERROR"
+
+# --- 41o. Artifact API: save_base64 succeeds ---
+echo ""
+echo "--- 41o. Artifact API save_base64 ---"
+RESP=$(curl -sf -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_base64","path":"docs/diagrams/artifact-api.png","base64_content":"AAECAw==","mime_type":"image/png"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_DIFF=$(pyget "$RESP" "diff")
+assert_eq "artifact save_base64 success" "True" "$ART_SUCCESS"
+assert_contains "artifact save_base64 diff" "new size: 4 bytes" "$ART_DIFF"
+
+# --- 41p. Artifact API: save_base64 overwrite succeeds ---
+echo ""
+echo "--- 41p. Artifact API save_base64 overwrite ---"
+RESP=$(curl -sf -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_base64","path":"docs/diagrams/artifact-api.png","base64_content":"AAECAwQFBg==","allow_overwrite":true}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_DIFF=$(pyget "$RESP" "diff")
+assert_eq "artifact save_base64 overwrite success" "True" "$ART_SUCCESS"
+assert_contains "artifact save_base64 overwrite diff" "new size: 7 bytes" "$ART_DIFF"
+
+# --- 41q. Artifact API: save_upload succeeds ---
+echo ""
+echo "--- 41q. Artifact API save_upload ---"
+RESP=$(curl -sf -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_upload","path":"docs/diagrams/artifact-upload.bin","source_file":"upload-source.bin"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_DIFF=$(pyget "$RESP" "diff")
+assert_eq "artifact save_upload success" "True" "$ART_SUCCESS"
+assert_contains "artifact save_upload diff" "new size: 4 bytes" "$ART_DIFF"
+
+# --- 41r. Artifact API: save_url succeeds or skips on network ---
+echo ""
+echo "--- 41r. Artifact API save_url ---"
+RESP=$(curl -s -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_url","path":"docs/diagrams/artifact-url.html","source_url":"https://example.com/"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+if [ "$ART_SUCCESS" = "True" ]; then
+    ART_DIFF=$(pyget "$RESP" "diff")
+    assert_contains "artifact save_url diff" "Binary file" "$ART_DIFF"
+else
+    ART_ERROR=$(pyget "$RESP" "error")
+    log_pass "artifact save_url skipped due network: $ART_ERROR"
+fi
+
+# --- 41s. Artifact API: rejects localhost/private URL ---
+echo ""
+echo "--- 41s. Artifact API rejects localhost URL ---"
+RESP=$(curl -s -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_url","path":"docs/diagrams/artifact-local.bin","source_url":"http://127.0.0.1:1/local.bin"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_ERROR=$(pyget "$RESP" "error")
+assert_eq "artifact localhost URL fails" "False" "$ART_SUCCESS"
+assert_contains "artifact localhost URL error" "blocked private/local" "$ART_ERROR"
+
+# --- 41t. Artifact API: oversized base64 fails ---
+echo ""
+echo "--- 41t. Artifact API oversized base64 fails ---"
+RESP=$(python3 - <<PY | curl -s -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d @-
+import base64, json
+payload = {
+    "project": "test-project",
+    "op": "save_base64",
+    "path": "docs/diagrams/artifact-too-large.png",
+    "base64_content": base64.b64encode(b'x' * (5 * 1024 * 1024 + 1)).decode('ascii'),
+}
+print(json.dumps(payload))
+PY
+)
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_ERROR=$(pyget "$RESP" "error")
+assert_eq "artifact oversized base64 fails" "False" "$ART_SUCCESS"
+assert_contains "artifact oversized base64 error" "too large" "$ART_ERROR"
 
 # --- 42. Edit: dry_run=true returns diff but does not modify ---
 echo ""

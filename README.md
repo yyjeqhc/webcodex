@@ -836,3 +836,20 @@ Examples:
 ```
 
 This endpoint does not bypass existing safety checks. Raw commands still require `allow_raw_command_requests = true`, configured command requests still require `allow_command_requests = true`, approval remains atomic, and all executions use the stored `command_text` snapshot with SQLite audit records.
+
+
+## OpenAPI schema variants
+
+Private Drop exposes three OpenAPI schema variants:
+
+- `/openapi.json`: the full API schema, including message, file, channel, web-adjacent, and Codex project APIs.
+- `/codex-openapi.json`: the full Codex-only schema. It keeps the detailed command request endpoints such as `createCommandRequest`, `createRawCommandRequest`, `listCommandRequests`, `createCommandRequestBatch`, `approveCommandRequest`, and `rejectCommandRequest`. This is useful for debugging or clients that prefer fine-grained operations.
+- `/codex-openapi-compact.json`: the recommended schema for GPT Actions. It exposes a smaller set of core Codex operations and uses `runCommandRequestOp` for command request create/list/approve/reject/batch workflows, reducing the total Action count.
+
+For GPT Builder, prefer importing:
+
+```text
+https://<your-domain>/codex-openapi-compact.json
+```
+
+The compact schema keeps the same `servers[0].url` behavior as the other schemas: it uses `DROP_PUBLIC_URL` when set, otherwise it falls back to `http://localhost:8080`.

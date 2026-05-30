@@ -1004,6 +1004,18 @@ pub async fn openapi_json(res: &mut Response) {
     }
 }
 
+fn apply_project_enum_to_schema(
+    spec: &mut serde_json::Value,
+    schema_names: &[&str],
+    project_enum: &serde_json::Value,
+) {
+    for name in schema_names {
+        spec["components"]["schemas"][*name]["properties"]["project"]["enum"] =
+            project_enum.clone();
+        spec["components"]["schemas"][*name]["properties"]["project"]["description"] = serde_json::json!("Whitelisted project name; not a report channel such as omo, inbox, xline, thesis, packfix, or files.");
+    }
+}
+
 #[handler]
 pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
     let project_enum = project_enum_from_depot(depot);
@@ -1075,26 +1087,96 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
         "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone()
     });
-    for name in [
-        "ContextRequest",
-        "ContextBatchRequest",
-        "PatchRequest",
-        "EditRequest",
-        "GitRequest",
-        "CommandRequest",
-        "CommandRequestCreate",
-        "RawCommandRequestCreate",
-        "CommandRequestBatchCreate",
-        "CommandRequestsListRequest",
-        "CommandRequestOpRequest",
-        "CommandApproveRequest",
-        "CommandRejectRequest",
-        "CheckRequest",
-        "ReportRequest",
-    ] {
-        spec["components"]["schemas"][name]["properties"]["project"]["enum"] = project_enum.clone();
-        spec["components"]["schemas"][name]["properties"]["project"]["description"] = serde_json::json!("Whitelisted project name; not a report channel such as omo, inbox, xline, thesis, packfix, or files.");
-    }
+    apply_project_enum_to_schema(
+        &mut spec,
+        &[
+            "ContextRequest",
+            "ContextBatchRequest",
+            "PatchRequest",
+            "EditRequest",
+            "GitRequest",
+            "CommandRequest",
+            "CommandRequestCreate",
+            "RawCommandRequestCreate",
+            "CommandRequestBatchCreate",
+            "CommandRequestsListRequest",
+            "CommandRequestOpRequest",
+            "CommandApproveRequest",
+            "CommandRejectRequest",
+            "CheckRequest",
+            "ReportRequest",
+        ],
+        &project_enum,
+    );
+    spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
+        serde_json::json!("Report channel; not the project field.");
+    res.render(Json(spec));
+}
+
+#[handler]
+pub async fn codex_openapi_compact_json(depot: &mut Depot, res: &mut Response) {
+    let project_enum = project_enum_from_depot(depot);
+    let mut spec =
+        match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
+            Ok(spec) => spec,
+            Err(e) => {
+                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                res.render(json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &e.to_string(),
+                ));
+                return;
+            }
+        };
+    spec["openapi"] = serde_json::json!("3.1.0");
+    spec["servers"] = serde_json::json!([{ "url": public_url(), "description": "Public server" }]);
+    spec["info"] = serde_json::json!({"title":"Private Drop Compact Codex API","version":env!("CARGO_PKG_VERSION"),"description":"Compact Codex project API for GPT Actions. Uses aggregate endpoints to reduce action count."});
+    spec["paths"] = serde_json::json!({
+        "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
+        "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+        "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
+        "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
+        "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
+        "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
+        "/api/codex/report": spec["paths"]["/api/codex/report"].clone()
+    });
+    spec["components"]["schemas"] = serde_json::json!({
+        "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
+        "ContextBatchItem": spec["components"]["schemas"]["ContextBatchItem"].clone(),
+        "ContextBatchRequest": spec["components"]["schemas"]["ContextBatchRequest"].clone(),
+        "ContextBatchResponse": spec["components"]["schemas"]["ContextBatchResponse"].clone(),
+        "ReplaceTextEdit": spec["components"]["schemas"]["ReplaceTextEdit"].clone(),
+        "ReplaceRangeEdit": spec["components"]["schemas"]["ReplaceRangeEdit"].clone(),
+        "AppendFileEdit": spec["components"]["schemas"]["AppendFileEdit"].clone(),
+        "CreateFileEdit": spec["components"]["schemas"]["CreateFileEdit"].clone(),
+        "WriteFileEdit": spec["components"]["schemas"]["WriteFileEdit"].clone(),
+        "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
+        "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+        "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
+        "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
+        "CommandRequest": spec["components"]["schemas"]["CommandRequest"].clone(),
+        "CommandResponse": spec["components"]["schemas"]["CommandResponse"].clone(),
+        "CommandRequestBatchItem": spec["components"]["schemas"]["CommandRequestBatchItem"].clone(),
+        "CommandRequestOpRequest": spec["components"]["schemas"]["CommandRequestOpRequest"].clone(),
+        "CommandRequestOpResponse": spec["components"]["schemas"]["CommandRequestOpResponse"].clone(),
+        "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
+        "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
+        "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
+        "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone()
+    });
+    apply_project_enum_to_schema(
+        &mut spec,
+        &[
+            "ContextBatchRequest",
+            "EditRequest",
+            "GitRequest",
+            "CommandRequest",
+            "CommandRequestOpRequest",
+            "CheckRequest",
+            "ReportRequest",
+        ],
+        &project_enum,
+    );
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -1540,6 +1622,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
     let codex_openapi_router = Router::with_path("codex-openapi.json").get(codex_openapi_json);
+    let codex_openapi_compact_router =
+        Router::with_path("codex-openapi-compact.json").get(codex_openapi_compact_json);
 
     let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
@@ -1548,6 +1632,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(api_router)
         .push(openapi_router)
         .push(codex_openapi_router)
+        .push(codex_openapi_compact_router)
         .push(web_router);
 
     // Add Codex API routes if projects config is loaded
@@ -1586,6 +1671,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("OpenAPI: http://localhost:{}/openapi.json", port);
     tracing::info!(
         "Codex OpenAPI: http://localhost:{}/codex-openapi.json",
+        port
+    );
+    tracing::info!(
+        "Compact Codex OpenAPI: http://localhost:{}/codex-openapi-compact.json",
         port
     );
     Server::new(acceptor).serve(router).await;

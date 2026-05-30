@@ -958,6 +958,57 @@ assert_contains "codex-openapi.json has rejectCommandRequest" "yes" "$HAS_REJECT
 HAS_ONEOF=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'oneOf' in sys.stdin.read() else 'no')")
 assert_contains "codex-openapi.json has oneOf schemas" "yes" "$HAS_ONEOF"
 
+# Compact Codex OpenAPI should expose only action-efficient core operations
+RESP=$(curl -sf "$BASE/codex-openapi-compact.json")
+COMPACT_OK=$(echo "$RESP" | python3 -c "import sys,json; json.load(sys.stdin); print('yes')")
+COMPACT_SERVER=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['servers'][0]['url'])")
+assert_eq "codex-openapi-compact.json loads" "yes" "$COMPACT_OK"
+assert_eq "codex-openapi-compact.json server url" "http://localhost:8080" "$COMPACT_SERVER"
+COMPACT_OPS=$(echo "$RESP" | python3 -c '
+import json, sys
+spec=json.load(sys.stdin)
+ops=[]
+for path, methods in spec.get("paths", {}).items():
+    for method, op in methods.items():
+        if isinstance(op, dict) and "operationId" in op:
+            ops.append(op["operationId"])
+print("\n".join(sorted(ops)))
+')
+for op in getProjectContextBatch applyProjectEdit runProjectGit runProjectCommand runCommandRequestOp runProjectCheck writeProjectReport; do
+    HAS_OP=$(echo "$COMPACT_OPS" | python3 -c "import sys; op='$op'; print('yes' if op in sys.stdin.read().splitlines() else 'no')")
+    assert_eq "codex-openapi-compact.json has $op" "yes" "$HAS_OP"
+done
+for op in getProjectContext applyProjectPatch createCommandRequest createRawCommandRequest listCommandRequests createCommandRequestBatch approveCommandRequest rejectCommandRequest; do
+    HAS_OP=$(echo "$COMPACT_OPS" | python3 -c "import sys; op='$op'; print('yes' if op in sys.stdin.read().splitlines() else 'no')")
+    assert_eq "codex-openapi-compact.json hides $op" "no" "$HAS_OP"
+done
+COMPACT_PATHS=$(echo "$RESP" | python3 -c 'import json,sys; d=json.load(sys.stdin); print("\n".join(sorted(d.get("paths", {}).keys())))')
+for path in /api/codex/context /api/codex/apply_patch /api/codex/command_request /api/codex/command_request_raw /api/codex/command_requests /api/codex/command_request_batch /api/codex/command_approve /api/codex/command_reject; do
+    HAS_PATH=$(echo "$COMPACT_PATHS" | python3 -c "import sys; path='$path'; print('yes' if path in sys.stdin.read().splitlines() else 'no')")
+    assert_eq "codex-openapi-compact.json hides $path" "no" "$HAS_PATH"
+done
+COMPACT_REFS_OK=$(echo "$RESP" | python3 -c '
+import json, sys
+spec = json.load(sys.stdin)
+schemas = spec.get("components", {}).get("schemas", {})
+missing = []
+def walk(x):
+    if isinstance(x, dict):
+        ref = x.get("$ref")
+        if isinstance(ref, str) and ref.startswith("#/components/schemas/"):
+            name = ref.rsplit("/", 1)[-1]
+            if name not in schemas:
+                missing.append(name)
+        for v in x.values():
+            walk(v)
+    elif isinstance(x, list):
+        for v in x:
+            walk(v)
+walk(spec)
+print("yes" if not missing else "missing:" + ",".join(sorted(set(missing))))
+')
+assert_eq "codex-openapi-compact.json refs resolve" "yes" "$COMPACT_REFS_OK"
+
 # --- 31. Path safety: read_file rejects dangerous paths ---
 echo ""
 echo "--- 31. Path Safety ---"

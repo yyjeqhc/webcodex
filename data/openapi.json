@@ -314,6 +314,34 @@
         },
         "required": ["request_id"]
       },
+      "CommandRequestOpRequest": {
+        "type": "object",
+        "properties": {
+          "op": {"type": "string", "enum": ["list", "create", "create_raw", "create_batch", "approve", "approve_batch", "reject", "reject_batch"], "description": "Command request operation to perform"},
+          "project": {"type": "string", "nullable": true, "description": "Project name for create/list filters"},
+          "command": {"type": "string", "nullable": true, "description": "Configured command id for op=create"},
+          "command_text": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Raw single-line command for op=create_raw"},
+          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Reason for create/reject operations"},
+          "requests": {"type": "array", "items": {"$ref": "#/components/schemas/CommandRequestBatchItem"}, "description": "Batch items for op=create_batch"},
+          "request_id": {"type": "string", "nullable": true, "description": "Request id for op=approve or op=reject"},
+          "request_ids": {"type": "array", "items": {"type": "string"}, "description": "Request ids for op=approve_batch or op=reject_batch"},
+          "status": {"type": "string", "nullable": true, "enum": ["pending", "running", "completed", "failed", "rejected", "expired"], "description": "Status filter for op=list"},
+          "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}
+        },
+        "required": ["op"]
+      },
+      "CommandRequestOpResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "op": {"type": "string"},
+          "records": {"type": "array", "items": {"type": "object"}},
+          "request_id": {"type": "string", "nullable": true},
+          "record": {"type": "object", "nullable": true},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "op", "records"]
+      },
       "CommandResponse": {
         "type": "object",
         "properties": {
@@ -619,6 +647,24 @@
           "200": {"description": "Command request created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
           "400": {"description": "Bad request"},
           "403": {"description": "Command requests disabled"}
+        }
+      }
+    },
+    "/api/codex/command_request_op": {
+      "post": {
+        "operationId": "runCommandRequestOp",
+        "summary": "Run an aggregated command request operation",
+        "description": "Single aggregated endpoint for command request workflow operations. Use op=list/create/create_raw/create_batch/approve/approve_batch/reject/reject_batch to reduce GPT Action count while preserving audit and approval semantics.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestOpRequest"}}}
+        },
+        "responses": {
+          "200": {"description": "Command request operation result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestOpResponse"}}}},
+          "400": {"description": "Bad request"},
+          "403": {"description": "Operation disabled"},
+          "404": {"description": "Request not found"}
         }
       }
     },

@@ -808,3 +808,31 @@ Example request:
 ```
 
 The command is stored as the audited `command_text` snapshot and is not executed until `approveCommandRequest` is called for the returned `request_id`. Raw commands are limited to 2000 characters, must be a single line, and are rejected if they contain blocked high-risk tokens such as `sudo`, `apt`, `systemctl`, `docker`, `rm -rf`, `git push`, `git fetch`, `git checkout`, `git restore`, `git clean`, `curl`, `wget`, `scp`, or `rsync`.
+
+
+## Aggregated command request operation
+
+`POST /api/codex/command_request_op` is a compact, enum-style wrapper around the command request workflow. It is intended for GPT Actions where the action count is limited: one endpoint can list, create, approve, reject, and batch-operate command requests.
+
+Supported `op` values:
+
+- `list`: list audit records using optional `project`, `status`, and `limit`
+- `create`: create one configured-command request using `project`, `command`, and optional `reason`
+- `create_raw`: create one raw command request using `project`, `command_text`, and optional `reason`
+- `create_batch`: create 1-20 configured-command requests using `project` and `requests`
+- `approve`: approve one request using `request_id`
+- `approve_batch`: approve 1-20 requests using `request_ids`
+- `reject`: reject one request using `request_id` and optional `reason`
+- `reject_batch`: reject 1-20 requests using `request_ids` and optional `reason`
+
+Examples:
+
+```json
+{"op":"create_raw","project":"private-drop-v4","command_text":"git status --short","reason":"inspect status"}
+```
+
+```json
+{"op":"approve_batch","request_ids":["id-1","id-2"]}
+```
+
+This endpoint does not bypass existing safety checks. Raw commands still require `allow_raw_command_requests = true`, configured command requests still require `allow_command_requests = true`, approval remains atomic, and all executions use the stored `command_text` snapshot with SQLite audit records.

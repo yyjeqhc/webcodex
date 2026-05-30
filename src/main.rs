@@ -1030,6 +1030,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
         "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
         "/api/codex/command_request": spec["paths"]["/api/codex/command_request"].clone(),
+        "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
         "/api/codex/command_request_raw": spec["paths"]["/api/codex/command_request_raw"].clone(),
         "/api/codex/command_requests": spec["paths"]["/api/codex/command_requests"].clone(),
         "/api/codex/command_request_batch": spec["paths"]["/api/codex/command_request_batch"].clone(),
@@ -1064,6 +1065,8 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "CommandRequestsListRequest": spec["components"]["schemas"]["CommandRequestsListRequest"].clone(),
         "CommandApproveRequest": spec["components"]["schemas"]["CommandApproveRequest"].clone(),
         "CommandRejectRequest": spec["components"]["schemas"]["CommandRejectRequest"].clone(),
+        "CommandRequestOpRequest": spec["components"]["schemas"]["CommandRequestOpRequest"].clone(),
+        "CommandRequestOpResponse": spec["components"]["schemas"]["CommandRequestOpResponse"].clone(),
         "CommandRequestResponse": spec["components"]["schemas"]["CommandRequestResponse"].clone(),
         "CommandRequestsListResponse": spec["components"]["schemas"]["CommandRequestsListResponse"].clone(),
         "CommandRequestBatchResponse": spec["components"]["schemas"]["CommandRequestBatchResponse"].clone(),
@@ -1083,6 +1086,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "RawCommandRequestCreate",
         "CommandRequestBatchCreate",
         "CommandRequestsListRequest",
+        "CommandRequestOpRequest",
         "CommandApproveRequest",
         "CommandRejectRequest",
         "CheckRequest",
@@ -1558,6 +1562,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("git").post(codex::codex_git))
                 .push(Router::with_path("command").post(codex::codex_command))
                 .push(Router::with_path("command_request").post(codex::codex_command_request))
+                .push(Router::with_path("command_request_op").post(codex::codex_command_request_op))
                 .push(
                     Router::with_path("command_request_raw").post(codex::codex_command_request_raw),
                 )

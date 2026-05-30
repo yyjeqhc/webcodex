@@ -165,6 +165,29 @@ pub struct CommandRejectRequest {
     pub reason: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct CommandRequestOpRequest {
+    pub op: String,
+    #[serde(default)]
+    pub project: Option<String>,
+    #[serde(default)]
+    pub command: Option<String>,
+    #[serde(default)]
+    pub command_text: Option<String>,
+    #[serde(default)]
+    pub reason: Option<String>,
+    #[serde(default)]
+    pub requests: Vec<CommandRequestBatchItem>,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    #[serde(default)]
+    pub request_ids: Vec<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default = "default_command_request_limit")]
+    pub limit: usize,
+}
+
 fn default_channel() -> String {
     "omo".to_string()
 }
@@ -297,6 +320,19 @@ pub struct CommandRequestsListResponse {
 pub struct CommandRequestBatchResponse {
     pub success: bool,
     pub records: Vec<CommandAuditRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct CommandRequestOpResponse {
+    pub success: bool,
+    pub op: String,
+    pub records: Vec<CommandAuditRecord>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub record: Option<CommandAuditRecord>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
@@ -2860,6 +2896,558 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
             Some("command failed".to_string())
         },
     }));
+}
+
+fn op_response(
+    op: &str,
+    success: bool,
+    records: Vec<CommandAuditRecord>,
+    error: Option<String>,
+) -> CommandRequestOpResponse {
+    CommandRequestOpResponse {
+        success,
+        op: op.to_string(),
+        request_id: records.first().map(|r| r.id.clone()),
+        record: records.first().cloned(),
+        records,
+        error,
+    }
+}
+
+fn reject_command_request_inner(
+    db: &Database,
+    request_id: String,
+    reason: Option<String>,
+) -> CommandRequestResponse {
+    if let Err(e) = validate_command_request_reason(&reason) {
+        return CommandRequestResponse {
+            success: false,
+            request_id: Some(request_id),
+            record: None,
+            error: Some(e),
+        };
+    }
+    let error = reason.unwrap_or_else(|| "Rejected by user".to_string());
+    match db.reject_command_request(&request_id, chrono::Utc::now().timestamp(), &error) {
+        Ok(Some(record)) => CommandRequestResponse {
+            success: true,
+            request_id: Some(record.id.clone()),
+            record: Some(record),
+            error: None,
+        },
+        Ok(None) => match db.get_command_request(&request_id) {
+            Ok(Some(record)) => CommandRequestResponse {
+                success: false,
+                request_id: Some(record.id.clone()),
+                record: Some(record),
+                error: Some("Command request is not pending".to_string()),
+            },
+            Ok(None) => CommandRequestResponse {
+                success: false,
+                request_id: Some(request_id),
+                record: None,
+                error: Some("Command request not found".to_string()),
+            },
+            Err(e) => CommandRequestResponse {
+                success: false,
+                request_id: Some(request_id),
+                record: None,
+                error: Some(format!("Failed to load command request: {}", e)),
+            },
+        },
+        Err(e) => CommandRequestResponse {
+            success: false,
+            request_id: Some(request_id),
+            record: None,
+            error: Some(format!("Failed to reject command request: {}", e)),
+        },
+    }
+}
+
+fn approve_command_request_inner(
+    projects: &ProjectsConfig,
+    db: &Database,
+    request_id: String,
+) -> CommandRequestResponse {
+    let approved_at = chrono::Utc::now().timestamp();
+    let min_created_at = approved_at - COMMAND_REQUEST_TTL_SECS;
+    let mut record =
+        match db.claim_command_request_for_execution(&request_id, approved_at, min_created_at) {
+            Ok(Some(record)) => record,
+            Ok(None) => match db.get_command_request(&request_id) {
+                Ok(Some(record)) => {
+                    if record.status == "pending" && record.created_at < min_created_at {
+                        let error = "Command request expired".to_string();
+                        let expired = db
+                            .expire_command_request(&record.id, approved_at, &error)
+                            .ok()
+                            .flatten()
+                            .unwrap_or(record);
+                        return CommandRequestResponse {
+                            success: false,
+                            request_id: Some(expired.id.clone()),
+                            record: Some(expired),
+                            error: Some(error),
+                        };
+                    }
+                    return CommandRequestResponse {
+                        success: false,
+                        request_id: Some(record.id.clone()),
+                        record: Some(record),
+                        error: Some("Command request is not pending".to_string()),
+                    };
+                }
+                Ok(None) => {
+                    return CommandRequestResponse {
+                        success: false,
+                        request_id: Some(request_id),
+                        record: None,
+                        error: Some("Command request not found".to_string()),
+                    };
+                }
+                Err(e) => {
+                    return CommandRequestResponse {
+                        success: false,
+                        request_id: Some(request_id),
+                        record: None,
+                        error: Some(format!("Failed to load command request: {}", e)),
+                    };
+                }
+            },
+            Err(e) => {
+                return CommandRequestResponse {
+                    success: false,
+                    request_id: Some(request_id),
+                    record: None,
+                    error: Some(format!("Failed to claim command request: {}", e)),
+                };
+            }
+        };
+    let proj = match projects.get_project(&record.project) {
+        Ok(p) => p,
+        Err(e) => {
+            record.status = "failed".to_string();
+            record.executed_at = Some(chrono::Utc::now().timestamp());
+            record.error = Some(e.clone());
+            let _ = db.update_command_request_result(&record);
+            return CommandRequestResponse {
+                success: false,
+                request_id: Some(record.id.clone()),
+                record: Some(record),
+                error: Some(e),
+            };
+        }
+    };
+    if !proj.allow_command_requests {
+        let error = "Command requests are not enabled for this project".to_string();
+        record.status = "failed".to_string();
+        record.executed_at = Some(chrono::Utc::now().timestamp());
+        record.error = Some(error.clone());
+        let _ = db.update_command_request_result(&record);
+        return CommandRequestResponse {
+            success: false,
+            request_id: Some(record.id.clone()),
+            record: Some(record),
+            error: Some(error),
+        };
+    }
+    let cmd = match record.command_text.clone() {
+        Some(cmd) if !cmd.is_empty() => cmd,
+        _ => {
+            let error = "Command request is missing command_text snapshot".to_string();
+            record.status = "failed".to_string();
+            record.executed_at = Some(chrono::Utc::now().timestamp());
+            record.error = Some(error.clone());
+            let _ = db.update_command_request_result(&record);
+            return CommandRequestResponse {
+                success: false,
+                request_id: Some(record.id.clone()),
+                record: Some(record),
+                error: Some(error),
+            };
+        }
+    };
+    let (code, stdout, stderr, _) =
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (stdout_tail, _) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
+    let (stderr_tail, _) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
+    record.status = if code == 0 { "completed" } else { "failed" }.to_string();
+    record.approved_at = Some(approved_at);
+    record.executed_at = Some(chrono::Utc::now().timestamp());
+    record.exit_code = Some(code);
+    record.stdout_tail = Some(stdout_tail);
+    record.stderr_tail = Some(stderr_tail);
+    record.error = if code == 0 {
+        None
+    } else {
+        Some("command failed".to_string())
+    };
+    if let Err(e) = db.update_command_request_result(&record) {
+        return CommandRequestResponse {
+            success: false,
+            request_id: Some(record.id.clone()),
+            record: Some(record),
+            error: Some(format!("Failed to update command request: {}", e)),
+        };
+    }
+    CommandRequestResponse {
+        success: code == 0,
+        request_id: Some(record.id.clone()),
+        record: Some(record),
+        error: if code == 0 {
+            None
+        } else {
+            Some("command failed".to_string())
+        },
+    }
+}
+
+#[handler]
+pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(op_response(
+            "unknown",
+            false,
+            Vec::new(),
+            Some("Projects not configured".to_string()),
+        )));
+        return;
+    };
+    let Some(db) = get_db(depot) else {
+        res.render(Json(op_response(
+            "unknown",
+            false,
+            Vec::new(),
+            Some("Database not configured".to_string()),
+        )));
+        return;
+    };
+    let body: CommandRequestOpRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(op_response(
+                "unknown",
+                false,
+                Vec::new(),
+                Some(format!("Invalid JSON: {}", e)),
+            )));
+            return;
+        }
+    };
+    match body.op.as_str() {
+        "list" => {
+            if let Some(status) = &body.status {
+                if let Err(e) = validate_command_request_status(status) {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+            }
+            match db.list_command_requests(
+                body.project.as_deref(),
+                body.status.as_deref(),
+                body.limit,
+            ) {
+                Ok(records) => res.render(Json(op_response(&body.op, true, records, None))),
+                Err(e) => res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some(format!("Failed to list command requests: {}", e)),
+                ))),
+            }
+        }
+        "create" => {
+            let Some(project) = body.project else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("project is required".to_string()),
+                )));
+                return;
+            };
+            let Some(command) = body.command else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("command is required".to_string()),
+                )));
+                return;
+            };
+            if let Err(e) = validate_command_request_reason(&body.reason) {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
+            let proj = match projects.get_project(&project) {
+                Ok(p) => p,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+            };
+            if !proj.allow_command_requests {
+                res.status_code(StatusCode::FORBIDDEN);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("Command requests are not enabled for this project".to_string()),
+                )));
+                return;
+            }
+            let command_text = match get_project_command(proj, &command) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+            };
+            let record = build_command_audit_record(
+                project,
+                command,
+                command_text,
+                body.reason,
+                chrono::Utc::now().timestamp(),
+            );
+            if let Err(e) = db.insert_command_request(&record) {
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some(format!("Failed to create command request: {}", e)),
+                )));
+                return;
+            }
+            res.render(Json(op_response(&body.op, true, vec![record], None)));
+        }
+        "create_raw" => {
+            let Some(project) = body.project else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("project is required".to_string()),
+                )));
+                return;
+            };
+            let Some(command_text) = body.command_text else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("command_text is required".to_string()),
+                )));
+                return;
+            };
+            if let Err(e) = validate_command_request_reason(&body.reason) {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
+            if let Err(e) = validate_raw_command_text(&command_text) {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
+            let proj = match projects.get_project(&project) {
+                Ok(p) => p,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+            };
+            if !proj.allow_raw_command_requests {
+                res.status_code(StatusCode::FORBIDDEN);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("Raw command requests are not enabled for this project".to_string()),
+                )));
+                return;
+            }
+            let record = build_command_audit_record(
+                project,
+                "raw".to_string(),
+                command_text.trim().to_string(),
+                body.reason,
+                chrono::Utc::now().timestamp(),
+            );
+            if let Err(e) = db.insert_command_request(&record) {
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some(format!("Failed to create raw command request: {}", e)),
+                )));
+                return;
+            }
+            res.render(Json(op_response(&body.op, true, vec![record], None)));
+        }
+        "create_batch" => {
+            let Some(project) = body.project else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("project is required".to_string()),
+                )));
+                return;
+            };
+            if body.requests.is_empty() || body.requests.len() > MAX_COMMAND_REQUEST_BATCH {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some(format!(
+                        "requests must contain 1-{} items",
+                        MAX_COMMAND_REQUEST_BATCH
+                    )),
+                )));
+                return;
+            }
+            let proj = match projects.get_project(&project) {
+                Ok(p) => p,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+            };
+            if !proj.allow_command_requests {
+                res.status_code(StatusCode::FORBIDDEN);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("Command requests are not enabled for this project".to_string()),
+                )));
+                return;
+            }
+            let now = chrono::Utc::now().timestamp();
+            let mut records = Vec::with_capacity(body.requests.len());
+            for item in body.requests {
+                if let Err(e) = validate_command_request_reason(&item.reason) {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
+                let command_text = match get_project_command(proj, &item.command) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        res.status_code(StatusCode::BAD_REQUEST);
+                        res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                        return;
+                    }
+                };
+                records.push(build_command_audit_record(
+                    project.clone(),
+                    item.command,
+                    command_text,
+                    item.reason,
+                    now,
+                ));
+            }
+            for record in &records {
+                if let Err(e) = db.insert_command_request(record) {
+                    res.render(Json(op_response(
+                        &body.op,
+                        false,
+                        Vec::new(),
+                        Some(format!("Failed to create command request: {}", e)),
+                    )));
+                    return;
+                }
+            }
+            res.render(Json(op_response(&body.op, true, records, None)));
+        }
+        "approve" | "reject" => {
+            let Some(request_id) = body.request_id else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some("request_id is required".to_string()),
+                )));
+                return;
+            };
+            let resp = if body.op == "approve" {
+                approve_command_request_inner(&projects, &db, request_id)
+            } else {
+                reject_command_request_inner(&db, request_id, body.reason)
+            };
+            let records = resp.record.clone().into_iter().collect::<Vec<_>>();
+            res.render(Json(CommandRequestOpResponse {
+                success: resp.success,
+                op: body.op,
+                records,
+                request_id: resp.request_id,
+                record: resp.record,
+                error: resp.error,
+            }));
+        }
+        "approve_batch" | "reject_batch" => {
+            if body.request_ids.is_empty() || body.request_ids.len() > MAX_COMMAND_REQUEST_BATCH {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(op_response(
+                    &body.op,
+                    false,
+                    Vec::new(),
+                    Some(format!(
+                        "request_ids must contain 1-{} items",
+                        MAX_COMMAND_REQUEST_BATCH
+                    )),
+                )));
+                return;
+            }
+            let mut records = Vec::new();
+            let mut all_success = true;
+            let mut first_error = None;
+            for request_id in body.request_ids {
+                let resp = if body.op == "approve_batch" {
+                    approve_command_request_inner(&projects, &db, request_id)
+                } else {
+                    reject_command_request_inner(&db, request_id, body.reason.clone())
+                };
+                all_success &= resp.success;
+                if first_error.is_none() {
+                    first_error = resp.error.clone();
+                }
+                if let Some(record) = resp.record {
+                    records.push(record);
+                }
+            }
+            res.render(Json(op_response(
+                &body.op,
+                all_success,
+                records,
+                first_error,
+            )));
+        }
+        _ => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(op_response(
+                &body.op,
+                false,
+                Vec::new(),
+                Some("unsupported op".to_string()),
+            )));
+        }
+    }
 }
 
 #[handler]

@@ -489,6 +489,8 @@ assert_http_code "POST /api/codex/command without token returns 401" "401" "$COD
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","command":"smoke"}'
 assert_http_code "POST /api/codex/command_request without token returns 401" "401" "$CODEX/command_request" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","command":"smoke"}'
+assert_http_code "POST /api/codex/command_request_op without token returns 401" "401" "$CODEX/command_request_op" \
+    -X POST -H "Content-Type: application/json" -d '{"op":"list","project":"test-project"}'
 assert_http_code "POST /api/codex/command_request_raw without token returns 401" "401" "$CODEX/command_request_raw" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","command_text":"echo raw"}'
 assert_http_code "POST /api/codex/command_requests without token returns 401" "401" "$CODEX/command_requests" \
@@ -763,6 +765,47 @@ RAW_BLOCK_SUCCESS=$(pyget "$RESP" "success")
 RAW_BLOCK_ERROR=$(pyget "$RESP" "error")
 assert_eq "Raw command high-risk blocked" "False" "$RAW_BLOCK_SUCCESS"
 assert_contains "Raw command block error" "blocked" "$RAW_BLOCK_ERROR"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"create_raw","project":"test-project","command_text":"echo op-raw-ok","reason":"aggregated raw smoke"}')
+OP_SUCCESS=$(pyget "$RESP" "success")
+OP_ID=$(pyget "$RESP" "request_id")
+OP_COMMAND_TEXT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('command_text') or '')")
+assert_eq "Command op create_raw success" "True" "$OP_SUCCESS"
+assert_contains "Command op create_raw stores command_text" "echo op-raw-ok" "$OP_COMMAND_TEXT"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'approve','request_id':'$OP_ID'}))")")
+OP_APPROVE_SUCCESS=$(pyget "$RESP" "success")
+OP_APPROVE_STDOUT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('stdout_tail') or '')")
+assert_eq "Command op approve success" "True" "$OP_APPROVE_SUCCESS"
+assert_contains "Command op approve stdout" "op-raw-ok" "$OP_APPROVE_STDOUT"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"list","project":"test-project","status":"completed","limit":20}')
+OP_LIST_SUCCESS=$(pyget "$RESP" "success")
+OP_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); ids={r['id'] for r in d.get('records', [])}; print('yes' if '$OP_ID' in ids else 'no')")
+assert_eq "Command op list success" "True" "$OP_LIST_SUCCESS"
+assert_eq "Command op list has approved id" "yes" "$OP_LIST_HAS_ID"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"create_batch","project":"test-project","requests":[{"command":"smoke","reason":"op batch 1"},{"command":"smoke","reason":"op batch 2"}]}')
+OP_BATCH_SUCCESS=$(pyget "$RESP" "success")
+OP_BATCH_ID_0=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['records'][0]['id'])")
+OP_BATCH_ID_1=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['records'][1]['id'])")
+assert_eq "Command op create_batch success" "True" "$OP_BATCH_SUCCESS"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'reject_batch','request_ids':['$OP_BATCH_ID_0','$OP_BATCH_ID_1'],'reason':'batch rejected'}))")")
+OP_REJECT_BATCH_SUCCESS=$(pyget "$RESP" "success")
+OP_REJECT_BATCH_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('records', [])))")
+assert_eq "Command op reject_batch success" "True" "$OP_REJECT_BATCH_SUCCESS"
+assert_eq "Command op reject_batch count" "2" "$OP_REJECT_BATCH_COUNT"
 
 # --- 25. Codex: applyProjectPatch ---
 echo ""
@@ -868,6 +911,7 @@ HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEd
 HAS_GIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectGit' in sys.stdin.read() else 'no')")
 HAS_CMD=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCommand' in sys.stdin.read() else 'no')")
 HAS_RAW_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createRawCommandRequest' in sys.stdin.read() else 'no')")
+HAS_OP_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runCommandRequestOp' in sys.stdin.read() else 'no')")
 HAS_LIST_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listCommandRequests' in sys.stdin.read() else 'no')")
 HAS_BATCH_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createCommandRequestBatch' in sys.stdin.read() else 'no')")
 HAS_REJECT_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'rejectCommandRequest' in sys.stdin.read() else 'no')")
@@ -879,6 +923,7 @@ assert_contains "OpenAPI has applyProjectEdit" "yes" "$HAS_EDIT"
 assert_contains "OpenAPI has runProjectGit" "yes" "$HAS_GIT"
 assert_contains "OpenAPI has runProjectCommand" "yes" "$HAS_CMD"
 assert_contains "OpenAPI has createRawCommandRequest" "yes" "$HAS_RAW_REQ"
+assert_contains "OpenAPI has runCommandRequestOp" "yes" "$HAS_OP_REQ"
 assert_contains "OpenAPI has listCommandRequests" "yes" "$HAS_LIST_REQ"
 assert_contains "OpenAPI has createCommandRequestBatch" "yes" "$HAS_BATCH_REQ"
 assert_contains "OpenAPI has rejectCommandRequest" "yes" "$HAS_REJECT_REQ"
@@ -898,6 +943,7 @@ HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEd
 HAS_GIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectGit' in sys.stdin.read() else 'no')")
 HAS_CMD=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCommand' in sys.stdin.read() else 'no')")
 HAS_RAW_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createRawCommandRequest' in sys.stdin.read() else 'no')")
+HAS_OP_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runCommandRequestOp' in sys.stdin.read() else 'no')")
 HAS_LIST_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listCommandRequests' in sys.stdin.read() else 'no')")
 HAS_BATCH_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createCommandRequestBatch' in sys.stdin.read() else 'no')")
 HAS_REJECT_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'rejectCommandRequest' in sys.stdin.read() else 'no')")
@@ -905,6 +951,7 @@ assert_contains "codex-openapi.json has applyProjectEdit" "yes" "$HAS_EDIT"
 assert_contains "codex-openapi.json has runProjectGit" "yes" "$HAS_GIT"
 assert_contains "codex-openapi.json has runProjectCommand" "yes" "$HAS_CMD"
 assert_contains "codex-openapi.json has createRawCommandRequest" "yes" "$HAS_RAW_REQ"
+assert_contains "codex-openapi.json has runCommandRequestOp" "yes" "$HAS_OP_REQ"
 assert_contains "codex-openapi.json has listCommandRequests" "yes" "$HAS_LIST_REQ"
 assert_contains "codex-openapi.json has createCommandRequestBatch" "yes" "$HAS_BATCH_REQ"
 assert_contains "codex-openapi.json has rejectCommandRequest" "yes" "$HAS_REJECT_REQ"

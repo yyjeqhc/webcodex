@@ -1,7 +1,7 @@
 use crate::projects::ProjectConfig;
-use crate::CommandAuditRecord;
+use crate::{CodexGoalRecord, CommandAuditRecord};
 
-use super::types::CommandResponse;
+use super::types::{CommandRequestOpResponse, CommandResponse};
 
 pub(super) const MAX_COMMAND_REASON_LEN: usize = 2_000;
 pub(super) const MAX_RAW_COMMAND_LEN: usize = 2_000;
@@ -191,6 +191,55 @@ pub(super) fn build_command_audit_record(
         exit_code: None,
         stdout_tail: None,
         stderr_tail: None,
+        error: None,
+    }
+}
+
+pub(super) fn op_response(
+    op: &str,
+    success: bool,
+    records: Vec<CommandAuditRecord>,
+    error: Option<String>,
+) -> CommandRequestOpResponse {
+    op_response_with_goals(op, success, records, Vec::new(), error)
+}
+
+pub(super) fn op_response_with_goals(
+    op: &str,
+    success: bool,
+    records: Vec<CommandAuditRecord>,
+    goals: Vec<CodexGoalRecord>,
+    error: Option<String>,
+) -> CommandRequestOpResponse {
+    CommandRequestOpResponse {
+        success,
+        op: op.to_string(),
+        request_id: records.first().map(|r| r.id.clone()),
+        record: records.first().cloned(),
+        goal_id: goals.first().map(|g| g.id.clone()),
+        goal: goals.first().cloned(),
+        records,
+        goals,
+        error,
+    }
+}
+
+pub(super) fn build_goal_record(
+    project: String,
+    title: String,
+    summary: Option<String>,
+    now: i64,
+    ttl_secs: i64,
+) -> CodexGoalRecord {
+    CodexGoalRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        project,
+        title,
+        summary,
+        status: "pending".to_string(),
+        created_at: now,
+        expires_at: now + ttl_secs,
+        closed_at: None,
         error: None,
     }
 }

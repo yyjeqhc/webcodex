@@ -1,9 +1,11 @@
-use crate::projects::{canonicalize_and_verify, ProjectConfig};
-use base64::Engine;
-
+use super::apply_edit_request_with_metrics;
+use super::get_projects;
 use super::read_binary_from_url;
 use super::security::is_sensitive_path;
 use super::types::{EditOperation, EditRequest, EditResponse};
+use crate::projects::{canonicalize_and_verify, ProjectConfig};
+use base64::Engine;
+use salvo::prelude::*;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -693,4 +695,63 @@ pub(super) fn read_binary_from_upload(
     let bytes =
         std::fs::read(&canonical).map_err(|e| format!("Failed to read source_file: {}", e))?;
     validate_binary_size(bytes, rel_path)
+}
+
+#[handler]
+pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(edit_error("Projects not configured".to_string())));
+        return;
+    };
+    let body: EditRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(edit_error(format!("Invalid JSON: {}", e))));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(edit_error(e)));
+            return;
+        }
+    };
+    if !proj.allow_patch() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(edit_error(
+            "Edit is not allowed for this project".to_string(),
+        )));
+        return;
+    }
+    if body.edits.is_empty() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(edit_error("edits cannot be empty".to_string())));
+        return;
+    }
+    if let Err(e) = validate_no_mixed_edit_kinds(&body.edits) {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(edit_error(e)));
+        return;
+    }
+    for edit in &body.edits {
+        if let Err(e) = validate_edit_path(edit_path(edit)) {
+            res.status_code(StatusCode::FORBIDDEN);
+            res.render(Json(edit_error(e)));
+            return;
+        }
+        if edit_text_len(edit) > MAX_EDIT_TEXT_SIZE {
+            res.status_code(StatusCode::PAYLOAD_TOO_LARGE);
+            res.render(Json(edit_error(format!(
+                "edit text for {} exceeds {} bytes",
+                edit_path(edit),
+                MAX_EDIT_TEXT_SIZE
+            ))));
+            return;
+        }
+    }
+    let response = apply_edit_request_with_metrics(&projects, proj, &body, "applyProjectEdit");
+    res.render(Json(response));
 }

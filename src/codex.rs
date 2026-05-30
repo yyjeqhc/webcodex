@@ -21,6 +21,7 @@ pub use command_request::{
     codex_command_requests,
 };
 use context::*;
+pub use edit::codex_edit;
 use edit::*;
 pub use git::codex_git;
 #[cfg(test)]
@@ -45,7 +46,6 @@ use url_security::*;
 
 pub(super) const MAX_OUTPUT_LEN: usize = 50_000;
 pub(super) const CHECK_TIMEOUT_SECS: u64 = 300;
-const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
 const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
 const URL_IMPORT_TIMEOUT_SECS: u64 = 10;
 
@@ -3493,7 +3493,7 @@ fn read_binary_from_url(source_url: &str, rel_path: &str) -> Result<Vec<u8>, Str
     validate_binary_size(bytes, rel_path)
 }
 
-fn apply_edit_request_with_metrics(
+pub(super) fn apply_edit_request_with_metrics(
     projects: &ProjectsConfig,
     proj: &ProjectConfig,
     body: &EditRequest,
@@ -3534,65 +3534,6 @@ fn apply_edit_request_with_metrics(
         "codex_edit_completed"
     );
     response
-}
-
-#[handler]
-pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(projects) = get_projects(depot) else {
-        res.render(Json(edit_error("Projects not configured".to_string())));
-        return;
-    };
-    let body: EditRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(edit_error(format!("Invalid JSON: {}", e))));
-            return;
-        }
-    };
-    let proj = match projects.get_project(&body.project) {
-        Ok(p) => p,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(edit_error(e)));
-            return;
-        }
-    };
-    if !proj.allow_patch() {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(edit_error(
-            "Edit is not allowed for this project".to_string(),
-        )));
-        return;
-    }
-    if body.edits.is_empty() {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(edit_error("edits cannot be empty".to_string())));
-        return;
-    }
-    if let Err(e) = validate_no_mixed_edit_kinds(&body.edits) {
-        res.status_code(StatusCode::BAD_REQUEST);
-        res.render(Json(edit_error(e)));
-        return;
-    }
-    for edit in &body.edits {
-        if let Err(e) = validate_edit_path(edit_path(edit)) {
-            res.status_code(StatusCode::FORBIDDEN);
-            res.render(Json(edit_error(e)));
-            return;
-        }
-        if edit_text_len(edit) > MAX_EDIT_TEXT_SIZE {
-            res.status_code(StatusCode::PAYLOAD_TOO_LARGE);
-            res.render(Json(edit_error(format!(
-                "edit text for {} exceeds {} bytes",
-                edit_path(edit),
-                MAX_EDIT_TEXT_SIZE
-            ))));
-            return;
-        }
-    }
-    let response = apply_edit_request_with_metrics(&projects, proj, &body, "applyProjectEdit");
-    res.render(Json(response));
 }
 
 #[handler]

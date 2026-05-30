@@ -1,5 +1,5 @@
+use super::command_workflow::require_active_goal;
 use super::get_projects;
-use super::require_active_goal;
 use super::types::{job_response, JobOpRequest, JobOpResponse};
 use crate::get_db;
 use crate::projects::{ProjectConfig, SshConfig};

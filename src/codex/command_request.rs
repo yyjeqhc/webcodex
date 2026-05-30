@@ -1,5 +1,6 @@
+use super::command_workflow::require_active_goal;
+use super::command_workflow::{approve_command_request_inner, reject_command_request_inner};
 use super::get_projects;
-use super::require_active_goal;
 use super::shell::sanitize_tail;
 use super::types::{
     CheckRequest, CheckResponse, CommandApproveRequest, CommandRejectRequest, CommandRequest,
@@ -8,10 +9,7 @@ use super::types::{
     CommandRequestsListRequest, CommandRequestsListResponse, CommandResponse,
     RawCommandRequestCreate,
 };
-use super::{
-    approve_command_request_inner, reject_command_request_inner, run_project_cmd,
-    CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN,
-};
+use super::{run_project_cmd, CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN};
 use crate::get_db;
 use crate::projects::ProjectConfig;
 use crate::{CodexGoalRecord, CommandAuditRecord};

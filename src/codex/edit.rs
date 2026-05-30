@@ -1,13 +1,15 @@
 use crate::projects::{canonicalize_and_verify, ProjectConfig};
+use base64::Engine;
 
+use super::read_binary_from_url;
 use super::security::is_sensitive_path;
 use super::types::{EditOperation, EditRequest, EditResponse};
-use super::{decode_binary_artifact, read_binary_from_upload, read_binary_from_url};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
+const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
 
 pub(super) fn edit_error(error: String) -> EditResponse {
     EditResponse {
@@ -594,4 +596,101 @@ pub(super) fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest)
         warnings: Vec::new(),
         error: None,
     }
+}
+
+pub(super) fn decode_binary_artifact(
+    base64_content: &str,
+    rel_path: &str,
+) -> Result<Vec<u8>, String> {
+    if base64_content.len() > MAX_BINARY_ARTIFACT_SIZE * 2 {
+        return Err(format!(
+            "base64 content for {} is too large; maximum decoded size is {} bytes",
+            rel_path, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(base64_content)
+        .map_err(|e| format!("Invalid base64 content for {}: {}", rel_path, e))?;
+    if bytes.len() > MAX_BINARY_ARTIFACT_SIZE {
+        return Err(format!(
+            "binary content for {} exceeds {} bytes",
+            rel_path, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    Ok(bytes)
+}
+
+pub(super) fn validate_binary_size(bytes: Vec<u8>, label: &str) -> Result<Vec<u8>, String> {
+    if bytes.len() > MAX_BINARY_ARTIFACT_SIZE {
+        return Err(format!(
+            "binary content for {} exceeds {} bytes",
+            label, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    Ok(bytes)
+}
+
+pub(super) fn allowed_upload_roots(project_root: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![
+        project_root.to_path_buf(),
+        std::env::temp_dir(),
+        PathBuf::from("/tmp"),
+        PathBuf::from("/var/tmp"),
+        PathBuf::from("/mnt/data"),
+    ];
+    if let Ok(drop_data) = std::env::var("DROP_DATA") {
+        roots.push(PathBuf::from(drop_data).join("uploads"));
+    }
+    roots
+}
+
+pub(super) fn read_binary_from_upload(
+    project_root: &Path,
+    source_file: &str,
+    rel_path: &str,
+) -> Result<Vec<u8>, String> {
+    if source_file.is_empty() {
+        return Err("source_file cannot be empty".to_string());
+    }
+    if source_file.contains("..") {
+        return Err("source_file path traversal is not allowed".to_string());
+    }
+    if is_sensitive_path(source_file) {
+        return Err("source_file cannot reference a sensitive path".to_string());
+    }
+    let source_path = PathBuf::from(source_file);
+    let full = if source_path.is_absolute() {
+        source_path
+    } else {
+        project_root.join(source_path)
+    };
+    let canonical = full
+        .canonicalize()
+        .map_err(|e| format!("Failed to access source_file: {}", e))?;
+    let mut allowed = false;
+    for root in allowed_upload_roots(project_root) {
+        if let Ok(root) = root.canonicalize() {
+            if canonical.starts_with(&root) {
+                allowed = true;
+                break;
+            }
+        }
+    }
+    if !allowed {
+        return Err("source_file is outside allowed upload/temp directories".to_string());
+    }
+    let meta =
+        std::fs::metadata(&canonical).map_err(|e| format!("Failed to stat source_file: {}", e))?;
+    if !meta.is_file() {
+        return Err("source_file must be a regular file".to_string());
+    }
+    if meta.len() as usize > MAX_BINARY_ARTIFACT_SIZE {
+        return Err(format!(
+            "source_file for {} exceeds {} bytes",
+            rel_path, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    let bytes =
+        std::fs::read(&canonical).map_err(|e| format!("Failed to read source_file: {}", e))?;
+    validate_binary_size(bytes, rel_path)
 }

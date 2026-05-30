@@ -1,5 +1,5 @@
 use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig, SshConfig};
-use crate::{CodexGoalRecord, CommandAuditRecord, Config, Database, Message, MessageKind};
+use crate::{CodexGoalRecord, CommandAuditRecord, Config, Database};
 use salvo::prelude::*;
 mod artifact;
 mod command_request;
@@ -7,6 +7,7 @@ mod context;
 mod edit;
 mod git;
 mod jobs;
+mod report;
 mod security;
 mod shell;
 mod ssh;
@@ -18,6 +19,7 @@ use context::*;
 use edit::*;
 use git::*;
 use jobs::*;
+pub use report::codex_report;
 pub use security::is_sensitive_path;
 use shell::*;
 use ssh::*;
@@ -44,7 +46,7 @@ const URL_IMPORT_TIMEOUT_SECS: u64 = 10;
 // Helpers
 // =============================================================================
 
-fn get_projects(depot: &Depot) -> Option<Arc<ProjectsConfig>> {
+pub(super) fn get_projects(depot: &Depot) -> Option<Arc<ProjectsConfig>> {
     depot.obtain::<Arc<ProjectsConfig>>().ok().cloned()
 }
 
@@ -4939,138 +4941,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             )));
         }
     }
-}
-
-#[handler]
-pub async fn codex_report(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let Some(projects) = get_projects(depot) else {
-        res.render(Json(ReportResponse {
-            success: false,
-            report_id: None,
-            message_id: None,
-            path: None,
-            error: Some("Projects not configured".to_string()),
-        }));
-        return;
-    };
-    let Some(db) = get_db(depot) else {
-        res.render(Json(ReportResponse {
-            success: false,
-            report_id: None,
-            message_id: None,
-            path: None,
-            error: Some("No database".to_string()),
-        }));
-        return;
-    };
-    let body: ReportRequest = match req.parse_json().await {
-        Ok(b) => b,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ReportResponse {
-                success: false,
-                report_id: None,
-                message_id: None,
-                path: None,
-                error: Some(format!("Invalid JSON: {}", e)),
-            }));
-            return;
-        }
-    };
-    let _proj = match projects.get_project(&body.project) {
-        Ok(p) => p,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ReportResponse {
-                success: false,
-                report_id: None,
-                message_id: None,
-                path: None,
-                error: Some(e),
-            }));
-            return;
-        }
-    };
-
-    let report_id = uuid::Uuid::new_v4().to_string();
-    let now = chrono::Utc::now();
-    let timestamp = now.format("%Y%m%d_%H%M%S").to_string();
-    let filename = format!("{}_{}.json", timestamp, &report_id[..8]);
-    let report_dir = std::env::var("DROP_DATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("./data"))
-        .join("reports");
-
-    if let Err(e) = std::fs::create_dir_all(&report_dir) {
-        res.render(Json(ReportResponse {
-            success: false,
-            report_id: None,
-            message_id: None,
-            path: None,
-            error: Some(format!("Failed to create reports directory: {}", e)),
-        }));
-        return;
-    }
-
-    let report_path = report_dir.join(&filename);
-    let report_json = serde_json::json!({
-        "id": report_id,
-        "project": body.project,
-        "status": body.status,
-        "title": body.title,
-        "summary": body.summary,
-        "channel": body.channel,
-        "created_at": now.timestamp(),
-    });
-    if let Err(e) = std::fs::write(
-        &report_path,
-        serde_json::to_string_pretty(&report_json).unwrap(),
-    ) {
-        res.render(Json(ReportResponse {
-            success: false,
-            report_id: None,
-            message_id: None,
-            path: None,
-            error: Some(format!("Failed to write report: {}", e)),
-        }));
-        return;
-    }
-
-    // Write message to channel
-    let msg_text = format!("[{}] {}\n\n{}", body.status, body.title, body.summary);
-    let message = Message {
-        id: uuid::Uuid::new_v4().to_string(),
-        channel: body.channel.clone(),
-        kind: MessageKind::Text,
-        title: Some(format!("[codex] {}", body.title)),
-        text: Some(msg_text),
-        file_name: None,
-        file_path: None,
-        file_size: None,
-        mime_type: None,
-        created_at: now.timestamp(),
-        expires_at: None,
-    };
-    let message_id = message.id.clone();
-    if let Err(e) = db.insert_message(&message) {
-        // Report was written but message failed
-        res.render(Json(ReportResponse {
-            success: true,
-            report_id: Some(report_id),
-            message_id: None,
-            path: Some(report_path.to_string_lossy().to_string()),
-            error: Some(format!("Report written but message insert failed: {}", e)),
-        }));
-        return;
-    }
-
-    res.render(Json(ReportResponse {
-        success: true,
-        report_id: Some(report_id),
-        message_id: Some(message_id),
-        path: Some(report_path.to_string_lossy().to_string()),
-        error: None,
-    }));
 }
 
 #[cfg(test)]

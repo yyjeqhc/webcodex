@@ -890,14 +890,14 @@ This repository includes version-controlled visual documentation for the compact
 
 Use SVG for stable documentation, Mermaid for quick text edits, HTML for standalone sharing, and Excalidraw JSON for manual visual editing.
 
-Binary diagram or document artifacts can also be saved through `applyProjectEdit` without adding a new GPT Action. Use `create_binary_file` for new PNG/JPG/WebP/GIF/PDF files and `write_binary_file` for overwrites:
+Binary diagram or document artifacts can also be saved through `applyProjectEdit` without adding a new GPT Action. For generated images, the recommended base64 path is `create_binary_artifact` for new PNG/JPG/WebP/GIF/PDF files and `write_binary_artifact` for overwrites. These are semantic aliases of `create_binary_file` / `write_binary_file`, but they make the “generate image → base64 → save to project” workflow clearer:
 
 ```json
 {
   "project": "private-drop-v4",
   "edits": [
     {
-      "type": "create_binary_file",
+      "type": "create_binary_artifact",
       "path": "docs/diagrams/example.png",
       "base64_content": "..."
     }
@@ -905,7 +905,7 @@ Binary diagram or document artifacts can also be saved through `applyProjectEdit
 }
 ```
 
-Binary artifact writes keep the same project path safety checks as text edits, reject sensitive paths, default to no overwrite, and limit decoded content to 5MB.
+Base64 artifact writes keep the same project path safety checks as text edits, reject sensitive paths, default to no overwrite, and limit decoded content to 5MB. Use base64 when the image bytes are already available to the GPT workflow; use `source_file` only when the file exists on the Private Drop server, and use `source_url` only when the artifact is available at a public HTTP/HTTPS URL.
 
 
 ### Import generated or uploaded binary artifacts

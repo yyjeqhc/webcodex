@@ -152,6 +152,15 @@ assert_contains() {
     fi
 }
 
+assert_not_contains() {
+    local desc="$1" needle="$2" haystack="$3"
+    if echo "$haystack" | grep -qF "$needle"; then
+        log_fail "$desc" "expected not to contain '$needle'"
+    else
+        log_pass "$desc"
+    fi
+}
+
 assert_not_empty() {
     local desc="$1" val="$2"
     if [ -n "$val" ]; then
@@ -1506,6 +1515,72 @@ EDIT_SUCCESS=$(pyget "$RESP" "success")
 EDIT_ERROR=$(pyget "$RESP" "error")
 assert_eq "oversized source_file fails" "False" "$EDIT_SUCCESS"
 assert_contains "oversized source_file error" "exceeds" "$EDIT_ERROR"
+
+# --- 41k. Edit: create_binary_artifact succeeds ---
+echo ""
+echo "--- 41k. Edit create_binary_artifact ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_binary_artifact","path":"docs/diagrams/generated-artifact.png","base64_content":"iVBORw0KGgoAAAANSUhEUgAAAAoAAAAKCAYAAACNMs+9AAAAH0lEQVQoU2NkYGD4z8DAwMDAwMDAwMAQF8EBACrIAf8nqgkhAAAAAElFTkSuQmCC"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_DIFF=$(pyget "$RESP" "diff")
+assert_eq "create_binary_artifact success" "True" "$EDIT_SUCCESS"
+assert_contains "create_binary_artifact diff" "Binary file" "$EDIT_DIFF"
+
+# --- 41l. Edit: write_binary_artifact overwrite succeeds ---
+echo ""
+echo "--- 41l. Edit write_binary_artifact overwrite succeeds ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"write_binary_artifact","path":"docs/diagrams/generated-artifact.png","base64_content":"AAECAwQFBgcICQ==","allow_overwrite":true}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_DIFF=$(pyget "$RESP" "diff")
+assert_eq "write_binary_artifact overwrite success" "True" "$EDIT_SUCCESS"
+assert_contains "write_binary_artifact diff" "new size: 10 bytes" "$EDIT_DIFF"
+
+# --- 41m. Edit: create_binary_artifact dry_run does not write ---
+echo ""
+echo "--- 41m. Edit create_binary_artifact dry_run ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","dry_run":true,"edits":[{"type":"create_binary_artifact","path":"docs/diagrams/dry-run-artifact.png","base64_content":"AAECAw=="}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_DIFF=$(pyget "$RESP" "diff")
+assert_eq "create_binary_artifact dry_run success" "True" "$EDIT_SUCCESS"
+assert_contains "create_binary_artifact dry_run diff" "new size: 4 bytes" "$EDIT_DIFF"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"tree"}')
+TREE_ITEMS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('\n'.join(d.get('items') or []))")
+assert_not_contains "create_binary_artifact dry_run did not write" "docs/diagrams/dry-run-artifact.png" "$TREE_ITEMS"
+
+# --- 41n. Edit: oversized base64 artifact fails ---
+echo ""
+echo "--- 41n. Edit oversized base64 artifact fails ---"
+RESP=$(python3 - <<PY | curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d @-
+import base64, json
+payload = {
+    "project": "test-project",
+    "edits": [{
+        "type": "create_binary_artifact",
+        "path": "docs/diagrams/too-large.png",
+        "base64_content": base64.b64encode(b'x' * (5 * 1024 * 1024 + 1)).decode('ascii'),
+    }],
+}
+print(json.dumps(payload))
+PY
+)
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_ERROR=$(pyget "$RESP" "error")
+assert_eq "oversized base64 artifact fails" "False" "$EDIT_SUCCESS"
+assert_contains "oversized base64 artifact error" "too large" "$EDIT_ERROR"
 
 # --- 42. Edit: dry_run=true returns diff but does not modify ---
 echo ""

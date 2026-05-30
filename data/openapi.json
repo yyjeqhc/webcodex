@@ -212,6 +212,27 @@
         },
         "required": ["type", "path", "base64_content"]
       },
+      "CreateBinaryArtifactEdit": {
+        "type": "object",
+        "description": "Recommended high-level edit for saving generated images or binary artifacts from base64 content. Fails if the file already exists. Equivalent to create_binary_file with clearer artifact semantics.",
+        "properties": {
+          "type": {"type": "string", "enum": ["create_binary_artifact"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "base64_content": {"type": "string", "description": "Base64-encoded artifact bytes. Decoded size max 5MB."}
+        },
+        "required": ["type", "path", "base64_content"]
+      },
+      "WriteBinaryArtifactEdit": {
+        "type": "object",
+        "description": "Recommended high-level edit for overwriting generated images or binary artifacts from base64 content. Defaults to no overwrite unless allow_overwrite=true.",
+        "properties": {
+          "type": {"type": "string", "enum": ["write_binary_artifact"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "base64_content": {"type": "string", "description": "Base64-encoded artifact bytes. Decoded size max 5MB."},
+          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+        },
+        "required": ["type", "path", "base64_content"]
+      },
       "CreateBinaryFileFromUploadEdit": {
         "type": "object",
         "description": "Create a new binary artifact by importing a server-accessible upload/temp file. Fails if the file already exists.",
@@ -271,12 +292,14 @@
                 {"$ref": "#/components/schemas/WriteFileEdit"},
                 {"$ref": "#/components/schemas/CreateBinaryFileEdit"},
                 {"$ref": "#/components/schemas/WriteBinaryFileEdit"},
+                {"$ref": "#/components/schemas/CreateBinaryArtifactEdit"},
+                {"$ref": "#/components/schemas/WriteBinaryArtifactEdit"},
                 {"$ref": "#/components/schemas/CreateBinaryFileFromUploadEdit"},
                 {"$ref": "#/components/schemas/WriteBinaryFileFromUploadEdit"},
                 {"$ref": "#/components/schemas/CreateBinaryFileFromUrlEdit"},
                 {"$ref": "#/components/schemas/WriteBinaryFileFromUrlEdit"}
               ],
-              "discriminator": {"propertyName": "type", "mapping": {"replace_text": "#/components/schemas/ReplaceTextEdit", "replace_range": "#/components/schemas/ReplaceRangeEdit", "append_file": "#/components/schemas/AppendFileEdit", "create_file": "#/components/schemas/CreateFileEdit", "write_file": "#/components/schemas/WriteFileEdit", "create_binary_file": "#/components/schemas/CreateBinaryFileEdit", "write_binary_file": "#/components/schemas/WriteBinaryFileEdit", "create_binary_file_from_upload": "#/components/schemas/CreateBinaryFileFromUploadEdit", "write_binary_file_from_upload": "#/components/schemas/WriteBinaryFileFromUploadEdit", "create_binary_file_from_url": "#/components/schemas/CreateBinaryFileFromUrlEdit", "write_binary_file_from_url": "#/components/schemas/WriteBinaryFileFromUrlEdit"}}
+              "discriminator": {"propertyName": "type", "mapping": {"replace_text": "#/components/schemas/ReplaceTextEdit", "replace_range": "#/components/schemas/ReplaceRangeEdit", "append_file": "#/components/schemas/AppendFileEdit", "create_file": "#/components/schemas/CreateFileEdit", "write_file": "#/components/schemas/WriteFileEdit", "create_binary_file": "#/components/schemas/CreateBinaryFileEdit", "write_binary_file": "#/components/schemas/WriteBinaryFileEdit", "create_binary_artifact": "#/components/schemas/CreateBinaryArtifactEdit", "write_binary_artifact": "#/components/schemas/WriteBinaryArtifactEdit", "create_binary_file_from_upload": "#/components/schemas/CreateBinaryFileFromUploadEdit", "write_binary_file_from_upload": "#/components/schemas/WriteBinaryFileFromUploadEdit", "create_binary_file_from_url": "#/components/schemas/CreateBinaryFileFromUrlEdit", "write_binary_file_from_url": "#/components/schemas/WriteBinaryFileFromUrlEdit"}}
             }
           }
         },

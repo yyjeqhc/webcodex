@@ -1,3 +1,5 @@
+#![recursion_limit = "256"]
+
 use salvo::cors::Cors;
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -1215,6 +1217,8 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "WriteFileEdit": spec["components"]["schemas"]["WriteFileEdit"].clone(),
         "CreateBinaryFileEdit": spec["components"]["schemas"]["CreateBinaryFileEdit"].clone(),
         "WriteBinaryFileEdit": spec["components"]["schemas"]["WriteBinaryFileEdit"].clone(),
+        "CreateBinaryArtifactEdit": spec["components"]["schemas"]["CreateBinaryArtifactEdit"].clone(),
+        "WriteBinaryArtifactEdit": spec["components"]["schemas"]["WriteBinaryArtifactEdit"].clone(),
         "CreateBinaryFileFromUploadEdit": spec["components"]["schemas"]["CreateBinaryFileFromUploadEdit"].clone(),
         "WriteBinaryFileFromUploadEdit": spec["components"]["schemas"]["WriteBinaryFileFromUploadEdit"].clone(),
         "CreateBinaryFileFromUrlEdit": spec["components"]["schemas"]["CreateBinaryFileFromUrlEdit"].clone(),
@@ -1307,6 +1311,8 @@ pub async fn codex_openapi_compact_json(depot: &mut Depot, res: &mut Response) {
         "WriteFileEdit": spec["components"]["schemas"]["WriteFileEdit"].clone(),
         "CreateBinaryFileEdit": spec["components"]["schemas"]["CreateBinaryFileEdit"].clone(),
         "WriteBinaryFileEdit": spec["components"]["schemas"]["WriteBinaryFileEdit"].clone(),
+        "CreateBinaryArtifactEdit": spec["components"]["schemas"]["CreateBinaryArtifactEdit"].clone(),
+        "WriteBinaryArtifactEdit": spec["components"]["schemas"]["WriteBinaryArtifactEdit"].clone(),
         "CreateBinaryFileFromUploadEdit": spec["components"]["schemas"]["CreateBinaryFileFromUploadEdit"].clone(),
         "WriteBinaryFileFromUploadEdit": spec["components"]["schemas"]["WriteBinaryFileFromUploadEdit"].clone(),
         "CreateBinaryFileFromUrlEdit": spec["components"]["schemas"]["CreateBinaryFileFromUrlEdit"].clone(),

@@ -402,6 +402,16 @@ pub enum EditOperation {
         #[serde(default)]
         allow_overwrite: bool,
     },
+    CreateBinaryArtifact {
+        path: String,
+        base64_content: String,
+    },
+    WriteBinaryArtifact {
+        path: String,
+        base64_content: String,
+        #[serde(default)]
+        allow_overwrite: bool,
+    },
     CreateBinaryFileFromUpload {
         path: String,
         source_file: String,
@@ -1174,7 +1184,7 @@ def main():
                 originals.setdefault(rel, None)
             paths_map[rel] = full
             current[rel] = ed.get('content', '')
-        elif etype == 'create_binary_file':
+        elif etype in ('create_binary_file', 'create_binary_artifact'):
             full, e = resolve(root, rel, False)
             if e:
                 print(json.dumps(err(e)))
@@ -1189,7 +1199,7 @@ def main():
             paths_map[rel] = full
             binary_originals.setdefault(rel, None)
             binary_current[rel] = data
-        elif etype == 'write_binary_file':
+        elif etype in ('write_binary_file', 'write_binary_artifact'):
             full, e = resolve(root, rel, False)
             if e:
                 print(json.dumps(err(e)))
@@ -6173,6 +6183,8 @@ fn edit_path(edit: &EditOperation) -> &str {
         | EditOperation::WriteFile { path, .. }
         | EditOperation::CreateBinaryFile { path, .. }
         | EditOperation::WriteBinaryFile { path, .. }
+        | EditOperation::CreateBinaryArtifact { path, .. }
+        | EditOperation::WriteBinaryArtifact { path, .. }
         | EditOperation::CreateBinaryFileFromUpload { path, .. }
         | EditOperation::WriteBinaryFileFromUpload { path, .. }
         | EditOperation::CreateBinaryFileFromUrl { path, .. }
@@ -6189,6 +6201,8 @@ fn edit_text_len(edit: &EditOperation) -> usize {
         EditOperation::WriteFile { content, .. } => content.len(),
         EditOperation::CreateBinaryFile { .. }
         | EditOperation::WriteBinaryFile { .. }
+        | EditOperation::CreateBinaryArtifact { .. }
+        | EditOperation::WriteBinaryArtifact { .. }
         | EditOperation::CreateBinaryFileFromUpload { .. }
         | EditOperation::WriteBinaryFileFromUpload { .. }
         | EditOperation::CreateBinaryFileFromUrl { .. }
@@ -6205,6 +6219,8 @@ fn edit_kind(edit: &EditOperation) -> &'static str {
         | EditOperation::WriteFile { .. } => "text",
         EditOperation::CreateBinaryFile { .. }
         | EditOperation::WriteBinaryFile { .. }
+        | EditOperation::CreateBinaryArtifact { .. }
+        | EditOperation::WriteBinaryArtifact { .. }
         | EditOperation::CreateBinaryFileFromUpload { .. }
         | EditOperation::WriteBinaryFileFromUpload { .. }
         | EditOperation::CreateBinaryFileFromUrl { .. }
@@ -6713,7 +6729,8 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
                 originals.entry(rel_path.clone()).or_insert(old);
                 current.insert(rel_path.clone(), Some(content.clone()));
             }
-            EditOperation::CreateBinaryFile { base64_content, .. } => {
+            EditOperation::CreateBinaryFile { base64_content, .. }
+            | EditOperation::CreateBinaryArtifact { base64_content, .. } => {
                 let bytes = match decode_binary_artifact(base64_content, &rel_path) {
                     Ok(bytes) => bytes,
                     Err(e) => return edit_error(e),
@@ -6730,6 +6747,11 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
                 binary_current.insert(rel_path.clone(), Some(bytes));
             }
             EditOperation::WriteBinaryFile {
+                base64_content,
+                allow_overwrite,
+                ..
+            }
+            | EditOperation::WriteBinaryArtifact {
                 base64_content,
                 allow_overwrite,
                 ..

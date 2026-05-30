@@ -94,6 +94,7 @@ pub enum GitOperation {
     Diff,
     Log,
     Add,
+    Commit,
     CommitAmendNoEdit,
 }
 
@@ -103,6 +104,8 @@ pub struct GitRequest {
     pub operation: GitOperation,
     #[serde(default)]
     pub paths: Vec<String>,
+    #[serde(default)]
+    pub message: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -115,6 +118,14 @@ pub struct CommandRequest {
 pub struct CommandRequestCreate {
     pub project: String,
     pub command: String,
+    #[serde(default)]
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RawCommandRequestCreate {
+    pub project: String,
+    pub command_text: String,
     #[serde(default)]
     pub reason: Option<String>,
 }
@@ -2710,7 +2721,7 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
     };
     if matches!(
         body.operation,
-        GitOperation::Add | GitOperation::CommitAmendNoEdit
+        GitOperation::Add | GitOperation::Commit | GitOperation::CommitAmendNoEdit
     ) && !proj.allow_patch()
     {
         res.status_code(StatusCode::FORBIDDEN);
@@ -2951,6 +2962,107 @@ pub async fn codex_command_request(req: &mut Request, depot: &mut Depot, res: &m
         request_id = %request_id,
         "codex_command_request_created"
     );
+    res.render(Json(CommandRequestResponse {
+        success: true,
+        request_id: Some(request_id),
+        record: Some(record),
+        error: None,
+    }));
+}
+
+#[handler]
+pub async fn codex_command_request_raw(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some("Projects not configured".to_string()),
+        }));
+        return;
+    };
+    let Some(db) = get_db(depot) else {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some("Database not configured".to_string()),
+        }));
+        return;
+    };
+    let body: RawCommandRequestCreate = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: None,
+                record: None,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    if let Err(e) = validate_command_request_reason(&body.reason) {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some(e),
+        }));
+        return;
+    }
+    if let Err(e) = validate_raw_command_text(&body.command_text) {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some(e),
+        }));
+        return;
+    }
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandRequestResponse {
+                success: false,
+                request_id: None,
+                record: None,
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+    if !proj.allow_raw_command_requests {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some("Raw command requests are not enabled for this project".to_string()),
+        }));
+        return;
+    }
+    let record = build_command_audit_record(
+        body.project,
+        "raw".to_string(),
+        body.command_text.trim().to_string(),
+        body.reason,
+        chrono::Utc::now().timestamp(),
+    );
+    let request_id = record.id.clone();
+    if let Err(e) = db.insert_command_request(&record) {
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some(format!("Failed to create raw command request: {}", e)),
+        }));
+        return;
+    }
     res.render(Json(CommandRequestResponse {
         success: true,
         request_id: Some(request_id),
@@ -3706,6 +3818,7 @@ mod tests {
             user: None,
             allow_patch: true,
             allow_command_requests: true,
+            allow_raw_command_requests: true,
             allowed_checks: vec![],
             checks: None,
             commands,
@@ -3720,6 +3833,7 @@ mod tests {
             project: "p".to_string(),
             operation: GitOperation::Status,
             paths: vec![],
+            message: None,
         };
         assert_eq!(
             git_command_for_request(&status).unwrap(),
@@ -3729,6 +3843,7 @@ mod tests {
             project: "p".to_string(),
             operation: GitOperation::Diff,
             paths: vec!["src/main.rs".to_string()],
+            message: None,
         };
         assert_eq!(
             git_command_for_request(&diff).unwrap(),
@@ -3737,11 +3852,48 @@ mod tests {
     }
 
     #[test]
+    fn test_git_command_commit_is_fixed_and_no_verify() {
+        let request = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::Commit,
+            paths: vec!["src/main.rs".to_string()],
+            message: Some("Add feature".to_string()),
+        };
+        let cmd = git_command_for_request(&request).unwrap();
+        assert!(cmd.contains("git add -- 'src/main.rs'"));
+        assert!(cmd.contains("git diff --cached --quiet -- 'src/main.rs'"));
+        assert!(cmd.contains("No staged changes to commit"));
+        assert!(cmd.contains("git commit -m 'Add feature' --no-verify"));
+    }
+
+    #[test]
+    fn test_git_command_commit_rejects_bad_message() {
+        let request = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::Commit,
+            paths: vec!["src/main.rs".to_string()],
+            message: Some("bad\nmessage".to_string()),
+        };
+        assert!(git_command_for_request(&request).is_err());
+    }
+
+    #[test]
+    fn test_raw_command_validation_rejects_high_risk_tokens() {
+        assert!(validate_raw_command_text("echo ok").is_ok());
+        assert!(validate_raw_command_text("git status --short").is_ok());
+        assert!(validate_raw_command_text("git push origin main").is_err());
+        assert!(validate_raw_command_text("sudo systemctl restart nginx").is_err());
+        assert!(validate_raw_command_text("rm -rf target").is_err());
+        assert!(validate_raw_command_text("echo one\necho two").is_err());
+    }
+
+    #[test]
     fn test_git_command_amend_is_fixed_and_no_verify() {
         let request = GitRequest {
             project: "p".to_string(),
             operation: GitOperation::CommitAmendNoEdit,
             paths: vec!["src/codex.rs".to_string()],
+            message: None,
         };
         let cmd = git_command_for_request(&request).unwrap();
         assert!(cmd.contains("git add -- 'src/codex.rs'"));
@@ -3774,6 +3926,7 @@ mod tests {
             project: "p".to_string(),
             operation: GitOperation::Add,
             paths: vec![".env".to_string()],
+            message: None,
         };
         assert!(git_command_for_request(&request).is_err());
     }
@@ -3784,6 +3937,7 @@ mod tests {
             project: "p".to_string(),
             operation: GitOperation::CommitAmendNoEdit,
             paths: vec![],
+            message: None,
         };
         assert!(git_command_for_request(&request).is_err());
     }
@@ -3848,6 +4002,7 @@ mod tests {
             user: Some("root".to_string()),
             allow_patch: false,
             allow_command_requests: false,
+            allow_raw_command_requests: false,
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
@@ -3861,6 +4016,7 @@ mod tests {
             user: None,
             allow_patch: false,
             allow_command_requests: false,
+            allow_raw_command_requests: false,
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
@@ -3877,6 +4033,7 @@ mod tests {
             user: None,
             allow_patch: false,
             allow_command_requests: false,
+            allow_raw_command_requests: false,
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
@@ -3893,6 +4050,7 @@ mod tests {
             user: None,
             allow_patch: false,
             allow_command_requests: false,
+            allow_raw_command_requests: false,
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
@@ -4192,6 +4350,61 @@ mod tests {
     }
 }
 
+fn validate_raw_command_text(command_text: &str) -> Result<(), String> {
+    let trimmed = command_text.trim();
+    if trimmed.is_empty() {
+        return Err("raw command cannot be empty".to_string());
+    }
+    if command_text.chars().count() > MAX_RAW_COMMAND_LEN {
+        return Err(format!(
+            "raw command is too long; maximum is {} characters",
+            MAX_RAW_COMMAND_LEN
+        ));
+    }
+    if command_text
+        .chars()
+        .any(|ch| ch == '\0' || ch == '\r' || ch == '\n')
+    {
+        return Err("raw command must be a single line and cannot contain NUL".to_string());
+    }
+    let lower = trimmed.to_ascii_lowercase();
+    let blocked_tokens = [
+        "sudo",
+        "su ",
+        "apt",
+        "apt-get",
+        "systemctl",
+        "service",
+        "docker",
+        "podman",
+        "kubectl",
+        "iptables",
+        "ufw",
+        "mkfs",
+        "mount",
+        "umount",
+        "chmod -r",
+        "chown -r",
+        "rm -rf",
+        "git push",
+        "git fetch",
+        "git pull",
+        "git checkout",
+        "git restore",
+        "git clean",
+        "git reset",
+        "git submodule",
+        "curl ",
+        "wget ",
+        "scp ",
+        "rsync ",
+    ];
+    if blocked_tokens.iter().any(|token| lower.contains(token)) {
+        return Err("raw command contains a blocked high-risk token".to_string());
+    }
+    Ok(())
+}
+
 fn validate_command_request_reason(reason: &Option<String>) -> Result<(), String> {
     if let Some(reason) = reason {
         if reason.chars().count() > MAX_COMMAND_REASON_LEN {
@@ -4286,6 +4499,7 @@ fn git_operation_name(operation: &GitOperation) -> &'static str {
         GitOperation::Diff => "diff",
         GitOperation::Log => "log",
         GitOperation::Add => "add",
+        GitOperation::Commit => "commit",
         GitOperation::CommitAmendNoEdit => "commit_amend_no_edit",
     }
 }
@@ -4307,6 +4521,7 @@ fn git_error(project: &str, operation: &GitOperation, error: String) -> GitRespo
 const MAX_GIT_PATHS: usize = 50;
 const MAX_GIT_PATH_LEN: usize = 512;
 const MAX_COMMAND_REASON_LEN: usize = 2_000;
+const MAX_RAW_COMMAND_LEN: usize = 2_000;
 const MAX_COMMAND_REQUEST_BATCH: usize = 20;
 const COMMAND_REQUEST_TTL_SECS: i64 = 2 * 60 * 60;
 
@@ -4337,6 +4552,23 @@ fn shell_join_paths(paths: &[String]) -> String {
         .join(" ")
 }
 
+fn validate_git_commit_message(message: &str) -> Result<(), String> {
+    let len = message.chars().count();
+    if len == 0 {
+        return Err("commit message cannot be empty".to_string());
+    }
+    if len > 200 {
+        return Err("commit message is too long; maximum is 200 characters".to_string());
+    }
+    if message
+        .chars()
+        .any(|ch| ch == '\n' || ch == '\r' || ch == '\0')
+    {
+        return Err("commit message cannot contain newlines or NUL".to_string());
+    }
+    Ok(())
+}
+
 fn git_command_for_request(body: &GitRequest) -> Result<String, String> {
     match body.operation {
         GitOperation::Status => Ok("git status --short".to_string()),
@@ -4352,6 +4584,19 @@ fn git_command_for_request(body: &GitRequest) -> Result<String, String> {
         GitOperation::Add => {
             validate_git_paths(&body.paths)?;
             Ok(format!("git add -- {}", shell_join_paths(&body.paths)))
+        }
+        GitOperation::Commit => {
+            validate_git_paths(&body.paths)?;
+            let message = body
+                .message
+                .as_deref()
+                .ok_or_else(|| "message is required for commit".to_string())?;
+            validate_git_commit_message(message)?;
+            let paths = shell_join_paths(&body.paths);
+            let message = shell_escape(message);
+            Ok(format!(
+                "git add -- {paths} && if git diff --cached --quiet -- {paths}; then echo 'No staged changes to commit' >&2; exit 1; fi; git commit -m {message} --no-verify"
+            ))
         }
         GitOperation::CommitAmendNoEdit => {
             validate_git_paths(&body.paths)?;

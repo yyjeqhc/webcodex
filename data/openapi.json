@@ -228,8 +228,9 @@
         "type": "object",
         "properties": {
           "project": {"type": "string", "description": "Project name from whitelist"},
-          "operation": {"type": "string", "enum": ["status", "diff", "log", "add", "commit_amend_no_edit"], "description": "Controlled git operation to run"},
-          "paths": {"type": "array", "items": {"type": "string"}, "description": "Relative paths for diff/add/commit_amend_no_edit. Required for add and commit_amend_no_edit."}
+          "operation": {"type": "string", "enum": ["status", "diff", "log", "add", "commit", "commit_amend_no_edit"], "description": "Controlled git operation to run"},
+          "paths": {"type": "array", "items": {"type": "string"}, "description": "Relative paths for diff/add/commit/commit_amend_no_edit. Required for add, commit, and commit_amend_no_edit."},
+          "message": {"type": "string", "nullable": true, "maxLength": 200, "description": "Commit message. Required for operation=commit."}
         },
         "required": ["project", "operation"]
       },
@@ -264,6 +265,15 @@
           "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Why this command is requested"}
         },
         "required": ["project", "command"]
+      },
+      "RawCommandRequestCreate": {
+        "type": "object",
+        "properties": {
+          "project": {"type": "string", "description": "Project name from whitelist"},
+          "command_text": {"type": "string", "maxLength": 2000, "description": "Exact single-line command to request. Requires allow_raw_command_requests=true and is blocked if it contains high-risk tokens."},
+          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Why this raw command is requested"}
+        },
+        "required": ["project", "command_text"]
       },
       "CommandRequestBatchItem": {
         "type": "object",
@@ -566,7 +576,7 @@
       "post": {
         "operationId": "runProjectGit",
         "summary": "Run a controlled git operation",
-        "description": "Run fixed git operations on a whitelisted project. Supports status, diff, log, add, and commit_amend_no_edit. Does not expose arbitrary shell.",
+        "description": "Run fixed git operations on a whitelisted project. Supports status, diff, log, add, commit, and commit_amend_no_edit. Does not expose arbitrary shell.",
         "tags": ["codex"],
         "requestBody": {
           "required": true,
@@ -609,6 +619,23 @@
           "200": {"description": "Command request created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
           "400": {"description": "Bad request"},
           "403": {"description": "Command requests disabled"}
+        }
+      }
+    },
+    "/api/codex/command_request_raw": {
+      "post": {
+        "operationId": "createRawCommandRequest",
+        "summary": "Create an auditable raw command request",
+        "description": "Create a pending request for an exact single-line command. Requires allow_raw_command_requests=true. The command is not executed until approved, is audited, expires like other command requests, and is rejected if it contains high-risk tokens.",
+        "tags": ["codex"],
+        "requestBody": {
+          "required": true,
+          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RawCommandRequestCreate"}}}
+        },
+        "responses": {
+          "200": {"description": "Raw command request created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
+          "400": {"description": "Bad request or blocked command"},
+          "403": {"description": "Raw command requests disabled"}
         }
       }
     },

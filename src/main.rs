@@ -1030,6 +1030,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
         "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
         "/api/codex/command_request": spec["paths"]["/api/codex/command_request"].clone(),
+        "/api/codex/command_request_raw": spec["paths"]["/api/codex/command_request_raw"].clone(),
         "/api/codex/command_requests": spec["paths"]["/api/codex/command_requests"].clone(),
         "/api/codex/command_request_batch": spec["paths"]["/api/codex/command_request_batch"].clone(),
         "/api/codex/command_approve": spec["paths"]["/api/codex/command_approve"].clone(),
@@ -1057,6 +1058,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "CommandRequest": spec["components"]["schemas"]["CommandRequest"].clone(),
         "CommandResponse": spec["components"]["schemas"]["CommandResponse"].clone(),
         "CommandRequestCreate": spec["components"]["schemas"]["CommandRequestCreate"].clone(),
+        "RawCommandRequestCreate": spec["components"]["schemas"]["RawCommandRequestCreate"].clone(),
         "CommandRequestBatchItem": spec["components"]["schemas"]["CommandRequestBatchItem"].clone(),
         "CommandRequestBatchCreate": spec["components"]["schemas"]["CommandRequestBatchCreate"].clone(),
         "CommandRequestsListRequest": spec["components"]["schemas"]["CommandRequestsListRequest"].clone(),
@@ -1078,6 +1080,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "GitRequest",
         "CommandRequest",
         "CommandRequestCreate",
+        "RawCommandRequestCreate",
         "CommandRequestBatchCreate",
         "CommandRequestsListRequest",
         "CommandApproveRequest",
@@ -1555,6 +1558,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("git").post(codex::codex_git))
                 .push(Router::with_path("command").post(codex::codex_command))
                 .push(Router::with_path("command_request").post(codex::codex_command_request))
+                .push(
+                    Router::with_path("command_request_raw").post(codex::codex_command_request_raw),
+                )
                 .push(Router::with_path("command_requests").post(codex::codex_command_requests))
                 .push(
                     Router::with_path("command_request_batch")

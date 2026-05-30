@@ -767,3 +767,44 @@ Additional approval helpers:
 - `POST /api/codex/command_reject` rejects a pending request and records the rejection reason.
 
 This is a chat-friendly approval flow with server-side audit records, not an arbitrary shell endpoint.
+
+
+## Controlled Git commit operation
+
+`POST /api/codex/git` supports a fixed `commit` operation for creating a normal commit without exposing arbitrary shell.
+
+Example:
+
+```json
+{
+  "project": "private-drop-v4",
+  "operation": "commit",
+  "paths": ["README.md", "src/main.rs"],
+  "message": "Update deployment workflow"
+}
+```
+
+The generated command is fixed: it stages only the provided validated paths, checks that the staged diff is non-empty, and then runs `git commit -m <message> --no-verify`. The commit message is limited to 200 characters and cannot contain newlines or NUL bytes.
+
+## Raw command requests with chat approval
+
+`POST /api/codex/command_request_raw` creates a pending audited request for a single-line command text. It is intended for development situations where a one-off command is useful, but it still requires explicit chat approval before execution.
+
+Project opt-in is required:
+
+```toml
+[projects.private-drop-v4]
+allow_raw_command_requests = true
+```
+
+Example request:
+
+```json
+{
+  "project": "private-drop-v4",
+  "command_text": "git commit -m 'Complete workflow'",
+  "reason": "Create a one-off commit after review"
+}
+```
+
+The command is stored as the audited `command_text` snapshot and is not executed until `approveCommandRequest` is called for the returned `request_id`. Raw commands are limited to 2000 characters, must be a single line, and are rejected if they contain blocked high-risk tokens such as `sudo`, `apt`, `systemctl`, `docker`, `rm -rf`, `git push`, `git fetch`, `git checkout`, `git restore`, `git clean`, `curl`, `wget`, `scp`, or `rsync`.

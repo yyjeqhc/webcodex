@@ -1,6 +1,6 @@
+use super::edit::validate_edit_path;
 use super::shell::{shell_escape, shell_join_paths};
 use super::types::{GitOperation, GitRequest};
-use super::validate_edit_path;
 
 pub(super) const MAX_GIT_PATHS: usize = 50;
 pub(super) const MAX_GIT_PATH_LEN: usize = 512;

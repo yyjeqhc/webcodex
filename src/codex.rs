@@ -12,6 +12,7 @@ mod remote_edit;
 mod report;
 mod security;
 mod shell;
+mod source;
 mod ssh;
 mod types;
 mod url_security;
@@ -40,6 +41,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use types::*;
+#[cfg(test)]
 use url_security::*;
 // =============================================================================
 // Request / Response types
@@ -51,8 +53,6 @@ use url_security::*;
 
 pub(super) const MAX_OUTPUT_LEN: usize = 50_000;
 pub(super) const CHECK_TIMEOUT_SECS: u64 = 300;
-const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
-const URL_IMPORT_TIMEOUT_SECS: u64 = 10;
 
 // =============================================================================
 // Helpers
@@ -1627,42 +1627,6 @@ mod tests {
         assert_eq!(result["success"], false);
         assert!(result["error"].as_str().unwrap().contains("sensitive"));
     }
-}
-
-fn read_binary_from_url(source_url: &str, rel_path: &str) -> Result<Vec<u8>, String> {
-    let url = validate_source_url(source_url)?;
-    let client = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(URL_IMPORT_TIMEOUT_SECS))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .map_err(|e| format!("Failed to build URL client: {}", e))?;
-    let response = client
-        .get(url)
-        .send()
-        .map_err(|e| format!("Failed to fetch source_url: {}", e))?;
-    if response.status().is_redirection() {
-        return Err("source_url redirects are not allowed".to_string());
-    }
-    if !response.status().is_success() {
-        return Err(format!("source_url returned HTTP {}", response.status()));
-    }
-    if let Some(len) = response.content_length() {
-        if len as usize > MAX_BINARY_ARTIFACT_SIZE {
-            return Err(format!(
-                "source_url content for {} exceeds {} bytes",
-                rel_path, MAX_BINARY_ARTIFACT_SIZE
-            ));
-        }
-    }
-    let mut bytes = Vec::new();
-    {
-        use std::io::Read;
-        let mut limited = response.take((MAX_BINARY_ARTIFACT_SIZE + 1) as u64);
-        limited
-            .read_to_end(&mut bytes)
-            .map_err(|e| format!("Failed to read source_url response: {}", e))?;
-    }
-    validate_binary_size(bytes, rel_path)
 }
 
 pub(super) fn apply_edit_request_with_metrics(

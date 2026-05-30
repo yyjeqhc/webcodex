@@ -1,7 +1,7 @@
 use super::apply_edit_request_with_metrics;
 use super::get_projects;
-use super::read_binary_from_url;
 use super::security::is_sensitive_path;
+use super::source::read_binary_from_url;
 use super::types::{EditOperation, EditRequest, EditResponse};
 use crate::projects::{canonicalize_and_verify, ProjectConfig};
 use base64::Engine;

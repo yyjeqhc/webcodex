@@ -1,11 +1,13 @@
-use crate::projects::canonicalize_and_verify;
+use crate::projects::{canonicalize_and_verify, ProjectConfig};
 
 use super::security::is_sensitive_path;
-use super::types::{EditOperation, EditResponse};
-use std::collections::HashMap;
+use super::types::{EditOperation, EditRequest, EditResponse};
+use super::{decode_binary_artifact, read_binary_from_upload, read_binary_from_url};
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
+const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
 
 pub(super) fn edit_error(error: String) -> EditResponse {
     EditResponse {
@@ -271,4 +273,325 @@ pub(super) fn load_edit_content(
         .or_insert_with(|| Some(content.clone()));
     current.insert(rel_path.to_string(), Some(content.clone()));
     Ok(content)
+}
+
+pub(super) fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditResponse {
+    let root = proj.root();
+    if !root.exists() {
+        return edit_error("Project root does not exist".to_string());
+    }
+    let mut paths: HashMap<String, PathBuf> = HashMap::new();
+    let mut originals: HashMap<String, Option<String>> = HashMap::new();
+    let mut current: HashMap<String, Option<String>> = HashMap::new();
+    let mut binary_originals: HashMap<String, Option<Vec<u8>>> = HashMap::new();
+    let mut binary_current: HashMap<String, Option<Vec<u8>>> = HashMap::new();
+    let mut changed = BTreeSet::new();
+    for edit in &body.edits {
+        let rel_path = edit_path(edit).to_string();
+        if let Err(e) = validate_edit_path(&rel_path) {
+            return edit_error(e);
+        }
+        if edit_text_len(edit) > MAX_EDIT_TEXT_SIZE {
+            return edit_error(format!(
+                "edit text for {} exceeds {} bytes",
+                rel_path, MAX_EDIT_TEXT_SIZE
+            ));
+        }
+        match edit {
+            EditOperation::ReplaceText {
+                old_text,
+                new_text,
+                occurrence,
+                ..
+            } => {
+                let before = match load_edit_content(
+                    &root,
+                    &rel_path,
+                    &mut paths,
+                    &mut originals,
+                    &mut current,
+                ) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                let after = match replace_nth(&before, old_text, new_text, *occurrence) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                current.insert(rel_path.clone(), Some(after));
+            }
+            EditOperation::ReplaceRange {
+                start_line,
+                end_line,
+                new_text,
+                ..
+            } => {
+                let before = match load_edit_content(
+                    &root,
+                    &rel_path,
+                    &mut paths,
+                    &mut originals,
+                    &mut current,
+                ) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                let after = match replace_line_range(&before, *start_line, *end_line, new_text) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                current.insert(rel_path.clone(), Some(after));
+            }
+            EditOperation::AppendFile { text, .. } => {
+                let mut before = match load_edit_content(
+                    &root,
+                    &rel_path,
+                    &mut paths,
+                    &mut originals,
+                    &mut current,
+                ) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                before.push_str(text);
+                current.insert(rel_path.clone(), Some(before));
+            }
+            EditOperation::CreateFile { content, .. } => {
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() || matches!(current.get(&rel_path), Some(Some(_))) {
+                    return edit_error(format!("File already exists: {}", rel_path));
+                }
+                paths.insert(rel_path.clone(), full_path);
+                originals.entry(rel_path.clone()).or_insert(None);
+                current.insert(rel_path.clone(), Some(content.clone()));
+            }
+            EditOperation::WriteFile {
+                content,
+                allow_overwrite,
+                ..
+            } => {
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                let old = if full_path.exists() {
+                    match read_edit_file(&full_path) {
+                        Ok(c) => Some(c),
+                        Err(e) => return edit_error(e),
+                    }
+                } else {
+                    None
+                };
+                paths.insert(rel_path.clone(), full_path);
+                originals.entry(rel_path.clone()).or_insert(old);
+                current.insert(rel_path.clone(), Some(content.clone()));
+            }
+            EditOperation::CreateBinaryFile { base64_content, .. }
+            | EditOperation::CreateBinaryArtifact { base64_content, .. } => {
+                let bytes = match decode_binary_artifact(base64_content, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() || matches!(binary_current.get(&rel_path), Some(Some(_))) {
+                    return edit_error(format!("File already exists: {}", rel_path));
+                }
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(None);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::WriteBinaryFile {
+                base64_content,
+                allow_overwrite,
+                ..
+            }
+            | EditOperation::WriteBinaryArtifact {
+                base64_content,
+                allow_overwrite,
+                ..
+            } => {
+                let bytes = match decode_binary_artifact(base64_content, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                let old = if full_path.exists() {
+                    match std::fs::read(&full_path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => return edit_error(format!("Failed to read binary file: {}", e)),
+                    }
+                } else {
+                    None
+                };
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(old);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::CreateBinaryFileFromUpload { source_file, .. } => {
+                let bytes = match read_binary_from_upload(&root, source_file, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() || matches!(binary_current.get(&rel_path), Some(Some(_))) {
+                    return edit_error(format!("File already exists: {}", rel_path));
+                }
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(None);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::WriteBinaryFileFromUpload {
+                source_file,
+                allow_overwrite,
+                ..
+            } => {
+                let bytes = match read_binary_from_upload(&root, source_file, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                let old = if full_path.exists() {
+                    match std::fs::read(&full_path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => return edit_error(format!("Failed to read binary file: {}", e)),
+                    }
+                } else {
+                    None
+                };
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(old);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::CreateBinaryFileFromUrl { source_url, .. } => {
+                let bytes = match read_binary_from_url(source_url, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() || matches!(binary_current.get(&rel_path), Some(Some(_))) {
+                    return edit_error(format!("File already exists: {}", rel_path));
+                }
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(None);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::WriteBinaryFileFromUrl {
+                source_url,
+                allow_overwrite,
+                ..
+            } => {
+                let bytes = match read_binary_from_url(source_url, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                let old = if full_path.exists() {
+                    match std::fs::read(&full_path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => return edit_error(format!("Failed to read binary file: {}", e)),
+                    }
+                } else {
+                    None
+                };
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(old);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+        }
+        changed.insert(rel_path);
+    }
+    let changed_files: Vec<String> = changed.into_iter().collect();
+    let mut diff = String::new();
+    for path in &changed_files {
+        if let Some(Some(new_content)) = current.get(path) {
+            diff.push_str(&simple_file_diff(
+                path,
+                originals.get(path).and_then(|v| v.as_deref()),
+                new_content,
+            ));
+        } else if let Some(Some(new_bytes)) = binary_current.get(path) {
+            diff.push_str(&simple_binary_diff(
+                path,
+                binary_originals
+                    .get(path)
+                    .and_then(|v| v.as_ref())
+                    .map(|v| v.len()),
+                new_bytes.len(),
+            ));
+        }
+    }
+    if !body.dry_run {
+        for path in &changed_files {
+            if let (Some(full_path), Some(Some(new_content))) = (paths.get(path), current.get(path))
+            {
+                if let Err(e) = ensure_parent_dir(full_path) {
+                    return edit_error(e);
+                }
+                if let Err(e) = std::fs::write(full_path, new_content) {
+                    return edit_error(format!("Failed to write {}: {}", path, e));
+                }
+            } else if let (Some(full_path), Some(Some(new_bytes))) =
+                (paths.get(path), binary_current.get(path))
+            {
+                if let Err(e) = ensure_parent_dir(full_path) {
+                    return edit_error(e);
+                }
+                if let Err(e) = std::fs::write(full_path, new_bytes) {
+                    return edit_error(format!("Failed to write binary {}: {}", path, e));
+                }
+            }
+        }
+    }
+    EditResponse {
+        success: true,
+        changed_files,
+        diff,
+        warnings: Vec::new(),
+        error: None,
+    }
 }

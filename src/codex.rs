@@ -5395,6 +5395,41 @@ mod tests {
     }
 
     #[test]
+    fn test_validate_no_mixed_edit_kinds_rejects_same_path_text_binary() {
+        let edits = vec![
+            EditOperation::WriteFile {
+                path: "docs/diagram.bin".to_string(),
+                content: "text".to_string(),
+                allow_overwrite: true,
+            },
+            EditOperation::WriteBinaryFile {
+                path: "docs/diagram.bin".to_string(),
+                base64_content: "AAE=".to_string(),
+                allow_overwrite: true,
+            },
+        ];
+        let err = validate_no_mixed_edit_kinds(&edits).unwrap_err();
+        assert!(err.contains("cannot mix text and binary edits for the same path"));
+    }
+
+    #[test]
+    fn test_validate_no_mixed_edit_kinds_allows_same_path_same_kind() {
+        let edits = vec![
+            EditOperation::WriteBinaryFile {
+                path: "docs/diagram.bin".to_string(),
+                base64_content: "AAE=".to_string(),
+                allow_overwrite: true,
+            },
+            EditOperation::WriteBinaryFile {
+                path: "docs/diagram.bin".to_string(),
+                base64_content: "AQI=".to_string(),
+                allow_overwrite: true,
+            },
+        ];
+        assert!(validate_no_mixed_edit_kinds(&edits).is_ok());
+    }
+
+    #[test]
     fn test_decode_binary_artifact_accepts_small_base64() {
         let bytes = decode_binary_artifact("AAECAw==", "docs/pixel.bin").unwrap();
         assert_eq!(bytes, vec![0, 1, 2, 3]);
@@ -5925,6 +5960,41 @@ fn edit_text_len(edit: &EditOperation) -> usize {
     }
 }
 
+fn edit_kind(edit: &EditOperation) -> &'static str {
+    match edit {
+        EditOperation::ReplaceText { .. }
+        | EditOperation::ReplaceRange { .. }
+        | EditOperation::AppendFile { .. }
+        | EditOperation::CreateFile { .. }
+        | EditOperation::WriteFile { .. } => "text",
+        EditOperation::CreateBinaryFile { .. } | EditOperation::WriteBinaryFile { .. } => "binary",
+    }
+}
+
+fn validate_no_mixed_edit_kinds(edits: &[EditOperation]) -> Result<(), String> {
+    let mut kinds: HashMap<&str, &'static str> = HashMap::new();
+    for edit in edits {
+        let path = edit_path(edit);
+        let kind = edit_kind(edit);
+        if let Some(previous) = kinds.insert(path, kind) {
+            if previous != kind {
+                return Err(format!(
+                    "cannot mix text and binary edits for the same path: {}",
+                    path
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_parent_dir(path: &Path) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "path has no parent directory".to_string())?;
+    std::fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent directory: {}", e))
+}
+
 fn validate_edit_path(rel_path: &str) -> Result<(), String> {
     if rel_path.is_empty() {
         return Err("path cannot be empty".to_string());
@@ -5998,11 +6068,14 @@ fn resolve_edit_path(root: &Path, rel_path: &str, must_exist: bool) -> Result<Pa
     let parent = full_path
         .parent()
         .ok_or_else(|| "path has no parent directory".to_string())?;
-    let canonical_parent = canonicalize_and_verify(parent, root)?;
-    let file_name = full_path
-        .file_name()
-        .ok_or_else(|| "path has no file name".to_string())?;
-    Ok(canonical_parent.join(file_name))
+    let mut ancestor = parent;
+    while !ancestor.exists() {
+        ancestor = ancestor
+            .parent()
+            .ok_or_else(|| "path has no existing parent directory".to_string())?;
+    }
+    canonicalize_and_verify(ancestor, root)?;
+    Ok(full_path)
 }
 
 fn read_edit_file(path: &Path) -> Result<String, String> {
@@ -6309,12 +6382,18 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
         for path in &changed_files {
             if let (Some(full_path), Some(Some(new_content))) = (paths.get(path), current.get(path))
             {
+                if let Err(e) = ensure_parent_dir(full_path) {
+                    return edit_error(e);
+                }
                 if let Err(e) = std::fs::write(full_path, new_content) {
                     return edit_error(format!("Failed to write {}: {}", path, e));
                 }
             } else if let (Some(full_path), Some(Some(new_bytes))) =
                 (paths.get(path), binary_current.get(path))
             {
+                if let Err(e) = ensure_parent_dir(full_path) {
+                    return edit_error(e);
+                }
                 if let Err(e) = std::fs::write(full_path, new_bytes) {
                     return edit_error(format!("Failed to write binary {}: {}", path, e));
                 }
@@ -6362,6 +6441,11 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
     if body.edits.is_empty() {
         res.status_code(StatusCode::BAD_REQUEST);
         res.render(Json(edit_error("edits cannot be empty".to_string())));
+        return;
+    }
+    if let Err(e) = validate_no_mixed_edit_kinds(&body.edits) {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(edit_error(e)));
         return;
     }
     for edit in &body.edits {

@@ -1364,13 +1364,29 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
 CTX_CONTENT=$(pyget "$RESP" "content")
 assert_contains "new_file.txt overwritten" "overwritten content" "$CTX_CONTENT"
 
+# --- 41a. Edit: create_file to new subdirectory succeeds ---
+echo ""
+echo "--- 41a. Edit create_file to new subdirectory ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_file","path":"docs/notes/nested.txt","content":"nested text artifact\n"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "create_file nested directory success" "True" "$EDIT_SUCCESS"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":"docs/notes/nested.txt"}')
+CTX_CONTENT=$(pyget "$RESP" "content")
+assert_contains "create_file nested content" "nested text artifact" "$CTX_CONTENT"
+
 # --- 41b. Edit: create_binary_file succeeds ---
 echo ""
 echo "--- 41b. Edit create_binary_file ---"
 RESP=$(curl -sf -X POST "$EDIT" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"project":"test-project","edits":[{"type":"create_binary_file","path":"src/pixel.bin","base64_content":"AAECAw=="}]}')
+    -d '{"project":"test-project","edits":[{"type":"create_binary_file","path":"docs/diagrams/pixel.bin","base64_content":"AAECAw=="}]}')
 EDIT_SUCCESS=$(pyget "$RESP" "success")
 EDIT_DIFF=$(pyget "$RESP" "diff")
 assert_eq "create_binary_file success" "True" "$EDIT_SUCCESS"
@@ -1380,7 +1396,7 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
     -H "Content-Type: application/json" \
     -d '{"project":"test-project","mode":"tree"}')
 TREE_ITEMS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('\n'.join(d.get('items') or []))")
-assert_contains "create_binary_file appears in tree" "src/pixel.bin" "$TREE_ITEMS"
+assert_contains "create_binary_file appears in tree" "docs/diagrams/pixel.bin" "$TREE_ITEMS"
 
 # --- 41c. Edit: write_binary_file overwrite succeeds ---
 echo ""
@@ -1388,7 +1404,7 @@ echo "--- 41c. Edit write_binary_file overwrite succeeds ---"
 RESP=$(curl -sf -X POST "$EDIT" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
-    -d '{"project":"test-project","edits":[{"type":"write_binary_file","path":"src/pixel.bin","base64_content":"AQIDBAU=","allow_overwrite":true}]}')
+    -d '{"project":"test-project","edits":[{"type":"write_binary_file","path":"docs/diagrams/pixel.bin","base64_content":"AQIDBAU=","allow_overwrite":true}]}')
 EDIT_SUCCESS=$(pyget "$RESP" "success")
 EDIT_DIFF=$(pyget "$RESP" "diff")
 assert_eq "write_binary_file overwrite success" "True" "$EDIT_SUCCESS"
@@ -1405,6 +1421,18 @@ EDIT_SUCCESS=$(pyget "$RESP" "success")
 EDIT_ERROR=$(pyget "$RESP" "error")
 assert_eq "invalid binary base64 fails" "False" "$EDIT_SUCCESS"
 assert_contains "invalid binary base64 error" "Invalid base64" "$EDIT_ERROR"
+
+# --- 41e. Edit: text/binary mixed same path fails ---
+echo ""
+echo "--- 41e. Edit text/binary mixed same path fails ---"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"write_file","path":"docs/mixed.bin","content":"text","allow_overwrite":true},{"type":"write_binary_file","path":"docs/mixed.bin","base64_content":"AAE=","allow_overwrite":true}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_ERROR=$(pyget "$RESP" "error")
+assert_eq "mixed text binary same path fails" "False" "$EDIT_SUCCESS"
+assert_contains "mixed text binary error" "cannot mix text and binary edits for the same path" "$EDIT_ERROR"
 
 # --- 42. Edit: dry_run=true returns diff but does not modify ---
 echo ""

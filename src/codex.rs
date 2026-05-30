@@ -766,6 +766,9 @@ fn parse_changed_files_from_patch(patch: &str) -> Vec<String> {
 }
 
 pub fn is_sensitive_path(path: &str) -> bool {
+    if path == ".gitignore" {
+        return false;
+    }
     let lower = path.to_lowercase();
     for sensitive in SENSITIVE_PATHS {
         if *sensitive == ".env" {
@@ -2689,6 +2692,14 @@ fn write_status_file(path: &Path, status: &str) {
     let _ = std::fs::write(path.join("status"), status);
 }
 
+fn write_finished_at_file(path: &Path, timestamp: i64) {
+    let _ = std::fs::write(path.join("finished_at"), timestamp.to_string());
+}
+
+fn read_finished_at_file(path: &Path) -> Option<i64> {
+    read_file_to_string(&path.join("finished_at")).and_then(|s| s.parse::<i64>().ok())
+}
+
 fn tail_lines_from_text(text: &str, tail_lines: usize) -> String {
     let lines: Vec<&str> = text.lines().collect();
     let start = lines.len().saturating_sub(tail_lines.max(1));
@@ -2733,6 +2744,7 @@ fn update_job_status_local(root: &Path, meta: &JobMetadata) -> JobInfo {
                     .status();
                 status = "timeout".to_string();
                 write_status_file(&dir, &status);
+                write_finished_at_file(&dir, now);
             } else if !pid_running_local(pid) {
                 status = if exit_code.unwrap_or(1) == 0 {
                     "completed".to_string()
@@ -2740,9 +2752,13 @@ fn update_job_status_local(root: &Path, meta: &JobMetadata) -> JobInfo {
                     "failed".to_string()
                 };
                 write_status_file(&dir, &status);
+                if read_finished_at_file(&dir).is_none() {
+                    write_finished_at_file(&dir, now);
+                }
             }
         }
     }
+    let finished_at = read_finished_at_file(&dir).or(meta.finished_at);
     JobInfo {
         job_id: meta.job_id.clone(),
         project: meta.project.clone(),
@@ -2752,7 +2768,7 @@ fn update_job_status_local(root: &Path, meta: &JobMetadata) -> JobInfo {
         status,
         created_at: meta.created_at,
         started_at: meta.started_at,
-        finished_at: meta.finished_at,
+        finished_at,
         max_runtime_secs: meta.max_runtime_secs,
         executor: meta.executor.clone(),
         pid,
@@ -2808,10 +2824,11 @@ fn create_local_job(
         .map_err(|e| format!("Failed to write status: {}", e))?;
     let dir_s = dir.to_string_lossy().to_string();
     let wrapper = format!(
-        "bash {0}/command.sh > {0}/stdout.log 2> {0}/stderr.log; code=$?; echo $code > {0}/exit_code; if [ $code -eq 0 ]; then echo completed > {0}/status; else echo failed > {0}/status; fi",
+        "bash {0}/command.sh > {0}/stdout.log 2> {0}/stderr.log; code=$?; echo $code > {0}/exit_code; finished=$(date +%s); echo $finished > {0}/finished_at; if [ $code -eq 0 ]; then echo completed > {0}/status; else echo failed > {0}/status; fi",
         shell_escape(&dir_s)
     );
-    let child = std::process::Command::new("sh")
+    let child = std::process::Command::new("setsid")
+        .arg("sh")
         .arg("-c")
         .arg(wrapper)
         .current_dir(&root)
@@ -2847,19 +2864,20 @@ fn remote_job_status_string(
     proj: &ProjectConfig,
     job_id: &str,
     ssh_config: Option<&SshConfig>,
-) -> (Option<String>, Option<i64>, Option<i32>) {
+) -> (Option<String>, Option<i64>, Option<i32>, Option<i64>) {
     let dir = job_dir_rel(job_id);
     let cmd = format!(
-        "printf 'STATUS='; cat {0}/status 2>/dev/null || true; printf '\nPID='; cat {0}/pid 2>/dev/null || true; printf '\nEXIT='; cat {0}/exit_code 2>/dev/null || true; printf '\n'",
+        "printf 'STATUS='; cat {0}/status 2>/dev/null || true; printf '\nPID='; cat {0}/pid 2>/dev/null || true; printf '\nEXIT='; cat {0}/exit_code 2>/dev/null || true; printf '\nFINISHED='; cat {0}/finished_at 2>/dev/null || true; printf '\n'",
         shell_escape(&dir)
     );
     let (code, stdout, _, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
     if code != 0 {
-        return (None, None, None);
+        return (None, None, None, None);
     }
     let mut status = None;
     let mut pid = None;
     let mut exit_code = None;
+    let mut finished_at = None;
     for line in stdout.lines() {
         if let Some(v) = line.strip_prefix("STATUS=") {
             if !v.trim().is_empty() {
@@ -2869,9 +2887,11 @@ fn remote_job_status_string(
             pid = v.trim().parse::<i64>().ok();
         } else if let Some(v) = line.strip_prefix("EXIT=") {
             exit_code = v.trim().parse::<i32>().ok();
+        } else if let Some(v) = line.strip_prefix("FINISHED=") {
+            finished_at = v.trim().parse::<i64>().ok();
         }
     }
-    (status, pid, exit_code)
+    (status, pid, exit_code, finished_at)
 }
 
 fn update_job_status_ssh(
@@ -2881,14 +2901,18 @@ fn update_job_status_ssh(
 ) -> JobInfo {
     let now = chrono::Utc::now().timestamp();
     let dir = job_dir_rel(&meta.job_id);
-    let (mut status, pid, exit_code) = remote_job_status_string(proj, &meta.job_id, ssh_config);
+    let (mut status, pid, exit_code, mut finished_at) =
+        remote_job_status_string(proj, &meta.job_id, ssh_config);
     let mut status_value = status.take().unwrap_or_else(|| meta.status.clone());
     if status_value == "running" {
         if let Some(pid) = pid {
             if meta.started_at.unwrap_or(meta.created_at) + meta.max_runtime_secs < now {
                 let cmd = format!(
-                    "kill {} 2>/dev/null || true; printf timeout > {}/status",
+                    "kill -TERM -{} 2>/dev/null || kill {} 2>/dev/null || true; sleep 1; kill -KILL -{} 2>/dev/null || true; now=$(date +%s); printf timeout > {}/status; echo $now > {}/finished_at",
                     pid,
+                    pid,
+                    pid,
+                    shell_escape(&dir),
                     shell_escape(&dir)
                 );
                 let _ = run_project_cmd(proj, &cmd, 10, ssh_config);
@@ -2903,14 +2927,24 @@ fn update_job_status_ssh(
                         "failed".to_string()
                     };
                     let cmd = format!(
-                        "printf {} > {}/status",
+                        "printf {} > {}/status; test -f {}/finished_at || date +%s > {}/finished_at",
                         shell_escape(&status_value),
+                        shell_escape(&dir),
+                        shell_escape(&dir),
                         shell_escape(&dir)
                     );
                     let _ = run_project_cmd(proj, &cmd, 10, ssh_config);
+                    let (_, _, _, refreshed_finished_at) =
+                        remote_job_status_string(proj, &meta.job_id, ssh_config);
+                    finished_at = refreshed_finished_at.or(finished_at);
                 }
             }
         }
+    }
+    if status_value == "timeout" && finished_at.is_none() {
+        let (_, _, _, refreshed_finished_at) =
+            remote_job_status_string(proj, &meta.job_id, ssh_config);
+        finished_at = refreshed_finished_at;
     }
     JobInfo {
         job_id: meta.job_id.clone(),
@@ -2921,7 +2955,7 @@ fn update_job_status_ssh(
         status: status_value,
         created_at: meta.created_at,
         started_at: meta.started_at,
-        finished_at: meta.finished_at,
+        finished_at: finished_at.or(meta.finished_at),
         max_runtime_secs: meta.max_runtime_secs,
         executor: meta.executor.clone(),
         pid,
@@ -2970,11 +3004,11 @@ fn create_ssh_job(
     let command_b64 = b64_text(&format!("#!/usr/bin/env bash\n{}\n", command));
     let dir_q = shell_escape(&dir);
     let wrapper = format!(
-        "bash {0}/command.sh > {0}/stdout.log 2> {0}/stderr.log; code=$?; echo $code > {0}/exit_code; if [ $code -eq 0 ]; then echo completed > {0}/status; else echo failed > {0}/status; fi",
+        "bash {0}/command.sh > {0}/stdout.log 2> {0}/stderr.log; code=$?; echo $code > {0}/exit_code; finished=$(date +%s); echo $finished > {0}/finished_at; if [ $code -eq 0 ]; then echo completed > {0}/status; else echo failed > {0}/status; fi",
         dir_q
     );
     let cmd = format!(
-        "mkdir -p {dir}; printf %s {meta} | base64 -d > {dir}/metadata.json; printf %s {cmd_b64} | base64 -d > {dir}/command.sh; printf running > {dir}/status; nohup sh -c {wrapper} >/dev/null 2>&1 & echo $! > {dir}/pid",
+        "mkdir -p {dir}; printf %s {meta} | base64 -d > {dir}/metadata.json; printf %s {cmd_b64} | base64 -d > {dir}/command.sh; printf running > {dir}/status; nohup setsid sh -c {wrapper} >/dev/null 2>&1 & echo $! > {dir}/pid",
         dir = dir_q,
         meta = shell_escape(&meta_b64),
         cmd_b64 = shell_escape(&command_b64),
@@ -3091,11 +3125,25 @@ fn stop_local_job(root: &Path, job_id: &str) -> Result<JobInfo, String> {
     let meta = read_job_metadata_local(root, job_id)?;
     let dir = local_job_dir(root, job_id);
     if let Some(pid) = read_file_to_string(&dir.join("pid")).and_then(|s| s.parse::<i64>().ok()) {
+        let group = format!("-{}", pid);
         let _ = std::process::Command::new("kill")
+            .arg("-TERM")
+            .arg(&group)
+            .status();
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        if pid_running_local(pid) {
+            let _ = std::process::Command::new("kill")
+                .arg("-KILL")
+                .arg(&group)
+                .status();
+        }
+        let _ = std::process::Command::new("kill")
+            .arg("-TERM")
             .arg(pid.to_string())
             .status();
     }
     write_status_file(&dir, "stopped");
+    write_finished_at_file(&dir, chrono::Utc::now().timestamp());
     Ok(update_job_status_local(root, &meta))
 }
 
@@ -3107,7 +3155,7 @@ fn stop_ssh_job(
     validate_job_id(job_id)?;
     let dir = job_dir_rel(job_id);
     let cmd = format!(
-        "if test -f {0}/pid; then kill $(cat {0}/pid) 2>/dev/null || true; fi; printf stopped > {0}/status",
+        "if test -f {0}/pid; then pid=$(cat {0}/pid); kill -TERM -$pid 2>/dev/null || kill $pid 2>/dev/null || true; sleep 1; kill -KILL -$pid 2>/dev/null || true; fi; now=$(date +%s); printf stopped > {0}/status; echo $now > {0}/finished_at",
         shell_escape(&dir)
     );
     let (code, _, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
@@ -6033,6 +6081,13 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     return;
                 }
             };
+            for command in &body.commands {
+                if let Err(e) = validate_job_command(command) {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(job_response(&op, false, Some(e))));
+                    return;
+                }
+            }
             let mut jobs = Vec::new();
             for command in &body.commands {
                 let result = if proj.is_ssh() {
@@ -6887,6 +6942,13 @@ mod tests {
     fn test_validate_edit_path_allows_normal() {
         assert!(validate_edit_path("src/main.rs").is_ok());
         assert!(validate_edit_path("README.md").is_ok());
+        assert!(validate_edit_path(".gitignore").is_ok());
+    }
+
+    #[test]
+    fn test_validate_edit_path_rejects_git_dir() {
+        assert!(validate_edit_path(".git/config").is_err());
+        assert!(validate_edit_path(".git/hooks/pre-commit").is_err());
     }
 
     // =========================================================================

@@ -973,8 +973,10 @@ RESP=$(curl -sf -X POST "$CODEX/job" \
     -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'status','job_id':'$JOB_ID'}))")")
 JOB_STATUS_SUCCESS=$(pyget "$RESP" "success")
 JOB_STATUS_VALUE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job']['status'])")
+JOB_FINISHED_AT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('finished_at') or '')")
 assert_eq "Job status success" "True" "$JOB_STATUS_SUCCESS"
 assert_eq "Job status completed" "completed" "$JOB_STATUS_VALUE"
+assert_not_empty "Job completed has finished_at" "$JOB_FINISHED_AT"
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -992,6 +994,20 @@ JOB_LIST_SUCCESS=$(pyget "$RESP" "success")
 JOB_LIST_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('jobs', [])))")
 assert_eq "Job list success" "True" "$JOB_LIST_SUCCESS"
 assert_contains "Job list has jobs" "4" "$JOB_LIST_COUNT"
+RESP=$(curl -s -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create_batch','goal_id':'$GOAL_ID','commands':['echo should-not-start',''],'reason':'invalid batch','max_runtime_secs':30}))")")
+JOB_BAD_BATCH_SUCCESS=$(pyget "$RESP" "success")
+JOB_BAD_BATCH_ERROR=$(pyget "$RESP" "error")
+assert_eq "Job create_batch invalid command fails" "False" "$JOB_BAD_BATCH_SUCCESS"
+assert_contains "Job create_batch invalid command error" "command cannot be empty" "$JOB_BAD_BATCH_ERROR"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'list','goal_id':'$GOAL_ID','limit':20}))")")
+JOB_LIST_AFTER_BAD_BATCH_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('jobs', [])))")
+assert_eq "Job invalid batch starts no partial jobs" "$JOB_LIST_COUNT" "$JOB_LIST_AFTER_BAD_BATCH_COUNT"
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -1011,8 +1027,10 @@ RESP=$(curl -sf -X POST "$CODEX/job" \
     -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'stop','job_id':'$JOB_STOP_ID'}))")")
 JOB_STOP_SUCCESS=$(pyget "$RESP" "success")
 JOB_STOP_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job']['status'])")
+JOB_STOP_FINISHED_AT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('finished_at') or '')")
 assert_eq "Job stop success" "True" "$JOB_STOP_SUCCESS"
 assert_eq "Job stop status" "stopped" "$JOB_STOP_STATUS"
+assert_not_empty "Job stopped has finished_at" "$JOB_STOP_FINISHED_AT"
 
 RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
     -H "Authorization: Bearer $TOKEN" \
@@ -1971,6 +1989,30 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
     -d '{"project":"test-project","mode":"read_file","path":"new_file.txt"}')
 AFTER_CONTENT=$(pyget "$RESP" "content")
 assert_eq "dry_run did not modify file" "$BEFORE_CONTENT" "$AFTER_CONTENT"
+
+# --- 42a. Edit: allows root .gitignore and still rejects .git directory ---
+echo ""
+echo "--- 42a. Edit allows .gitignore ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_file","path":".gitignore","content":".codex/jobs/\n"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "Edit .gitignore success" "True" "$EDIT_SUCCESS"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"read_file","path":".gitignore"}')
+GITIGNORE_CONTENT=$(pyget "$RESP" "content")
+assert_contains "Edit .gitignore contains jobs ignore" ".codex/jobs/" "$GITIGNORE_CONTENT"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"write_file","path":".git/config","content":"bad","allow_overwrite":true}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_ERROR=$(pyget "$RESP" "error")
+assert_eq "Edit .git/config blocked" "False" "$EDIT_SUCCESS"
+assert_contains "Edit .git/config error" "sensitive" "$EDIT_ERROR"
 
 # --- 43. Edit: rejects .env ---
 echo ""

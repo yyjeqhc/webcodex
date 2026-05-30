@@ -317,11 +317,15 @@
       "CommandRequestOpRequest": {
         "type": "object",
         "properties": {
-          "op": {"type": "string", "enum": ["list", "create", "create_raw", "create_batch", "approve", "approve_batch", "reject", "reject_batch"], "description": "Command request operation to perform"},
-          "project": {"type": "string", "nullable": true, "description": "Project name for create/list filters"},
-          "command": {"type": "string", "nullable": true, "description": "Configured command id for op=create"},
-          "command_text": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Raw single-line command for op=create_raw"},
-          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Reason for create/reject operations"},
+          "op": {"type": "string", "enum": ["list", "create", "create_raw", "create_batch", "approve", "approve_batch", "reject", "reject_batch", "create_goal", "list_goals", "close_goal", "create_raw_and_approve", "create_and_approve"], "description": "Command request or goal operation to perform"},
+          "project": {"type": "string", "nullable": true, "description": "Project name for create/list/goal filters"},
+          "command": {"type": "string", "nullable": true, "description": "Configured command id for op=create or op=create_and_approve"},
+          "command_text": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Raw single-line command for op=create_raw or op=create_raw_and_approve"},
+          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Reason for create/reject/goal operations"},
+          "title": {"type": "string", "nullable": true, "maxLength": 200, "description": "Goal title for op=create_goal"},
+          "summary": {"type": "string", "nullable": true, "maxLength": 4000, "description": "Goal summary for op=create_goal"},
+          "goal_id": {"type": "string", "nullable": true, "description": "Goal id for op=close_goal/create_raw_and_approve/create_and_approve"},
+          "ttl_secs": {"type": "integer", "nullable": true, "minimum": 60, "maximum": 28800, "description": "Goal TTL in seconds for op=create_goal"},
           "requests": {"type": "array", "items": {"$ref": "#/components/schemas/CommandRequestBatchItem"}, "description": "Batch items for op=create_batch"},
           "request_id": {"type": "string", "nullable": true, "description": "Request id for op=approve or op=reject"},
           "request_ids": {"type": "array", "items": {"type": "string"}, "description": "Request ids for op=approve_batch or op=reject_batch"},
@@ -336,8 +340,11 @@
           "success": {"type": "boolean"},
           "op": {"type": "string"},
           "records": {"type": "array", "items": {"type": "object"}},
+          "goals": {"type": "array", "items": {"type": "object"}},
           "request_id": {"type": "string", "nullable": true},
           "record": {"type": "object", "nullable": true},
+          "goal_id": {"type": "string", "nullable": true},
+          "goal": {"type": "object", "nullable": true},
           "error": {"type": "string", "nullable": true}
         },
         "required": ["success", "op", "records"]

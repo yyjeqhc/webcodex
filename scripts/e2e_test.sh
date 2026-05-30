@@ -806,6 +806,58 @@ OP_REJECT_BATCH_SUCCESS=$(pyget "$RESP" "success")
 OP_REJECT_BATCH_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('records', [])))")
 assert_eq "Command op reject_batch success" "True" "$OP_REJECT_BATCH_SUCCESS"
 assert_eq "Command op reject_batch count" "2" "$OP_REJECT_BATCH_COUNT"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"create_goal","project":"test-project","title":"E2E development goal","summary":"Allow low-risk e2e commands","ttl_secs":600}')
+GOAL_SUCCESS=$(pyget "$RESP" "success")
+GOAL_ID=$(pyget "$RESP" "goal_id")
+GOAL_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['goal']['status'])")
+assert_eq "Command op create_goal success" "True" "$GOAL_SUCCESS"
+assert_not_empty "Command op create_goal id" "$GOAL_ID"
+assert_eq "Command op create_goal active" "active" "$GOAL_STATUS"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_raw_and_approve','project':'test-project','goal_id':'$GOAL_ID','command_text':'echo goal-raw-ok','reason':'goal raw smoke'}))")")
+GOAL_RAW_SUCCESS=$(pyget "$RESP" "success")
+GOAL_RAW_STDOUT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('stdout_tail') or '')")
+GOAL_RAW_REASON=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('reason') or '')")
+assert_eq "Command op goal raw auto approve success" "True" "$GOAL_RAW_SUCCESS"
+assert_contains "Command op goal raw stdout" "goal-raw-ok" "$GOAL_RAW_STDOUT"
+assert_contains "Command op goal raw reason has goal" "$GOAL_ID" "$GOAL_RAW_REASON"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_and_approve','project':'test-project','goal_id':'$GOAL_ID','command':'smoke','reason':'goal configured smoke'}))")")
+GOAL_CMD_SUCCESS=$(pyget "$RESP" "success")
+GOAL_CMD_STDOUT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('stdout_tail') or '')")
+assert_eq "Command op goal configured auto approve success" "True" "$GOAL_CMD_SUCCESS"
+assert_contains "Command op goal configured stdout" "command-smoke-ok" "$GOAL_CMD_STDOUT"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"list_goals","project":"test-project","status":"active","limit":10}')
+GOAL_LIST_SUCCESS=$(pyget "$RESP" "success")
+GOAL_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); ids={g['id'] for g in d.get('goals', [])}; print('yes' if '$GOAL_ID' in ids else 'no')")
+assert_eq "Command op list_goals success" "True" "$GOAL_LIST_SUCCESS"
+assert_eq "Command op list_goals has id" "yes" "$GOAL_LIST_HAS_ID"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'close_goal','goal_id':'$GOAL_ID','reason':'done'}))")")
+GOAL_CLOSE_SUCCESS=$(pyget "$RESP" "success")
+GOAL_CLOSE_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['goal']['status'])")
+assert_eq "Command op close_goal success" "True" "$GOAL_CLOSE_SUCCESS"
+assert_eq "Command op close_goal closed" "closed" "$GOAL_CLOSE_STATUS"
+RESP=$(curl -s -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_raw_and_approve','project':'test-project','goal_id':'$GOAL_ID','command_text':'echo should-not-run'}))")")
+GOAL_CLOSED_SUCCESS=$(pyget "$RESP" "success")
+GOAL_CLOSED_ERROR=$(pyget "$RESP" "error")
+assert_eq "Command op closed goal cannot auto approve" "False" "$GOAL_CLOSED_SUCCESS"
+assert_contains "Command op closed goal error" "not active" "$GOAL_CLOSED_ERROR"
 
 # --- 25. Codex: applyProjectPatch ---
 echo ""

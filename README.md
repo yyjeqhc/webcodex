@@ -824,6 +824,11 @@ Supported `op` values:
 - `approve_batch`: approve 1-20 requests using `request_ids`
 - `reject`: reject one request using `request_id` and optional `reason`
 - `reject_batch`: reject 1-20 requests using `request_ids` and optional `reason`
+- `create_goal`: create an active development goal with `project`, `title`, optional `summary`, and optional `ttl_secs`
+- `list_goals`: list goals with optional `project`, `status`, and `limit`
+- `close_goal`: close an active goal with `goal_id`
+- `create_raw_and_approve`: under an active `goal_id`, create and immediately approve one raw command request
+- `create_and_approve`: under an active `goal_id`, create and immediately approve one configured-command request
 
 Examples:
 
@@ -834,6 +839,16 @@ Examples:
 ```json
 {"op":"approve_batch","request_ids":["id-1","id-2"]}
 ```
+
+```json
+{"op":"create_goal","project":"private-drop-v4","title":"Implement compact API cleanup","ttl_secs":7200}
+```
+
+```json
+{"op":"create_raw_and_approve","project":"private-drop-v4","goal_id":"<goal-id>","command_text":"git status --short","reason":"inspect current state"}
+```
+
+Goal-scoped `*_and_approve` operations are intended to reduce repeated manual approval during a bounded development task. They require an active, unexpired goal for the same project and still create normal `command_requests` audit records before execution.
 
 This endpoint does not bypass existing safety checks. Raw commands still require `allow_raw_command_requests = true`, configured command requests still require `allow_command_requests = true`, approval remains atomic, and all executions use the stored `command_text` snapshot with SQLite audit records.
 

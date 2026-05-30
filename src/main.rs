@@ -62,6 +62,19 @@ pub struct CommandAuditRecord {
     pub error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CodexGoalRecord {
+    pub id: String,
+    pub project: String,
+    pub title: String,
+    pub summary: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub closed_at: Option<i64>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct Config {
     pub addr: String,
@@ -245,7 +258,20 @@ impl Database {
                 stderr_tail TEXT,
                 error TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_command_requests_created_at ON command_requests(created_at DESC);",
+            CREATE INDEX IF NOT EXISTS idx_command_requests_created_at ON command_requests(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS codex_goals (
+                id TEXT PRIMARY KEY,
+                project TEXT NOT NULL,
+                title TEXT NOT NULL,
+                summary TEXT,
+                status TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                closed_at INTEGER,
+                error TEXT
+            );
+            CREATE INDEX IF NOT EXISTS idx_codex_goals_created_at ON codex_goals(created_at DESC);",
         )?;
         let has_command_text = {
             let mut stmt = conn.prepare("PRAGMA table_info(command_requests)")?;
@@ -339,6 +365,109 @@ impl Database {
         let has_more = messages.len() > limit;
         messages.truncate(limit);
         Ok((messages, has_more))
+    }
+
+    pub fn insert_goal(&self, record: &CodexGoalRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO codex_goals (id, project, title, summary, status, created_at, expires_at, closed_at, error)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                record.id,
+                record.project,
+                record.title,
+                record.summary,
+                record.status,
+                record.created_at,
+                record.expires_at,
+                record.closed_at,
+                record.error,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_goal(&self, id: &str) -> anyhow::Result<Option<CodexGoalRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, project, title, summary, status, created_at, expires_at, closed_at, error FROM codex_goals WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(CodexGoalRecord {
+                id: row.get(0)?,
+                project: row.get(1)?,
+                title: row.get(2)?,
+                summary: row.get(3)?,
+                status: row.get(4)?,
+                created_at: row.get(5)?,
+                expires_at: row.get(6)?,
+                closed_at: row.get(7)?,
+                error: row.get(8)?,
+            })
+        })?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_goals(
+        &self,
+        project: Option<&str>,
+        status: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<CodexGoalRecord>> {
+        let limit = limit.clamp(1, 100) as i64;
+        let conn = self.conn.lock().unwrap();
+        let sql = match (project, status) {
+            (Some(_), Some(_)) => "SELECT id, project, title, summary, status, created_at, expires_at, closed_at, error FROM codex_goals WHERE project = ?1 AND status = ?2 ORDER BY created_at DESC LIMIT ?3",
+            (Some(_), None) => "SELECT id, project, title, summary, status, created_at, expires_at, closed_at, error FROM codex_goals WHERE project = ?1 ORDER BY created_at DESC LIMIT ?2",
+            (None, Some(_)) => "SELECT id, project, title, summary, status, created_at, expires_at, closed_at, error FROM codex_goals WHERE status = ?1 ORDER BY created_at DESC LIMIT ?2",
+            (None, None) => "SELECT id, project, title, summary, status, created_at, expires_at, closed_at, error FROM codex_goals ORDER BY created_at DESC LIMIT ?1",
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let map_row = |row: &rusqlite::Row| {
+            Ok(CodexGoalRecord {
+                id: row.get(0)?,
+                project: row.get(1)?,
+                title: row.get(2)?,
+                summary: row.get(3)?,
+                status: row.get(4)?,
+                created_at: row.get(5)?,
+                expires_at: row.get(6)?,
+                closed_at: row.get(7)?,
+                error: row.get(8)?,
+            })
+        };
+        let rows = match (project, status) {
+            (Some(project), Some(status)) => {
+                stmt.query_map(params![project, status, limit], map_row)?
+            }
+            (Some(project), None) => stmt.query_map(params![project, limit], map_row)?,
+            (None, Some(status)) => stmt.query_map(params![status, limit], map_row)?,
+            (None, None) => stmt.query_map(params![limit], map_row)?,
+        };
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn update_goal_status(
+        &self,
+        id: &str,
+        status: &str,
+        closed_at: i64,
+        error: Option<&str>,
+    ) -> anyhow::Result<Option<CodexGoalRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE codex_goals SET status = ?2, closed_at = ?3, error = ?4 WHERE id = ?1",
+            params![id, status, closed_at, error],
+        )?;
+        drop(conn);
+        if changed == 1 {
+            self.get_goal(id)
+        } else {
+            Ok(None)
+        }
     }
 
     pub fn insert_command_request(&self, record: &CommandAuditRecord) -> anyhow::Result<()> {

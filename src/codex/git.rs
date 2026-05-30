@@ -1,6 +1,10 @@
 use super::edit::validate_edit_path;
+use super::get_projects;
+use super::shell::sanitize_tail;
 use super::shell::{shell_escape, shell_join_paths};
-use super::types::{GitOperation, GitRequest};
+use super::types::{GitOperation, GitRequest, GitResponse};
+use super::{run_project_cmd, CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN};
+use salvo::prelude::*;
 
 pub(super) const MAX_GIT_PATHS: usize = 50;
 pub(super) const MAX_GIT_PATH_LEN: usize = 512;
@@ -77,5 +81,129 @@ pub(super) fn git_command_for_request(body: &GitRequest) -> Result<String, Strin
                 "git add -- {paths} && if git diff --cached --quiet -- {paths}; then echo 'No staged changes to amend' >&2; exit 1; fi; git commit --amend --no-edit --no-verify"
             ))
         }
+    }
+}
+
+#[handler]
+pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(GitResponse {
+            success: false,
+            project: String::new(),
+            operation: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            stdout_tail: None,
+            stderr_tail: None,
+            truncated: false,
+            error: Some("Projects not configured".to_string()),
+        }));
+        return;
+    };
+    let body: GitRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(GitResponse {
+                success: false,
+                project: String::new(),
+                operation: String::new(),
+                exit_code: None,
+                duration_ms: 0,
+                stdout_tail: None,
+                stderr_tail: None,
+                truncated: false,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(git_error(&body.project, &body.operation, e)));
+            return;
+        }
+    };
+    if matches!(
+        body.operation,
+        GitOperation::Add | GitOperation::Commit | GitOperation::CommitAmendNoEdit
+    ) && !proj.allow_patch()
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(git_error(
+            &body.project,
+            &body.operation,
+            "Git mutation is not allowed for this project".to_string(),
+        )));
+        return;
+    }
+    let cmd = match git_command_for_request(&body) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(git_error(&body.project, &body.operation, e)));
+            return;
+        }
+    };
+    let (code, stdout, stderr, duration_ms) =
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
+    let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
+    let truncated = stdout_trunc || stderr_trunc;
+    let success = code == 0;
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "runProjectGit",
+        project = %body.project,
+        git_operation = git_operation_name(&body.operation),
+        executor = if proj.is_ssh() { "ssh" } else { "local" },
+        success = success,
+        exit_code = code,
+        duration_ms = duration_ms,
+        ssh_calls = if proj.is_ssh() { 1 } else { 0 },
+        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+        "codex_git_completed"
+    );
+    res.render(Json(GitResponse {
+        success,
+        project: body.project,
+        operation: git_operation_name(&body.operation).to_string(),
+        exit_code: Some(code),
+        duration_ms,
+        stdout_tail: Some(stdout_tail),
+        stderr_tail: Some(stderr_tail),
+        truncated,
+        error: if success {
+            None
+        } else {
+            Some("git operation failed".to_string())
+        },
+    }));
+}
+
+pub(super) fn git_operation_name(operation: &GitOperation) -> &'static str {
+    match operation {
+        GitOperation::Status => "status",
+        GitOperation::Diff => "diff",
+        GitOperation::Log => "log",
+        GitOperation::Add => "add",
+        GitOperation::Commit => "commit",
+        GitOperation::CommitAmendNoEdit => "commit_amend_no_edit",
+    }
+}
+
+pub(super) fn git_error(project: &str, operation: &GitOperation, error: String) -> GitResponse {
+    GitResponse {
+        success: false,
+        project: project.to_string(),
+        operation: git_operation_name(operation).to_string(),
+        exit_code: None,
+        duration_ms: 0,
+        stdout_tail: None,
+        stderr_tail: None,
+        truncated: false,
+        error: Some(error),
     }
 }

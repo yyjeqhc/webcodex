@@ -2,10 +2,11 @@ use super::get_projects;
 use super::require_active_goal;
 use super::shell::sanitize_tail;
 use super::types::{
-    CommandApproveRequest, CommandRejectRequest, CommandRequestBatchCreate,
-    CommandRequestBatchResponse, CommandRequestCreate, CommandRequestOpRequest,
-    CommandRequestOpResponse, CommandRequestResponse, CommandRequestsListRequest,
-    CommandRequestsListResponse, CommandResponse, RawCommandRequestCreate,
+    CheckRequest, CheckResponse, CommandApproveRequest, CommandRejectRequest, CommandRequest,
+    CommandRequestBatchCreate, CommandRequestBatchResponse, CommandRequestCreate,
+    CommandRequestOpRequest, CommandRequestOpResponse, CommandRequestResponse,
+    CommandRequestsListRequest, CommandRequestsListResponse, CommandResponse,
+    RawCommandRequestCreate,
 };
 use super::{
     approve_command_request_inner, reject_command_request_inner, run_project_cmd,
@@ -1726,6 +1727,207 @@ pub async fn codex_command_request(req: &mut Request, depot: &mut Depot, res: &m
         success: true,
         request_id: Some(request_id),
         record: Some(record),
+        error: None,
+    }));
+}
+
+#[handler]
+pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(CommandResponse {
+            success: false,
+            project: String::new(),
+            command: String::new(),
+            exit_code: None,
+            duration_ms: 0,
+            stdout_tail: None,
+            stderr_tail: None,
+            truncated: false,
+            error: Some("Projects not configured".to_string()),
+        }));
+        return;
+    };
+    let body: CommandRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CommandResponse {
+                success: false,
+                project: String::new(),
+                command: String::new(),
+                exit_code: None,
+                duration_ms: 0,
+                stdout_tail: None,
+                stderr_tail: None,
+                truncated: false,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(command_error(&body.project, &body.command, e)));
+            return;
+        }
+    };
+    let cmd = match get_project_command(proj, &body.command) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(command_error(&body.project, &body.command, e)));
+            return;
+        }
+    };
+    let (code, stdout, stderr, duration_ms) =
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
+    let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
+    let truncated = stdout_trunc || stderr_trunc;
+    let success = code == 0;
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "runProjectCommand",
+        project = %body.project,
+        command = %body.command,
+        executor = if proj.is_ssh() { "ssh" } else { "local" },
+        success = success,
+        exit_code = code,
+        duration_ms = duration_ms,
+        ssh_calls = if proj.is_ssh() { 1 } else { 0 },
+        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+        "codex_command_completed"
+    );
+    res.render(Json(CommandResponse {
+        success,
+        project: body.project,
+        command: body.command,
+        exit_code: Some(code),
+        duration_ms,
+        stdout_tail: Some(stdout_tail),
+        stderr_tail: Some(stderr_tail),
+        truncated,
+        error: if success {
+            None
+        } else {
+            Some("command failed".to_string())
+        },
+    }));
+}
+
+#[handler]
+pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(projects) = get_projects(depot) else {
+        res.render(Json(CheckResponse {
+            success: false,
+            suite: None,
+            exit_code: None,
+            duration_ms: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            truncated: false,
+            error: Some("Projects not configured".to_string()),
+        }));
+        return;
+    };
+    let body: CheckRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CheckResponse {
+                success: false,
+                suite: None,
+                exit_code: None,
+                duration_ms: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                truncated: false,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    let proj = match projects.get_project(&body.project) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(CheckResponse {
+                success: false,
+                suite: Some(body.suite),
+                exit_code: None,
+                duration_ms: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                truncated: false,
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+    if !proj.is_check_allowed(&body.suite) {
+        res.status_code(StatusCode::FORBIDDEN);
+        let suite = body.suite.clone();
+        res.render(Json(CheckResponse {
+            success: false,
+            suite: Some(body.suite),
+            exit_code: None,
+            duration_ms: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            truncated: false,
+            error: Some(format!(
+                "Check '{}' is not allowed. Allowed: {}",
+                suite,
+                proj.allowed_checks.join(", ")
+            )),
+        }));
+        return;
+    }
+    let cmd = match proj.get_check_command(&body.suite) {
+        Ok(c) => c,
+        Err(e) => {
+            res.render(Json(CheckResponse {
+                success: false,
+                suite: Some(body.suite),
+                exit_code: None,
+                duration_ms: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                truncated: false,
+                error: Some(e),
+            }));
+            return;
+        }
+    };
+    let (code, stdout, stderr, duration_ms) =
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
+    let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
+    let truncated = stdout_trunc || stderr_trunc;
+    tracing::info!(
+        target: "codex.metrics",
+        operation = "runProjectCheck",
+        project = %body.project,
+        suite = %body.suite,
+        executor = if proj.is_ssh() { "ssh" } else { "local" },
+        success = code == 0,
+        exit_code = code,
+        duration_ms = duration_ms,
+        ssh_calls = if proj.is_ssh() { 1 } else { 0 },
+        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+        "codex_check_completed"
+    );
+
+    res.render(Json(CheckResponse {
+        success: code == 0,
+        suite: Some(body.suite),
+        exit_code: Some(code),
+        duration_ms: Some(duration_ms),
+        stdout_tail: Some(stdout_tail),
+        stderr_tail: Some(stderr_tail),
+        truncated,
         error: None,
     }));
 }

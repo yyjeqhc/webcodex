@@ -1624,9 +1624,48 @@ ART_DIFF=$(pyget "$RESP" "diff")
 assert_eq "artifact save_upload success" "True" "$ART_SUCCESS"
 assert_contains "artifact save_upload diff" "new size: 4 bytes" "$ART_DIFF"
 
-# --- 41r. Artifact API: save_url succeeds or skips on network ---
+# --- 41r. Artifact API: save_upload with /api/files file_id succeeds ---
 echo ""
-echo "--- 41r. Artifact API save_url ---"
+echo "--- 41r. Artifact API save_upload file_id ---"
+python3 - <<PY
+from pathlib import Path
+Path('$TMPDIR_DATA/artifact-file-id.bin').write_bytes(bytes([0, 1, 2, 3]))
+PY
+RESP=$(curl -sf -X POST "$BASE/api/files?channel=files" \
+    -H "Authorization: Bearer $TOKEN" \
+    -F "file=@$TMPDIR_DATA/artifact-file-id.bin")
+ART_UPLOAD_ID=$(pyget "$RESP" "id")
+assert_not_empty "artifact upload returns file id" "$ART_UPLOAD_ID"
+RESP=$(curl -sf -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'save_upload','path':'docs/diagrams/artifact-upload-file-id.bin','file_id':'$ART_UPLOAD_ID'}))")")
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_DIFF=$(pyget "$RESP" "diff")
+assert_eq "artifact save_upload file_id success" "True" "$ART_SUCCESS"
+assert_contains "artifact save_upload file_id diff" "new size: 4 bytes" "$ART_DIFF"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"tree"}')
+TREE_ITEMS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('\n'.join(d.get('items') or []))")
+assert_contains "artifact save_upload file_id appears in tree" "docs/diagrams/artifact-upload-file-id.bin" "$TREE_ITEMS"
+
+# --- 41s. Artifact API: missing file_id fails ---
+echo ""
+echo "--- 41s. Artifact API missing file_id fails ---"
+RESP=$(curl -s -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_upload","path":"docs/diagrams/artifact-missing-file-id.bin","file_id":"missing-file-id"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_ERROR=$(pyget "$RESP" "error")
+assert_eq "artifact missing file_id fails" "False" "$ART_SUCCESS"
+assert_contains "artifact missing file_id error" "not found" "$ART_ERROR"
+
+# --- 41t. Artifact API: save_url succeeds or skips on network ---
+echo ""
+echo "--- 41t. Artifact API save_url ---"
 RESP=$(curl -s -X POST "$CODEX/artifact" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \

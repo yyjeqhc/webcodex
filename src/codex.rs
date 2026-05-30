@@ -1,5 +1,5 @@
 use crate::projects::{canonicalize_and_verify, ProjectConfig, ProjectsConfig, SshConfig};
-use crate::{CodexGoalRecord, CommandAuditRecord, Database, Message, MessageKind};
+use crate::{CodexGoalRecord, CommandAuditRecord, Config, Database, Message, MessageKind};
 use base64::Engine;
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -464,6 +464,8 @@ pub struct ArtifactRequest {
     pub base64_content: Option<String>,
     #[serde(default)]
     pub source_file: Option<String>,
+    #[serde(default)]
+    pub file_id: Option<String>,
     #[serde(default)]
     pub source_url: Option<String>,
     #[serde(default)]
@@ -6996,7 +6998,55 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
     }
 }
 
-fn edit_request_from_artifact(body: &ArtifactRequest) -> Result<EditRequest, String> {
+fn resolve_upload_file_id(
+    config: &Config,
+    db: &Database,
+    file_id: &str,
+    rel_path: &str,
+) -> Result<String, String> {
+    let message = db
+        .get_message(file_id)
+        .map_err(|e| format!("Failed to read upload record: {}", e))?
+        .ok_or_else(|| format!("file_id not found: {}", file_id))?;
+    if message.kind != MessageKind::File {
+        return Err(format!("file_id is not a file upload: {}", file_id));
+    }
+    let Some(file_path) = message.file_path else {
+        return Err(format!("file_id has no file_path: {}", file_id));
+    };
+    if file_path.is_empty() || file_path.contains("..") || is_sensitive_path(&file_path) {
+        return Err("upload file_path is unsafe".to_string());
+    }
+    let uploads_dir = config.uploads_dir();
+    let canonical_uploads = uploads_dir
+        .canonicalize()
+        .map_err(|e| format!("Failed to access uploads directory: {}", e))?;
+    let candidate = uploads_dir.join(&file_path);
+    let canonical = candidate
+        .canonicalize()
+        .map_err(|_| format!("file_id upload file not found: {}", file_id))?;
+    if !canonical.starts_with(&canonical_uploads) {
+        return Err("file_id resolved outside uploads directory".to_string());
+    }
+    let meta =
+        std::fs::metadata(&canonical).map_err(|e| format!("Failed to stat upload file: {}", e))?;
+    if !meta.is_file() {
+        return Err("file_id upload path is not a regular file".to_string());
+    }
+    if meta.len() as usize > MAX_BINARY_ARTIFACT_SIZE {
+        return Err(format!(
+            "upload file for {} exceeds {} bytes",
+            rel_path, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    Ok(canonical.to_string_lossy().to_string())
+}
+
+fn edit_request_from_artifact(
+    body: &ArtifactRequest,
+    config: &Config,
+    db: &Database,
+) -> Result<EditRequest, String> {
     let edit = match body.op {
         ArtifactOperation::SaveBase64 => {
             let base64_content = body
@@ -7017,10 +7067,13 @@ fn edit_request_from_artifact(body: &ArtifactRequest) -> Result<EditRequest, Str
             }
         }
         ArtifactOperation::SaveUpload => {
-            let source_file = body
-                .source_file
-                .clone()
-                .ok_or_else(|| "source_file is required for save_upload".to_string())?;
+            let source_file = if let Some(file_id) = body.file_id.as_deref() {
+                resolve_upload_file_id(config, db, file_id, &body.path)?
+            } else {
+                body.source_file.clone().ok_or_else(|| {
+                    "file_id or source_file is required for save_upload".to_string()
+                })?
+            };
             if body.allow_overwrite {
                 EditOperation::WriteBinaryFileFromUpload {
                     path: body.path.clone(),
@@ -7169,6 +7222,14 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
         res.render(Json(edit_error("Projects not configured".to_string())));
         return;
     };
+    let Some(config) = depot.obtain::<Arc<Config>>().ok().cloned() else {
+        res.render(Json(edit_error("Config not configured".to_string())));
+        return;
+    };
+    let Some(db) = depot.obtain::<Arc<Database>>().ok().cloned() else {
+        res.render(Json(edit_error("Database not configured".to_string())));
+        return;
+    };
     let artifact_body: ArtifactRequest = match req.parse_json().await {
         Ok(b) => b,
         Err(e) => {
@@ -7177,7 +7238,7 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
             return;
         }
     };
-    let edit_body = match edit_request_from_artifact(&artifact_body) {
+    let edit_body = match edit_request_from_artifact(&artifact_body, &config, &db) {
         Ok(body) => body,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);

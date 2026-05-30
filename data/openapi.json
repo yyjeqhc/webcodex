@@ -326,7 +326,8 @@
           "reason": {"type": "string", "nullable": true},
           "allow_overwrite": {"type": "boolean", "default": false, "description": "If true, overwrite an existing artifact"},
           "base64_content": {"type": "string", "nullable": true, "description": "Required for save_base64. Base64-encoded artifact bytes; decoded size max 5MB."},
-          "source_file": {"type": "string", "nullable": true, "description": "Required for save_upload. Server-accessible upload/temp file path; max 5MB."},
+          "source_file": {"type": "string", "nullable": true, "description": "Low-level fallback for save_upload. Server-accessible upload/temp file path; max 5MB."},
+          "file_id": {"type": "string", "nullable": true, "description": "Required/recommended for save_upload when the artifact was uploaded through /api/files. The server resolves it to DROP_DATA/uploads via the messages table."},
           "source_url": {"type": "string", "nullable": true, "description": "Required for save_url. HTTP/HTTPS URL with SSRF protection; max 5MB."},
           "mime_type": {"type": "string", "nullable": true, "description": "Optional caller-provided MIME hint for audit/UI purposes"}
         },

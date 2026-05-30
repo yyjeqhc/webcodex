@@ -492,6 +492,7 @@ pub struct ArtifactResponse {
     pub file_size: Option<u64>,
     pub mime_type: Option<String>,
     pub markdown_snippet: Option<String>,
+    pub selected_source: Option<String>,
     pub diff: String,
     pub warnings: Vec<String>,
     pub error: Option<String>,
@@ -504,6 +505,8 @@ struct ArtifactPlan {
     file_size: Option<u64>,
     mime_type: Option<String>,
     markdown_snippet: Option<String>,
+    selected_source: String,
+    warnings: Vec<String>,
 }
 
 // =============================================================================
@@ -7155,18 +7158,59 @@ fn artifact_edit_from_url(body: &ArtifactRequest, source_url: String) -> EditOpe
     }
 }
 
+fn provided_artifact_sources(body: &ArtifactRequest) -> Vec<&'static str> {
+    let mut sources = Vec::new();
+    if body.file_id.is_some() {
+        sources.push("file_id");
+    }
+    if body.base64_content.is_some() {
+        sources.push("base64_content");
+    }
+    if body.chatgpt_estuary_url.is_some() {
+        sources.push("chatgpt_estuary_url");
+    }
+    if body.source_url.is_some() {
+        sources.push("source_url");
+    }
+    if body.source_file.is_some() {
+        sources.push("source_file");
+    }
+    sources
+}
+
+fn multiple_source_warning(body: &ArtifactRequest, selected_source: &str) -> Vec<String> {
+    if matches!(body.op, ArtifactOperation::SaveGenerated) {
+        let sources = provided_artifact_sources(body);
+        if sources.len() > 1 {
+            return vec![format!(
+                "Multiple artifact sources provided; using {} by priority.",
+                selected_source
+            )];
+        }
+    }
+    Vec::new()
+}
+
 fn select_generated_artifact_edit(
     body: &ArtifactRequest,
     config: &Config,
     db: &Database,
-) -> Result<(EditOperation, Option<u64>), String> {
+) -> Result<(EditOperation, Option<u64>, &'static str), String> {
     if let Some(file_id) = body.file_id.as_deref() {
         let source_file = resolve_upload_file_id(config, db, file_id, &body.path)?;
-        return Ok((artifact_edit_from_upload(body, source_file), None));
+        return Ok((
+            artifact_edit_from_upload(body, source_file),
+            None,
+            "file_id",
+        ));
     }
     if let Some(base64_content) = body.base64_content.clone() {
         let file_size = base64_decoded_len(&base64_content);
-        return Ok((artifact_edit_from_base64(body, base64_content), file_size));
+        return Ok((
+            artifact_edit_from_base64(body, base64_content),
+            file_size,
+            "base64_content",
+        ));
     }
     if let Some(source_url) = body.chatgpt_estuary_url.clone() {
         validate_source_url(&source_url)?;
@@ -7177,13 +7221,21 @@ fn select_generated_artifact_edit(
                 "chatgpt_estuary_url is not an allowed ChatGPT estuary content URL".to_string(),
             );
         }
-        return Ok((artifact_edit_from_url(body, source_url), None));
+        return Ok((
+            artifact_edit_from_url(body, source_url),
+            None,
+            "chatgpt_estuary_url",
+        ));
     }
     if let Some(source_url) = body.source_url.clone() {
-        return Ok((artifact_edit_from_url(body, source_url), None));
+        return Ok((artifact_edit_from_url(body, source_url), None, "source_url"));
     }
     if let Some(source_file) = body.source_file.clone() {
-        return Ok((artifact_edit_from_upload(body, source_file), None));
+        return Ok((
+            artifact_edit_from_upload(body, source_file),
+            None,
+            "source_file",
+        ));
     }
     Err("save_generated requires one of file_id, base64_content, chatgpt_estuary_url, source_url, or source_file".to_string())
 }
@@ -7193,14 +7245,18 @@ fn plan_artifact_request(
     config: &Config,
     db: &Database,
 ) -> Result<ArtifactPlan, String> {
-    let (artifact_edit, file_size) = match body.op {
+    let (artifact_edit, file_size, selected_source) = match body.op {
         ArtifactOperation::SaveBase64 => {
             let base64_content = body
                 .base64_content
                 .clone()
                 .ok_or_else(|| "base64_content is required for save_base64".to_string())?;
             let file_size = base64_decoded_len(&base64_content);
-            (artifact_edit_from_base64(body, base64_content), file_size)
+            (
+                artifact_edit_from_base64(body, base64_content),
+                file_size,
+                "base64_content",
+            )
         }
         ArtifactOperation::SaveUpload => {
             let source_file = if let Some(file_id) = body.file_id.as_deref() {
@@ -7210,7 +7266,16 @@ fn plan_artifact_request(
                     "file_id or source_file is required for save_upload".to_string()
                 })?
             };
-            (artifact_edit_from_upload(body, source_file), None)
+            let selected_source = if body.file_id.is_some() {
+                "file_id"
+            } else {
+                "source_file"
+            };
+            (
+                artifact_edit_from_upload(body, source_file),
+                None,
+                selected_source,
+            )
         }
         ArtifactOperation::SaveUrl => {
             let source_url = body
@@ -7218,7 +7283,16 @@ fn plan_artifact_request(
                 .clone()
                 .or_else(|| body.chatgpt_estuary_url.clone())
                 .ok_or_else(|| "source_url is required for save_url".to_string())?;
-            (artifact_edit_from_url(body, source_url), None)
+            let selected_source = if body.source_url.is_some() {
+                "source_url"
+            } else {
+                "chatgpt_estuary_url"
+            };
+            (
+                artifact_edit_from_url(body, source_url),
+                None,
+                selected_source,
+            )
         }
         ArtifactOperation::SaveGenerated => select_generated_artifact_edit(body, config, db)?,
     };
@@ -7252,10 +7326,14 @@ fn plan_artifact_request(
         file_size,
         mime_type: body.mime_type.clone(),
         markdown_snippet: Some(snippet),
+        selected_source: selected_source.to_string(),
+        warnings: multiple_source_warning(body, selected_source),
     })
 }
 
 fn artifact_response_from_edit(plan: &ArtifactPlan, response: EditResponse) -> ArtifactResponse {
+    let mut warnings = plan.warnings.clone();
+    warnings.extend(response.warnings);
     if response.success {
         ArtifactResponse {
             success: true,
@@ -7265,8 +7343,9 @@ fn artifact_response_from_edit(plan: &ArtifactPlan, response: EditResponse) -> A
             file_size: plan.file_size,
             mime_type: plan.mime_type.clone(),
             markdown_snippet: plan.markdown_snippet.clone(),
+            selected_source: Some(plan.selected_source.clone()),
             diff: response.diff,
-            warnings: response.warnings,
+            warnings,
             error: None,
         }
     } else {
@@ -7278,8 +7357,9 @@ fn artifact_response_from_edit(plan: &ArtifactPlan, response: EditResponse) -> A
             file_size: None,
             mime_type: plan.mime_type.clone(),
             markdown_snippet: plan.markdown_snippet.clone(),
+            selected_source: Some(plan.selected_source.clone()),
             diff: response.diff,
-            warnings: response.warnings,
+            warnings,
             error: response.error,
         }
     }
@@ -7421,6 +7501,7 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
                 file_size: None,
                 mime_type: artifact_body.mime_type.clone(),
                 markdown_snippet: None,
+                selected_source: None,
                 diff: String::new(),
                 warnings: Vec::new(),
                 error: Some(e),
@@ -7441,6 +7522,7 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
                 file_size: None,
                 mime_type: artifact_body.mime_type.clone(),
                 markdown_snippet: plan.markdown_snippet.clone(),
+                selected_source: Some(plan.selected_source.clone()),
                 diff: String::new(),
                 warnings: Vec::new(),
                 error: Some(e),
@@ -7458,6 +7540,7 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
             file_size: None,
             mime_type: artifact_body.mime_type.clone(),
             markdown_snippet: plan.markdown_snippet.clone(),
+            selected_source: Some(plan.selected_source.clone()),
             diff: String::new(),
             warnings: Vec::new(),
             error: Some("Artifact save is not allowed for this project".to_string()),
@@ -7474,6 +7557,7 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
             file_size: None,
             mime_type: artifact_body.mime_type.clone(),
             markdown_snippet: plan.markdown_snippet.clone(),
+            selected_source: Some(plan.selected_source.clone()),
             diff: String::new(),
             warnings: Vec::new(),
             error: Some(e),
@@ -7491,6 +7575,7 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
                 file_size: None,
                 mime_type: artifact_body.mime_type.clone(),
                 markdown_snippet: plan.markdown_snippet.clone(),
+                selected_source: Some(plan.selected_source.clone()),
                 diff: String::new(),
                 warnings: Vec::new(),
                 error: Some(e),

@@ -348,6 +348,7 @@
           "file_size": {"type": "integer", "nullable": true},
           "mime_type": {"type": "string", "nullable": true},
           "markdown_snippet": {"type": "string", "nullable": true},
+          "selected_source": {"type": "string", "nullable": true, "description": "Actual artifact source selected by the server, such as file_id, base64_content, chatgpt_estuary_url, source_url, or source_file."},
           "diff": {"type": "string"},
           "warnings": {"type": "array", "items": {"type": "string"}},
           "error": {"type": "string", "nullable": true}

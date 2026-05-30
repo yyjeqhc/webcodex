@@ -1665,11 +1665,13 @@ ART_SAVED=$(pyget "$RESP" "saved_path")
 ART_REL=$(pyget "$RESP" "relative_path")
 ART_SIZE=$(pyget "$RESP" "file_size")
 ART_SNIPPET=$(pyget "$RESP" "markdown_snippet")
+ART_SELECTED=$(pyget "$RESP" "selected_source")
 ART_DIFF=$(pyget "$RESP" "diff")
 assert_eq "artifact save_generated base64 success" "True" "$ART_SUCCESS"
 assert_eq "artifact save_generated saved_path" "docs/diagrams/generated-base64.png" "$ART_SAVED"
 assert_eq "artifact save_generated relative_path" "docs/diagrams/generated-base64.png" "$ART_REL"
 assert_eq "artifact save_generated file_size" "4" "$ART_SIZE"
+assert_eq "artifact save_generated selected_source" "base64_content" "$ART_SELECTED"
 assert_contains "artifact save_generated markdown snippet" "Generated base64 smoke" "$ART_SNIPPET"
 assert_contains "artifact save_generated diff has companion" "generated-base64.md" "$ART_DIFF"
 RESP=$(curl -sf -X POST "$CODEX/context" \
@@ -1678,6 +1680,21 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
     -d '{"project":"test-project","mode":"read_file","path":"docs/diagrams/generated-base64.md"}')
 COMPANION_CONTENT=$(pyget "$RESP" "content")
 assert_contains "artifact companion markdown references image" "./generated-base64.png" "$COMPANION_CONTENT"
+
+# --- 41r2b. Artifact API: save_generated multiple sources warns ---
+echo ""
+echo "--- 41r2b. Artifact API save_generated multiple sources warns ---"
+RESP=$(curl -sf -X POST "$CODEX/artifact" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","op":"save_generated","path":"docs/diagrams/generated-multi-source.png","base64_content":"AAECAw==","source_url":"http://127.0.0.1:1/should-not-fetch.bin","mime_type":"image/png"}')
+ART_SUCCESS=$(pyget "$RESP" "success")
+ART_SELECTED=$(pyget "$RESP" "selected_source")
+ART_WARNINGS=$(pyget "$RESP" "warnings")
+assert_eq "artifact save_generated multi-source success" "True" "$ART_SUCCESS"
+assert_eq "artifact save_generated multi-source selected_source" "base64_content" "$ART_SELECTED"
+assert_contains "artifact save_generated multi-source warning" "Multiple artifact sources provided" "$ART_WARNINGS"
+assert_contains "artifact save_generated multi-source warning selected" "base64_content" "$ART_WARNINGS"
 
 # --- 41r3. Artifact API: save_generated no-overwrite fails ---
 echo ""
@@ -1712,9 +1729,11 @@ RESP=$(curl -sf -X POST "$CODEX/artifact" \
     -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'save_generated','path':'docs/diagrams/generated-file-id.bin','file_id':'$ART_UPLOAD_ID','mime_type':'application/octet-stream'}))")")
 ART_SUCCESS=$(pyget "$RESP" "success")
 ART_SAVED=$(pyget "$RESP" "saved_path")
+ART_SELECTED=$(pyget "$RESP" "selected_source")
 ART_DIFF=$(pyget "$RESP" "diff")
 assert_eq "artifact save_generated file_id success" "True" "$ART_SUCCESS"
 assert_eq "artifact save_generated file_id saved_path" "docs/diagrams/generated-file-id.bin" "$ART_SAVED"
+assert_eq "artifact save_generated file_id selected_source" "file_id" "$ART_SELECTED"
 assert_contains "artifact save_generated file_id diff" "new size: 4 bytes" "$ART_DIFF"
 
 # --- 41r6. Artifact API: save_generated rejects localhost URL ---

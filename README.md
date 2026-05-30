@@ -682,6 +682,27 @@ Use `mode="agent_context"` at the start of a new GPT/Codex chat to load project 
 
 A good startup batch for project work is `agent_context + overview + git_status`, then targeted `read_file` calls for the files relevant to the user's goal.
 
+For large Markdown projects such as thesis chapters, prefer these lighter modes before reading large line ranges:
+
+- `markdown_outline`: returns Markdown headings with line numbers for one file.
+- `read_section`: returns the Markdown section whose heading contains `query`, stopping before the next same-or-higher-level heading.
+
+Example:
+
+```json
+{
+  "project": "paper",
+  "requests": [
+    {"mode": "agent_context"},
+    {"mode": "markdown_outline", "path": "ch3.md", "limit": 80},
+    {"mode": "read_section", "path": "ch3.md", "query": "3.2", "limit": 160}
+  ],
+  "max_total_chars": 40000
+}
+```
+
+`max_total_chars` is a best-effort total character budget for context batch responses. It truncates later results if needed, which helps avoid large-response gateway failures when reading several long Markdown files.
+
 
 ## Codex controlled Git API
 

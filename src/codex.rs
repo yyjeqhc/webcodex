@@ -13,13 +13,15 @@ use std::time::Instant;
 // Request / Response types
 // =============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
 pub enum ContextMode {
     Overview,
     Tree,
     Search,
     ReadFile,
+    MarkdownOutline,
+    ReadSection,
     AgentContext,
     GitStatus,
     GitDiff,
@@ -56,6 +58,8 @@ pub struct ContextBatchItem {
 pub struct ContextBatchRequest {
     pub project: String,
     pub requests: Vec<ContextBatchItem>,
+    #[serde(default = "default_context_batch_max_total_chars")]
+    pub max_total_chars: usize,
 }
 
 fn default_start_line() -> usize {
@@ -63,6 +67,9 @@ fn default_start_line() -> usize {
 }
 fn default_limit() -> usize {
     200
+}
+fn default_context_batch_max_total_chars() -> usize {
+    60_000
 }
 
 #[derive(Debug, Deserialize)]
@@ -1981,6 +1988,8 @@ fn mode_name(mode: &ContextMode) -> &'static str {
         ContextMode::Tree => "tree",
         ContextMode::Search => "search",
         ContextMode::ReadFile => "read_file",
+        ContextMode::MarkdownOutline => "markdown_outline",
+        ContextMode::ReadSection => "read_section",
         ContextMode::AgentContext => "agent_context",
         ContextMode::GitStatus => "git_status",
         ContextMode::GitDiff => "git_diff",
@@ -2061,6 +2070,191 @@ fn local_agent_context(root: &Path, project_name: &str) -> ContextResponse {
         content.push('\n');
     }
     mode_content_response(project_name, "agent_context", content, MAX_OUTPUT_LEN)
+}
+
+fn markdown_outline_from_text(project_name: &str, text: &str, limit: usize) -> ContextResponse {
+    let max = limit.clamp(1, MAX_READ_FILE_LIMIT);
+    let mut lines = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+        if (1..=6).contains(&hashes) && trimmed.chars().nth(hashes) == Some(' ') {
+            lines.push(format!("{:4} | {}", idx + 1, trimmed));
+            if lines.len() >= max {
+                break;
+            }
+        }
+    }
+    let truncated = lines.len() >= max;
+    ContextResponse {
+        success: true,
+        project: project_name.to_string(),
+        mode: "markdown_outline".to_string(),
+        content: Some(lines.join("\n")),
+        items: None,
+        truncated,
+        error: None,
+    }
+}
+
+fn markdown_section_from_text(
+    project_name: &str,
+    text: &str,
+    query: &str,
+    limit: usize,
+) -> ContextResponse {
+    let max = limit.clamp(1, MAX_READ_FILE_LIMIT);
+    let query_lower = query.to_lowercase();
+    let mut found = false;
+    let mut level = 0usize;
+    let mut selected = Vec::new();
+    for (idx, line) in text.lines().enumerate() {
+        let trimmed = line.trim_start();
+        let hashes = trimmed.chars().take_while(|c| *c == '#').count();
+        let is_heading = (1..=6).contains(&hashes) && trimmed.chars().nth(hashes) == Some(' ');
+        if is_heading {
+            if found && hashes <= level {
+                break;
+            }
+            if !found && trimmed.to_lowercase().contains(&query_lower) {
+                found = true;
+                level = hashes;
+            }
+        }
+        if found {
+            if selected.len() >= max {
+                break;
+            }
+            selected.push(format!("{:4} | {}", idx + 1, line));
+        }
+    }
+    if !found {
+        return ContextResponse {
+            success: false,
+            project: project_name.to_string(),
+            mode: "read_section".to_string(),
+            content: None,
+            items: None,
+            truncated: false,
+            error: Some(format!("Section not found: {}", query)),
+        };
+    }
+    let truncated = selected.len() >= max;
+    ContextResponse {
+        success: true,
+        project: project_name.to_string(),
+        mode: "read_section".to_string(),
+        content: Some(selected.join("\n")),
+        items: None,
+        truncated,
+        error: None,
+    }
+}
+
+fn enforce_context_batch_total_limit(results: &mut [ContextResponse], max_total_chars: usize) {
+    let max_total = max_total_chars.clamp(4_000, 200_000);
+    let mut used = 0usize;
+    for result in results {
+        if let Some(content) = result.content.as_mut() {
+            if used >= max_total {
+                content.clear();
+                result.truncated = true;
+                continue;
+            }
+            let remaining = max_total - used;
+            if content.len() > remaining {
+                let (truncated, _) = truncate_string(content.clone(), remaining);
+                *content = truncated;
+                result.truncated = true;
+                used = max_total;
+            } else {
+                used += content.len();
+            }
+        }
+        if let Some(items) = result.items.as_mut() {
+            let mut kept = Vec::new();
+            for item in items.iter() {
+                if used + item.len() + 1 > max_total {
+                    result.truncated = true;
+                    break;
+                }
+                used += item.len() + 1;
+                kept.push(item.clone());
+            }
+            *items = kept;
+        }
+    }
+}
+
+fn markdown_outline_shell_fragment(path: &str, limit: usize) -> String {
+    format!(
+        " if test -f {0}; then grep -n -E '^#{{1,6}}[[:space:]]+' -- {0} | head -n {1}; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;",
+        shell_escape(path),
+        limit.clamp(1, MAX_READ_FILE_LIMIT)
+    )
+}
+
+fn markdown_section_shell_fragment(path: &str, query: &str, limit: usize) -> String {
+    format!(
+        " if test -f {path}; then awk -v q={query} -v max={limit} 'BEGIN{{found=0;level=0;count=0}} /^#{{1,6}}[ \\t]+/{{ if(found){{ match($0,/^#+/); if(RLENGTH<=level) exit }} if(!found && index(tolower($0),tolower(q))>0){{ match($0,/^#+/); level=RLENGTH; found=1 }} }} found && count<max {{ printf \"%4d | %s\\n\", NR, $0; count++ }} END{{ if(!found) printf \"__PDCTX_ERROR__:Section not found: %s\\n\", q }}' -- {path}; else printf '__PDCTX_ERROR__:File not found: {path}\\n'; fi;",
+        path = shell_escape(path),
+        query = shell_escape(query),
+        limit = limit.clamp(1, MAX_READ_FILE_LIMIT)
+    )
+}
+
+fn local_markdown_file_response(
+    root: &Path,
+    project_name: &str,
+    item: &ContextBatchItem,
+) -> (ContextResponse, u64) {
+    let Some(rel_path) = &item.path else {
+        return (
+            context_error(
+                project_name,
+                &item.mode,
+                "path parameter is required for markdown mode".to_string(),
+            ),
+            0,
+        );
+    };
+    let full_path = root.join(rel_path);
+    match canonicalize_and_verify(&full_path, root) {
+        Ok(canonical) => match std::fs::read_to_string(&canonical) {
+            Ok(content) => match item.mode {
+                ContextMode::MarkdownOutline => (
+                    markdown_outline_from_text(project_name, &content, item.limit),
+                    0,
+                ),
+                ContextMode::ReadSection => {
+                    let Some(query) = item.query.as_deref() else {
+                        return (
+                            context_error(
+                                project_name,
+                                &item.mode,
+                                "query parameter is required for read_section mode".to_string(),
+                            ),
+                            0,
+                        );
+                    };
+                    (
+                        markdown_section_from_text(project_name, &content, query, item.limit),
+                        0,
+                    )
+                }
+                _ => unreachable!(),
+            },
+            Err(e) => (
+                context_error(
+                    project_name,
+                    &item.mode,
+                    format!("Failed to read file: {}", e),
+                ),
+                0,
+            ),
+        },
+        Err(e) => (context_error(project_name, &item.mode, e), 0),
+    }
 }
 
 fn agent_context_shell_fragment() -> String {
@@ -2209,6 +2403,18 @@ fn ssh_batch_block_to_response(
                 error: None,
             }
         }
+        ContextMode::MarkdownOutline => mode_content_response(
+            project_name,
+            "markdown_outline",
+            block.to_string(),
+            MAX_OUTPUT_LEN,
+        ),
+        ContextMode::ReadSection => mode_content_response(
+            project_name,
+            "read_section",
+            block.to_string(),
+            MAX_OUTPUT_LEN,
+        ),
         ContextMode::AgentContext => mode_content_response(
             project_name,
             "agent_context",
@@ -2320,6 +2526,24 @@ fn try_ssh_context_batch_once(
                 let escaped_path = shell_escape(path);
                 script.push_str(&format!(" if test -f {0}; then sed -n '{1},{2}p' -- {0}; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;", escaped_path, item.start_line, end_line));
             }
+            ContextMode::MarkdownOutline => {
+                let Some(path) = &item.path else {
+                    return None;
+                };
+                if validate_ssh_read_path(path).is_err() {
+                    return None;
+                }
+                script.push_str(&markdown_outline_shell_fragment(path, item.limit));
+            }
+            ContextMode::ReadSection => {
+                let (Some(path), Some(query)) = (&item.path, &item.query) else {
+                    return None;
+                };
+                if validate_ssh_read_path(path).is_err() {
+                    return None;
+                }
+                script.push_str(&markdown_section_shell_fragment(path, query, item.limit));
+            }
             ContextMode::AgentContext => {
                 script.push_str(&agent_context_shell_fragment());
             }
@@ -2382,6 +2606,64 @@ fn execute_context_item(
                     project_name,
                     &item.mode,
                     "path parameter is required for read_file mode".to_string(),
+                ),
+            },
+            ContextMode::MarkdownOutline => match &item.path {
+                Some(path) => {
+                    let cmd = markdown_outline_shell_fragment(path, item.limit);
+                    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+                    if code == 0 {
+                        if let Some(err) = stdout.trim().strip_prefix("__PDCTX_ERROR__:") {
+                            context_error(project_name, &item.mode, err.trim().to_string())
+                        } else {
+                            mode_content_response(
+                                project_name,
+                                "markdown_outline",
+                                stdout,
+                                MAX_OUTPUT_LEN,
+                            )
+                        }
+                    } else {
+                        context_error(
+                            project_name,
+                            &item.mode,
+                            format!("markdown_outline failed: {}", stderr.trim()),
+                        )
+                    }
+                }
+                None => context_error(
+                    project_name,
+                    &item.mode,
+                    "path parameter is required for markdown_outline mode".to_string(),
+                ),
+            },
+            ContextMode::ReadSection => match (&item.path, &item.query) {
+                (Some(path), Some(query)) => {
+                    let cmd = markdown_section_shell_fragment(path, query, item.limit);
+                    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+                    if code == 0 {
+                        if let Some(err) = stdout.trim().strip_prefix("__PDCTX_ERROR__:") {
+                            context_error(project_name, &item.mode, err.trim().to_string())
+                        } else {
+                            mode_content_response(
+                                project_name,
+                                "read_section",
+                                stdout,
+                                MAX_OUTPUT_LEN,
+                            )
+                        }
+                    } else {
+                        context_error(
+                            project_name,
+                            &item.mode,
+                            format!("read_section failed: {}", stderr.trim()),
+                        )
+                    }
+                }
+                _ => context_error(
+                    project_name,
+                    &item.mode,
+                    "path and query parameters are required for read_section mode".to_string(),
                 ),
             },
             ContextMode::AgentContext => {
@@ -2595,6 +2877,9 @@ fn execute_context_item(
                 0,
             ),
         },
+        ContextMode::MarkdownOutline | ContextMode::ReadSection => {
+            local_markdown_file_response(&root, project_name, item)
+        }
         ContextMode::AgentContext => (local_agent_context(&root, project_name), 0),
         ContextMode::GitStatus => {
             let output = run_command("git status --short", &root, 10);
@@ -3295,6 +3580,89 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                     ssh_config,
                 )
             }
+            ContextMode::MarkdownOutline => match &body.path {
+                Some(path) => {
+                    let cmd = markdown_outline_shell_fragment(path, body.limit);
+                    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+                    if code != 0 {
+                        ContextResponse {
+                            success: false,
+                            project: body.project.clone(),
+                            mode: "markdown_outline".to_string(),
+                            content: None,
+                            items: None,
+                            truncated: false,
+                            error: Some(format!("markdown_outline failed: {}", stderr.trim())),
+                        }
+                    } else if let Some(err) = stdout.trim().strip_prefix("__PDCTX_ERROR__:") {
+                        ContextResponse {
+                            success: false,
+                            project: body.project.clone(),
+                            mode: "markdown_outline".to_string(),
+                            content: None,
+                            items: None,
+                            truncated: false,
+                            error: Some(err.trim().to_string()),
+                        }
+                    } else {
+                        mode_content_response(
+                            &body.project,
+                            "markdown_outline",
+                            stdout,
+                            MAX_OUTPUT_LEN,
+                        )
+                    }
+                }
+                None => ContextResponse {
+                    success: false,
+                    project: body.project.clone(),
+                    mode: "markdown_outline".to_string(),
+                    content: None,
+                    items: None,
+                    truncated: false,
+                    error: Some("path parameter is required for markdown_outline mode".to_string()),
+                },
+            },
+            ContextMode::ReadSection => match (&body.path, &body.query) {
+                (Some(path), Some(query)) => {
+                    let cmd = markdown_section_shell_fragment(path, query, body.limit);
+                    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+                    if code != 0 {
+                        ContextResponse {
+                            success: false,
+                            project: body.project.clone(),
+                            mode: "read_section".to_string(),
+                            content: None,
+                            items: None,
+                            truncated: false,
+                            error: Some(format!("read_section failed: {}", stderr.trim())),
+                        }
+                    } else if let Some(err) = stdout.trim().strip_prefix("__PDCTX_ERROR__:") {
+                        ContextResponse {
+                            success: false,
+                            project: body.project.clone(),
+                            mode: "read_section".to_string(),
+                            content: None,
+                            items: None,
+                            truncated: false,
+                            error: Some(err.trim().to_string()),
+                        }
+                    } else {
+                        mode_content_response(&body.project, "read_section", stdout, MAX_OUTPUT_LEN)
+                    }
+                }
+                _ => ContextResponse {
+                    success: false,
+                    project: body.project.clone(),
+                    mode: "read_section".to_string(),
+                    content: None,
+                    items: None,
+                    truncated: false,
+                    error: Some(
+                        "path and query parameters are required for read_section mode".to_string(),
+                    ),
+                },
+            },
             ContextMode::AgentContext => {
                 let (code, stdout, stderr, _) =
                     run_project_cmd(proj, &agent_context_shell_fragment(), 10, ssh_config);
@@ -3365,7 +3733,8 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             }
         };
         let ssh_calls = match resp.mode.as_str() {
-            "overview" | "tree" | "search" | "read_file" | "git_status" | "git_diff" => 1,
+            "overview" | "tree" | "search" | "read_file" | "markdown_outline" | "read_section"
+            | "git_status" | "git_diff" => 1,
             _ => 0,
         };
         tracing::info!(
@@ -3557,6 +3926,17 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 }
             }
         }
+        ContextMode::MarkdownOutline | ContextMode::ReadSection => {
+            let item = ContextBatchItem {
+                mode: body.mode,
+                path: body.path.clone(),
+                query: body.query.clone(),
+                start_line: body.start_line,
+                limit: body.limit,
+            };
+            let (resp, _) = local_markdown_file_response(&root, &body.project, &item);
+            res.render(Json(resp));
+        }
         ContextMode::AgentContext => {
             res.render(Json(local_agent_context(&root, &body.project)));
         }
@@ -3648,7 +4028,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
     };
 
     let start = Instant::now();
-    let (results, ssh_calls) = if proj.is_ssh() {
+    let (mut results, ssh_calls) = if proj.is_ssh() {
         match try_ssh_context_batch_once(proj, &body.project, &body.requests, projects.ssh.as_ref())
         {
             Some((results, ssh_calls)) => (results, ssh_calls),
@@ -3672,6 +4052,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
         }
         (results, 0)
     };
+    enforce_context_batch_total_limit(&mut results, body.max_total_chars);
     let success = results.iter().all(|r| r.success);
     let duration_ms = start.elapsed().as_millis() as u64;
     tracing::info!(

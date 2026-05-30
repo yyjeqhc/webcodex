@@ -46,6 +46,31 @@ echo 'fn main() { println!("hello"); }' > src/main.rs
 echo "line1" > test.txt
 echo "line2" >> test.txt
 echo "line3" >> test.txt
+cat > chapter.md <<'EOF'
+# Chapter 1
+
+Intro text.
+
+## 1.1 Motivation
+
+Motivation paragraph.
+
+## 1.2 Method
+
+Method paragraph.
+
+### 1.2.1 Details
+
+Detail paragraph.
+
+## 1.3 Results
+
+Result paragraph.
+EOF
+python3 - <<'PY'
+from pathlib import Path
+Path('big.md').write_text('# Big\n\n' + '\n'.join(f'line {i} ' + ('x' * 120) for i in range(120)) + '\n')
+PY
 mkdir -p .codex/memory
 cat > AGENTS.md <<'EOF'
 # Test Agent Rules
@@ -640,6 +665,27 @@ BATCH_HAS_LINE1=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.st
 assert_eq "Context batch success" "True" "$BATCH_SUCCESS"
 assert_eq "Context batch has 3 results" "3" "$BATCH_COUNT"
 assert_eq "Context batch read_file contains line1" "yes" "$BATCH_HAS_LINE1"
+
+# --- 24b1. Codex: Markdown context modes ---
+echo ""
+echo "--- 24b1. Codex Markdown Context Modes ---"
+RESP=$(curl -sf -X POST "$CODEX/context_batch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","requests":[{"mode":"markdown_outline","path":"chapter.md","limit":20},{"mode":"read_section","path":"chapter.md","query":"1.2 Method","limit":20}],"max_total_chars":4000}')
+BATCH_SUCCESS=$(pyget "$RESP" "success")
+OUTLINE_CONTENT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['results'][0].get('content',''))")
+SECTION_CONTENT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['results'][1].get('content',''))")
+assert_eq "Markdown context batch success" "True" "$BATCH_SUCCESS"
+assert_contains "Markdown outline has heading" "1.2 Method" "$OUTLINE_CONTENT"
+assert_contains "Read section has method" "Method paragraph" "$SECTION_CONTENT"
+assert_contains "Read section includes child heading" "1.2.1 Details" "$SECTION_CONTENT"
+RESP=$(curl -sf -X POST "$CODEX/context_batch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","requests":[{"mode":"read_file","path":"big.md","limit":200},{"mode":"read_file","path":"big.md","limit":200}],"max_total_chars":4000}')
+BATCH_TRUNCATED=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if any(r.get('truncated') for r in d.get('results', [])) else 'no')")
+assert_eq "Context batch max_total_chars can truncate" "yes" "$BATCH_TRUNCATED"
 
 # --- 24b2. Codex: getProjectContextBatch agent_context ---
 echo ""

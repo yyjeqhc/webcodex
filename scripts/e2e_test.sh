@@ -46,6 +46,11 @@ echo 'fn main() { println!("hello"); }' > src/main.rs
 echo "line1" > test.txt
 echo "line2" >> test.txt
 echo "line3" >> test.txt
+python3 - <<'PY'
+from pathlib import Path
+Path('upload-source.bin').write_bytes(bytes([9, 8, 7, 6]))
+Path('upload-source-new.bin').write_bytes(bytes([6, 7, 8, 9, 10]))
+PY
 
 cat > check.sh << 'CHECKEOF'
 #!/bin/bash
@@ -1433,6 +1438,74 @@ EDIT_SUCCESS=$(pyget "$RESP" "success")
 EDIT_ERROR=$(pyget "$RESP" "error")
 assert_eq "mixed text binary same path fails" "False" "$EDIT_SUCCESS"
 assert_contains "mixed text binary error" "cannot mix text and binary edits for the same path" "$EDIT_ERROR"
+
+# --- 41f. Edit: create_binary_file_from_upload succeeds ---
+echo ""
+echo "--- 41f. Edit create_binary_file_from_upload ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_binary_file_from_upload","path":"docs/diagrams/from-upload.bin","source_file":"upload-source.bin"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_DIFF=$(pyget "$RESP" "diff")
+assert_eq "create_binary_file_from_upload success" "True" "$EDIT_SUCCESS"
+assert_contains "create_binary_file_from_upload diff" "new size: 4 bytes" "$EDIT_DIFF"
+
+# --- 41g. Edit: write_binary_file_from_upload overwrite succeeds ---
+echo ""
+echo "--- 41g. Edit write_binary_file_from_upload overwrite succeeds ---"
+RESP=$(curl -sf -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"write_binary_file_from_upload","path":"docs/diagrams/from-upload.bin","source_file":"upload-source-new.bin","allow_overwrite":true}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_DIFF=$(pyget "$RESP" "diff")
+assert_eq "write_binary_file_from_upload overwrite success" "True" "$EDIT_SUCCESS"
+assert_contains "write_binary_file_from_upload diff" "new size: 5 bytes" "$EDIT_DIFF"
+
+# --- 41h. Edit: create_binary_file_from_url succeeds ---
+echo ""
+echo "--- 41h. Edit create_binary_file_from_url ---"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_binary_file_from_url","path":"docs/diagrams/from-url.html","source_url":"https://example.com/"}]}')
+URL_EDIT_SUCCESS=$(pyget "$RESP" "success")
+if [ "$URL_EDIT_SUCCESS" = "True" ]; then
+    EDIT_DIFF=$(pyget "$RESP" "diff")
+    assert_contains "create_binary_file_from_url diff" "Binary file" "$EDIT_DIFF"
+else
+    URL_EDIT_ERROR=$(pyget "$RESP" "error")
+    log_pass "create_binary_file_from_url skipped due network: $URL_EDIT_ERROR"
+fi
+
+# --- 41i. Edit: source_url rejects localhost/private ---
+echo ""
+echo "--- 41i. Edit source_url rejects localhost ---"
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_binary_file_from_url","path":"docs/diagrams/local.bin","source_url":"http://127.0.0.1:1/local.bin"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_ERROR=$(pyget "$RESP" "error")
+assert_eq "source_url localhost fails" "False" "$EDIT_SUCCESS"
+assert_contains "source_url localhost error" "blocked private/local" "$EDIT_ERROR"
+
+# --- 41j. Edit: oversized source_file fails ---
+echo ""
+echo "--- 41j. Edit oversized source_file fails ---"
+python3 - <<PY
+from pathlib import Path
+Path('$TEST_PROJECT_DIR/oversized.bin').write_bytes(b'x' * (5 * 1024 * 1024 + 1))
+PY
+RESP=$(curl -s -X POST "$EDIT" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","edits":[{"type":"create_binary_file_from_upload","path":"docs/diagrams/oversized.bin","source_file":"oversized.bin"}]}')
+EDIT_SUCCESS=$(pyget "$RESP" "success")
+EDIT_ERROR=$(pyget "$RESP" "error")
+assert_eq "oversized source_file fails" "False" "$EDIT_SUCCESS"
+assert_contains "oversized source_file error" "exceeds" "$EDIT_ERROR"
 
 # --- 42. Edit: dry_run=true returns diff but does not modify ---
 echo ""

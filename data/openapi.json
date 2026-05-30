@@ -212,6 +212,48 @@
         },
         "required": ["type", "path", "base64_content"]
       },
+      "CreateBinaryFileFromUploadEdit": {
+        "type": "object",
+        "description": "Create a new binary artifact by importing a server-accessible upload/temp file. Fails if the file already exists.",
+        "properties": {
+          "type": {"type": "string", "enum": ["create_binary_file_from_upload"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "source_file": {"type": "string", "description": "Server-accessible upload/temp file path. Allowed roots include project root, /tmp, /var/tmp, /mnt/data, and DROP_DATA/uploads. Max 5MB."}
+        },
+        "required": ["type", "path", "source_file"]
+      },
+      "WriteBinaryFileFromUploadEdit": {
+        "type": "object",
+        "description": "Write a binary artifact by importing a server-accessible upload/temp file. Defaults to no overwrite unless allow_overwrite=true.",
+        "properties": {
+          "type": {"type": "string", "enum": ["write_binary_file_from_upload"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "source_file": {"type": "string", "description": "Server-accessible upload/temp file path. Allowed roots include project root, /tmp, /var/tmp, /mnt/data, and DROP_DATA/uploads. Max 5MB."},
+          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+        },
+        "required": ["type", "path", "source_file"]
+      },
+      "CreateBinaryFileFromUrlEdit": {
+        "type": "object",
+        "description": "Create a new binary artifact by downloading from an http/https URL. Fails if the file already exists. Private/local addresses, redirects, credentials, and oversized responses are rejected.",
+        "properties": {
+          "type": {"type": "string", "enum": ["create_binary_file_from_url"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "source_url": {"type": "string", "description": "HTTP/HTTPS source URL. Download timeout 10s, max 5MB, no redirects, no private/local addresses."}
+        },
+        "required": ["type", "path", "source_url"]
+      },
+      "WriteBinaryFileFromUrlEdit": {
+        "type": "object",
+        "description": "Write a binary artifact by downloading from an http/https URL. Defaults to no overwrite unless allow_overwrite=true. Private/local addresses, redirects, credentials, and oversized responses are rejected.",
+        "properties": {
+          "type": {"type": "string", "enum": ["write_binary_file_from_url"]},
+          "path": {"type": "string", "description": "Relative file path within the project"},
+          "source_url": {"type": "string", "description": "HTTP/HTTPS source URL. Download timeout 10s, max 5MB, no redirects, no private/local addresses."},
+          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+        },
+        "required": ["type", "path", "source_url"]
+      },
       "EditRequest": {
         "type": "object",
         "properties": {
@@ -228,9 +270,13 @@
                 {"$ref": "#/components/schemas/CreateFileEdit"},
                 {"$ref": "#/components/schemas/WriteFileEdit"},
                 {"$ref": "#/components/schemas/CreateBinaryFileEdit"},
-                {"$ref": "#/components/schemas/WriteBinaryFileEdit"}
+                {"$ref": "#/components/schemas/WriteBinaryFileEdit"},
+                {"$ref": "#/components/schemas/CreateBinaryFileFromUploadEdit"},
+                {"$ref": "#/components/schemas/WriteBinaryFileFromUploadEdit"},
+                {"$ref": "#/components/schemas/CreateBinaryFileFromUrlEdit"},
+                {"$ref": "#/components/schemas/WriteBinaryFileFromUrlEdit"}
               ],
-              "discriminator": {"propertyName": "type", "mapping": {"replace_text": "#/components/schemas/ReplaceTextEdit", "replace_range": "#/components/schemas/ReplaceRangeEdit", "append_file": "#/components/schemas/AppendFileEdit", "create_file": "#/components/schemas/CreateFileEdit", "write_file": "#/components/schemas/WriteFileEdit", "create_binary_file": "#/components/schemas/CreateBinaryFileEdit", "write_binary_file": "#/components/schemas/WriteBinaryFileEdit"}}
+              "discriminator": {"propertyName": "type", "mapping": {"replace_text": "#/components/schemas/ReplaceTextEdit", "replace_range": "#/components/schemas/ReplaceRangeEdit", "append_file": "#/components/schemas/AppendFileEdit", "create_file": "#/components/schemas/CreateFileEdit", "write_file": "#/components/schemas/WriteFileEdit", "create_binary_file": "#/components/schemas/CreateBinaryFileEdit", "write_binary_file": "#/components/schemas/WriteBinaryFileEdit", "create_binary_file_from_upload": "#/components/schemas/CreateBinaryFileFromUploadEdit", "write_binary_file_from_upload": "#/components/schemas/WriteBinaryFileFromUploadEdit", "create_binary_file_from_url": "#/components/schemas/CreateBinaryFileFromUrlEdit", "write_binary_file_from_url": "#/components/schemas/WriteBinaryFileFromUrlEdit"}}
             }
           }
         },

@@ -906,3 +906,42 @@ Binary diagram or document artifacts can also be saved through `applyProjectEdit
 ```
 
 Binary artifact writes keep the same project path safety checks as text edits, reject sensitive paths, default to no overwrite, and limit decoded content to 5MB.
+
+
+### Import generated or uploaded binary artifacts
+
+`applyProjectEdit` can also import binary artifacts without manually embedding base64 in the request.
+
+Use `create_binary_file_from_upload` when a generated image or uploaded file already exists on the Private Drop server in an allowed upload/temp location, or as a relative file inside the project:
+
+```json
+{
+  "project": "private-drop-v4",
+  "edits": [
+    {
+      "type": "create_binary_file_from_upload",
+      "path": "data/tmp_images/smart-anime-meme.png",
+      "source_file": "/mnt/data/smart-anime-meme.png"
+    }
+  ]
+}
+```
+
+Use `write_binary_file_from_upload` with `allow_overwrite=true` to replace an existing binary artifact.
+
+Use `create_binary_file_from_url` or `write_binary_file_from_url` to import from an external HTTP/HTTPS URL:
+
+```json
+{
+  "project": "private-drop-v4",
+  "edits": [
+    {
+      "type": "create_binary_file_from_url",
+      "path": "docs/diagrams/logo.png",
+      "source_url": "https://example.com/logo.png"
+    }
+  ]
+}
+```
+
+URL imports are intentionally constrained: only `http` and `https` are allowed, redirects are rejected, credentials in URLs are rejected, localhost/private/link-local addresses are rejected, downloads time out after 10 seconds, and the decoded/downloaded content is limited to 5MB. Upload imports are limited to project-relative files or server-side upload/temp roots such as `/tmp`, `/var/tmp`, `/mnt/data`, and `DROP_DATA/uploads`; sensitive source paths are rejected.

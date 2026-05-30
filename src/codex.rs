@@ -4,6 +4,7 @@ use base64::Engine;
 use salvo::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
+use std::net::{IpAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Instant;
@@ -401,6 +402,26 @@ pub enum EditOperation {
         #[serde(default)]
         allow_overwrite: bool,
     },
+    CreateBinaryFileFromUpload {
+        path: String,
+        source_file: String,
+    },
+    WriteBinaryFileFromUpload {
+        path: String,
+        source_file: String,
+        #[serde(default)]
+        allow_overwrite: bool,
+    },
+    CreateBinaryFileFromUrl {
+        path: String,
+        source_url: String,
+    },
+    WriteBinaryFileFromUrl {
+        path: String,
+        source_url: String,
+        #[serde(default)]
+        allow_overwrite: bool,
+    },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -432,6 +453,7 @@ const CHECK_TIMEOUT_SECS: u64 = 300;
 const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
 const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
+const URL_IMPORT_TIMEOUT_SECS: u64 = 10;
 
 const SENSITIVE_PATHS: &[&str] = &[
     ".git",
@@ -804,13 +826,14 @@ fn run_ssh_patch(
 /// Receives project root via argv[1] and edit JSON via stdin.
 /// Returns JSON result on stdout.
 const REMOTE_EDIT_SCRIPT: &str = r#####"
-import sys, json, os, difflib, base64
+import sys, json, os, difflib, base64, urllib.request, urllib.parse, socket, ipaddress
 
 SENSITIVE = ('.git', '.env', '.pem', '.key', 'id_rsa', 'id_ed25519',
              'target', 'node_modules')
 MAX_FILE = 2 * 1024 * 1024
 MAX_TEXT = 200 * 1024
 MAX_BINARY = 5 * 1024 * 1024
+URL_TIMEOUT = 10
 
 def err(msg):
     return {'success': False, 'changed_files': [], 'diff': '', 'warnings': [], 'error': msg}
@@ -849,8 +872,14 @@ def resolve(root, rel, must_exist):
             return None, 'File does not exist: ' + rel
     else:
         parent = os.path.dirname(full)
-        if not os.path.isdir(parent):
-            return None, 'Parent directory does not exist for: ' + rel
+        ancestor = parent
+        while ancestor and not os.path.isdir(ancestor):
+            next_ancestor = os.path.dirname(ancestor)
+            if next_ancestor == ancestor:
+                return None, 'path has no existing parent directory'
+            ancestor = next_ancestor
+        if not os.path.realpath(ancestor).startswith(canon_root + os.sep) and os.path.realpath(ancestor) != canon_root:
+            return None, 'Path is outside project directory'
     return full, None
 
 def read_file(path):
@@ -919,6 +948,11 @@ def simple_binary_diff(path, old_len, new_len):
         return 'diff --git a/{0} b/{0}\nnew file mode 100644\nBinary file b/{0} added\n# new size: {1} bytes\n'.format(path, new_len)
     return 'diff --git a/{0} b/{0}\nBinary files a/{0} and b/{0} differ\n# old size: {1} bytes\n# new size: {2} bytes\n'.format(path, old_len, new_len)
 
+def check_binary_size(data, label):
+    if len(data) > MAX_BINARY:
+        return None, 'binary content for %s exceeds %d bytes' % (label, MAX_BINARY)
+    return data, None
+
 def decode_binary(payload, rel):
     if len(payload) > MAX_BINARY * 2:
         return None, 'base64 content for %s is too large; maximum decoded size is %d bytes' % (rel, MAX_BINARY)
@@ -926,9 +960,94 @@ def decode_binary(payload, rel):
         data = base64.b64decode(payload, validate=True)
     except Exception as e:
         return None, 'Invalid base64 content for %s: %s' % (rel, e)
-    if len(data) > MAX_BINARY:
-        return None, 'binary content for %s exceeds %d bytes' % (rel, MAX_BINARY)
-    return data, None
+    return check_binary_size(data, rel)
+
+def read_upload(root, source_file, rel):
+    if not source_file:
+        return None, 'source_file cannot be empty'
+    if '..' in source_file:
+        return None, 'source_file path traversal is not allowed'
+    if is_sensitive(source_file):
+        return None, 'source_file cannot reference a sensitive path'
+    full = source_file if os.path.isabs(source_file) else os.path.join(root, source_file)
+    try:
+        canon = os.path.realpath(full)
+    except Exception as e:
+        return None, 'Failed to access source_file: %s' % e
+    allowed_roots = [root, '/tmp', '/var/tmp', '/mnt/data']
+    drop_data = os.environ.get('DROP_DATA')
+    if drop_data:
+        allowed_roots.append(os.path.join(drop_data, 'uploads'))
+    allowed = False
+    for allowed_root in allowed_roots:
+        if os.path.isdir(allowed_root):
+            ar = os.path.realpath(allowed_root)
+            if canon == ar or canon.startswith(ar + os.sep):
+                allowed = True
+                break
+    if not allowed:
+        return None, 'source_file is outside allowed upload/temp directories'
+    if not os.path.isfile(canon):
+        return None, 'source_file must be a regular file'
+    if os.path.getsize(canon) > MAX_BINARY:
+        return None, 'source_file for %s exceeds %d bytes' % (rel, MAX_BINARY)
+    try:
+        with open(canon, 'rb') as f:
+            return check_binary_size(f.read(), rel)
+    except Exception as e:
+        return None, 'Failed to read source_file: %s' % e
+
+def blocked_ip(ip):
+    try:
+        addr = ipaddress.ip_address(ip)
+    except ValueError:
+        return True
+    return addr.is_private or addr.is_loopback or addr.is_link_local or addr.is_multicast or addr.is_unspecified or addr.is_reserved
+
+def validate_url(source_url):
+    try:
+        parsed = urllib.parse.urlparse(source_url)
+    except Exception as e:
+        return None, 'Invalid source_url: %s' % e
+    if parsed.scheme not in ('http', 'https'):
+        return None, 'source_url must use http or https'
+    if parsed.username or parsed.password:
+        return None, 'source_url must not contain credentials'
+    host = parsed.hostname
+    if not host:
+        return None, 'source_url must include a host'
+    if host.lower() == 'localhost' or host.lower().endswith('.localhost'):
+        return None, 'source_url host is not allowed'
+    port = parsed.port or (443 if parsed.scheme == 'https' else 80)
+    try:
+        infos = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except Exception as e:
+        return None, 'Failed to resolve source_url host: %s' % e
+    if not infos:
+        return None, 'source_url host resolved to no addresses'
+    for info in infos:
+        if blocked_ip(info[4][0]):
+            return None, 'source_url resolves to a blocked private/local address'
+    return source_url, None
+
+def read_url(source_url, rel):
+    url, e = validate_url(source_url)
+    if e:
+        return None, e
+    req = urllib.request.Request(url, headers={'User-Agent': 'private-drop-artifact-import/1'})
+    opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler)
+    try:
+        with urllib.request.urlopen(req, timeout=URL_TIMEOUT) as resp:
+            final_url = resp.geturl()
+            if final_url != url:
+                return None, 'source_url redirects are not allowed'
+            length = resp.headers.get('Content-Length')
+            if length and int(length) > MAX_BINARY:
+                return None, 'source_url content for %s exceeds %d bytes' % (rel, MAX_BINARY)
+            data = resp.read(MAX_BINARY + 1)
+    except Exception as e:
+        return None, 'Failed to fetch source_url: %s' % e
+    return check_binary_size(data, rel)
 
 def main():
     if len(sys.argv) < 2:
@@ -1080,6 +1199,84 @@ def main():
                 print(json.dumps(err('File exists and allow_overwrite is false: ' + rel)))
                 return
             data, e = decode_binary(ed.get('base64_content', ''), rel)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            if os.path.exists(full) and rel not in binary_originals:
+                try:
+                    with open(full, 'rb') as f:
+                        binary_originals[rel] = f.read()
+                except Exception as e:
+                    print(json.dumps(err('Failed to read binary file: ' + str(e))))
+                    return
+            elif rel not in binary_originals:
+                binary_originals.setdefault(rel, None)
+            paths_map[rel] = full
+            binary_current[rel] = data
+        elif etype == 'create_binary_file_from_upload':
+            full, e = resolve(root, rel, False)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            if os.path.exists(full) or rel in binary_current:
+                print(json.dumps(err('File already exists: ' + rel)))
+                return
+            data, e = read_upload(root, ed.get('source_file', ''), rel)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            paths_map[rel] = full
+            binary_originals.setdefault(rel, None)
+            binary_current[rel] = data
+        elif etype == 'write_binary_file_from_upload':
+            full, e = resolve(root, rel, False)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            allow = ed.get('allow_overwrite', False)
+            if os.path.exists(full) and not allow:
+                print(json.dumps(err('File exists and allow_overwrite is false: ' + rel)))
+                return
+            data, e = read_upload(root, ed.get('source_file', ''), rel)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            if os.path.exists(full) and rel not in binary_originals:
+                try:
+                    with open(full, 'rb') as f:
+                        binary_originals[rel] = f.read()
+                except Exception as e:
+                    print(json.dumps(err('Failed to read binary file: ' + str(e))))
+                    return
+            elif rel not in binary_originals:
+                binary_originals.setdefault(rel, None)
+            paths_map[rel] = full
+            binary_current[rel] = data
+        elif etype == 'create_binary_file_from_url':
+            full, e = resolve(root, rel, False)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            if os.path.exists(full) or rel in binary_current:
+                print(json.dumps(err('File already exists: ' + rel)))
+                return
+            data, e = read_url(ed.get('source_url', ''), rel)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            paths_map[rel] = full
+            binary_originals.setdefault(rel, None)
+            binary_current[rel] = data
+        elif etype == 'write_binary_file_from_url':
+            full, e = resolve(root, rel, False)
+            if e:
+                print(json.dumps(err(e)))
+                return
+            allow = ed.get('allow_overwrite', False)
+            if os.path.exists(full) and not allow:
+                print(json.dumps(err('File exists and allow_overwrite is false: ' + rel)))
+                return
+            data, e = read_url(ed.get('source_url', ''), rel)
             if e:
                 print(json.dumps(err(e)))
                 return
@@ -5430,6 +5627,36 @@ mod tests {
     }
 
     #[test]
+    fn test_read_binary_from_upload_accepts_project_relative_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("upload.bin");
+        std::fs::write(&source, [1_u8, 2, 3, 4]).unwrap();
+        let bytes = read_binary_from_upload(dir.path(), "upload.bin", "docs/out.bin").unwrap();
+        assert_eq!(bytes, vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn test_read_binary_from_upload_rejects_traversal() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = read_binary_from_upload(dir.path(), "../secret.bin", "docs/out.bin").unwrap_err();
+        assert!(err.contains("traversal"));
+    }
+
+    #[test]
+    fn test_validate_source_url_rejects_localhost() {
+        let err = validate_source_url("http://localhost:8080/file.png").unwrap_err();
+        assert!(err.contains("not allowed"));
+        let err = validate_source_url("http://127.0.0.1/file.png").unwrap_err();
+        assert!(err.contains("blocked private/local"));
+    }
+
+    #[test]
+    fn test_validate_source_url_rejects_non_http() {
+        let err = validate_source_url("file:///tmp/file.png").unwrap_err();
+        assert!(err.contains("http or https"));
+    }
+
+    #[test]
     fn test_decode_binary_artifact_accepts_small_base64() {
         let bytes = decode_binary_artifact("AAECAw==", "docs/pixel.bin").unwrap();
         assert_eq!(bytes, vec![0, 1, 2, 3]);
@@ -5945,7 +6172,11 @@ fn edit_path(edit: &EditOperation) -> &str {
         | EditOperation::CreateFile { path, .. }
         | EditOperation::WriteFile { path, .. }
         | EditOperation::CreateBinaryFile { path, .. }
-        | EditOperation::WriteBinaryFile { path, .. } => path,
+        | EditOperation::WriteBinaryFile { path, .. }
+        | EditOperation::CreateBinaryFileFromUpload { path, .. }
+        | EditOperation::WriteBinaryFileFromUpload { path, .. }
+        | EditOperation::CreateBinaryFileFromUrl { path, .. }
+        | EditOperation::WriteBinaryFileFromUrl { path, .. } => path,
     }
 }
 
@@ -5956,7 +6187,12 @@ fn edit_text_len(edit: &EditOperation) -> usize {
         EditOperation::AppendFile { text, .. } => text.len(),
         EditOperation::CreateFile { content, .. } => content.len(),
         EditOperation::WriteFile { content, .. } => content.len(),
-        EditOperation::CreateBinaryFile { .. } | EditOperation::WriteBinaryFile { .. } => 0,
+        EditOperation::CreateBinaryFile { .. }
+        | EditOperation::WriteBinaryFile { .. }
+        | EditOperation::CreateBinaryFileFromUpload { .. }
+        | EditOperation::WriteBinaryFileFromUpload { .. }
+        | EditOperation::CreateBinaryFileFromUrl { .. }
+        | EditOperation::WriteBinaryFileFromUrl { .. } => 0,
     }
 }
 
@@ -5967,7 +6203,12 @@ fn edit_kind(edit: &EditOperation) -> &'static str {
         | EditOperation::AppendFile { .. }
         | EditOperation::CreateFile { .. }
         | EditOperation::WriteFile { .. } => "text",
-        EditOperation::CreateBinaryFile { .. } | EditOperation::WriteBinaryFile { .. } => "binary",
+        EditOperation::CreateBinaryFile { .. }
+        | EditOperation::WriteBinaryFile { .. }
+        | EditOperation::CreateBinaryFileFromUpload { .. }
+        | EditOperation::WriteBinaryFileFromUpload { .. }
+        | EditOperation::CreateBinaryFileFromUrl { .. }
+        | EditOperation::WriteBinaryFileFromUrl { .. } => "binary",
     }
 }
 
@@ -6028,6 +6269,170 @@ fn decode_binary_artifact(base64_content: &str, rel_path: &str) -> Result<Vec<u8
         ));
     }
     Ok(bytes)
+}
+
+fn validate_binary_size(bytes: Vec<u8>, label: &str) -> Result<Vec<u8>, String> {
+    if bytes.len() > MAX_BINARY_ARTIFACT_SIZE {
+        return Err(format!(
+            "binary content for {} exceeds {} bytes",
+            label, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    Ok(bytes)
+}
+
+fn allowed_upload_roots(project_root: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![
+        project_root.to_path_buf(),
+        std::env::temp_dir(),
+        PathBuf::from("/tmp"),
+        PathBuf::from("/var/tmp"),
+        PathBuf::from("/mnt/data"),
+    ];
+    if let Ok(drop_data) = std::env::var("DROP_DATA") {
+        roots.push(PathBuf::from(drop_data).join("uploads"));
+    }
+    roots
+}
+
+fn read_binary_from_upload(
+    project_root: &Path,
+    source_file: &str,
+    rel_path: &str,
+) -> Result<Vec<u8>, String> {
+    if source_file.is_empty() {
+        return Err("source_file cannot be empty".to_string());
+    }
+    if source_file.contains("..") {
+        return Err("source_file path traversal is not allowed".to_string());
+    }
+    if is_sensitive_path(source_file) {
+        return Err("source_file cannot reference a sensitive path".to_string());
+    }
+    let source_path = PathBuf::from(source_file);
+    let full = if source_path.is_absolute() {
+        source_path
+    } else {
+        project_root.join(source_path)
+    };
+    let canonical = full
+        .canonicalize()
+        .map_err(|e| format!("Failed to access source_file: {}", e))?;
+    let mut allowed = false;
+    for root in allowed_upload_roots(project_root) {
+        if let Ok(root) = root.canonicalize() {
+            if canonical.starts_with(&root) {
+                allowed = true;
+                break;
+            }
+        }
+    }
+    if !allowed {
+        return Err("source_file is outside allowed upload/temp directories".to_string());
+    }
+    let meta =
+        std::fs::metadata(&canonical).map_err(|e| format!("Failed to stat source_file: {}", e))?;
+    if !meta.is_file() {
+        return Err("source_file must be a regular file".to_string());
+    }
+    if meta.len() as usize > MAX_BINARY_ARTIFACT_SIZE {
+        return Err(format!(
+            "source_file for {} exceeds {} bytes",
+            rel_path, MAX_BINARY_ARTIFACT_SIZE
+        ));
+    }
+    let bytes =
+        std::fs::read(&canonical).map_err(|e| format!("Failed to read source_file: {}", e))?;
+    validate_binary_size(bytes, rel_path)
+}
+
+fn is_blocked_ip(ip: IpAddr) -> bool {
+    match ip {
+        IpAddr::V4(v4) => {
+            v4.is_private()
+                || v4.is_loopback()
+                || v4.is_link_local()
+                || v4.is_broadcast()
+                || v4.is_documentation()
+                || v4.is_unspecified()
+                || v4.is_multicast()
+        }
+        IpAddr::V6(v6) => {
+            v6.is_loopback()
+                || v6.is_unspecified()
+                || v6.is_multicast()
+                || matches!(v6.segments()[0], 0xfc00..=0xfdff | 0xfe80..=0xfebf)
+        }
+    }
+}
+
+fn validate_source_url(source_url: &str) -> Result<reqwest::Url, String> {
+    let url = reqwest::Url::parse(source_url).map_err(|e| format!("Invalid source_url: {}", e))?;
+    match url.scheme() {
+        "http" | "https" => {}
+        _ => return Err("source_url must use http or https".to_string()),
+    }
+    if url.username() != "" || url.password().is_some() {
+        return Err("source_url must not contain credentials".to_string());
+    }
+    let host = url
+        .host_str()
+        .ok_or_else(|| "source_url must include a host".to_string())?;
+    let host_lower = host.to_ascii_lowercase();
+    if host_lower == "localhost" || host_lower.ends_with(".localhost") {
+        return Err("source_url host is not allowed".to_string());
+    }
+    let port = url.port_or_known_default().unwrap_or(80);
+    let addrs = (host, port)
+        .to_socket_addrs()
+        .map_err(|e| format!("Failed to resolve source_url host: {}", e))?;
+    let mut saw_addr = false;
+    for addr in addrs {
+        saw_addr = true;
+        if is_blocked_ip(addr.ip()) {
+            return Err("source_url resolves to a blocked private/local address".to_string());
+        }
+    }
+    if !saw_addr {
+        return Err("source_url host resolved to no addresses".to_string());
+    }
+    Ok(url)
+}
+
+fn read_binary_from_url(source_url: &str, rel_path: &str) -> Result<Vec<u8>, String> {
+    let url = validate_source_url(source_url)?;
+    let client = reqwest::blocking::Client::builder()
+        .timeout(std::time::Duration::from_secs(URL_IMPORT_TIMEOUT_SECS))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| format!("Failed to build URL client: {}", e))?;
+    let response = client
+        .get(url)
+        .send()
+        .map_err(|e| format!("Failed to fetch source_url: {}", e))?;
+    if response.status().is_redirection() {
+        return Err("source_url redirects are not allowed".to_string());
+    }
+    if !response.status().is_success() {
+        return Err(format!("source_url returned HTTP {}", response.status()));
+    }
+    if let Some(len) = response.content_length() {
+        if len as usize > MAX_BINARY_ARTIFACT_SIZE {
+            return Err(format!(
+                "source_url content for {} exceeds {} bytes",
+                rel_path, MAX_BINARY_ARTIFACT_SIZE
+            ));
+        }
+    }
+    let mut bytes = Vec::new();
+    {
+        use std::io::Read;
+        let mut limited = response.take((MAX_BINARY_ARTIFACT_SIZE + 1) as u64);
+        limited
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("Failed to read source_url response: {}", e))?;
+    }
+    validate_binary_size(bytes, rel_path)
 }
 
 fn simple_binary_diff(path: &str, old_len: Option<usize>, new_len: usize) -> String {
@@ -6330,6 +6735,100 @@ fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditRes
                 ..
             } => {
                 let bytes = match decode_binary_artifact(base64_content, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                let old = if full_path.exists() {
+                    match std::fs::read(&full_path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => return edit_error(format!("Failed to read binary file: {}", e)),
+                    }
+                } else {
+                    None
+                };
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(old);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::CreateBinaryFileFromUpload { source_file, .. } => {
+                let bytes = match read_binary_from_upload(&root, source_file, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() || matches!(binary_current.get(&rel_path), Some(Some(_))) {
+                    return edit_error(format!("File already exists: {}", rel_path));
+                }
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(None);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::WriteBinaryFileFromUpload {
+                source_file,
+                allow_overwrite,
+                ..
+            } => {
+                let bytes = match read_binary_from_upload(&root, source_file, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                let old = if full_path.exists() {
+                    match std::fs::read(&full_path) {
+                        Ok(bytes) => Some(bytes),
+                        Err(e) => return edit_error(format!("Failed to read binary file: {}", e)),
+                    }
+                } else {
+                    None
+                };
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(old);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::CreateBinaryFileFromUrl { source_url, .. } => {
+                let bytes = match read_binary_from_url(source_url, &rel_path) {
+                    Ok(bytes) => bytes,
+                    Err(e) => return edit_error(e),
+                };
+                let full_path = match resolve_edit_path(&root, &rel_path, false) {
+                    Ok(p) => p,
+                    Err(e) => return edit_error(e),
+                };
+                if full_path.exists() || matches!(binary_current.get(&rel_path), Some(Some(_))) {
+                    return edit_error(format!("File already exists: {}", rel_path));
+                }
+                paths.insert(rel_path.clone(), full_path);
+                binary_originals.entry(rel_path.clone()).or_insert(None);
+                binary_current.insert(rel_path.clone(), Some(bytes));
+            }
+            EditOperation::WriteBinaryFileFromUrl {
+                source_url,
+                allow_overwrite,
+                ..
+            } => {
+                let bytes = match read_binary_from_url(source_url, &rel_path) {
                     Ok(bytes) => bytes,
                     Err(e) => return edit_error(e),
                 };

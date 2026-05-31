@@ -921,9 +921,9 @@ Supported ops:
 - `create_batch`: start up to 20 shell commands under the same active goal. The server validates all commands first so ordinary input validation errors do not partially start a batch. Optional `client_request_id` groups retries and created jobs.
 - `list`: list jobs for a project, optionally filtered by `goal_id`, `status`, or `client_request_id`.
 - `status`: refresh and return one job status by `job_id`, or recover one by `client_request_id`.
-- `log`: return stdout/stderr tails.
-- `stop`: best-effort stop for the recorded job. On Linux it first tries the job process group, then falls back to the recorded PID, and marks the job stopped.
-- `summarize`: return a Markdown summary of jobs, commands, status, exit code, duration, and log tails.
+- `log`: return stdout/stderr tails by `job_id`, or recover one job by `client_request_id`.
+- `stop`: best-effort stop for the recorded job by `job_id` or `client_request_id`. On Linux it first tries the job process group, then falls back to the recorded PID, and marks the job stopped.
+- `summarize`: return a Markdown summary of jobs, commands, status, exit code, duration, and log tails; it can be filtered by `client_request_id`.
 
 Permission model:
 

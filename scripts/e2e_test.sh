@@ -1138,6 +1138,33 @@ assert_eq "Job list by client_request_id has one job" "1" "$JOB_IDEMPOTENT_LIST_
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'log','goal_id':'$GOAL_ID','client_request_id':'$JOB_IDEMPOTENCY_KEY','tail_lines':20}))")")
+JOB_IDEMPOTENT_LOG_ID=$(pyget "$RESP" "job_id")
+JOB_IDEMPOTENT_LOG_STDOUT=$(pyget "$RESP" "stdout_tail")
+assert_eq "Job log by client_request_id returns job" "$JOB_IDEMPOTENT_ID" "$JOB_IDEMPOTENT_LOG_ID"
+assert_contains "Job log by client_request_id has output" "idempotent-job" "$JOB_IDEMPOTENT_LOG_STDOUT"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'summarize','goal_id':'$GOAL_ID','client_request_id':'$JOB_IDEMPOTENCY_KEY','tail_lines':20}))")")
+JOB_IDEMPOTENT_SUMMARY=$(pyget "$RESP" "summary_markdown")
+assert_contains "Job summarize by client_request_id has job" "$JOB_IDEMPOTENT_ID" "$JOB_IDEMPOTENT_SUMMARY"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','client_request_id':'$JOB_IDEMPOTENCY_KEY-stop','command':'sleep 30','reason':'job idempotent stop smoke','max_runtime_secs':60}))")")
+JOB_IDEMPOTENT_STOP_ID=$(pyget "$RESP" "job_id")
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'stop','goal_id':'$GOAL_ID','client_request_id':'$JOB_IDEMPOTENCY_KEY-stop'}))")")
+JOB_IDEMPOTENT_STOP_RETURN_ID=$(pyget "$RESP" "job_id")
+JOB_IDEMPOTENT_STOP_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job']['status'])")
+assert_eq "Job stop by client_request_id returns job" "$JOB_IDEMPOTENT_STOP_ID" "$JOB_IDEMPOTENT_STOP_RETURN_ID"
+assert_eq "Job stop by client_request_id stopped" "stopped" "$JOB_IDEMPOTENT_STOP_STATUS"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
     -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','script_path':'scripts/codex_jobs/job_smoke.sh','script_args':['alpha value','beta value'],'reason':'job script_path smoke','max_runtime_secs':30}))")")
 JOB_SCRIPT_SUCCESS=$(pyget "$RESP" "success")
 JOB_SCRIPT_ID=$(pyget "$RESP" "job_id")

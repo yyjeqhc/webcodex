@@ -1077,12 +1077,37 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             }
         }
         "log" => {
-            let Some(job_id) = body.job_id.as_deref() else {
+            let job_id_owned;
+            let job_id = if let Some(job_id) = body.job_id.as_deref() {
+                job_id
+            } else if let Some(client_request_id) = client_request_id {
+                let mut jobs = if proj.is_ssh() {
+                    list_ssh_jobs(proj, 100, None, ssh_config)
+                } else {
+                    list_local_jobs(&proj.root(), 100, None)
+                };
+                if let Some(goal_id) = body.goal_id.as_deref() {
+                    jobs.retain(|j| j.goal_id == goal_id);
+                }
+                jobs.retain(|j| j.client_request_id.as_deref() == Some(client_request_id));
+                jobs.sort_by_key(|j| -j.created_at);
+                let Some(job) = jobs.first() else {
+                    res.status_code(StatusCode::NOT_FOUND);
+                    res.render(Json(job_response(
+                        &op,
+                        false,
+                        Some("job not found for client_request_id".to_string()),
+                    )));
+                    return;
+                };
+                job_id_owned = job.job_id.clone();
+                &job_id_owned
+            } else {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.render(Json(job_response(
                     &op,
                     false,
-                    Some("job_id is required".to_string()),
+                    Some("job_id or client_request_id is required".to_string()),
                 )));
                 return;
             };
@@ -1109,12 +1134,37 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             }
         }
         "stop" => {
-            let Some(job_id) = body.job_id.as_deref() else {
+            let job_id_owned;
+            let job_id = if let Some(job_id) = body.job_id.as_deref() {
+                job_id
+            } else if let Some(client_request_id) = client_request_id {
+                let mut jobs = if proj.is_ssh() {
+                    list_ssh_jobs(proj, 100, None, ssh_config)
+                } else {
+                    list_local_jobs(&proj.root(), 100, None)
+                };
+                if let Some(goal_id) = body.goal_id.as_deref() {
+                    jobs.retain(|j| j.goal_id == goal_id);
+                }
+                jobs.retain(|j| j.client_request_id.as_deref() == Some(client_request_id));
+                jobs.sort_by_key(|j| -j.created_at);
+                let Some(job) = jobs.first() else {
+                    res.status_code(StatusCode::NOT_FOUND);
+                    res.render(Json(job_response(
+                        &op,
+                        false,
+                        Some("job not found for client_request_id".to_string()),
+                    )));
+                    return;
+                };
+                job_id_owned = job.job_id.clone();
+                &job_id_owned
+            } else {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.render(Json(job_response(
                     &op,
                     false,
-                    Some("job_id is required".to_string()),
+                    Some("job_id or client_request_id is required".to_string()),
                 )));
                 return;
             };
@@ -1148,6 +1198,17 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             };
             if let Some(goal_id) = body.goal_id.as_deref() {
                 jobs.retain(|j| j.goal_id == goal_id);
+            }
+            if let Some(client_request_id) = client_request_id {
+                jobs.retain(|j| {
+                    j.client_request_id
+                        .as_deref()
+                        .map(|id| {
+                            id == client_request_id
+                                || id.starts_with(&format!("{}.", client_request_id))
+                        })
+                        .unwrap_or(false)
+                });
             }
             let mut tails = Vec::new();
             for job in &jobs {

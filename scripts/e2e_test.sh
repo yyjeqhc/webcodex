@@ -996,6 +996,34 @@ assert_contains "Command op goal raw reason has goal" "$GOAL_ID" "$GOAL_RAW_REAS
 RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_raw_and_approve','project':'test-project','goal_id':'$GOAL_ID','script_path':'scripts/codex_jobs/job_smoke.sh','script_args':['raw alpha','raw beta'],'reason':'goal raw script_path smoke'}))")")
+GOAL_RAW_SCRIPT_SUCCESS=$(pyget "$RESP" "success")
+GOAL_RAW_SCRIPT_STDOUT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('stdout_tail') or '')")
+GOAL_RAW_SCRIPT_STDERR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('stderr_tail') or '')")
+GOAL_RAW_SCRIPT_COMMAND=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('command_text') or '')")
+assert_eq "Command op goal raw script_path auto approve success" "True" "$GOAL_RAW_SCRIPT_SUCCESS"
+assert_contains "Command op goal raw script_path stdout" "script-start:raw alpha" "$GOAL_RAW_SCRIPT_STDOUT"
+assert_contains "Command op goal raw script_path stderr" "script-err:raw beta" "$GOAL_RAW_SCRIPT_STDERR"
+assert_contains "Command op goal raw script_path command_text" "scripts/codex_jobs/job_smoke.sh" "$GOAL_RAW_SCRIPT_COMMAND"
+RESP=$(curl -s -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_raw','project':'test-project','command_text':'echo bad','script_path':'scripts/codex_jobs/job_smoke.sh','reason':'mixed raw source'}))")")
+OP_RAW_MIXED_SUCCESS=$(pyget "$RESP" "success")
+OP_RAW_MIXED_ERROR=$(pyget "$RESP" "error")
+assert_eq "Command op raw mixed sources fail" "False" "$OP_RAW_MIXED_SUCCESS"
+assert_contains "Command op raw mixed sources error" "either command_text or script_path" "$OP_RAW_MIXED_ERROR"
+RESP=$(curl -s -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_raw','project':'test-project','script_path':'../evil.sh','reason':'bad raw script path'}))")")
+OP_RAW_BAD_SCRIPT_SUCCESS=$(pyget "$RESP" "success")
+OP_RAW_BAD_SCRIPT_ERROR=$(pyget "$RESP" "error")
+assert_eq "Command op raw script_path traversal fails" "False" "$OP_RAW_BAD_SCRIPT_SUCCESS"
+assert_contains "Command op raw script_path traversal error" "script_path" "$OP_RAW_BAD_SCRIPT_ERROR"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
     -d "$(python3 -c "import json; print(json.dumps({'op':'create_and_approve','project':'test-project','goal_id':'$GOAL_ID','command':'smoke','reason':'goal configured smoke'}))")")
 GOAL_CMD_SUCCESS=$(pyget "$RESP" "success")
 GOAL_CMD_STDOUT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('stdout_tail') or '')")

@@ -861,7 +861,7 @@ Supported `op` values:
 
 - `list`: list audit records using optional `project`, `status`, and `limit`
 - `create`: create one configured-command request using `project`, `command`, and optional `reason`
-- `create_raw`: create one raw command request using `project`, `command_text`, and optional `reason`
+- `create_raw`: create one raw command request using `project`, either `command_text` or `script_path`, optional `script_args`, and optional `reason`
 - `create_batch`: create 1-20 configured-command requests using `project` and `requests`
 - `approve`: approve one request using `request_id`
 - `approve_batch`: approve 1-20 requests using `request_ids`
@@ -873,7 +873,7 @@ Supported `op` values:
 - `reject_goal`: reject a pending goal
 - `list_goals`: list goals with optional `project`, `status`, and `limit`
 - `close_goal`: close an active goal with `goal_id`
-- `create_raw_and_approve`: under an active `goal_id`, create and immediately approve one raw command request
+- `create_raw_and_approve`: under an active `goal_id`, create and immediately approve one raw command request using either `command_text` or `script_path`
 - `create_and_approve`: under an active `goal_id`, create and immediately approve one configured-command request
 
 Examples:
@@ -898,11 +898,17 @@ Examples:
 {"op":"create_raw_and_approve","project":"private-drop-v4","goal_id":"<goal-id>","command_text":"git status --short","reason":"inspect current state"}
 ```
 
+For complex raw commands with multiline logic, many quotes, or pipes, write a project-local script and use `script_path` instead of packing the shell into JSON:
+
+```json
+{"op":"create_raw_and_approve","project":"private-drop-v4","goal_id":"<goal-id>","script_path":"scripts/codex_jobs/inspect.sh","script_args":["--tail","80"],"reason":"run scripted inspection"}
+```
+
 Recommended flow: GPT calls `create_goal` to propose a bounded task, the goal starts as `pending`, the user explicitly approves the `goal_id` in chat, GPT calls `approve_goal` to activate it, then GPT may use `create_and_approve` or `create_raw_and_approve` within that active goal. When the user has already approved a bounded task in chat, GPT may use `create_goal_and_approve` to create the active goal in one audited operation. `close_goal` ends the permission window.
 
 `create_goal` does not grant execution rights. `create_goal_and_approve` should only be used after explicit user approval for the bounded task. Only an `active`, unexpired goal grants bounded auto-approve permission. Goal-scoped `*_and_approve` operations are intended to reduce repeated manual approval during a bounded development task, and still create normal `command_requests` audit records before execution.
 
-This endpoint does not bypass existing safety checks. Raw commands still require `allow_raw_command_requests = true`, configured command requests still require `allow_command_requests = true`, approval remains atomic, and all executions use the stored `command_text` snapshot with SQLite audit records.
+This endpoint does not bypass existing safety checks. Raw commands still require `allow_raw_command_requests = true`, configured command requests still require `allow_command_requests = true`, approval remains atomic, and all executions use the stored `command_text` snapshot with SQLite audit records. `script_path` is converted into an audited single-line `bash <script_path> <script_args...>` command after the same project-relative path and sensitive-path checks used by `runJobOp`.
 
 
 ## Trusted async shell jobs

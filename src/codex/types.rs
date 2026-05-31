@@ -181,6 +181,10 @@ pub struct CommandRequestOpRequest {
     #[serde(default)]
     pub command_text: Option<String>,
     #[serde(default)]
+    pub script_path: Option<String>,
+    #[serde(default)]
+    pub script_args: Vec<String>,
+    #[serde(default)]
     pub reason: Option<String>,
     #[serde(default)]
     pub title: Option<String>,

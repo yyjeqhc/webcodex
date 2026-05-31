@@ -1,6 +1,7 @@
 use super::command_workflow::require_active_goal;
 use super::command_workflow::{approve_command_request_inner, reject_command_request_inner};
 use super::get_projects;
+use super::jobs::build_script_job_command;
 use super::shell::sanitize_tail;
 use super::types::{
     CheckRequest, CheckResponse, CommandApproveRequest, CommandRejectRequest, CommandRequest,
@@ -129,6 +130,21 @@ pub(super) fn validate_command_request_reason(reason: &Option<String>) -> Result
         }
     }
     Ok(())
+}
+
+pub(super) fn build_raw_command_text_from_op_request(
+    command_text: Option<String>,
+    script_path: Option<String>,
+    script_args: &[String],
+) -> Result<String, String> {
+    match (command_text, script_path) {
+        (Some(_), Some(_)) => {
+            Err("provide either command_text or script_path, not both".to_string())
+        }
+        (Some(command_text), None) => Ok(command_text),
+        (None, Some(script_path)) => build_script_job_command(&script_path, script_args),
+        (None, None) => Err("command_text or script_path is required".to_string()),
+    }
 }
 
 pub(super) fn validate_command_request_status(status: &str) -> Result<(), String> {
@@ -586,15 +602,17 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 )));
                 return;
             };
-            let Some(command_text) = body.command_text else {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
-                    &body.op,
-                    false,
-                    Vec::new(),
-                    Some("command_text is required".to_string()),
-                )));
-                return;
+            let command_text = match build_raw_command_text_from_op_request(
+                body.command_text,
+                body.script_path,
+                &body.script_args,
+            ) {
+                Ok(command_text) => command_text,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
             };
             let goal = match require_active_goal(&db, &goal_id, &project) {
                 Ok(goal) => goal,
@@ -877,15 +895,17 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 )));
                 return;
             };
-            let Some(command_text) = body.command_text else {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
-                    &body.op,
-                    false,
-                    Vec::new(),
-                    Some("command_text is required".to_string()),
-                )));
-                return;
+            let command_text = match build_raw_command_text_from_op_request(
+                body.command_text,
+                body.script_path,
+                &body.script_args,
+            ) {
+                Ok(command_text) => command_text,
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    return;
+                }
             };
             if let Err(e) = validate_command_request_reason(&body.reason) {
                 res.status_code(StatusCode::BAD_REQUEST);

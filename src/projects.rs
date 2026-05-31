@@ -80,12 +80,18 @@ impl ProjectsConfig {
         toml::from_str(&content).map_err(|e| format!("Failed to parse projects config: {}", e))
     }
 
+    pub fn available_project_names(&self) -> Vec<String> {
+        let mut names = self.projects.keys().cloned().collect::<Vec<_>>();
+        names.sort();
+        names
+    }
+
     pub fn get_project(&self, name: &str) -> Result<&ProjectConfig, String> {
         self.projects.get(name).ok_or_else(|| {
             format!(
-                "Unknown project '{}'. Available: {}",
+                "Unknown project '{}'. Available projects: {}",
                 name,
-                self.projects.keys().cloned().collect::<Vec<_>>().join(", ")
+                self.available_project_names().join(", ")
             )
         })
     }

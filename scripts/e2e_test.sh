@@ -593,8 +593,12 @@ RESP=$(curl -s -X POST "$CODEX/context" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"project":"nonexistent","mode":"overview"}')
-HAS_ERR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if d.get('error') else 'no')")
+UNKNOWN_PROJECT_ERROR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error') or '')")
+HAS_ERR=$(echo "$UNKNOWN_PROJECT_ERROR" | python3 -c "import sys; print('yes' if sys.stdin.read().strip() else 'no')")
 assert_eq "Unknown project returns error" "yes" "$HAS_ERR"
+assert_contains "Unknown project error names missing project" "nonexistent" "$UNKNOWN_PROJECT_ERROR"
+assert_contains "Unknown project error lists available projects" "Available projects" "$UNKNOWN_PROJECT_ERROR"
+assert_contains "Unknown project error lists test-project" "test-project" "$UNKNOWN_PROJECT_ERROR"
 
 # --- 20. Codex: getProjectContext mode=overview ---
 echo ""

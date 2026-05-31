@@ -268,8 +268,9 @@ Instead of exposing fine-grained dangerous APIs (readFile, writeFile, runShell, 
 
 1. **getProjectContext** — Read-only observation (overview, tree, search, read_file, git_status, git_diff)
 2. **applyProjectPatch** — Apply a unified diff to a whitelisted project
-3. **runProjectCheck** — Run pre-configured check commands (fmt, test, build, e2e, full)
-4. **writeProjectReport** — Write operation reports and post messages to channels
+3. **listProjects** — Discover runtime projects, executors, checks, configured commands, and capabilities
+4. **runProjectCheck** — Run pre-configured check commands (fmt, test, build, e2e, full)
+5. **writeProjectReport** — Write operation reports and post messages to channels
 
 This design prevents arbitrary shell access, arbitrary file I/O, and git push while still giving GPT enough capability to complete code review and fix workflows.
 
@@ -336,6 +337,10 @@ ssh msi 'cd /root/git/private-drop && cargo test'
 ### API Examples
 
 ```bash
+# Discover runtime projects and capabilities
+curl -X POST http://localhost:8080/api/codex/projects \
+  -H "Authorization: Bearer your-secret-token"
+
 # Get project overview
 curl -X POST http://localhost:8080/api/codex/context \
   -H "Authorization: Bearer your-secret-token" \

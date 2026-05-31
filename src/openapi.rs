@@ -66,6 +66,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
     spec["info"] = serde_json::json!({"title":"Private Drop Codex API","version":env!("CARGO_PKG_VERSION"),"description":"Codex-only project API. Message, file, and channel APIs are excluded."});
     spec["paths"] = serde_json::json!({
         "/api/codex/context": spec["paths"]["/api/codex/context"].clone(),
+        "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
         "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
         "/api/codex/apply_patch": spec["paths"]["/api/codex/apply_patch"].clone(),
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
@@ -123,6 +124,9 @@ pub async fn codex_openapi_json(res: &mut Response) {
         "CommandRequestOpResponse": spec["components"]["schemas"]["CommandRequestOpResponse"].clone(),
         "JobOpRequest": spec["components"]["schemas"]["JobOpRequest"].clone(),
         "JobOpResponse": spec["components"]["schemas"]["JobOpResponse"].clone(),
+        "ProjectCapabilities": spec["components"]["schemas"]["ProjectCapabilities"].clone(),
+        "ProjectCapabilityInfo": spec["components"]["schemas"]["ProjectCapabilityInfo"].clone(),
+        "ProjectsResponse": spec["components"]["schemas"]["ProjectsResponse"].clone(),
         "CommandRequestResponse": spec["components"]["schemas"]["CommandRequestResponse"].clone(),
         "CommandRequestsListResponse": spec["components"]["schemas"]["CommandRequestsListResponse"].clone(),
         "CommandRequestBatchResponse": spec["components"]["schemas"]["CommandRequestBatchResponse"].clone(),
@@ -176,6 +180,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
     spec["servers"] = serde_json::json!([{ "url": public_url(), "description": "Public server" }]);
     spec["info"] = serde_json::json!({"title":"Private Drop Compact Codex API","version":env!("CARGO_PKG_VERSION"),"description":"Compact Codex project API for GPT Actions. Uses aggregate endpoints to reduce action count."});
     spec["paths"] = serde_json::json!({
+        "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
         "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
         "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
@@ -217,6 +222,9 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         "CommandRequestOpResponse": spec["components"]["schemas"]["CommandRequestOpResponse"].clone(),
         "JobOpRequest": spec["components"]["schemas"]["JobOpRequest"].clone(),
         "JobOpResponse": spec["components"]["schemas"]["JobOpResponse"].clone(),
+        "ProjectCapabilities": spec["components"]["schemas"]["ProjectCapabilities"].clone(),
+        "ProjectCapabilityInfo": spec["components"]["schemas"]["ProjectCapabilityInfo"].clone(),
+        "ProjectsResponse": spec["components"]["schemas"]["ProjectsResponse"].clone(),
         "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
         "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),

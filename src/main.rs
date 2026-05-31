@@ -151,6 +151,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Router::with_path("api/codex")
                 .hoop(AuthMiddleware)
                 .push(Router::with_path("context").post(codex::codex_context))
+                .push(Router::with_path("projects").post(codex::codex_projects))
                 .push(Router::with_path("context_batch").post(codex::codex_context_batch))
                 .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
                 .push(Router::with_path("edit").post(codex::codex_edit))

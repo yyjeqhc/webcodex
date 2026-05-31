@@ -619,3 +619,39 @@ pub(super) struct ArtifactPlan {
     pub(super) selected_source: String,
     pub(super) warnings: Vec<String>,
 }
+
+#[derive(Debug, Serialize)]
+pub struct ProjectCapabilities {
+    pub edit: bool,
+    pub patch: bool,
+    pub artifact: bool,
+    pub git: bool,
+    pub checks: bool,
+    pub jobs: bool,
+    pub command_requests: bool,
+    pub raw_command_requests: bool,
+    pub configured_commands: bool,
+    pub reports: bool,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectCapabilityInfo {
+    pub name: String,
+    pub executor: String,
+    pub root: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ssh_target: Option<String>,
+    pub allowed_checks: Vec<String>,
+    pub configured_checks: Vec<String>,
+    pub commands: Vec<String>,
+    pub capabilities: ProjectCapabilities,
+}
+
+#[derive(Debug, Serialize)]
+pub struct ProjectsResponse {
+    pub success: bool,
+    pub projects: Vec<ProjectCapabilityInfo>,
+    pub project_names: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}

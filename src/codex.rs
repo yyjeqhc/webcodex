@@ -1,6 +1,7 @@
 use crate::projects::{ProjectConfig, ProjectsConfig, SshConfig};
 use salvo::prelude::*;
 mod artifact;
+mod capabilities;
 mod command_request;
 mod command_workflow;
 mod context;
@@ -17,6 +18,7 @@ mod ssh;
 mod types;
 mod url_security;
 pub use artifact::codex_artifact;
+pub use capabilities::codex_projects;
 #[cfg(test)]
 use command_request::*;
 pub use command_request::{

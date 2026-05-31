@@ -555,6 +555,8 @@ CODEX="$BASE/api/codex"
 # --- 18. Codex: Unauthorized access ---
 echo ""
 echo "--- 18. Codex Auth ---"
+assert_http_code "POST /api/codex/projects without token returns 401" "401" "$CODEX/projects" \
+    -X POST -H "Content-Type: application/json"
 assert_http_code "POST /api/codex/context without token returns 401" "401" "$CODEX/context" \
     -X POST -H "Content-Type: application/json" -d '{"project":"test-project","mode":"overview"}'
 assert_http_code "POST /api/codex/apply_patch without token returns 401" "401" "$CODEX/apply_patch" \
@@ -599,6 +601,25 @@ assert_eq "Unknown project returns error" "yes" "$HAS_ERR"
 assert_contains "Unknown project error names missing project" "nonexistent" "$UNKNOWN_PROJECT_ERROR"
 assert_contains "Unknown project error lists available projects" "Available projects" "$UNKNOWN_PROJECT_ERROR"
 assert_contains "Unknown project error lists test-project" "test-project" "$UNKNOWN_PROJECT_ERROR"
+
+# --- 19b. Codex Project Capabilities ---
+echo ""
+echo "--- 19b. Codex Project Capabilities ---"
+RESP=$(curl -sf -X POST "$CODEX/projects" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json")
+PROJECTS_SUCCESS=$(pyget "$RESP" "success")
+PROJECTS_HAS_TEST=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if 'test-project' in d.get('project_names', []) else 'no')")
+PROJECTS_TEST_EXECUTOR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('executor'))")
+PROJECTS_TEST_CHECKS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(','.join(p.get('allowed_checks', [])))")
+PROJECTS_TEST_COMMANDS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(','.join(p.get('commands', [])))")
+PROJECTS_TEST_RAW=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('capabilities', {}).get('raw_command_requests'))")
+assert_eq "Projects capabilities success" "True" "$PROJECTS_SUCCESS"
+assert_eq "Projects capabilities lists test-project" "yes" "$PROJECTS_HAS_TEST"
+assert_eq "Projects capabilities executor" "local" "$PROJECTS_TEST_EXECUTOR"
+assert_contains "Projects capabilities allowed checks" "test" "$PROJECTS_TEST_CHECKS"
+assert_contains "Projects capabilities configured commands" "smoke" "$PROJECTS_TEST_COMMANDS"
+assert_eq "Projects capabilities raw commands enabled" "True" "$PROJECTS_TEST_RAW"
 
 # --- 20. Codex: getProjectContext mode=overview ---
 echo ""
@@ -1428,6 +1449,7 @@ assert_eq "Report message found in omo channel" "yes" "$FOUND"
 echo ""
 echo "--- 30. Codex OpenAPI Spec ---"
 RESP=$(curl -sf "$BASE/openapi.json")
+HAS_PROJECTS=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listProjects' in sys.stdin.read() else 'no')")
 HAS_CTX=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'getProjectContext' in sys.stdin.read() else 'no')")
 HAS_PATCH=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectPatch' in sys.stdin.read() else 'no')")
 HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEdit' in sys.stdin.read() else 'no')")
@@ -1442,6 +1464,7 @@ HAS_REJECT_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'rejectCo
 HAS_CHECK=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectCheck' in sys.stdin.read() else 'no')")
 HAS_REPORT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'writeProjectReport' in sys.stdin.read() else 'no')")
 HAS_JOB=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runJobOp' in sys.stdin.read() else 'no')")
+assert_contains "OpenAPI has listProjects" "yes" "$HAS_PROJECTS"
 assert_contains "OpenAPI has getProjectContext" "yes" "$HAS_CTX"
 assert_contains "OpenAPI has applyProjectPatch" "yes" "$HAS_PATCH"
 assert_contains "OpenAPI has applyProjectEdit" "yes" "$HAS_EDIT"
@@ -1475,6 +1498,7 @@ HAS_OP_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runCommandRe
 HAS_LIST_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listCommandRequests' in sys.stdin.read() else 'no')")
 HAS_BATCH_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createCommandRequestBatch' in sys.stdin.read() else 'no')")
 HAS_REJECT_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'rejectCommandRequest' in sys.stdin.read() else 'no')")
+assert_contains "codex-openapi.json has listProjects" "yes" "$HAS_PROJECTS"
 assert_contains "codex-openapi.json has applyProjectEdit" "yes" "$HAS_EDIT"
 assert_contains "codex-openapi.json has saveProjectArtifact" "yes" "$HAS_ARTIFACT"
 assert_contains "codex-openapi.json has runProjectGit" "yes" "$HAS_GIT"
@@ -1529,7 +1553,7 @@ for path, methods in spec.get("paths", {}).items():
             ops.append(op["operationId"])
 print("\n".join(sorted(ops)))
 ')
-for op in getProjectContextBatch applyProjectEdit saveProjectArtifact runProjectGit runProjectCommand runCommandRequestOp runJobOp runProjectCheck writeProjectReport; do
+for op in listProjects getProjectContextBatch applyProjectEdit saveProjectArtifact runProjectGit runProjectCommand runCommandRequestOp runJobOp runProjectCheck writeProjectReport; do
     HAS_OP=$(echo "$COMPACT_OPS" | python3 -c "import sys; op='$op'; print('yes' if op in sys.stdin.read().splitlines() else 'no')")
     assert_eq "codex-openapi-compact.json has $op" "yes" "$HAS_OP"
 done

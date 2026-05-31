@@ -566,6 +566,46 @@
         },
         "required": ["success", "records"]
       },
+      "ProjectCapabilities": {
+        "type": "object",
+        "properties": {
+          "edit": {"type": "boolean"},
+          "patch": {"type": "boolean"},
+          "artifact": {"type": "boolean"},
+          "git": {"type": "boolean"},
+          "checks": {"type": "boolean"},
+          "jobs": {"type": "boolean"},
+          "command_requests": {"type": "boolean"},
+          "raw_command_requests": {"type": "boolean"},
+          "configured_commands": {"type": "boolean"},
+          "reports": {"type": "boolean"}
+        },
+        "required": ["edit", "patch", "artifact", "git", "checks", "jobs", "command_requests", "raw_command_requests", "configured_commands", "reports"]
+      },
+      "ProjectCapabilityInfo": {
+        "type": "object",
+        "properties": {
+          "name": {"type": "string"},
+          "executor": {"type": "string", "enum": ["local", "ssh"]},
+          "root": {"type": "string"},
+          "ssh_target": {"type": "string", "nullable": true},
+          "allowed_checks": {"type": "array", "items": {"type": "string"}},
+          "configured_checks": {"type": "array", "items": {"type": "string"}},
+          "commands": {"type": "array", "items": {"type": "string"}},
+          "capabilities": {"$ref": "#/components/schemas/ProjectCapabilities"}
+        },
+        "required": ["name", "executor", "root", "allowed_checks", "configured_checks", "commands", "capabilities"]
+      },
+      "ProjectsResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "projects": {"type": "array", "items": {"$ref": "#/components/schemas/ProjectCapabilityInfo"}},
+          "project_names": {"type": "array", "items": {"type": "string"}},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "projects", "project_names"]
+      },
       "CheckRequest": {
         "type": "object",
         "properties": {
@@ -711,6 +751,18 @@
         "responses": {
           "200": {"description": "File content"},
           "404": {"description": "Not found"}
+        }
+      }
+    },
+    "/api/codex/projects": {
+      "post": {
+        "operationId": "listProjects",
+        "summary": "List runtime project capabilities",
+        "description": "Return configured projects and their runtime capabilities, including executor, checks, configured commands, and permission flags. Use this instead of relying on project enums in the OpenAPI schema.",
+        "tags": ["codex"],
+        "responses": {
+          "200": {"description": "Configured project capabilities", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectsResponse"}}}},
+          "500": {"description": "Projects config not loaded"}
         }
       }
     },

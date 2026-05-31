@@ -65,3 +65,42 @@ pub struct CodexGoalRecord {
     pub closed_at: Option<i64>,
     pub error: Option<String>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesktopTask {
+    pub id: String,
+    pub title: String,
+    pub instructions: String,
+    pub status: String,
+    pub priority: i64,
+    pub claimed_by: Option<String>,
+    pub last_event: Option<String>,
+    pub screenshot_url: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct CreateDesktopTaskRequest {
+    pub title: String,
+    pub instructions: String,
+    #[serde(default)]
+    pub priority: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DesktopTaskClaimRequest {
+    pub worker: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DesktopTaskEventRequest {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub worker: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub screenshot_url: Option<String>,
+}

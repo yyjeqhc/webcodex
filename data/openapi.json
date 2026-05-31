@@ -60,6 +60,63 @@
         },
         "required": ["messages", "total", "has_more"]
       },
+      "DesktopTask": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "title": {"type": "string"},
+          "instructions": {"type": "string"},
+          "status": {"type": "string", "enum": ["pending", "running", "completed", "failed", "needs_input", "cancelled"]},
+          "priority": {"type": "integer"},
+          "claimed_by": {"type": "string", "nullable": true},
+          "last_event": {"type": "string", "nullable": true},
+          "screenshot_url": {"type": "string", "nullable": true},
+          "created_at": {"type": "integer"},
+          "updated_at": {"type": "integer"}
+        },
+        "required": ["id", "title", "instructions", "status", "priority", "created_at", "updated_at"]
+      },
+      "CreateDesktopTaskRequest": {
+        "type": "object",
+        "properties": {
+          "title": {"type": "string"},
+          "instructions": {"type": "string"},
+          "priority": {"type": "integer", "nullable": true, "minimum": -100, "maximum": 100}
+        },
+        "required": ["title", "instructions"]
+      },
+      "DesktopTaskClaimRequest": {
+        "type": "object",
+        "properties": {"worker": {"type": "string"}},
+        "required": ["worker"]
+      },
+      "DesktopTaskEventRequest": {
+        "type": "object",
+        "properties": {
+          "status": {"type": "string", "nullable": true, "enum": ["pending", "running", "completed", "failed", "needs_input", "cancelled"]},
+          "worker": {"type": "string", "nullable": true},
+          "message": {"type": "string", "nullable": true},
+          "screenshot_url": {"type": "string", "nullable": true}
+        }
+      },
+      "DesktopTaskResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "task": {"$ref": "#/components/schemas/DesktopTask", "nullable": true},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success"]
+      },
+      "DesktopTaskListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/DesktopTask"}},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "tasks"]
+      },
       "ContextRequest": {
         "type": "object",
         "properties": {
@@ -800,6 +857,47 @@
           "200": {"description": "File content"},
           "404": {"description": "Not found"}
         }
+      }
+    },
+    "/api/desktop/tasks": {
+      "get": {
+        "operationId": "listDesktopTasks",
+        "summary": "List desktop automation tasks",
+        "description": "List queued desktop/computer-use tasks for a future worker. Filter by status to let workers poll pending tasks.",
+        "tags": ["desktop"],
+        "parameters": [
+          {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["pending", "running", "completed", "failed", "needs_input", "cancelled"]}},
+          {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}}
+        ],
+        "responses": {"200": {"description": "Desktop tasks", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskListResponse"}}}}}
+      },
+      "post": {
+        "operationId": "createDesktopTask",
+        "summary": "Create a desktop automation task",
+        "description": "Create a task that can later be claimed and executed by a desktop/computer-use worker.",
+        "tags": ["desktop"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateDesktopTaskRequest"}}}},
+        "responses": {"200": {"description": "Created task", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "400": {"description": "Bad request"}}
+      }
+    },
+    "/api/desktop/tasks/{id}/claim": {
+      "post": {
+        "operationId": "claimDesktopTask",
+        "summary": "Claim a pending desktop task",
+        "tags": ["desktop"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskClaimRequest"}}}},
+        "responses": {"200": {"description": "Claimed task", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "409": {"description": "Task is missing or not pending"}}
+      }
+    },
+    "/api/desktop/tasks/{id}/event": {
+      "post": {
+        "operationId": "appendDesktopTaskEvent",
+        "summary": "Update a desktop task with worker event state",
+        "tags": ["desktop"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskEventRequest"}}}},
+        "responses": {"200": {"description": "Updated task", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "404": {"description": "Task not found"}}
       }
     },
     "/api/codex/projects": {

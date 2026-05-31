@@ -13,6 +13,7 @@ mod auth;
 mod codex;
 mod config;
 mod db;
+mod desktop;
 mod drop_api;
 mod models;
 mod openapi;
@@ -25,12 +26,16 @@ pub(crate) use config::load_startup_env_files;
 pub(crate) use config::parse_env_file_line;
 pub use config::Config;
 pub use db::Database;
+pub(crate) use desktop::{
+    append_desktop_task_event, claim_desktop_task, create_desktop_task, list_desktop_tasks,
+};
 pub(crate) use drop_api::{
     create_message, delete_message, download_file, get_message, health, list_channels,
     list_messages, upload_file,
 };
 pub use models::{
-    Channel, CodexGoalRecord, CommandAuditRecord, CreateMessageRequest, Message, MessageKind,
+    Channel, CodexGoalRecord, CommandAuditRecord, CreateDesktopTaskRequest, CreateMessageRequest,
+    DesktopTask, DesktopTaskClaimRequest, DesktopTaskEventRequest, Message, MessageKind,
 };
 pub(crate) use openapi::{codex_openapi_compact_json, codex_openapi_json, openapi_json};
 pub(crate) use web::{
@@ -114,7 +119,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         .delete(delete_message),
                 )
                 .push(Router::with_path("files/{file_id}").get(download_file))
-                .push(Router::with_path("files").post(upload_file)),
+                .push(Router::with_path("files").post(upload_file))
+                .push(
+                    Router::with_path("desktop/tasks")
+                        .get(list_desktop_tasks)
+                        .post(create_desktop_task),
+                )
+                .push(Router::with_path("desktop/tasks/{id}/claim").post(claim_desktop_task))
+                .push(
+                    Router::with_path("desktop/tasks/{id}/event").post(append_desktop_task_event),
+                ),
         );
 
     let assets_router = Router::with_path("assets")

@@ -1,10 +1,25 @@
-use crate::{Channel, CodexGoalRecord, CommandAuditRecord, Message, MessageKind};
+use crate::{Channel, CodexGoalRecord, CommandAuditRecord, DesktopTask, Message, MessageKind};
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
 pub struct Database {
     conn: Mutex<Connection>,
+}
+
+fn row_to_desktop_task(row: &rusqlite::Row) -> rusqlite::Result<DesktopTask> {
+    Ok(DesktopTask {
+        id: row.get(0)?,
+        title: row.get(1)?,
+        instructions: row.get(2)?,
+        status: row.get(3)?,
+        priority: row.get(4)?,
+        claimed_by: row.get(5)?,
+        last_event: row.get(6)?,
+        screenshot_url: row.get(7)?,
+        created_at: row.get(8)?,
+        updated_at: row.get(9)?,
+    })
 }
 
 fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<Message> {
@@ -83,7 +98,23 @@ impl Database {
                 closed_at INTEGER,
                 error TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_codex_goals_created_at ON codex_goals(created_at DESC);",
+            CREATE INDEX IF NOT EXISTS idx_codex_goals_created_at ON codex_goals(created_at DESC);
+
+            CREATE TABLE IF NOT EXISTS desktop_tasks (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                instructions TEXT NOT NULL,
+                status TEXT NOT NULL,
+                priority INTEGER NOT NULL,
+                claimed_by TEXT,
+                last_event TEXT,
+                screenshot_url TEXT,
+                created_at INTEGER NOT NULL,
+                updated_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_desktop_tasks_status_priority ON desktop_tasks(status, priority DESC, created_at ASC);
+            CREATE INDEX IF NOT EXISTS idx_desktop_tasks_updated_at ON desktop_tasks(updated_at DESC);",
+
         )?;
         let has_command_text = {
             let mut stmt = conn.prepare("PRAGMA table_info(command_requests)")?;
@@ -470,6 +501,103 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn insert_desktop_task(&self, task: &DesktopTask) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO desktop_tasks (id, title, instructions, status, priority, claimed_by, last_event, screenshot_url, created_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                task.id,
+                task.title,
+                task.instructions,
+                task.status,
+                task.priority,
+                task.claimed_by,
+                task.last_event,
+                task.screenshot_url,
+                task.created_at,
+                task.updated_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_desktop_task(&self, id: &str) -> anyhow::Result<Option<DesktopTask>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, title, instructions, status, priority, claimed_by, last_event, screenshot_url, created_at, updated_at FROM desktop_tasks WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], row_to_desktop_task)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_desktop_tasks(
+        &self,
+        status: Option<&str>,
+        limit: usize,
+    ) -> anyhow::Result<Vec<DesktopTask>> {
+        let limit = limit.clamp(1, 100) as i64;
+        let conn = self.conn.lock().unwrap();
+        let sql = match status {
+            Some(_) => "SELECT id, title, instructions, status, priority, claimed_by, last_event, screenshot_url, created_at, updated_at FROM desktop_tasks WHERE status = ?1 ORDER BY priority DESC, created_at ASC LIMIT ?2",
+            None => "SELECT id, title, instructions, status, priority, claimed_by, last_event, screenshot_url, created_at, updated_at FROM desktop_tasks ORDER BY updated_at DESC LIMIT ?1",
+        };
+        let mut stmt = conn.prepare(sql)?;
+        let rows = match status {
+            Some(status) => stmt.query_map(params![status, limit], row_to_desktop_task)?,
+            None => stmt.query_map(params![limit], row_to_desktop_task)?,
+        };
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn claim_desktop_task(
+        &self,
+        id: &str,
+        worker: &str,
+        now: i64,
+    ) -> anyhow::Result<Option<DesktopTask>> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE desktop_tasks SET status = 'running', claimed_by = ?2, last_event = ?3, updated_at = ?4 WHERE id = ?1 AND status = 'pending'",
+            params![id, worker, format!("claimed by {}", worker), now],
+        )?;
+        drop(conn);
+        if changed == 1 {
+            self.get_desktop_task(id)
+        } else {
+            Ok(None)
+        }
+    }
+
+    pub fn update_desktop_task_event(
+        &self,
+        id: &str,
+        status: Option<&str>,
+        worker: Option<&str>,
+        message: Option<&str>,
+        screenshot_url: Option<&str>,
+        now: i64,
+    ) -> anyhow::Result<Option<DesktopTask>> {
+        let existing = match self.get_desktop_task(id)? {
+            Some(task) => task,
+            None => return Ok(None),
+        };
+        let next_status = status.unwrap_or(&existing.status);
+        let next_worker = worker.or(existing.claimed_by.as_deref());
+        let next_event = message.or(existing.last_event.as_deref());
+        let next_screenshot = screenshot_url.or(existing.screenshot_url.as_deref());
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE desktop_tasks SET status = ?2, claimed_by = ?3, last_event = ?4, screenshot_url = ?5, updated_at = ?6 WHERE id = ?1",
+            params![id, next_status, next_worker, next_event, next_screenshot, now],
+        )?;
+        drop(conn);
+        self.get_desktop_task(id)
     }
 
     pub fn list_channels(&self) -> anyhow::Result<Vec<Channel>> {

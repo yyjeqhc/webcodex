@@ -516,6 +516,8 @@ assert_http_code "GET /api/messages with wrong token returns 401" "401" "$BASE/a
     -H "Authorization: Bearer wrong-token"
 assert_http_code "POST /api/messages without token returns 401" "401" "$BASE/api/messages" \
     -X POST -H "Content-Type: application/json" -d '{"channel":"inbox","text":"test"}'
+assert_http_code "POST /api/desktop/tasks without token returns 401" "401" "$BASE/api/desktop/tasks" \
+    -X POST -H "Content-Type: application/json" -d '{"title":"x","instructions":"y"}'
 
 # --- 3. Create text message ---
 echo ""
@@ -621,8 +623,10 @@ echo "--- 11. OpenAPI Spec ---"
 RESP=$(curl -sf "$BASE/openapi.json")
 HAS_CREATE=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createMessage' in sys.stdin.read() else 'no')")
 HAS_LIST=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listMessages' in sys.stdin.read() else 'no')")
+HAS_DESKTOP=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createDesktopTask' in sys.stdin.read() else 'no')")
 assert_contains "OpenAPI contains createMessage" "yes" "$HAS_CREATE"
 assert_contains "OpenAPI contains listMessages" "yes" "$HAS_LIST"
+assert_contains "OpenAPI contains createDesktopTask" "yes" "$HAS_DESKTOP"
 
 # --- 12. Channels ---
 echo ""
@@ -630,6 +634,43 @@ echo "--- 12. Channels ---"
 RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/channels")
 HAS_INBOX=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'inbox' in sys.stdin.read() else 'no')")
 assert_contains "Channels list contains inbox" "yes" "$HAS_INBOX"
+
+# --- 12b. Desktop task prototype API ---
+echo ""
+echo "--- 12b. Desktop Task Prototype ---"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"title":"Open browser demo","instructions":"Open the browser, visit example.com, and report what you see.","priority":7}')
+DESKTOP_SUCCESS=$(pyget "$RESP" "success")
+DESKTOP_ID=$(pyget "$RESP" "task.id")
+DESKTOP_STATUS=$(pyget "$RESP" "task.status")
+assert_eq "Desktop task create success" "True" "$DESKTOP_SUCCESS"
+assert_not_empty "Desktop task has id" "$DESKTOP_ID"
+assert_eq "Desktop task starts pending" "pending" "$DESKTOP_STATUS"
+RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks?status=pending&limit=10")
+DESKTOP_LIST_SUCCESS=$(pyget "$RESP" "success")
+DESKTOP_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if any(t.get('id') == '$DESKTOP_ID' for t in d.get('tasks', [])) else 'no')")
+assert_eq "Desktop task list success" "True" "$DESKTOP_LIST_SUCCESS"
+assert_eq "Desktop pending list has task" "yes" "$DESKTOP_LIST_HAS_ID"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks/$DESKTOP_ID/claim" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"worker":"orb-demo-worker"}')
+DESKTOP_CLAIM_STATUS=$(pyget "$RESP" "task.status")
+DESKTOP_CLAIMED_BY=$(pyget "$RESP" "task.claimed_by")
+assert_eq "Desktop task claim sets running" "running" "$DESKTOP_CLAIM_STATUS"
+assert_eq "Desktop task claim records worker" "orb-demo-worker" "$DESKTOP_CLAIMED_BY"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks/$DESKTOP_ID/event" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"status":"completed","worker":"orb-demo-worker","message":"Demo completed","screenshot_url":"https://example.com/screenshot.png"}')
+DESKTOP_DONE_STATUS=$(pyget "$RESP" "task.status")
+DESKTOP_DONE_EVENT=$(pyget "$RESP" "task.last_event")
+DESKTOP_DONE_SHOT=$(pyget "$RESP" "task.screenshot_url")
+assert_eq "Desktop task event completes" "completed" "$DESKTOP_DONE_STATUS"
+assert_eq "Desktop task event stores message" "Demo completed" "$DESKTOP_DONE_EVENT"
+assert_eq "Desktop task event stores screenshot url" "https://example.com/screenshot.png" "$DESKTOP_DONE_SHOT"
 
 # --- 13. Web UI: Login page ---
 echo ""

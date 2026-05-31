@@ -49,6 +49,7 @@ printf 'other file\n' > data/other/other.txt
 echo "line1" > test.txt
 echo "line2" >> test.txt
 echo "line3" >> test.txt
+echo "delete me" > delete-codex.txt
 cat > chapter.md <<'EOF'
 # Chapter 1
 
@@ -130,6 +131,90 @@ chmod +x scripts/codex_jobs/job_smoke.sh
 git add -A
 git commit -m "init" 2>&1
 cd "$PROJECT_DIR"
+
+CODEX_APPLY_PATCH_FAKE="$TMPDIR_DATA/fake-codex-apply-patch.py"
+cat > "$CODEX_APPLY_PATCH_FAKE" <<'PY'
+#!/usr/bin/env python3
+import os
+import sys
+from pathlib import Path
+
+lines = sys.stdin.read().splitlines()
+changed = []
+
+def record(kind, path):
+    changed.append((kind, path))
+
+def collect_payload(i):
+    payload = []
+    while i < len(lines) and not lines[i].startswith('*** '):
+        payload.append(lines[i])
+        i += 1
+    return payload, i
+
+i = 0
+try:
+    while i < len(lines):
+        line = lines[i]
+        if line.startswith('*** Add File: '):
+            path = line[len('*** Add File: '):].strip()
+            payload, i = collect_payload(i + 1)
+            content = '\n'.join(l[1:] for l in payload if l.startswith('+'))
+            if content:
+                content += '\n'
+            Path(path).parent.mkdir(parents=True, exist_ok=True)
+            Path(path).write_text(content)
+            record('A', path)
+            continue
+        if line.startswith('*** Update File: '):
+            path = line[len('*** Update File: '):].strip()
+            p = Path(path)
+            if not p.exists():
+                print(f'Failed to read file to update {p}: No such file or directory', file=sys.stderr)
+                sys.exit(1)
+            text = p.read_text()
+            payload, i = collect_payload(i + 1)
+            j = 0
+            while j < len(payload):
+                if payload[j].startswith('@@'):
+                    j += 1
+                    continue
+                if payload[j].startswith('-') and j + 1 < len(payload) and payload[j + 1].startswith('+'):
+                    old = payload[j][1:]
+                    new = payload[j + 1][1:]
+                    if old not in text:
+                        print(f'Failed to find expected text in {path}: {old}', file=sys.stderr)
+                        sys.exit(1)
+                    text = text.replace(old, new, 1)
+                    j += 2
+                    continue
+                j += 1
+            p.write_text(text)
+            record('M', path)
+            continue
+        if line.startswith('*** Delete File: '):
+            path = line[len('*** Delete File: '):].strip()
+            p = Path(path)
+            if not p.exists():
+                print(f'Failed to delete missing file {p}', file=sys.stderr)
+                sys.exit(1)
+            p.unlink()
+            record('D', path)
+            i += 1
+            continue
+        i += 1
+except Exception as exc:
+    print(str(exc), file=sys.stderr)
+    sys.exit(1)
+
+if not changed:
+    print('No changes declared', file=sys.stderr)
+    sys.exit(1)
+print('Success. Updated the following files:')
+for kind, path in changed:
+    print(f'{kind} {path}')
+PY
+chmod +x "$CODEX_APPLY_PATCH_FAKE"
 
 # Generate projects.toml for test
 PROJECTS_TOML="$TMPDIR_DATA/projects.toml"
@@ -304,7 +389,7 @@ DROP_DATA=$TMPDIR_DATA
 PROJECTS_CONFIG=$PROJECTS_TOML
 EOF
 
-DROP_ENV_FILE="$ENV_FILE" ./target/release/private-drop > "$LOGFILE" 2>&1 &
+CODEX_APPLY_PATCH_BIN="$CODEX_APPLY_PATCH_FAKE" DROP_ENV_FILE="$ENV_FILE" ./target/release/private-drop > "$LOGFILE" 2>&1 &
 SERVER_PID=$!
 echo "  Server PID: $SERVER_PID"
 
@@ -1409,6 +1494,110 @@ RESP=$(curl -sf -X POST "$CODEX/context" \
     -d '{"project":"test-project","mode":"read_file","path":"test.txt"}')
 CTX_CONTENT=$(pyget "$RESP" "content")
 assert_contains "Patch added line4" "line4" "$CTX_CONTENT"
+# --- 25b. Codex: applyProjectPatch experimental codex backend ---
+echo ""
+echo "--- 25b. Codex Apply Patch Codex Backend ---"
+CODEX_PATCH_FILE="$TMPDIR_DATA/codex.patch"
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Add File: codex-single.txt
++codex backend single file
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex single'}))
+")")
+CODEX_PATCH_SUCCESS=$(pyget "$RESP" "success")
+CODEX_PATCH_BACKEND=$(pyget "$RESP" "backend")
+CODEX_PATCH_EXIT=$(pyget "$RESP" "exit_code")
+CODEX_PATCH_STDOUT=$(pyget "$RESP" "stdout")
+CODEX_PATCH_DIFF=$(pyget "$RESP" "diff")
+assert_eq "Codex backend single patch success" "True" "$CODEX_PATCH_SUCCESS"
+assert_eq "Codex backend is reported" "codex" "$CODEX_PATCH_BACKEND"
+assert_eq "Codex backend exit code 0" "0" "$CODEX_PATCH_EXIT"
+assert_contains "Codex backend stdout lists file" "codex-single.txt" "$CODEX_PATCH_STDOUT"
+assert_contains "Codex backend diff includes file" "codex-single.txt" "$CODEX_PATCH_DIFF"
+
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Update File: test.txt
+@@
+-line2
++line2-codex
+*** Add File: codex-added.txt
++codex backend added
+*** Delete File: delete-codex.txt
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex multi'}))
+")")
+CODEX_MULTI_SUCCESS=$(pyget "$RESP" "success")
+CODEX_MULTI_STDOUT=$(pyget "$RESP" "stdout")
+CODEX_MULTI_CHANGED=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(','.join(d.get('changed_files') or []))")
+assert_eq "Codex backend multi patch success" "True" "$CODEX_MULTI_SUCCESS"
+assert_contains "Codex backend multi stdout add" "A codex-added.txt" "$CODEX_MULTI_STDOUT"
+assert_contains "Codex backend multi stdout modify" "M test.txt" "$CODEX_MULTI_STDOUT"
+assert_contains "Codex backend multi stdout delete" "D delete-codex.txt" "$CODEX_MULTI_STDOUT"
+assert_contains "Codex backend changed files include update" "test.txt" "$CODEX_MULTI_CHANGED"
+
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Add File: ../codex-escape.txt
++bad
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex traversal'}))
+")")
+CODEX_TRAVERSAL_SUCCESS=$(pyget "$RESP" "success")
+CODEX_TRAVERSAL_ERROR=$(pyget "$RESP" "error")
+assert_eq "Codex backend traversal blocked" "False" "$CODEX_TRAVERSAL_SUCCESS"
+assert_contains "Codex backend traversal error" "Path traversal" "$CODEX_TRAVERSAL_ERROR"
+
+cat > "$CODEX_PATCH_FILE" << 'PATCHEOF'
+*** Begin Patch
+*** Update File: test.txt
+@@
+-line3
++line3-codex-partial
+*** Update File: missing-codex.txt
+@@
+-missing
++patched
+*** End Patch
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$CODEX_PATCH_FILE').read()
+print(json.dumps({'project':'test-project','backend':'codex','patch':patch,'reason':'codex failure'}))
+")")
+CODEX_FAIL_SUCCESS=$(pyget "$RESP" "success")
+CODEX_FAIL_ERROR=$(pyget "$RESP" "error")
+CODEX_FAIL_STDERR=$(pyget "$RESP" "stderr")
+CODEX_FAIL_DIFF=$(pyget "$RESP" "diff")
+assert_eq "Codex backend failed patch reports failure" "False" "$CODEX_FAIL_SUCCESS"
+assert_contains "Codex backend failure error warns partial" "partial" "$CODEX_FAIL_ERROR"
+assert_contains "Codex backend failure stderr" "missing-codex.txt" "$CODEX_FAIL_STDERR"
+assert_contains "Codex backend failure diff includes partial change" "line3-codex-partial" "$CODEX_FAIL_DIFF"
 
 # --- 26. Codex: applyProjectPatch blocked sensitive path ---
 echo ""

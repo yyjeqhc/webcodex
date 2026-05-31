@@ -75,6 +75,8 @@ pub struct PatchRequest {
     pub patch: String,
     #[serde(default)]
     pub reason: Option<String>,
+    #[serde(default)]
+    pub backend: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -355,11 +357,19 @@ pub struct ContextBatchResponse {
 pub struct PatchResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub backend: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub changed_files: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stdout: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub duration_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

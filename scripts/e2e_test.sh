@@ -467,32 +467,38 @@ assert_contains "Channels list contains inbox" "yes" "$HAS_INBOX"
 # --- 13. Web UI: Login page ---
 echo ""
 echo "--- 13. Web UI ---"
-# Web UI is client-side rendered; pages return HTML shells with JS
+# Web UI is client-side rendered; pages return HTML shells plus shared frontend assets
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/login")
 assert_eq "GET /login returns 200" "200" "$HTTP_CODE"
 BODY=$(curl -sf "$BASE/login")
-assert_contains "Login page references drop_token" "drop_token" "$BODY"
+assert_contains "Login page references frontend JS" "/assets/app.js" "$BODY"
 assert_contains "Login page redirects to /c/inbox" "/c/inbox" "$BODY"
+ASSET_JS=$(curl -sf "$BASE/assets/app.js")
+ASSET_CSS=$(curl -sf "$BASE/assets/styles.css")
+assert_contains "Frontend asset references drop_token" "drop_token" "$ASSET_JS"
+assert_contains "Frontend asset adds Authorization" "Authorization" "$ASSET_JS"
+assert_contains "Frontend asset uses Bearer" "Bearer" "$ASSET_JS"
+assert_contains "Frontend CSS has card styles" ".card" "$ASSET_CSS"
 
 # --- 14. Web UI: Home page ---
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/")
 assert_eq "GET / returns 200" "200" "$HTTP_CODE"
 BODY=$(curl -sf "$BASE/")
-assert_contains "Home page references drop_token" "drop_token" "$BODY"
-assert_contains "Home page references /c/inbox" "/c/inbox" "$BODY"
+assert_contains "Home page references frontend JS" "/assets/app.js" "$BODY"
+assert_contains "Home page references /channels" "/channels" "$BODY"
 
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/channels")
 assert_eq "GET /channels returns 200" "200" "$HTTP_CODE"
 BODY=$(curl -sf "$BASE/channels")
 assert_contains "Channels page contains Channels" "Channels" "$BODY"
+assert_contains "Channels page references frontend JS" "/assets/app.js" "$BODY"
 
 # --- 15. Web UI: Channel page ---
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/c/inbox")
 assert_eq "GET /c/inbox returns 200" "200" "$HTTP_CODE"
 BODY=$(curl -sf "$BASE/c/inbox")
 assert_contains "Channel page calls /api/messages" "/api/messages" "$BODY"
-assert_contains "Channel page uses Authorization" "Authorization" "$BODY"
-assert_contains "Channel page uses Bearer" "Bearer" "$BODY"
+assert_contains "Channel page references frontend JS" "/assets/app.js" "$BODY"
 
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/c/xline")
 assert_eq "GET /c/xline returns 200" "200" "$HTTP_CODE"
@@ -513,40 +519,24 @@ OMO_HAS_ONCLICK=$(echo "$OMO_BODY" | grep -c 'onclick=' || true)
 assert_eq "Channel page has no inline onclick" "0" "$OMO_HAS_ONCLICK"
 # Must contain expected elements
 assert_contains "Channel page has /api/messages" "/api/messages" "$OMO_BODY"
-assert_contains "Channel page has drop_token" "drop_token" "$OMO_BODY"
+assert_contains "Channel page references frontend JS" "/assets/app.js" "$OMO_BODY"
 assert_contains "Channel page has error handling" "alert-error" "$OMO_BODY"
 assert_contains "Channel page has event delegation" "addEventListener" "$OMO_BODY"
 assert_contains "Channel page has data-text-id" "data-text-id" "$OMO_BODY"
 assert_contains "Channel page has data-delete-id" "data-delete-id" "$OMO_BODY"
-# JS syntax check (if node available)
-if command -v node > /dev/null 2>&1; then
-    OMO_SCRIPT=$(echo "$OMO_BODY" | python3 -c "
-import sys
-html = sys.stdin.read()
-start = html.find('<script>')
-end = html.find('</script>')
-if start >= 0 and end >= 0:
-    print(html[start+8:end])
-else:
-    print('')
-")
-    if [ -n "$OMO_SCRIPT" ]; then
-        JS_OK=$(echo "$OMO_SCRIPT" | node --check 2>&1 && echo "yes" || echo "no")
-        assert_eq "Channel page JS passes node --check" "yes" "$JS_OK"
-    fi
-fi
 
 # --- 16. Web UI: Message detail page ---
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/m/$MSG_ID")
 assert_eq "GET /m/{id} returns 200" "200" "$HTTP_CODE"
+BODY=$(curl -sf "$BASE/m/$MSG_ID")
+assert_contains "Message page references frontend JS" "/assets/app.js" "$BODY"
 
 # --- 17. Web UI: Send page ---
 HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/send")
 assert_eq "GET /send returns 200" "200" "$HTTP_CODE"
 BODY=$(curl -sf "$BASE/send")
 assert_contains "Send page calls POST /api/messages" "/api/messages" "$BODY"
-assert_contains "Send page uses Authorization" "Authorization" "$BODY"
-assert_contains "Send page uses Bearer" "Bearer" "$BODY"
+assert_contains "Send page references frontend JS" "/assets/app.js" "$BODY"
 
 # ============================================================================
 # Codex API Tests
@@ -1121,7 +1111,11 @@ RESP=$(curl -sf -X POST "$CODEX/job" \
 JOB_LIST_SUCCESS=$(pyget "$RESP" "success")
 JOB_LIST_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('jobs', [])))")
 assert_eq "Job list success" "True" "$JOB_LIST_SUCCESS"
-assert_contains "Job list has jobs" "4" "$JOB_LIST_COUNT"
+if [ "$JOB_LIST_COUNT" -lt 5 ]; then
+    fail "Job list has jobs" "expected at least 5 jobs, got $JOB_LIST_COUNT"
+else
+    log_pass "Job list has jobs"
+fi
 RESP=$(curl -s -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \

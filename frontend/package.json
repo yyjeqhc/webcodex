@@ -1,0 +1,11 @@
+{
+  "name": "private-drop-frontend",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.0"
+  }
+}

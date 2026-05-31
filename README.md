@@ -146,7 +146,7 @@ curl -H "Authorization: Bearer your-secret-token" \
 
 ## Web UI
 
-The web UI is server-rendered HTML, mobile-friendly, no JavaScript framework required.
+The web UI is server-rendered HTML with shared frontend assets in `frontend/`, mobile-friendly, no JavaScript framework required. Common browser helpers and styles live in TypeScript/CSS (`frontend/src/app.ts`, `frontend/src/styles.css`) and are served from built assets under `/assets/app.js` and `/assets/styles.css`.
 
 - `GET /` - Home page with channel list and recent messages
 - `GET /c/{channel}` - Channel messages (e.g., `/c/inbox`)

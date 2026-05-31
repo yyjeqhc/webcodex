@@ -19,41 +19,8 @@ fn app_shell(title: &str, page_js: &str) -> String {
 <head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>{title} - Private Drop</title>
-<style>
-*{{margin:0;padding:0;box-sizing:border-box}}
-body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f5f5f5;color:#333}}
-.container{{max-width:800px;margin:0 auto;padding:16px}}
-.header{{background:#2c3e50;color:white;padding:16px;margin-bottom:16px;border-radius:8px}}
-.header h1{{font-size:1.5em}}
-.nav{{display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap}}
-.nav a{{padding:8px 16px;background:#3498db;color:white;text-decoration:none;border-radius:4px;font-size:14px}}
-.nav a:hover{{background:#2980b9}}
-.card{{background:white;border-radius:8px;padding:16px;margin-bottom:12px;box-shadow:0 2px 4px rgba(0,0,0,0.1)}}
-.card-header{{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}}
-.card-title{{font-weight:bold;font-size:1.1em;word-break:break-word}}
-.card-meta{{color:#666;font-size:0.9em}}
-.card-text{{white-space:pre-wrap;word-break:break-word;line-height:1.5}}
-.btn{{padding:8px 16px;border:none;border-radius:4px;cursor:pointer;font-size:14px;text-decoration:none;display:inline-block}}
-.btn-primary{{background:#3498db;color:white}}
-.btn-danger{{background:#e74c3c;color:white}}
-.btn-success{{background:#27ae60;color:white}}
-.btn-sm{{padding:4px 12px;font-size:12px}}
-.form-group{{margin-bottom:12px}}
-.form-group label{{display:block;margin-bottom:4px;font-weight:bold}}
-.form-group input,.form-group textarea,.form-group select{{width:100%;padding:10px;border:1px solid #ddd;border-radius:4px;font-size:14px}}
-.form-group textarea{{min-height:150px;resize:vertical}}
-.form-actions{{display:flex;gap:8px}}
-.file-info{{display:flex;align-items:center;gap:8px}}
-.file-icon{{font-size:24px}}
-.file-size{{color:#666;font-size:0.9em}}
-.token-form{{max-width:400px;margin:100px auto}}
-.alert{{padding:12px;border-radius:4px;margin-bottom:12px}}
-.alert-error{{background:#f8d7da;color:#721c24}}
-.alert-success{{background:#d4edda;color:#155724}}
-.channel-badge{{display:inline-block;padding:2px 8px;background:#ecf0f1;border-radius:12px;font-size:0.8em}}
-.loading{{text-align:center;padding:40px;color:#666}}
-@media(max-width:600px){{.container{{padding:8px}}.header{{padding:12px}}.card{{padding:12px}}}}
-</style>
+<link rel="stylesheet" href="/assets/styles.css">
+<script src="/assets/app.js" defer></script>
 </head>
 <body>
 <div class="container">
@@ -61,24 +28,34 @@ body{{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
 <div class="nav"><a href="/channels">Channels</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a></div>
 <div id="app"><div class="loading">Loading...</div></div>
 </div>
-<script>
-function getToken(){{return localStorage.getItem('drop_token')||''}}
-function setToken(t){{localStorage.setItem('drop_token',t)}}
-function clearToken(){{localStorage.removeItem('drop_token')}}
-function requireToken(){{if(!getToken()){{window.location.href='/login';return false}}return true}}
-async function apiCall(url,options={{}}){{const token=getToken();if(!token){{window.location.href='/login';return null}}const headers={{...options.headers}};headers['Authorization']='Bearer '+token;const resp=await fetch(url,{{...options,headers}});if(resp.status===401){{clearToken();window.location.href='/login';return null}}return resp}}
-function escapeHtml(s){{const d=document.createElement('div');d.textContent=s;return d.innerHTML}}
-function formatSize(b){{if(b<1024)return b+' B';if(b<1048576)return(b/1024).toFixed(1)+' KB';if(b<1073741824)return(b/1048576).toFixed(1)+' MB';return(b/1073741824).toFixed(2)+' GB'}}
-function fmtTime(ts){{const d=new Date(ts*1000);return d.toLocaleString()}}
-async function deleteMsg(id){{if(!confirm('Delete this message?'))return;const r=await apiCall('/api/messages/'+id,{{method:'DELETE'}});if(r&&r.ok)window.location.reload()}}
-function copyText(t){{navigator.clipboard.writeText(t).then(()=>alert('Copied!'))}}
+<script defer>
+window.addEventListener('DOMContentLoaded', function() {{
 {page_js}
+}});
 </script>
 </body>
 </html>"#,
         title = html_escape(title),
         page_js = page_js
     )
+}
+
+#[handler]
+pub async fn frontend_app_js(res: &mut Response) {
+    res.add_header(
+        "content-type",
+        "application/javascript; charset=utf-8",
+        true,
+    )
+    .ok();
+    res.render(Text::Plain(include_str!("../frontend/dist/app.js")));
+}
+
+#[handler]
+pub async fn frontend_styles_css(res: &mut Response) {
+    res.add_header("content-type", "text/css; charset=utf-8", true)
+        .ok();
+    res.render(Text::Plain(include_str!("../frontend/dist/styles.css")));
 }
 
 #[handler]

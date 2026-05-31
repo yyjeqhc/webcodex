@@ -33,7 +33,10 @@ pub use models::{
     Channel, CodexGoalRecord, CommandAuditRecord, CreateMessageRequest, Message, MessageKind,
 };
 pub(crate) use openapi::{codex_openapi_compact_json, codex_openapi_json, openapi_json};
-pub(crate) use web::{channel_page, channels_page, home_page, login_page, message_page, send_page};
+pub(crate) use web::{
+    channel_page, channels_page, frontend_app_js, frontend_styles_css, home_page, login_page,
+    message_page, send_page,
+};
 
 // ============================================================================
 // Main
@@ -114,6 +117,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("files").post(upload_file)),
         );
 
+    let assets_router = Router::with_path("assets")
+        .push(Router::with_path("app.js").get(frontend_app_js))
+        .push(Router::with_path("styles.css").get(frontend_styles_css));
+
     let web_router = Router::new()
         .push(Router::with_path("login").get(login_page))
         .push(Router::with_path("channels").get(channels_page))
@@ -135,6 +142,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(openapi_router)
         .push(codex_openapi_router)
         .push(codex_openapi_compact_router)
+        .push(assets_router)
         .push(web_router);
 
     // Add Codex API routes if projects config is loaded

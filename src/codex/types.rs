@@ -658,7 +658,11 @@ pub struct ProjectCapabilityInfo {
 
 #[derive(Debug, Serialize)]
 pub struct InstanceInfo {
+    pub service: String,
+    pub api: String,
+    pub schema: String,
     pub package_version: String,
+    pub server_time: i64,
     pub pid: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub hostname: Option<String>,

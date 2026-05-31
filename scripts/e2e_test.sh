@@ -614,7 +614,11 @@ PROJECTS_TEST_EXECUTOR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load
 PROJECTS_TEST_CHECKS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(','.join(p.get('allowed_checks', [])))")
 PROJECTS_TEST_COMMANDS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(','.join(p.get('commands', [])))")
 PROJECTS_TEST_RAW=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('capabilities', {}).get('raw_command_requests'))")
+PROJECTS_INSTANCE_SERVICE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('service') or '')")
+PROJECTS_INSTANCE_API=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('api') or '')")
+PROJECTS_INSTANCE_SCHEMA=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('schema') or '')")
 PROJECTS_INSTANCE_VERSION=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('package_version') or '')")
+PROJECTS_INSTANCE_TIME=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('server_time') or '')")
 PROJECTS_INSTANCE_PID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('pid') or '')")
 PROJECTS_INSTANCE_DATA_DIR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('data_dir') or '')")
 assert_eq "Projects capabilities success" "True" "$PROJECTS_SUCCESS"
@@ -623,7 +627,11 @@ assert_eq "Projects capabilities executor" "local" "$PROJECTS_TEST_EXECUTOR"
 assert_contains "Projects capabilities allowed checks" "test" "$PROJECTS_TEST_CHECKS"
 assert_contains "Projects capabilities configured commands" "smoke" "$PROJECTS_TEST_COMMANDS"
 assert_eq "Projects capabilities raw commands enabled" "True" "$PROJECTS_TEST_RAW"
+assert_eq "Projects instance service" "private-drop" "$PROJECTS_INSTANCE_SERVICE"
+assert_eq "Projects instance api" "codex" "$PROJECTS_INSTANCE_API"
+assert_eq "Projects instance schema" "codex-openapi-compact" "$PROJECTS_INSTANCE_SCHEMA"
 assert_not_empty "Projects instance has package version" "$PROJECTS_INSTANCE_VERSION"
+assert_not_empty "Projects instance has server time" "$PROJECTS_INSTANCE_TIME"
 assert_not_empty "Projects instance has pid" "$PROJECTS_INSTANCE_PID"
 assert_not_empty "Projects instance has data dir" "$PROJECTS_INSTANCE_DATA_DIR"
 
@@ -1470,6 +1478,7 @@ RESP=$(curl -sf "$BASE/openapi.json")
 HAS_PROJECTS=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listProjects' in sys.stdin.read() else 'no')")
 HAS_CTX=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'getProjectContext' in sys.stdin.read() else 'no')")
 HAS_PATCH=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectPatch' in sys.stdin.read() else 'no')")
+HAS_JOB_INFO=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'JobInfo' in sys.stdin.read() else 'no')")
 HAS_EDIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'applyProjectEdit' in sys.stdin.read() else 'no')")
 HAS_ARTIFACT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'saveProjectArtifact' in sys.stdin.read() else 'no')")
 HAS_GIT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runProjectGit' in sys.stdin.read() else 'no')")
@@ -1517,6 +1526,7 @@ HAS_LIST_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listComman
 HAS_BATCH_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createCommandRequestBatch' in sys.stdin.read() else 'no')")
 HAS_REJECT_REQ=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'rejectCommandRequest' in sys.stdin.read() else 'no')")
 assert_contains "codex-openapi.json has listProjects" "yes" "$HAS_PROJECTS"
+assert_contains "codex-openapi.json has JobInfo schema" "yes" "$HAS_JOB_INFO"
 assert_contains "codex-openapi.json has applyProjectEdit" "yes" "$HAS_EDIT"
 assert_contains "codex-openapi.json has saveProjectArtifact" "yes" "$HAS_ARTIFACT"
 assert_contains "codex-openapi.json has runProjectGit" "yes" "$HAS_GIT"

@@ -44,7 +44,11 @@ fn instance_info(depot: &Depot) -> InstanceInfo {
         .map(|cfg| cfg.data_dir.display().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     InstanceInfo {
+        service: "private-drop".to_string(),
+        api: "codex".to_string(),
+        schema: "codex-openapi-compact".to_string(),
         package_version: env!("CARGO_PKG_VERSION").to_string(),
+        server_time: chrono::Utc::now().timestamp(),
         pid: std::process::id(),
         hostname: hostname(),
         data_dir,

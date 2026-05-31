@@ -507,6 +507,29 @@
         },
         "required": ["op"]
       },
+      "JobInfo": {
+        "type": "object",
+        "properties": {
+          "job_id": {"type": "string"},
+          "client_request_id": {"type": "string", "nullable": true},
+          "project": {"type": "string"},
+          "goal_id": {"type": "string"},
+          "command": {"type": "string"},
+          "kind": {"type": "string", "nullable": true, "enum": ["command", "script", "check"]},
+          "suite": {"type": "string", "nullable": true},
+          "script_path": {"type": "string", "nullable": true},
+          "reason": {"type": "string", "nullable": true},
+          "status": {"type": "string", "enum": ["running", "completed", "failed", "stopped", "timeout"]},
+          "created_at": {"type": "integer"},
+          "started_at": {"type": "integer", "nullable": true},
+          "finished_at": {"type": "integer", "nullable": true},
+          "max_runtime_secs": {"type": "integer"},
+          "executor": {"type": "string", "enum": ["local", "ssh"]},
+          "pid": {"type": "integer", "nullable": true},
+          "exit_code": {"type": "integer", "nullable": true}
+        },
+        "required": ["job_id", "project", "goal_id", "command", "status", "created_at", "max_runtime_secs", "executor"]
+      },
       "JobOpResponse": {
         "type": "object",
         "properties": {
@@ -514,8 +537,8 @@
           "op": {"type": "string"},
           "job_id": {"type": "string", "nullable": true},
           "job_ids": {"type": "array", "items": {"type": "string"}},
-          "job": {"type": "object", "nullable": true},
-          "jobs": {"type": "array", "items": {"type": "object"}},
+          "job": {"$ref": "#/components/schemas/JobInfo", "nullable": true},
+          "jobs": {"type": "array", "items": {"$ref": "#/components/schemas/JobInfo"}},
           "stdout_tail": {"type": "string", "nullable": true},
           "stderr_tail": {"type": "string", "nullable": true},
           "summary_markdown": {"type": "string", "nullable": true},
@@ -599,14 +622,18 @@
       "InstanceInfo": {
         "type": "object",
         "properties": {
+          "service": {"type": "string"},
+          "api": {"type": "string"},
+          "schema": {"type": "string"},
           "package_version": {"type": "string"},
+          "server_time": {"type": "integer"},
           "pid": {"type": "integer"},
           "hostname": {"type": "string", "nullable": true},
           "data_dir": {"type": "string"},
           "projects_config_path": {"type": "string"},
           "public_url": {"type": "string", "nullable": true}
         },
-        "required": ["package_version", "pid", "data_dir", "projects_config_path"]
+        "required": ["service", "api", "schema", "package_version", "server_time", "pid", "data_dir", "projects_config_path"]
       },
       "ProjectsResponse": {
         "type": "object",

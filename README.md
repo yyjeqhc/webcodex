@@ -268,7 +268,7 @@ Instead of exposing fine-grained dangerous APIs (readFile, writeFile, runShell, 
 
 1. **getProjectContext** — Read-only observation (overview, tree, search, read_file, git_status, git_diff)
 2. **applyProjectPatch** — Apply a unified diff to a whitelisted project
-3. **listProjects** — Discover runtime projects, executors, checks, configured commands, and capabilities
+3. **listProjects** — Discover runtime projects, instance identity, executors, checks, configured commands, and capabilities
 4. **runProjectCheck** — Run pre-configured check commands (fmt, test, build, e2e, full)
 5. **writeProjectReport** — Write operation reports and post messages to channels
 
@@ -938,6 +938,7 @@ Permission model:
 - The goal must be `active` and unexpired.
 - Within that active goal scope, job commands are trusted shell commands; they are not matched against configured command IDs and are not individually approved. `check` is narrower: it can only run suites configured in `projects.toml` and allowed by `allowed_checks`.
 - Every job is audited on disk under `.codex/jobs/<job_id>/` with `metadata.json`, `command.sh`, `stdout.log`, `stderr.log`, `pid`, `exit_code`, `status`, and `finished_at` when the job ends.
+- Job responses expose structured `JobInfo` fields, including `kind` (`command`, `script`, or `check`), `suite` for async checks, and `script_path` for script jobs.
 - When `client_request_id` is supplied, retrying the same `create` within the same goal returns the existing job instead of starting a duplicate. After an HTTP 504 or client disconnect, call `status` or `list` with the same `client_request_id` to recover the job id.
 - `script_path` must be project-relative, cannot use traversal or sensitive paths, and is executed as `bash <script_path> <script_args...>` from the project root.
 - Add `.codex/jobs/` to the project `.gitignore`; job audit logs are runtime artifacts and should not be committed.
@@ -984,6 +985,8 @@ For long checks, prefer async `check` over synchronous `runProjectCheck`:
 ```
 
 This endpoint supports both local and SSH executors. SSH jobs are created in the remote project directory and use the existing SSH/ControlMaster configuration. Stop/timeout handling is best-effort and optimized for the current Linux deployment target.
+
+`listProjects` also returns `instance` identity fields (`service`, `api`, `schema`, `package_version`, `server_time`, `pid`, `hostname`, `data_dir`, `projects_config_path`, and optional `public_url`) so agents can distinguish sg4/v4/oe deployments and confirm which schema/service instance they are using.
 
 ## OpenAPI schema variants
 

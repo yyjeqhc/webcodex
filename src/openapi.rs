@@ -1,6 +1,5 @@
-use crate::{json_error, projects};
+use crate::json_error;
 use salvo::prelude::*;
-use std::sync::Arc;
 
 fn public_url() -> String {
     std::env::var("DROP_PUBLIC_URL")
@@ -10,15 +9,7 @@ fn public_url() -> String {
         .unwrap_or_else(|| "http://localhost:8080".to_string())
 }
 
-fn project_enum_from_depot(depot: &Depot) -> serde_json::Value {
-    if let Ok(projects) = depot.obtain::<Arc<projects::ProjectsConfig>>() {
-        let mut names: Vec<String> = projects.projects.keys().cloned().collect();
-        names.sort();
-        serde_json::json!(names)
-    } else {
-        serde_json::json!(["private-drop", "private-drop-v4", "gpt-sandbox", "paper"])
-    }
-}
+const PROJECT_SCHEMA_DESCRIPTION: &str = "Runtime-validated project name. Add or remove projects in projects.toml and restart the service; the OpenAPI schema intentionally does not enumerate project names.";
 
 #[handler]
 pub async fn openapi_json(res: &mut Response) {
@@ -41,21 +32,23 @@ pub async fn openapi_json(res: &mut Response) {
     }
 }
 
-fn apply_project_enum_to_schema(
-    spec: &mut serde_json::Value,
-    schema_names: &[&str],
-    project_enum: &serde_json::Value,
-) {
+fn apply_project_description_to_schema(spec: &mut serde_json::Value, schema_names: &[&str]) {
     for name in schema_names {
-        spec["components"]["schemas"][*name]["properties"]["project"]["enum"] =
-            project_enum.clone();
-        spec["components"]["schemas"][*name]["properties"]["project"]["description"] = serde_json::json!("Whitelisted project name; not a report channel such as omo, inbox, xline, thesis, packfix, or files.");
+        if let Some(project) = spec["components"]["schemas"][*name]["properties"].get_mut("project")
+        {
+            if let Some(obj) = project.as_object_mut() {
+                obj.remove("enum");
+                obj.insert(
+                    "description".to_string(),
+                    serde_json::json!(PROJECT_SCHEMA_DESCRIPTION),
+                );
+            }
+        }
     }
 }
 
 #[handler]
-pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
-    let project_enum = project_enum_from_depot(depot);
+pub async fn codex_openapi_json(res: &mut Response) {
     let mut spec =
         match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
             Ok(spec) => spec,
@@ -138,7 +131,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
         "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone()
     });
-    apply_project_enum_to_schema(
+    apply_project_description_to_schema(
         &mut spec,
         &[
             "ContextRequest",
@@ -159,7 +152,6 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
             "CheckRequest",
             "ReportRequest",
         ],
-        &project_enum,
     );
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
@@ -167,8 +159,7 @@ pub async fn codex_openapi_json(depot: &mut Depot, res: &mut Response) {
 }
 
 #[handler]
-pub async fn codex_openapi_compact_json(depot: &mut Depot, res: &mut Response) {
-    let project_enum = project_enum_from_depot(depot);
+pub async fn codex_openapi_compact_json(res: &mut Response) {
     let mut spec =
         match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
             Ok(spec) => spec,
@@ -231,7 +222,7 @@ pub async fn codex_openapi_compact_json(depot: &mut Depot, res: &mut Response) {
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
         "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone()
     });
-    apply_project_enum_to_schema(
+    apply_project_description_to_schema(
         &mut spec,
         &[
             "ContextBatchRequest",
@@ -244,7 +235,6 @@ pub async fn codex_openapi_compact_json(depot: &mut Depot, res: &mut Response) {
             "CheckRequest",
             "ReportRequest",
         ],
-        &project_enum,
     );
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");

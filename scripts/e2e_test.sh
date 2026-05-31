@@ -1398,6 +1398,17 @@ assert_contains "codex-openapi.json has createCommandRequestBatch" "yes" "$HAS_B
 assert_contains "codex-openapi.json has rejectCommandRequest" "yes" "$HAS_REJECT_REQ"
 HAS_ONEOF=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'oneOf' in sys.stdin.read() else 'no')")
 assert_contains "codex-openapi.json has oneOf schemas" "yes" "$HAS_ONEOF"
+CODEX_PROJECT_ENUM_FREE=$(echo "$RESP" | python3 -c '
+import json, sys
+spec = json.load(sys.stdin)
+violations = []
+for name, schema in spec.get("components", {}).get("schemas", {}).items():
+    project = schema.get("properties", {}).get("project") if isinstance(schema, dict) else None
+    if isinstance(project, dict) and "enum" in project:
+        violations.append(name)
+print("yes" if not violations else "enum:" + ",".join(sorted(violations)))
+')
+assert_eq "codex-openapi.json project fields are not enum" "yes" "$CODEX_PROJECT_ENUM_FREE"
 
 # Compact Codex OpenAPI should expose only action-efficient core operations
 RESP=$(curl -sf "$BASE/codex-openapi-compact.json")
@@ -1409,6 +1420,17 @@ COMPACT_HAS_SAVE_GENERATED=$(echo "$RESP" | python3 -c "import sys; print('yes' 
 COMPACT_HAS_AGENT_CONTEXT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'agent_context' in sys.stdin.read() else 'no')")
 assert_eq "codex-openapi-compact.json has save_generated artifact mode" "yes" "$COMPACT_HAS_SAVE_GENERATED"
 assert_eq "codex-openapi-compact.json has agent_context mode" "yes" "$COMPACT_HAS_AGENT_CONTEXT"
+COMPACT_PROJECT_ENUM_FREE=$(echo "$RESP" | python3 -c '
+import json, sys
+spec = json.load(sys.stdin)
+violations = []
+for name, schema in spec.get("components", {}).get("schemas", {}).items():
+    project = schema.get("properties", {}).get("project") if isinstance(schema, dict) else None
+    if isinstance(project, dict) and "enum" in project:
+        violations.append(name)
+print("yes" if not violations else "enum:" + ",".join(sorted(violations)))
+')
+assert_eq "codex-openapi-compact.json project fields are not enum" "yes" "$COMPACT_PROJECT_ENUM_FREE"
 COMPACT_OPS=$(echo "$RESP" | python3 -c '
 import json, sys
 spec=json.load(sys.stdin)

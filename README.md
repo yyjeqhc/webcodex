@@ -680,7 +680,7 @@ Use `mode="agent_context"` at the start of a new GPT/Codex chat to load project 
 - `.codex/memory/decisions.md`
 - `.codex/memory/user_preferences.md`
 
-A good startup batch for project work is `agent_context + overview + git_status`, then targeted `read_file` calls for the files relevant to the user's goal.
+A good startup batch for project work is `agent_context + overview + git_status`, then targeted `read_file` calls for the files relevant to the user's goal. When `search` finds a symbol or phrase but the surrounding code matters, use `grep_context` with `query` and optional `path`; it returns matching lines with three nearby context lines, which avoids a second manual line-range lookup.
 
 For large Markdown projects such as thesis chapters, prefer these lighter modes before reading large line ranges:
 

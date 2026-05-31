@@ -7,6 +7,7 @@ pub enum ContextMode {
     Overview,
     Tree,
     Search,
+    GrepContext,
     ReadFile,
     MarkdownOutline,
     ReadSection,

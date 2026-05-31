@@ -5,8 +5,8 @@ use super::types::{
     ContextResponse,
 };
 use super::{
-    agent_context_shell_fragment, run_project_cmd, ssh_overview, ssh_read_file, ssh_search,
-    ssh_tree, truncate_string, try_ssh_context_batch_once, MAX_OUTPUT_LEN,
+    agent_context_shell_fragment, run_project_cmd, ssh_grep_context, ssh_overview, ssh_read_file,
+    ssh_search, ssh_tree, truncate_string, try_ssh_context_batch_once, MAX_OUTPUT_LEN,
 };
 use crate::projects::{canonicalize_and_verify, ProjectConfig, SshConfig};
 use salvo::prelude::*;
@@ -118,6 +118,136 @@ pub(super) fn simple_search(dir: &Path, query: &str, limit: usize) -> Vec<String
     results
 }
 
+fn grep_context_file(
+    path: &Path,
+    base: &Path,
+    query: &str,
+    output: &mut Vec<String>,
+    limit: usize,
+) {
+    if output.len() >= limit {
+        return;
+    }
+    let metadata = match std::fs::metadata(path) {
+        Ok(m) => m,
+        Err(_) => return,
+    };
+    if metadata.len() > 1_000_000 {
+        return;
+    }
+    let content = match std::fs::read_to_string(path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    let lines: Vec<&str> = content.lines().collect();
+    let rel = path
+        .strip_prefix(base)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .to_string();
+    let mut last_end = 0usize;
+    for (idx, line) in lines.iter().enumerate() {
+        if output.len() >= limit {
+            return;
+        }
+        if !line.contains(query) {
+            continue;
+        }
+        let start = idx.saturating_sub(3);
+        let end = (idx + 4).min(lines.len());
+        if start > last_end && !output.is_empty() {
+            output.push("--".to_string());
+            if output.len() >= limit {
+                return;
+            }
+        }
+        for line_idx in start.max(last_end)..end {
+            if output.len() >= limit {
+                return;
+            }
+            let marker = if line_idx == idx { ">" } else { " " };
+            let (line, _) = truncate_context_line(lines[line_idx]);
+            output.push(format!("{}:{}{} | {}", rel, line_idx + 1, marker, line));
+        }
+        last_end = end;
+    }
+}
+
+fn grep_context_recursive(
+    dir: &Path,
+    base: &Path,
+    query: &str,
+    output: &mut Vec<String>,
+    limit: usize,
+) {
+    if output.len() >= limit {
+        return;
+    }
+    let entries = match std::fs::read_dir(dir) {
+        Ok(e) => e,
+        Err(_) => return,
+    };
+    let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+    sorted.sort_by_key(|e| e.file_name());
+    for entry in sorted {
+        if output.len() >= limit {
+            return;
+        }
+        let name = entry.file_name().to_string_lossy().to_string();
+        if is_ignored_dir(&name) {
+            continue;
+        }
+        let path = entry.path();
+        if path.is_dir() {
+            grep_context_recursive(&path, base, query, output, limit);
+        } else if path.is_file() {
+            grep_context_file(&path, base, query, output, limit);
+        }
+    }
+}
+
+pub(super) fn local_grep_context(
+    root: &Path,
+    project_name: &str,
+    rel_path: Option<&str>,
+    query: &str,
+    limit: usize,
+) -> ContextResponse {
+    let limit = limit.clamp(1, MAX_READ_FILE_LIMIT);
+    let start = match rel_path {
+        Some(path) => match canonicalize_and_verify(&root.join(path), root) {
+            Ok(path) => path,
+            Err(e) => return context_error(project_name, &ContextMode::GrepContext, e),
+        },
+        None => root.to_path_buf(),
+    };
+    let mut output = Vec::new();
+    if start.is_file() {
+        grep_context_file(&start, root, query, &mut output, limit);
+    } else {
+        grep_context_recursive(&start, root, query, &mut output, limit);
+    }
+    let truncated = output.len() >= limit;
+    mode_content_response(
+        project_name,
+        "grep_context",
+        output.join("\n"),
+        MAX_OUTPUT_LEN,
+    )
+    .tap_truncated(truncated)
+}
+
+trait ContextResponseExt {
+    fn tap_truncated(self, truncated: bool) -> Self;
+}
+
+impl ContextResponseExt for ContextResponse {
+    fn tap_truncated(mut self, truncated: bool) -> Self {
+        self.truncated = self.truncated || truncated;
+        self
+    }
+}
+
 fn search_recursive(dir: &Path, base: &Path, query: &str, results: &mut Vec<String>, limit: usize) {
     if results.len() >= limit {
         return;
@@ -172,6 +302,7 @@ pub(super) fn mode_name(mode: &ContextMode) -> &'static str {
         ContextMode::Overview => "overview",
         ContextMode::Tree => "tree",
         ContextMode::Search => "search",
+        ContextMode::GrepContext => "grep_context",
         ContextMode::ReadFile => "read_file",
         ContextMode::MarkdownOutline => "markdown_outline",
         ContextMode::ReadSection => "read_section",
@@ -478,6 +609,21 @@ pub(super) fn execute_context_item(
                     "query parameter is required for search mode".to_string(),
                 ),
             },
+            ContextMode::GrepContext => match &item.query {
+                Some(query) => ssh_grep_context(
+                    proj,
+                    project_name,
+                    item.path.as_deref(),
+                    query,
+                    item.limit,
+                    ssh_config,
+                ),
+                None => context_error(
+                    project_name,
+                    &item.mode,
+                    "query parameter is required for grep_context mode".to_string(),
+                ),
+            },
             ContextMode::ReadFile => match &item.path {
                 Some(path) => ssh_read_file(
                     proj,
@@ -709,6 +855,20 @@ pub(super) fn execute_context_item(
                 0,
             ),
         },
+        ContextMode::GrepContext => match &item.query {
+            Some(query) => (
+                local_grep_context(&root, project_name, item.path.as_deref(), query, item.limit),
+                0,
+            ),
+            None => (
+                context_error(
+                    project_name,
+                    &item.mode,
+                    "query parameter is required for grep_context mode".to_string(),
+                ),
+                0,
+            ),
+        },
         ContextMode::ReadFile => match &item.path {
             Some(rel_path) => {
                 let full_path = root.join(rel_path);
@@ -889,6 +1049,31 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 };
                 ssh_search(proj, &body.project, query, ssh_config)
             }
+            ContextMode::GrepContext => {
+                let Some(query) = &body.query else {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(ContextResponse {
+                        success: false,
+                        project: body.project,
+                        mode: "grep_context".to_string(),
+                        content: None,
+                        items: None,
+                        truncated: false,
+                        error: Some(
+                            "query parameter is required for grep_context mode".to_string(),
+                        ),
+                    }));
+                    return;
+                };
+                ssh_grep_context(
+                    proj,
+                    &body.project,
+                    body.path.as_deref(),
+                    query,
+                    body.limit,
+                    ssh_config,
+                )
+            }
             ContextMode::ReadFile => {
                 let Some(rel_path) = &body.path else {
                     res.status_code(StatusCode::BAD_REQUEST);
@@ -1065,8 +1250,8 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             }
         };
         let ssh_calls = match resp.mode.as_str() {
-            "overview" | "tree" | "search" | "read_file" | "markdown_outline" | "read_section"
-            | "git_status" | "git_diff" => 1,
+            "overview" | "tree" | "search" | "grep_context" | "read_file" | "markdown_outline"
+            | "read_section" | "git_status" | "git_diff" => 1,
             _ => 0,
         };
         tracing::info!(
@@ -1193,6 +1378,28 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 truncated,
                 error: None,
             }));
+        }
+        ContextMode::GrepContext => {
+            let Some(query) = &body.query else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(ContextResponse {
+                    success: false,
+                    project: body.project,
+                    mode: "grep_context".to_string(),
+                    content: None,
+                    items: None,
+                    truncated: false,
+                    error: Some("query parameter is required for grep_context mode".to_string()),
+                }));
+                return;
+            };
+            res.render(Json(local_grep_context(
+                &root,
+                &body.project,
+                body.path.as_deref(),
+                query,
+                body.limit,
+            )));
         }
         ContextMode::ReadFile => {
             let Some(rel_path) = &body.path else {

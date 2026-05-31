@@ -669,6 +669,15 @@ CTX_SUCCESS=$(pyget "$RESP" "success")
 assert_eq "Search success" "True" "$CTX_SUCCESS"
 HAS_RESULT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); items=d.get('items',[]); print('yes' if len(items)>0 else 'no')")
 assert_contains "Search found println" "yes" "$HAS_RESULT"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"test-project","mode":"grep_context","path":"src/main.rs","query":"println","limit":20}')
+GREP_CONTEXT_SUCCESS=$(pyget "$RESP" "success")
+GREP_CONTEXT_CONTENT=$(pyget "$RESP" "content")
+assert_eq "Grep context success" "True" "$GREP_CONTEXT_SUCCESS"
+assert_contains "Grep context includes match" "println" "$GREP_CONTEXT_CONTENT"
+assert_contains "Grep context marks match" "> |" "$GREP_CONTEXT_CONTENT"
 
 # --- 24. Codex: getProjectContext mode=git_status ---
 echo ""

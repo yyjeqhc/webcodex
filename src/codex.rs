@@ -333,6 +333,52 @@ pub(super) fn ssh_search(
     }
 }
 
+pub(super) fn ssh_grep_context(
+    proj: &ProjectConfig,
+    project_name: &str,
+    rel_path: Option<&str>,
+    query: &str,
+    limit: usize,
+    ssh_config: Option<&SshConfig>,
+) -> ContextResponse {
+    if let Some(path) = rel_path {
+        if let Err(e) = validate_ssh_read_path(path) {
+            return context_error(project_name, &ContextMode::GrepContext, e);
+        }
+    }
+    let mut excludes = String::new();
+    for dir in IGNORED_DIRS {
+        excludes.push_str(&format!(" --exclude-dir='{}'", dir));
+    }
+    let search_root = shell_escape(rel_path.unwrap_or("."));
+    let escaped_query = query.replace('\'', "'\\''");
+    let limit = limit.clamp(1, MAX_READ_FILE_LIMIT);
+    let cmd = format!(
+        "cd {} && grep -R -n -C 3{} --include='*' '{}' {} 2>/dev/null | head -n {} | sed 's|^\\./||' | awk '{{ if(length($0)>{}) print substr($0,1,{}) \"… [line truncated]\"; else print }}'",
+        shell_escape(&proj.path),
+        excludes,
+        escaped_query,
+        search_root,
+        limit,
+        MAX_CONTEXT_LINE_LEN,
+        MAX_CONTEXT_LINE_LEN
+    );
+    let (code, stdout, stderr, _) = run_ssh(
+        &build_ssh_target(proj).unwrap_or_default(),
+        &cmd,
+        30,
+        ssh_config,
+    );
+    if code != 0 && code != 1 {
+        return context_error(
+            project_name,
+            &ContextMode::GrepContext,
+            format!("SSH grep_context failed: {}", stderr.trim()),
+        );
+    }
+    mode_content_response(project_name, "grep_context", stdout, MAX_OUTPUT_LEN)
+}
+
 pub(super) fn ssh_read_file(
     proj: &ProjectConfig,
     project_name: &str,
@@ -563,10 +609,10 @@ fn ssh_batch_block_to_response(
                 error: None,
             }
         }
-        ContextMode::Search => context_error(
+        ContextMode::Search | ContextMode::GrepContext => context_error(
             project_name,
             &item.mode,
-            "search is not supported by single-SSH context batch".to_string(),
+            "search-like modes are not supported by single-SSH context batch".to_string(),
         ),
     }
 }
@@ -604,7 +650,7 @@ pub(super) fn try_ssh_context_batch_once(
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let mut script = format!("cd {} || exit 2;", shell_escape(&proj.path));
     for (idx, item) in requests.iter().enumerate() {
-        if matches!(item.mode, ContextMode::Search) {
+        if matches!(item.mode, ContextMode::Search | ContextMode::GrepContext) {
             return None;
         }
         script.push_str(&format!(" printf '\n__PDCTX_{}_START_{}__\n';", nonce, idx));
@@ -682,7 +728,7 @@ pub(super) fn try_ssh_context_batch_once(
             ContextMode::GitDiff => {
                 script.push_str(" git diff 2>/dev/null || true;");
             }
-            ContextMode::Search => return None,
+            ContextMode::Search | ContextMode::GrepContext => return None,
         }
         script.push_str(&format!(" printf '\n__PDCTX_{}_END_{}__\n';", nonce, idx));
     }

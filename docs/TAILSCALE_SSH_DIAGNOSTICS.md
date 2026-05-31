@@ -6,7 +6,7 @@ Use `scripts/diagnose_tailscale_ssh.sh` from the sg4/project host to collect rea
 - Are failures caused by sequential probes, parallel bursts, or the trigger workload?
 - Are failures real network/Tailscale timeouts, SSH host-key issues, authentication issues, or command errors?
 
-The script does not restart services, edit remote files, or change Tailscale/SSH configuration.
+The script does not restart services, edit remote files, or change Tailscale/SSH configuration. With `--remote-health`, it also captures read-only remote `systemctl`, `tailscale status/netcheck`, `journalctl`, and port-22 socket snapshots so a real `tailscaled` service outage can be correlated with the probe timeline.
 
 ## Quick smoke test
 
@@ -43,6 +43,8 @@ scripts/diagnose_tailscale_ssh.sh \
   --ssh-option StrictHostKeyChecking=no \
   --ssh-option UserKnownHostsFile=/dev/null \
   --ssh-option LogLevel=ERROR \
+  --remote-health \
+  --remote-health-since '20 minutes ago' \
   --trigger 'bash scripts/e2e_test.sh' \
   --out-dir /tmp/private-drop-v4-tailscale-diagnose-e2e
 ```
@@ -52,7 +54,9 @@ This records:
 1. `pre` sequential probes
 2. `parallel` burst probes
 3. optional `trigger` command output in `trigger.log`
-4. `post` sequential probes
+4. `remote_health_after_trigger.log`, when enabled
+5. `post` sequential probes
+6. `remote_health_after_post.log`, when enabled
 
 If Tailscale drops during or after the trigger, the phase-level summary helps identify whether the issue is tied to connection bursts, the long-running trigger, or recovery after the trigger exits.
 
@@ -71,4 +75,5 @@ If Tailscale drops during or after the trigger, the phase-level summary helps id
 - Keep the default remote command read-only unless you intentionally need a custom probe.
 - Use `/tmp/...` for `--out-dir` when you do not want diagnostic outputs in the repository.
 - Add `--tailscale-target 100.x.y.z` if the sg4 host has the `tailscale` CLI and you want `tailscale ping` samples in the CSV.
+- Add `--remote-health` when you suspect the target `tailscaled` or `sshd` service actually stopped or was restarted during the trigger window.
 - For ControlMaster isolation, compare a run with and without `--no-controlmaster`.

@@ -25,6 +25,8 @@ Options:
   --out-dir DIR                   Output directory (default: .codex/diagnostics/tailscale-ssh-<timestamp>)
   --trigger COMMAND               Optional local command to run between pre/post samples
   --tailscale-target HOST         Optional host/IP for `tailscale ping` samples
+  --remote-health                 Capture read-only remote systemctl/journalctl snapshots
+  --remote-health-since TEXT      journalctl --since value for remote health snapshots (default: 15 minutes ago)
   --ssh-option OPTION             Extra ssh option; may be repeated, e.g. --ssh-option StrictHostKeyChecking=no
   --no-controlmaster              Disable SSH ControlMaster for probes
   --help                          Show this help
@@ -44,6 +46,7 @@ Outputs:
   summary.txt       Aggregated success/failure counts and latency summary
   trigger.log       Optional trigger command output
   environment.txt   Local environment and tool versions
+  remote_health_*.log Optional remote systemctl/journalctl snapshots
 
 Safety:
   The default remote command is read-only. The script does not restart services,
@@ -61,6 +64,8 @@ remote_command='printf "ok host=%s now=%s\n" "$(hostname 2>/dev/null || uname -n
 out_dir=""
 trigger=""
 tailscale_target=""
+remote_health=0
+remote_health_since="15 minutes ago"
 no_controlmaster=0
 ssh_options=()
 
@@ -86,6 +91,10 @@ while [[ $# -gt 0 ]]; do
       trigger="${2:-}"; shift 2 ;;
     --tailscale-target)
       tailscale_target="${2:-}"; shift 2 ;;
+    --remote-health)
+      remote_health=1; shift ;;
+    --remote-health-since)
+      remote_health_since="${2:-}"; shift 2 ;;
     --ssh-option)
       ssh_options+=("-o" "${2:-}"); shift 2 ;;
     --no-controlmaster)
@@ -185,6 +194,8 @@ write_environment() {
     echo "remote_command=$remote_command"
     echo "trigger=$trigger"
     echo "tailscale_target=$tailscale_target"
+    echo "remote_health=$remote_health"
+    echo "remote_health_since=$remote_health_since"
     echo
     echo "ssh_version=$({ ssh -V; } 2>&1 || true)"
     if command -v tailscale >/dev/null 2>&1; then
@@ -196,6 +207,49 @@ write_environment() {
       echo "tailscale_version=not-found"
     fi
   } > "$env_txt"
+}
+
+remote_health_snapshot() {
+  local label="$1"
+  if [[ "$remote_health" -ne 1 ]]; then
+    return 0
+  fi
+  local log="$out_dir/remote_health_${label}.log"
+  local remote_script
+  remote_script=$(cat <<'EOF'
+echo "timestamp_utc=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+echo "hostname=$(hostname 2>/dev/null || true)"
+echo
+for svc in tailscaled ssh sshd; do
+  echo "=== systemctl is-active $svc ==="
+  systemctl is-active "$svc" 2>&1 || true
+  echo "=== systemctl status $svc ==="
+  systemctl --no-pager --full status "$svc" 2>&1 | tail -n 80 || true
+  echo
+done
+echo "=== tailscale status ==="
+tailscale status 2>&1 || true
+echo
+if command -v tailscale >/dev/null 2>&1; then
+  echo "=== tailscale netcheck ==="
+  tailscale netcheck 2>&1 || true
+fi
+echo
+for svc in tailscaled ssh sshd; do
+  echo "=== journalctl -u $svc ==="
+  journalctl -u "$svc" --since "__SINCE__" --no-pager -n 200 2>&1 || true
+  echo
+done
+echo "=== ss port 22 ==="
+ss -tanp 2>/dev/null | grep ':22' || true
+EOF
+)
+  remote_script="${remote_script//__SINCE__/$remote_health_since}"
+  set +e
+  "${ssh_base[@]}" "$target" "$remote_script" > "$log" 2>&1
+  local code=$?
+  set -e
+  echo "remote_health_${label}_exit_code=$code" >> "$env_txt"
 }
 
 record_probe() {
@@ -310,6 +364,8 @@ PY
 write_environment
 
 echo "diagnostic output: $out_dir"
+echo "remote health before..."
+remote_health_snapshot before
 echo "pre sequential samples..."
 run_sequential_phase pre "$iterations"
 
@@ -323,12 +379,16 @@ if [[ -n "$trigger" ]]; then
   trigger_code=$?
   set -e
   echo "trigger_exit_code=$trigger_code" >> "$env_txt"
+  echo "remote health after trigger..."
+  remote_health_snapshot after_trigger
 else
   echo "trigger_exit_code=not-run" >> "$env_txt"
 fi
 
 echo "post sequential samples..."
 run_sequential_phase post "$iterations"
+echo "remote health after post..."
+remote_health_snapshot after_post
 
 write_summary
 cat "$summary_txt"
@@ -337,6 +397,9 @@ echo "Wrote:"
 echo "  $samples_csv"
 echo "  $summary_txt"
 echo "  $env_txt"
+if [[ "$remote_health" -eq 1 ]]; then
+  echo "  $out_dir/remote_health_*.log"
+fi
 if [[ -n "$trigger" ]]; then
   echo "  $trigger_log"
 fi

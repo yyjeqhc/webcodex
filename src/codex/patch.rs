@@ -1,7 +1,7 @@
 use super::get_projects;
 use super::security::is_sensitive_path;
 use super::shell::{run_command, shell_escape};
-use super::ssh::{build_ssh_target, run_ssh, run_ssh_patch};
+use super::ssh::{build_ssh_targets, run_ssh_patch_targets, run_ssh_targets};
 use super::truncate_string;
 use super::types::{PatchRequest, PatchResponse};
 use crate::projects::{ProjectConfig, SshConfig};
@@ -109,12 +109,12 @@ fn git_diff_local(root: &Path) -> Option<String> {
 }
 
 fn git_diff_ssh(proj: &ProjectConfig, ssh_config: Option<&SshConfig>) -> Option<String> {
-    let ssh_target = build_ssh_target(proj).ok()?;
+    let ssh_targets = build_ssh_targets(proj).ok()?;
     let remote_cmd = format!(
         "cd {} && git diff --no-ext-diff -- && git status --short",
         shell_escape(&proj.path)
     );
-    let (code, stdout, stderr, _) = run_ssh(&ssh_target, &remote_cmd, 60, ssh_config);
+    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &remote_cmd, 60, ssh_config);
     if code == 0 {
         let (diff, _) = truncate_string(stdout, super::MAX_OUTPUT_LEN);
         Some(diff)
@@ -136,7 +136,7 @@ pub(super) fn ssh_apply_patch(
     changed: Vec<String>,
     ssh_config: Option<&SshConfig>,
 ) -> PatchResponse {
-    let ssh_target = match build_ssh_target(proj) {
+    let ssh_targets = match build_ssh_targets(proj) {
         Ok(t) => t,
         Err(e) => {
             return patch_response(
@@ -157,7 +157,7 @@ pub(super) fn ssh_apply_patch(
         shell_escape(&proj.path)
     );
     let (code, stdout, stderr, duration_ms) =
-        run_ssh_patch(&ssh_target, &proj.path, patch, &remote_cmd, ssh_config);
+        run_ssh_patch_targets(&ssh_targets, &proj.path, patch, &remote_cmd, ssh_config);
     let diff = git_diff_ssh(proj, ssh_config);
     if code == 0 {
         patch_response(
@@ -359,7 +359,7 @@ fn ssh_apply_codex_patch(
     changed: Vec<String>,
     ssh_config: Option<&SshConfig>,
 ) -> PatchResponse {
-    let ssh_target = match build_ssh_target(proj) {
+    let ssh_targets = match build_ssh_targets(proj) {
         Ok(t) => t,
         Err(e) => {
             return patch_response(
@@ -381,7 +381,7 @@ fn ssh_apply_codex_patch(
         shell_escape(&codex_apply_patch_bin())
     );
     let (code, stdout, stderr, duration_ms) =
-        run_ssh_patch(&ssh_target, &proj.path, patch, &remote_cmd, ssh_config);
+        run_ssh_patch_targets(&ssh_targets, &proj.path, patch, &remote_cmd, ssh_config);
     let diff = git_diff_ssh(proj, ssh_config);
     if code == 0 {
         patch_response(

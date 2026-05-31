@@ -1,6 +1,6 @@
 use super::edit::edit_error;
 use super::shell::shell_escape;
-use super::ssh::{build_ssh_command, build_ssh_target};
+use super::ssh::{build_ssh_command, build_ssh_targets, is_pre_start_ssh_connect_failure};
 use super::truncate_string;
 use super::types::{EditRequest, EditResponse};
 use super::{CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN};
@@ -533,7 +533,7 @@ pub(super) fn ssh_apply_project_edit(
     body: &EditRequest,
     ssh_config: Option<&SshConfig>,
 ) -> EditResponse {
-    let ssh_target = match build_ssh_target(proj) {
+    let ssh_targets = match build_ssh_targets(proj) {
         Ok(t) => t,
         Err(e) => return edit_error(e),
     };
@@ -545,100 +545,142 @@ pub(super) fn ssh_apply_project_edit(
         Err(e) => return edit_error(format!("Failed to serialize edit request: {}", e)),
     };
 
-    // Build the remote command: run python3 with the embedded script
-    // Pass project root as first argument; script reads JSON from stdin
+    let started_marker = "__PRIVATE_DROP_SSH_COMMAND_STARTED__";
     let remote_cmd = format!(
-        "python3 -c {} {}",
+        "printf '{}\\n'; python3 -c {} {}",
+        started_marker,
         shell_escape(REMOTE_EDIT_SCRIPT),
         shell_escape(project_path)
     );
 
-    let start = Instant::now();
-    let mut child = match build_ssh_command(&ssh_target, &remote_cmd, ssh_config)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(child) => child,
-        Err(e) => return edit_error(format!("Failed to spawn SSH edit: {}", e)),
-    };
-
-    if let Some(mut stdin) = child.stdin.take() {
-        use std::io::Write;
-        if let Err(e) = stdin.write_all(body_json.as_bytes()) {
-            let _ = child.kill();
-            return edit_error(format!("Failed to write SSH edit payload: {}", e));
-        }
-    }
-
-    let result = loop {
-        match child.try_wait() {
-            Ok(Some(_status)) => break child.wait_with_output(),
-            Ok(None) if start.elapsed() > std::time::Duration::from_secs(CHECK_TIMEOUT_SECS) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                return edit_error(format!(
-                    "SSH edit timed out after {} seconds",
-                    CHECK_TIMEOUT_SECS
-                ));
-            }
-            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+    let mut attempt_errors = Vec::new();
+    for (idx, ssh_target) in ssh_targets.iter().enumerate() {
+        let start = Instant::now();
+        let mut child = match build_ssh_command(ssh_target, &remote_cmd, ssh_config)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+        {
+            Ok(child) => child,
             Err(e) => {
-                let _ = child.kill();
-                return edit_error(format!("Failed while waiting for SSH edit: {}", e));
-            }
-        }
-    };
-
-    match result {
-        Ok(output) => {
-            let _elapsed = start.elapsed().as_millis() as u64;
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-            let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-            let code = output.status.code().unwrap_or(-1);
-
-            if code != 0 && stdout.is_empty() {
-                // python3 not available or other exec failure
-                if stderr.contains("No such file")
-                    || stderr.contains("not found")
-                    || stderr.contains("No module")
-                {
-                    return edit_error(
-                        "Remote python3 is not available. Install python3 on the remote host."
-                            .to_string(),
-                    );
+                let stderr = format!("Failed to spawn SSH edit: {}", e);
+                if idx + 1 < ssh_targets.len() {
+                    attempt_errors.push(format!("{}: {}", ssh_target, stderr));
+                    continue;
                 }
                 return edit_error(format!(
-                    "SSH edit failed (exit {}): {}",
-                    code,
-                    stderr.chars().take(500).collect::<String>()
+                    "All SSH endpoints failed before command start: {}",
+                    attempt_errors.join(" | ")
                 ));
             }
+        };
 
-            let mut resp: EditResponse = match serde_json::from_str(&stdout) {
-                Ok(r) => r,
-                Err(e) => {
-                    return edit_error(format!(
-                        "Failed to parse remote edit response: {}. Raw: {}",
-                        e,
-                        stdout.chars().take(500).collect::<String>()
-                    ))
-                }
-            };
-            let (truncated_diff, diff_truncated) = truncate_string(resp.diff, MAX_OUTPUT_LEN);
-            resp.diff = truncated_diff;
-            if diff_truncated {
-                resp.warnings.push("Remote diff was truncated".to_string());
+        if let Some(mut stdin) = child.stdin.take() {
+            use std::io::Write;
+            if let Err(e) = stdin.write_all(body_json.as_bytes()) {
+                let _ = child.kill();
+                return edit_error(format!("Failed to write SSH edit payload: {}", e));
             }
-            if !stderr.is_empty() {
-                resp.warnings.push(format!(
-                    "Remote stderr: {}",
-                    stderr.chars().take(500).collect::<String>()
-                ));
-            }
-            resp
         }
-        Err(e) => edit_error(format!("Failed to execute SSH edit: {}", e)),
+
+        let result = loop {
+            match child.try_wait() {
+                Ok(Some(_status)) => break child.wait_with_output(),
+                Ok(None)
+                    if start.elapsed() > std::time::Duration::from_secs(CHECK_TIMEOUT_SECS) =>
+                {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return edit_error(format!(
+                        "SSH edit timed out after {} seconds",
+                        CHECK_TIMEOUT_SECS
+                    ));
+                }
+                Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                Err(e) => {
+                    let _ = child.kill();
+                    return edit_error(format!("Failed while waiting for SSH edit: {}", e));
+                }
+            }
+        };
+
+        let output = match result {
+            Ok(output) => output,
+            Err(e) => return edit_error(format!("Failed to execute SSH edit: {}", e)),
+        };
+        let raw_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        let mut started = false;
+        let stdout = raw_stdout
+            .lines()
+            .filter(|line| {
+                if !started && *line == started_marker {
+                    started = true;
+                    false
+                } else {
+                    true
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let stdout = if raw_stdout.ends_with('\n') && !stdout.is_empty() {
+            format!("{}\n", stdout)
+        } else {
+            stdout
+        };
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let code = output.status.code().unwrap_or(-1);
+        if !started && is_pre_start_ssh_connect_failure(code, &stdout, &stderr) {
+            attempt_errors.push(format!("{}: exit {}: {}", ssh_target, code, stderr.trim()));
+            if idx + 1 < ssh_targets.len() {
+                continue;
+            }
+            return edit_error(format!(
+                "All SSH endpoints failed before command start: {}",
+                attempt_errors.join(" | ")
+            ));
+        }
+
+        if code != 0 && stdout.is_empty() {
+            if stderr.contains("No such file")
+                || stderr.contains("not found")
+                || stderr.contains("No module")
+            {
+                return edit_error(
+                    "Remote python3 is not available. Install python3 on the remote host."
+                        .to_string(),
+                );
+            }
+            return edit_error(format!(
+                "SSH edit failed (exit {}): {}",
+                code,
+                stderr.chars().take(500).collect::<String>()
+            ));
+        }
+
+        let mut resp: EditResponse = match serde_json::from_str(&stdout) {
+            Ok(r) => r,
+            Err(e) => {
+                return edit_error(format!(
+                    "Failed to parse remote edit response: {}. Raw: {}",
+                    e,
+                    stdout.chars().take(500).collect::<String>()
+                ))
+            }
+        };
+        let (truncated_diff, diff_truncated) = truncate_string(resp.diff, MAX_OUTPUT_LEN);
+        resp.diff = truncated_diff;
+        if diff_truncated {
+            resp.warnings.push("Remote diff was truncated".to_string());
+        }
+        if !stderr.is_empty() {
+            resp.warnings.push(format!(
+                "Remote stderr: {}",
+                stderr.chars().take(500).collect::<String>()
+            ));
+        }
+        return resp;
     }
+
+    edit_error("No SSH endpoints configured".to_string())
 }

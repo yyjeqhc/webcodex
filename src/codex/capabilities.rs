@@ -66,11 +66,12 @@ fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
     let mut allowed_checks = project.allowed_checks.clone();
     allowed_checks.sort();
     let configured_checks = configured_checks(&project.checks);
-    let ssh_target = if project.executor == Executor::Ssh {
-        project.ssh_target().ok()
+    let ssh_endpoints = if project.executor == Executor::Ssh {
+        project.ssh_targets()
     } else {
-        None
+        Vec::new()
     };
+    let ssh_target = ssh_endpoints.first().cloned();
     ProjectCapabilityInfo {
         name: name.to_string(),
         executor: match project.executor {
@@ -79,6 +80,7 @@ fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
         },
         root: project.path.clone(),
         ssh_target,
+        ssh_endpoints,
         allowed_checks,
         configured_checks: configured_checks.clone(),
         commands: commands.clone(),

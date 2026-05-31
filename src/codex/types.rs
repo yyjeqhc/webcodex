@@ -660,6 +660,7 @@ pub struct ProjectCapabilityInfo {
     pub root: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssh_target: Option<String>,
+    pub ssh_endpoints: Vec<String>,
     pub allowed_checks: Vec<String>,
     pub configured_checks: Vec<String>,
     pub commands: Vec<String>,

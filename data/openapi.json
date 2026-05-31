@@ -617,13 +617,14 @@
           "executor": {"type": "string", "enum": ["local", "ssh"]},
           "root": {"type": "string"},
           "ssh_target": {"type": "string", "nullable": true},
+          "ssh_endpoints": {"type": "array", "items": {"type": "string"}, "description": "Ordered SSH endpoints used for fallback. Empty for local projects."},
           "allowed_checks": {"type": "array", "items": {"type": "string"}},
           "configured_checks": {"type": "array", "items": {"type": "string"}},
           "commands": {"type": "array", "items": {"type": "string"}},
           "default_apply_patch_backend": {"type": "string", "enum": ["builtin", "codex"], "description": "Effective project default patch backend when request.backend is omitted."},
           "capabilities": {"$ref": "#/components/schemas/ProjectCapabilities"}
         },
-        "required": ["name", "executor", "root", "allowed_checks", "configured_checks", "commands", "default_apply_patch_backend", "capabilities"]
+        "required": ["name", "executor", "root", "ssh_endpoints", "allowed_checks", "configured_checks", "commands", "default_apply_patch_backend", "capabilities"]
       },
       "InstanceInfo": {
         "type": "object",

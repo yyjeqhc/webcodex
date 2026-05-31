@@ -91,12 +91,12 @@ pub(super) fn run_project_cmd(
     ssh_config: Option<&SshConfig>,
 ) -> (i32, String, String, u64) {
     if proj.is_ssh() {
-        let ssh_target = match build_ssh_target(proj) {
+        let ssh_targets = match build_ssh_targets(proj) {
             Ok(t) => t,
             Err(e) => return (-1, String::new(), e, 0),
         };
         let remote_cmd = format!("cd {} && {}", shell_escape(&proj.path), cmd);
-        run_ssh(&ssh_target, &remote_cmd, timeout_secs, ssh_config)
+        run_ssh_targets(&ssh_targets, &remote_cmd, timeout_secs, ssh_config)
     } else {
         run_command(cmd, &proj.root(), timeout_secs)
     }
@@ -125,7 +125,7 @@ pub(super) fn ssh_overview(
     project_name: &str,
     ssh_config: Option<&SshConfig>,
 ) -> ContextResponse {
-    let ssh_target = match build_ssh_target(proj) {
+    let ssh_targets = match build_ssh_targets(proj) {
         Ok(t) => t,
         Err(e) => {
             return ContextResponse {
@@ -156,7 +156,7 @@ pub(super) fn ssh_overview(
         shell_escape(&proj.path),
         file_args
     );
-    let (code, stdout, stderr, _) = run_ssh(&ssh_target, &remote_cmd, 15, ssh_config);
+    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &remote_cmd, 15, ssh_config);
     if code != 0 {
         return ContextResponse {
             success: false,
@@ -245,12 +245,11 @@ pub(super) fn ssh_tree(
         "cd {} && find {} -mindepth 1 -maxdepth {}{} -type f -print 2>/dev/null | sort | head -n {} | sed 's|^\\./||'",
         shell_escape(&proj.path), find_root, max_depth, excludes, limit
     );
-    let (code, stdout, stderr, _) = run_ssh(
-        &build_ssh_target(proj).unwrap_or_default(),
-        &cmd,
-        30,
-        ssh_config,
-    );
+    let ssh_targets = match build_ssh_targets(proj) {
+        Ok(t) => t,
+        Err(e) => return context_error(project_name, &ContextMode::Tree, e),
+    };
+    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &cmd, 30, ssh_config);
     if code != 0 {
         return ContextResponse {
             success: false,
@@ -300,12 +299,11 @@ pub(super) fn ssh_search(
         escaped_query,
         MAX_SEARCH_RESULTS
     );
-    let (code, stdout, stderr, _) = run_ssh(
-        &build_ssh_target(proj).unwrap_or_default(),
-        &cmd,
-        30,
-        ssh_config,
-    );
+    let ssh_targets = match build_ssh_targets(proj) {
+        Ok(t) => t,
+        Err(e) => return context_error(project_name, &ContextMode::Search, e),
+    };
+    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &cmd, 30, ssh_config);
     // grep returns 1 if no match, that's ok
     if code != 0 && code != 1 {
         return ContextResponse {
@@ -365,12 +363,11 @@ pub(super) fn ssh_grep_context(
         MAX_CONTEXT_LINE_LEN,
         MAX_CONTEXT_LINE_LEN
     );
-    let (code, stdout, stderr, _) = run_ssh(
-        &build_ssh_target(proj).unwrap_or_default(),
-        &cmd,
-        30,
-        ssh_config,
-    );
+    let ssh_targets = match build_ssh_targets(proj) {
+        Ok(t) => t,
+        Err(e) => return context_error(project_name, &ContextMode::GrepContext, e),
+    };
+    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &cmd, 30, ssh_config);
     if code != 0 && code != 1 {
         return context_error(
             project_name,
@@ -639,7 +636,7 @@ pub(super) fn try_ssh_context_batch_once(
     if requests.is_empty() {
         return Some((Vec::new(), 0));
     }
-    let ssh_target = match build_ssh_target(proj) {
+    let ssh_targets = match build_ssh_targets(proj) {
         Ok(t) => t,
         Err(e) => {
             return Some((
@@ -735,7 +732,7 @@ pub(super) fn try_ssh_context_batch_once(
         script.push_str(&format!(" printf '\n__PDCTX_{}_END_{}__\n';", nonce, idx));
     }
 
-    let (code, stdout, stderr, _) = run_ssh(&ssh_target, &script, 30, ssh_config);
+    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &script, 30, ssh_config);
     if code != 0 {
         let error = format!("SSH context batch failed: {}", stderr.trim());
         return Some((
@@ -824,6 +821,7 @@ mod tests {
             path: "/tmp/project".to_string(),
             executor: crate::projects::Executor::Local,
             host: None,
+            ssh_hosts: Vec::new(),
             user: None,
             allow_patch: true,
             allow_command_requests: true,
@@ -1004,13 +1002,13 @@ mod tests {
         assert!(results.iter().all(|r| !r.success));
         assert!(results.iter().all(|r| r.error.as_deref() == Some("boom")));
     }
-
     #[test]
-    fn test_build_ssh_target() {
+    fn test_build_ssh_targets() {
         let proj = ProjectConfig {
             path: "/tmp/test".to_string(),
             executor: crate::projects::Executor::Ssh,
             host: Some("msi".to_string()),
+            ssh_hosts: vec!["msi-rev4".to_string(), "msi-rev6".to_string()],
             user: Some("root".to_string()),
             allow_patch: false,
             allow_command_requests: false,
@@ -1020,12 +1018,20 @@ mod tests {
             checks: None,
             commands: HashMap::new(),
         };
-        assert_eq!(proj.ssh_target().unwrap(), "root@msi");
+        assert_eq!(
+            proj.ssh_targets(),
+            vec![
+                "root@msi".to_string(),
+                "root@msi-rev4".to_string(),
+                "root@msi-rev6".to_string()
+            ]
+        );
 
         let proj_no_user = ProjectConfig {
             path: "/tmp/test".to_string(),
             executor: crate::projects::Executor::Ssh,
             host: Some("msi".to_string()),
+            ssh_hosts: vec!["msi".to_string(), "msi-rev6".to_string()],
             user: None,
             allow_patch: false,
             allow_command_requests: false,
@@ -1035,15 +1041,19 @@ mod tests {
             checks: None,
             commands: HashMap::new(),
         };
-        assert_eq!(proj_no_user.ssh_target().unwrap(), "msi");
+        assert_eq!(
+            proj_no_user.ssh_targets(),
+            vec!["msi".to_string(), "msi-rev6".to_string()]
+        );
     }
 
     #[test]
-    fn test_build_ssh_target_no_host() {
+    fn test_build_ssh_targets_no_host() {
         let proj = ProjectConfig {
             path: "/tmp/test".to_string(),
             executor: crate::projects::Executor::Ssh,
             host: None,
+            ssh_hosts: vec![],
             user: None,
             allow_patch: false,
             allow_command_requests: false,
@@ -1053,7 +1063,7 @@ mod tests {
             checks: None,
             commands: HashMap::new(),
         };
-        assert!(proj.ssh_target().is_err());
+        assert!(proj.ssh_targets().is_empty());
     }
 
     #[test]
@@ -1062,6 +1072,7 @@ mod tests {
             path: "/tmp/test".to_string(),
             executor: crate::projects::Executor::default(),
             host: None,
+            ssh_hosts: Vec::new(),
             user: None,
             allow_patch: false,
             allow_command_requests: false,

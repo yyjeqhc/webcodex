@@ -27,6 +27,8 @@ pub struct ProjectConfig {
     #[serde(default)]
     pub host: Option<String>,
     #[serde(default)]
+    pub ssh_hosts: Vec<String>,
+    #[serde(default)]
     pub user: Option<String>,
     pub allow_patch: bool,
     #[serde(default)]
@@ -132,19 +134,27 @@ impl ProjectConfig {
         self.executor == Executor::Ssh
     }
 
-    /// Build SSH target: [user@]host
-    pub fn ssh_target(&self) -> Result<String, String> {
-        let host = self
-            .host
-            .as_ref()
-            .ok_or("SSH executor requires 'host' in projects.toml")?;
-        match &self.user {
-            Some(user) => Ok(format!("{}@{}", user, host)),
-            None => Ok(host.clone()),
+    /// Build ordered SSH endpoints, preserving legacy host compatibility.
+    pub fn ssh_targets(&self) -> Vec<String> {
+        let mut hosts = Vec::new();
+        if let Some(host) = self.host.as_ref().filter(|h| !h.trim().is_empty()) {
+            hosts.push(host.trim().to_string());
         }
+        for host in &self.ssh_hosts {
+            let host = host.trim();
+            if !host.is_empty() && !hosts.iter().any(|h| h == host) {
+                hosts.push(host.to_string());
+            }
+        }
+        hosts
+            .into_iter()
+            .map(|host| match &self.user {
+                Some(user) if !user.trim().is_empty() => format!("{}@{}", user, host),
+                _ => host,
+            })
+            .collect()
     }
 }
-
 pub fn canonicalize_and_verify(path: &Path, project_root: &Path) -> Result<PathBuf, String> {
     let canonical = path
         .canonicalize()

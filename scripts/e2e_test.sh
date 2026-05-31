@@ -50,6 +50,7 @@ echo "line1" > test.txt
 echo "line2" >> test.txt
 echo "line3" >> test.txt
 echo "old codex value" > codex-update.txt
+echo "ssh fallback old" > ssh-fallback-write.txt
 echo "partial original" > codex-partial.txt
 echo "delete me" > delete-codex.txt
 cat > chapter.md <<'EOF'
@@ -133,6 +134,52 @@ chmod +x scripts/codex_jobs/job_smoke.sh
 git add -A
 git commit -m "init" 2>&1
 cd "$PROJECT_DIR"
+
+FAKE_SSH_DIR="$TMPDIR_DATA/fake-bin"
+mkdir -p "$FAKE_SSH_DIR"
+FAKE_SSH_LOG="$TMPDIR_DATA/fake-ssh.log"
+export FAKE_SSH_LOG
+cat > "$FAKE_SSH_DIR/ssh" <<'PY'
+#!/usr/bin/env python3
+import os
+import subprocess
+import sys
+
+args = sys.argv[1:]
+i = 0
+while i < len(args):
+    if args[i] == '-o':
+        i += 2
+        continue
+    break
+if i >= len(args):
+    print('fake ssh: missing target', file=sys.stderr)
+    sys.exit(255)
+target = args[i]
+i += 1
+if i < len(args) and args[i] == '--':
+    i += 1
+remote_cmd = ' '.join(args[i:])
+log = os.environ.get('FAKE_SSH_LOG')
+if log:
+    with open(log, 'a', encoding='utf-8') as f:
+        f.write(f'{target}\t{remote_cmd}\n')
+if target.endswith('bad-refused') or target == 'bad-refused':
+    print('ssh: connect to host bad-refused port 22: Connection refused', file=sys.stderr)
+    sys.exit(255)
+if target.endswith('bad-reset') or target == 'bad-reset':
+    print('kex_exchange_identification: read: Connection reset by peer', file=sys.stderr)
+    sys.exit(255)
+if target.endswith('bad-started') or target == 'bad-started':
+    print('__PRIVATE_DROP_SSH_COMMAND_STARTED__')
+    print('remote command started then failed', file=sys.stderr)
+    sys.exit(255)
+proc = subprocess.run(remote_cmd, shell=True, text=True, stdin=sys.stdin, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+sys.stdout.write(proc.stdout)
+sys.stderr.write(proc.stderr)
+sys.exit(proc.returncode)
+PY
+chmod +x "$FAKE_SSH_DIR/ssh"
 
 CODEX_APPLY_PATCH_FAKE="$TMPDIR_DATA/fake-codex-apply-patch.py"
 cat > "$CODEX_APPLY_PATCH_FAKE" <<'PY'
@@ -244,6 +291,27 @@ fail = "echo command-failed >&2; exit 7"
 path = "$TEST_PROJECT_DIR"
 allow_patch = true
 default_apply_patch_backend = "codex"
+allowed_checks = []
+
+[projects.ssh-single-project]
+executor = "ssh"
+host = "ok-fallback"
+path = "$TEST_PROJECT_DIR"
+allow_patch = true
+allowed_checks = []
+
+[projects.ssh-fallback-project]
+executor = "ssh"
+ssh_hosts = ["bad-refused", "ok-fallback"]
+path = "$TEST_PROJECT_DIR"
+allow_patch = true
+allowed_checks = []
+
+[projects.ssh-all-fail-project]
+executor = "ssh"
+ssh_hosts = ["bad-refused", "bad-reset"]
+path = "$TEST_PROJECT_DIR"
+allow_patch = true
 allowed_checks = []
 EOF
 
@@ -397,7 +465,7 @@ DROP_DATA=$TMPDIR_DATA
 PROJECTS_CONFIG=$PROJECTS_TOML
 EOF
 
-CODEX_APPLY_PATCH_BIN="$CODEX_APPLY_PATCH_FAKE" DROP_ENV_FILE="$ENV_FILE" ./target/release/private-drop > "$LOGFILE" 2>&1 &
+FAKE_SSH_LOG="$FAKE_SSH_LOG" PATH="$FAKE_SSH_DIR:$PATH" CODEX_APPLY_PATCH_BIN="$CODEX_APPLY_PATCH_FAKE" DROP_ENV_FILE="$ENV_FILE" ./target/release/private-drop > "$LOGFILE" 2>&1 &
 SERVER_PID=$!
 echo "  Server PID: $SERVER_PID"
 
@@ -709,6 +777,9 @@ PROJECTS_TEST_COMMANDS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load
 PROJECTS_TEST_RAW=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('capabilities', {}).get('raw_command_requests'))")
 PROJECTS_TEST_DEFAULT_BACKEND=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('default_apply_patch_backend') or '')")
 PROJECTS_CODEX_DEFAULT_BACKEND=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'codex-default-project'); print(p.get('default_apply_patch_backend') or '')")
+PROJECTS_SSH_SINGLE_ENDPOINTS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'ssh-single-project'); print(','.join(p.get('ssh_endpoints') or []))")
+PROJECTS_SSH_FALLBACK_ENDPOINTS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'ssh-fallback-project'); print(','.join(p.get('ssh_endpoints') or []))")
+PROJECTS_SSH_FAIL_ENDPOINTS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'ssh-all-fail-project'); print(','.join(p.get('ssh_endpoints') or []))")
 PROJECTS_INSTANCE_SERVICE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('service') or '')")
 PROJECTS_INSTANCE_API=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('api') or '')")
 PROJECTS_INSTANCE_SCHEMA=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('instance', {}).get('schema') or '')")
@@ -724,6 +795,9 @@ assert_contains "Projects capabilities configured commands" "smoke" "$PROJECTS_T
 assert_eq "Projects capabilities raw commands enabled" "True" "$PROJECTS_TEST_RAW"
 assert_eq "Projects default backend fallback" "builtin" "$PROJECTS_TEST_DEFAULT_BACKEND"
 assert_eq "Projects codex default backend" "codex" "$PROJECTS_CODEX_DEFAULT_BACKEND"
+assert_eq "Projects SSH single endpoint" "ok-fallback" "$PROJECTS_SSH_SINGLE_ENDPOINTS"
+assert_eq "Projects SSH fallback endpoints" "bad-refused,ok-fallback" "$PROJECTS_SSH_FALLBACK_ENDPOINTS"
+assert_eq "Projects SSH all-fail endpoints" "bad-refused,bad-reset" "$PROJECTS_SSH_FAIL_ENDPOINTS"
 assert_eq "Projects instance service" "private-drop" "$PROJECTS_INSTANCE_SERVICE"
 assert_eq "Projects instance api" "codex" "$PROJECTS_INSTANCE_API"
 assert_eq "Projects instance schema" "codex-openapi-compact" "$PROJECTS_INSTANCE_SCHEMA"
@@ -731,6 +805,65 @@ assert_not_empty "Projects instance has package version" "$PROJECTS_INSTANCE_VER
 assert_not_empty "Projects instance has server time" "$PROJECTS_INSTANCE_TIME"
 assert_not_empty "Projects instance has pid" "$PROJECTS_INSTANCE_PID"
 assert_not_empty "Projects instance has data dir" "$PROJECTS_INSTANCE_DATA_DIR"
+
+# --- 19c. Codex SSH endpoint fallback ---
+echo ""
+echo "--- 19c. Codex SSH Endpoint Fallback ---"
+: > "$FAKE_SSH_LOG"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"ssh-single-project","mode":"overview"}')
+SSH_SINGLE_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "SSH single host compatibility" "True" "$SSH_SINGLE_SUCCESS"
+SSH_SINGLE_OK_COUNT=$(python3 -c "import os; p=os.environ['FAKE_SSH_LOG']; print(sum(1 for l in open(p) if l.startswith('ok-fallback\t')))" )
+assert_eq "SSH single host uses one endpoint" "1" "$SSH_SINGLE_OK_COUNT"
+
+: > "$FAKE_SSH_LOG"
+RESP=$(curl -sf -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"ssh-fallback-project","mode":"overview"}')
+SSH_FALLBACK_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "SSH fallback overview success" "True" "$SSH_FALLBACK_SUCCESS"
+SSH_FALLBACK_BAD_COUNT=$(python3 -c "import os; p=os.environ['FAKE_SSH_LOG']; print(sum(1 for l in open(p) if l.startswith('bad-refused\t')))" )
+SSH_FALLBACK_OK_COUNT=$(python3 -c "import os; p=os.environ['FAKE_SSH_LOG']; print(sum(1 for l in open(p) if l.startswith('ok-fallback\t')))" )
+assert_eq "SSH fallback tried first endpoint" "1" "$SSH_FALLBACK_BAD_COUNT"
+assert_eq "SSH fallback tried second endpoint" "1" "$SSH_FALLBACK_OK_COUNT"
+
+RESP=$(curl -s -X POST "$CODEX/context" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"project":"ssh-all-fail-project","mode":"overview"}')
+SSH_ALL_FAIL_SUCCESS=$(pyget "$RESP" "success")
+SSH_ALL_FAIL_ERROR=$(pyget "$RESP" "error")
+assert_eq "SSH all endpoints fail" "False" "$SSH_ALL_FAIL_SUCCESS"
+assert_contains "SSH all endpoints error" "All SSH endpoints failed" "$SSH_ALL_FAIL_ERROR"
+
+: > "$FAKE_SSH_LOG"
+SSH_PATCH_FILE="$TMPDIR_DATA/ssh-fallback.patch"
+cat > "$SSH_PATCH_FILE" << 'PATCHEOF'
+diff --git a/ssh-fallback-write.txt b/ssh-fallback-write.txt
+--- a/ssh-fallback-write.txt
++++ b/ssh-fallback-write.txt
+@@ -1 +1 @@
+-ssh fallback old
++ssh fallback write once
+PATCHEOF
+RESP=$(curl -s -X POST "$CODEX/apply_patch" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "
+import json
+patch = open('$SSH_PATCH_FILE').read()
+print(json.dumps({'project':'ssh-fallback-project','patch':patch,'reason':'ssh fallback write'}))
+")")
+SSH_PATCH_SUCCESS=$(pyget "$RESP" "success")
+assert_eq "SSH fallback patch success" "True" "$SSH_PATCH_SUCCESS"
+SSH_PATCH_BAD_COUNT=$(python3 -c "import os; p=os.environ['FAKE_SSH_LOG']; print(sum(1 for l in open(p) if l.startswith('bad-refused\t') and 'private-drop-patch' in l))" )
+SSH_PATCH_OK_COUNT=$(python3 -c "import os; p=os.environ['FAKE_SSH_LOG']; print(sum(1 for l in open(p) if l.startswith('ok-fallback\t') and 'private-drop-patch' in l))" )
+assert_eq "SSH fallback patch tried failed endpoint once" "1" "$SSH_PATCH_BAD_COUNT"
+assert_eq "SSH fallback patch executed write endpoint once" "1" "$SSH_PATCH_OK_COUNT"
 
 # --- 20. Codex: getProjectContext mode=overview ---
 echo ""
@@ -1879,10 +2012,12 @@ assert_eq "read_file allows src/main.rs" "True" "$PATH_SUCCESS"
 echo ""
 echo "--- 32. Executor Config ---"
 # Verify the test projects.toml has local executor (default)
-HAS_LOCAL=$(grep -c 'executor' "$PROJECTS_TOML" 2>/dev/null | tr -d '[:space:]' || true)
-if [ -z "$HAS_LOCAL" ]; then HAS_LOCAL="0"; fi
-assert_eq "Test config uses local executor (no executor field)" "0" "$HAS_LOCAL"
-
+# Verify the test project uses the local executor through runtime project discovery.
+RESP=$(curl -sf -X POST "$CODEX/projects" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json")
+TEST_PROJECT_EXECUTOR=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); p=next(p for p in d.get('projects', []) if p.get('name') == 'test-project'); print(p.get('executor'))")
+assert_eq "Test project uses local executor" "local" "$TEST_PROJECT_EXECUTOR"
 # Create a test SSH config and verify it parses
 SSH_TOML="$TMPDIR_DATA/ssh-test.toml"
 cat > "$SSH_TOML" << 'SSHEOF'

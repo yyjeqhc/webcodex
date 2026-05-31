@@ -1,9 +1,16 @@
 use crate::projects::{ProjectConfig, SshConfig};
 use std::time::Instant;
 
-/// Build SSH target string [user@]host from project config.
-pub(super) fn build_ssh_target(proj: &ProjectConfig) -> Result<String, String> {
-    proj.ssh_target()
+const SSH_START_MARKER: &str = "__PRIVATE_DROP_SSH_COMMAND_STARTED__";
+
+/// Build ordered SSH target strings, preserving legacy host compatibility.
+pub(super) fn build_ssh_targets(proj: &ProjectConfig) -> Result<Vec<String>, String> {
+    let targets = proj.ssh_targets();
+    if targets.is_empty() {
+        Err("SSH executor requires 'host' or non-empty 'ssh_hosts' in projects.toml".to_string())
+    } else {
+        Ok(targets)
+    }
 }
 
 pub(super) fn ssh_option_args(config: Option<&SshConfig>) -> Vec<String> {
@@ -55,25 +62,86 @@ pub(super) fn build_ssh_command(
     command
 }
 
-/// Run a command on a remote host via SSH.
-/// The command is passed as separate arguments to ssh (no local shell wrapping).
-/// Remote shell interprets the command string.
-pub(super) fn run_ssh(
+fn with_started_marker(remote_cmd: &str) -> String {
+    format!("printf '{}\\n'; {}", SSH_START_MARKER, remote_cmd)
+}
+
+fn strip_started_marker(stdout: String) -> (bool, String) {
+    let mut started = false;
+    let mut lines = Vec::new();
+    for line in stdout.lines() {
+        if !started && line == SSH_START_MARKER {
+            started = true;
+            continue;
+        }
+        lines.push(line);
+    }
+    if stdout.ends_with('\n') && !lines.is_empty() {
+        (started, format!("{}\n", lines.join("\n")))
+    } else {
+        (started, lines.join("\n"))
+    }
+}
+
+pub(super) fn is_pre_start_ssh_connect_failure(code: i32, stdout: &str, stderr: &str) -> bool {
+    if code != 255 && code != -1 {
+        return false;
+    }
+    if stdout.lines().any(|line| line == SSH_START_MARKER) {
+        return false;
+    }
+    let err = stderr.to_ascii_lowercase();
+    code == -1
+        || err.contains("connection refused")
+        || err.contains("connection timed out")
+        || err.contains("operation timed out")
+        || err.contains("connection reset")
+        || err.contains("connection closed")
+        || err.contains("connection aborted")
+        || err.contains("no route to host")
+        || err.contains("could not resolve hostname")
+        || err.contains("name or service not known")
+        || err.contains("temporary failure in name resolution")
+        || err.contains("kex_exchange_identification")
+        || err.contains("failed to execute ssh")
+        || err.contains("failed to execute ssh command")
+        || err.contains("failed to execute ssh patch")
+}
+
+fn append_attempt_error(errors: &mut Vec<String>, target: &str, code: i32, stderr: &str) {
+    let msg = stderr.trim();
+    if msg.is_empty() {
+        errors.push(format!("{target}: exit {code}"));
+    } else {
+        errors.push(format!("{target}: exit {code}: {msg}"));
+    }
+}
+
+fn combine_fallback_errors(errors: &[String]) -> String {
+    format!(
+        "All SSH endpoints failed before command start: {}",
+        errors.join(" | ")
+    )
+}
+
+fn run_ssh_single(
     ssh_target: &str,
     remote_cmd: &str,
     _timeout_secs: u64,
     ssh_config: Option<&SshConfig>,
-) -> (i32, String, String, u64) {
+) -> (i32, String, String, u64, bool) {
     let start = Instant::now();
-    let result = build_ssh_command(ssh_target, remote_cmd, ssh_config).output();
+    let result =
+        build_ssh_command(ssh_target, &with_started_marker(remote_cmd), ssh_config).output();
 
     match result {
         Ok(output) => {
             let elapsed = start.elapsed().as_millis() as u64;
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let raw_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let (started, stdout) = strip_started_marker(raw_stdout);
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let code = output.status.code().unwrap_or(-1);
-            (code, stdout, stderr, elapsed)
+            (code, stdout, stderr, elapsed, started)
         }
         Err(e) => {
             let elapsed = start.elapsed().as_millis() as u64;
@@ -82,25 +150,58 @@ pub(super) fn run_ssh(
                 String::new(),
                 format!("Failed to execute SSH command: {}", e),
                 elapsed,
+                false,
             )
         }
     }
 }
 
-/// Run an SSH command that receives patch data via stdin.
-/// Writes local patch content to a remote temp file via SSH stdin,
-/// then runs the remote command with the temp file path.
-pub(super) fn run_ssh_patch(
+/// Run a command using ordered fallback endpoints. Retries only when SSH fails before
+/// the remote command start marker is observed.
+pub(super) fn run_ssh_targets(
+    ssh_targets: &[String],
+    remote_cmd: &str,
+    timeout_secs: u64,
+    ssh_config: Option<&SshConfig>,
+) -> (i32, String, String, u64) {
+    let mut errors = Vec::new();
+    let mut total_ms = 0;
+    for (idx, target) in ssh_targets.iter().enumerate() {
+        let (code, stdout, stderr, elapsed, started) =
+            run_ssh_single(target, remote_cmd, timeout_secs, ssh_config);
+        total_ms += elapsed;
+        if code == 0 || started || !is_pre_start_ssh_connect_failure(code, &stdout, &stderr) {
+            return (code, stdout, stderr, total_ms);
+        }
+        append_attempt_error(&mut errors, target, code, &stderr);
+        if idx + 1 == ssh_targets.len() {
+            return (
+                -1,
+                String::new(),
+                combine_fallback_errors(&errors),
+                total_ms,
+            );
+        }
+    }
+    (
+        -1,
+        String::new(),
+        "No SSH endpoints configured".to_string(),
+        total_ms,
+    )
+}
+
+fn run_ssh_patch_target(
     ssh_target: &str,
-    _project_path: &str,
     patch: &str,
     remote_cmd_template: &str,
     ssh_config: Option<&SshConfig>,
-) -> (i32, String, String, u64) {
+) -> (i32, String, String, u64, bool) {
     let patch_id = uuid::Uuid::new_v4();
     let remote_patch = format!("/tmp/private-drop-patch-{}.diff", patch_id);
     let remote_cmd = format!(
-        "cat > '{}' && {} && rm -f '{}'",
+        "printf '{}\\n'; cat > '{}' && {} && rm -f '{}'",
+        SSH_START_MARKER,
         remote_patch,
         remote_cmd_template.replace("__PATCH__", &remote_patch),
         remote_patch
@@ -115,7 +216,6 @@ pub(super) fn run_ssh_patch(
             if let Some(mut stdin) = child.stdin.take() {
                 use std::io::Write;
                 let _ = stdin.write_all(patch.as_bytes());
-                // stdin is dropped here, closing the pipe
             }
             child.wait_with_output()
         });
@@ -123,10 +223,11 @@ pub(super) fn run_ssh_patch(
     match result {
         Ok(output) => {
             let elapsed = start.elapsed().as_millis() as u64;
-            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let raw_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+            let (started, stdout) = strip_started_marker(raw_stdout);
             let stderr = String::from_utf8_lossy(&output.stderr).to_string();
             let code = output.status.code().unwrap_or(-1);
-            (code, stdout, stderr, elapsed)
+            (code, stdout, stderr, elapsed, started)
         }
         Err(e) => {
             let elapsed = start.elapsed().as_millis() as u64;
@@ -135,9 +236,44 @@ pub(super) fn run_ssh_patch(
                 String::new(),
                 format!("Failed to execute SSH patch: {}", e),
                 elapsed,
+                false,
             )
         }
     }
+}
+
+pub(super) fn run_ssh_patch_targets(
+    ssh_targets: &[String],
+    _project_path: &str,
+    patch: &str,
+    remote_cmd_template: &str,
+    ssh_config: Option<&SshConfig>,
+) -> (i32, String, String, u64) {
+    let mut errors = Vec::new();
+    let mut total_ms = 0;
+    for (idx, target) in ssh_targets.iter().enumerate() {
+        let (code, stdout, stderr, elapsed, started) =
+            run_ssh_patch_target(target, patch, remote_cmd_template, ssh_config);
+        total_ms += elapsed;
+        if code == 0 || started || !is_pre_start_ssh_connect_failure(code, &stdout, &stderr) {
+            return (code, stdout, stderr, total_ms);
+        }
+        append_attempt_error(&mut errors, target, code, &stderr);
+        if idx + 1 == ssh_targets.len() {
+            return (
+                -1,
+                String::new(),
+                combine_fallback_errors(&errors),
+                total_ms,
+            );
+        }
+    }
+    (
+        -1,
+        String::new(),
+        "No SSH endpoints configured".to_string(),
+        total_ms,
+    )
 }
 
 pub(super) fn parse_ssh_batch_blocks(stdout: &str, count: usize, nonce: &str) -> Vec<String> {

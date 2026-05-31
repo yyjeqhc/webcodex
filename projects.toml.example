@@ -43,6 +43,8 @@ doc = "cargo doc --no-deps"
 # [projects.private-drop]
 # executor = "ssh"
 # host = "msi"
+# Optional fallback endpoints. Legacy host remains the first endpoint when both are set.
+# ssh_hosts = ["msi-rev4", "msi-rev6"]
 # user = "root"
 # path = "/root/git/private-drop"
 # allow_patch = true

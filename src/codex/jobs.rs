@@ -27,6 +27,18 @@ pub(super) fn validate_job_id(job_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub(super) fn validate_client_request_id(client_request_id: &str) -> Result<(), String> {
+    if client_request_id.is_empty()
+        || client_request_id.len() > 128
+        || !client_request_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err("invalid client_request_id".to_string());
+    }
+    Ok(())
+}
+
 pub(super) fn validate_job_command(command: &str) -> Result<(), String> {
     if command.trim().is_empty() {
         return Err("command cannot be empty".to_string());
@@ -210,6 +222,7 @@ pub(super) fn update_job_status_local(root: &Path, meta: &JobMetadata) -> JobInf
     let finished_at = read_finished_at_file(&dir).or(meta.finished_at);
     JobInfo {
         job_id: meta.job_id.clone(),
+        client_request_id: meta.client_request_id.clone(),
         project: meta.project.clone(),
         goal_id: meta.goal_id.clone(),
         command: meta.command.clone(),
@@ -235,6 +248,7 @@ pub(super) fn create_local_job(
     project: &str,
     goal_id: &str,
     command: &str,
+    client_request_id: Option<String>,
     reason: Option<String>,
     max_runtime_secs: i64,
 ) -> Result<JobInfo, String> {
@@ -246,6 +260,7 @@ pub(super) fn create_local_job(
     let now = chrono::Utc::now().timestamp();
     let meta = JobMetadata {
         job_id: job_id.clone(),
+        client_request_id,
         project: project.to_string(),
         goal_id: goal_id.to_string(),
         command: command.to_string(),
@@ -397,6 +412,7 @@ pub(super) fn update_job_status_ssh(
     }
     JobInfo {
         job_id: meta.job_id.clone(),
+        client_request_id: meta.client_request_id.clone(),
         project: meta.project.clone(),
         goal_id: meta.goal_id.clone(),
         command: meta.command.clone(),
@@ -426,6 +442,7 @@ pub(super) fn create_ssh_job(
     project: &str,
     goal_id: &str,
     command: &str,
+    client_request_id: Option<String>,
     reason: Option<String>,
     max_runtime_secs: i64,
     ssh_config: Option<&SshConfig>,
@@ -436,6 +453,7 @@ pub(super) fn create_ssh_job(
     let now = chrono::Utc::now().timestamp();
     let meta = JobMetadata {
         job_id: job_id.clone(),
+        client_request_id,
         project: project.to_string(),
         goal_id: goal_id.to_string(),
         command: command.to_string(),
@@ -495,6 +513,15 @@ pub(super) fn list_local_jobs(
     jobs.sort_by_key(|j| -j.created_at);
     jobs.truncate(limit);
     jobs
+}
+
+pub(super) fn filter_jobs_by_client_request_id(
+    jobs: &mut Vec<JobInfo>,
+    client_request_id: Option<&str>,
+) {
+    if let Some(client_request_id) = client_request_id {
+        jobs.retain(|j| j.client_request_id.as_deref() == Some(client_request_id));
+    }
 }
 
 pub(super) fn list_ssh_jobs(
@@ -705,6 +732,14 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         }
     };
     let ssh_config = projects.ssh.as_ref();
+    let client_request_id = body.client_request_id.as_deref();
+    if let Some(client_request_id) = client_request_id {
+        if let Err(e) = validate_client_request_id(client_request_id) {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(job_response(&op, false, Some(e))));
+            return;
+        }
+    }
     match op.as_str() {
         "create" => {
             let Some(goal_id) = body.goal_id.as_deref() else {
@@ -760,12 +795,38 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     return;
                 }
             };
+            if let Some(client_request_id) = client_request_id {
+                let mut existing = if proj.is_ssh() {
+                    list_ssh_jobs(proj, 100, None, ssh_config)
+                } else {
+                    list_local_jobs(&proj.root(), 100, None)
+                };
+                existing.retain(|j| j.goal_id == goal_id);
+                filter_jobs_by_client_request_id(&mut existing, Some(client_request_id));
+                existing.sort_by_key(|j| -j.created_at);
+                if let Some(job) = existing.first().cloned() {
+                    res.render(Json(JobOpResponse {
+                        success: true,
+                        op,
+                        job_id: Some(job.job_id.clone()),
+                        job_ids: vec![job.job_id.clone()],
+                        job: Some(job),
+                        jobs: Vec::new(),
+                        stdout_tail: None,
+                        stderr_tail: None,
+                        summary_markdown: None,
+                        error: None,
+                    }));
+                    return;
+                }
+            }
             let result = if proj.is_ssh() {
                 create_ssh_job(
                     proj,
                     &project,
                     goal_id,
                     &command,
+                    body.client_request_id.clone(),
                     body.reason.clone(),
                     max_runtime_secs,
                     ssh_config,
@@ -776,6 +837,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     &project,
                     goal_id,
                     &command,
+                    body.client_request_id.clone(),
                     body.reason.clone(),
                     max_runtime_secs,
                 )
@@ -835,14 +897,54 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     return;
                 }
             }
+            if let Some(client_request_id) = client_request_id {
+                let mut existing = if proj.is_ssh() {
+                    list_ssh_jobs(proj, 100, None, ssh_config)
+                } else {
+                    list_local_jobs(&proj.root(), 100, None)
+                };
+                existing.retain(|j| j.goal_id == goal_id);
+                existing.retain(|j| {
+                    j.client_request_id
+                        .as_deref()
+                        .map(|id| {
+                            id == client_request_id
+                                || id.starts_with(&format!("{}.", client_request_id))
+                        })
+                        .unwrap_or(false)
+                });
+                existing.sort_by_key(|j| -j.created_at);
+                if !existing.is_empty() {
+                    let job_ids = existing
+                        .iter()
+                        .map(|j| j.job_id.clone())
+                        .collect::<Vec<_>>();
+                    res.render(Json(JobOpResponse {
+                        success: true,
+                        op,
+                        job_id: job_ids.first().cloned(),
+                        job_ids,
+                        job: existing.first().cloned(),
+                        jobs: existing,
+                        stdout_tail: None,
+                        stderr_tail: None,
+                        summary_markdown: None,
+                        error: None,
+                    }));
+                    return;
+                }
+            }
             let mut jobs = Vec::new();
-            for command in &body.commands {
+            for (idx, command) in body.commands.iter().enumerate() {
                 let result = if proj.is_ssh() {
                     create_ssh_job(
                         proj,
                         &project,
                         goal_id,
                         command,
+                        body.client_request_id
+                            .as_ref()
+                            .map(|id| format!("{}.{}", id, idx + 1)),
                         body.reason.clone(),
                         max_runtime_secs,
                         ssh_config,
@@ -853,6 +955,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         &project,
                         goal_id,
                         command,
+                        body.client_request_id
+                            .as_ref()
+                            .map(|id| format!("{}.{}", id, idx + 1)),
                         body.reason.clone(),
                         max_runtime_secs,
                     )
@@ -890,6 +995,17 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             if let Some(goal_id) = body.goal_id.as_deref() {
                 jobs.retain(|j| j.goal_id == goal_id);
             }
+            if let Some(client_request_id) = client_request_id {
+                jobs.retain(|j| {
+                    j.client_request_id
+                        .as_deref()
+                        .map(|id| {
+                            id == client_request_id
+                                || id.starts_with(&format!("{}.", client_request_id))
+                        })
+                        .unwrap_or(false)
+                });
+            }
             let job_ids = jobs.iter().map(|j| j.job_id.clone()).collect::<Vec<_>>();
             res.render(Json(JobOpResponse {
                 success: true,
@@ -905,12 +1021,37 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             }));
         }
         "status" => {
-            let Some(job_id) = body.job_id.as_deref() else {
+            let job_id_owned;
+            let job_id = if let Some(job_id) = body.job_id.as_deref() {
+                job_id
+            } else if let Some(client_request_id) = client_request_id {
+                let mut jobs = if proj.is_ssh() {
+                    list_ssh_jobs(proj, 100, None, ssh_config)
+                } else {
+                    list_local_jobs(&proj.root(), 100, None)
+                };
+                if let Some(goal_id) = body.goal_id.as_deref() {
+                    jobs.retain(|j| j.goal_id == goal_id);
+                }
+                jobs.retain(|j| j.client_request_id.as_deref() == Some(client_request_id));
+                jobs.sort_by_key(|j| -j.created_at);
+                let Some(job) = jobs.first() else {
+                    res.status_code(StatusCode::NOT_FOUND);
+                    res.render(Json(job_response(
+                        &op,
+                        false,
+                        Some("job not found for client_request_id".to_string()),
+                    )));
+                    return;
+                };
+                job_id_owned = job.job_id.clone();
+                &job_id_owned
+            } else {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.render(Json(job_response(
                     &op,
                     false,
-                    Some("job_id is required".to_string()),
+                    Some("job_id or client_request_id is required".to_string()),
                 )));
                 return;
             };

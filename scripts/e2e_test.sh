@@ -1106,6 +1106,35 @@ JOB_FINISHED_AT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.st
 assert_eq "Job status success" "True" "$JOB_STATUS_SUCCESS"
 assert_eq "Job status completed" "completed" "$JOB_STATUS_VALUE"
 assert_not_empty "Job completed has finished_at" "$JOB_FINISHED_AT"
+JOB_IDEMPOTENCY_KEY="e2e-job-idempotent-$(date +%s)-$$"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','client_request_id':'$JOB_IDEMPOTENCY_KEY','command':'echo idempotent-job','reason':'job idempotency smoke','max_runtime_secs':30}))")")
+JOB_IDEMPOTENT_SUCCESS=$(pyget "$RESP" "success")
+JOB_IDEMPOTENT_ID=$(pyget "$RESP" "job_id")
+JOB_IDEMPOTENT_CLIENT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['job'].get('client_request_id') or '')")
+assert_eq "Job idempotent create success" "True" "$JOB_IDEMPOTENT_SUCCESS"
+assert_not_empty "Job idempotent create returns job_id" "$JOB_IDEMPOTENT_ID"
+assert_eq "Job idempotent create echoes client_request_id" "$JOB_IDEMPOTENCY_KEY" "$JOB_IDEMPOTENT_CLIENT"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','client_request_id':'$JOB_IDEMPOTENCY_KEY','command':'echo should-not-duplicate','reason':'job idempotency retry','max_runtime_secs':30}))")")
+JOB_IDEMPOTENT_RETRY_ID=$(pyget "$RESP" "job_id")
+assert_eq "Job idempotent retry returns same job_id" "$JOB_IDEMPOTENT_ID" "$JOB_IDEMPOTENT_RETRY_ID"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'status','goal_id':'$GOAL_ID','client_request_id':'$JOB_IDEMPOTENCY_KEY'}))")")
+JOB_IDEMPOTENT_STATUS_ID=$(pyget "$RESP" "job_id")
+assert_eq "Job status by client_request_id returns job" "$JOB_IDEMPOTENT_ID" "$JOB_IDEMPOTENT_STATUS_ID"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'list','goal_id':'$GOAL_ID','client_request_id':'$JOB_IDEMPOTENCY_KEY','limit':20}))")")
+JOB_IDEMPOTENT_LIST_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('jobs', [])))")
+assert_eq "Job list by client_request_id has one job" "1" "$JOB_IDEMPOTENT_LIST_COUNT"
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \

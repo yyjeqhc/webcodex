@@ -216,6 +216,8 @@ pub struct JobOpRequest {
     #[serde(default)]
     pub job_id: Option<String>,
     #[serde(default)]
+    pub client_request_id: Option<String>,
+    #[serde(default)]
     pub command: Option<String>,
     #[serde(default)]
     pub script_path: Option<String>,
@@ -238,6 +240,8 @@ pub struct JobOpRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JobMetadata {
     pub job_id: String,
+    #[serde(default)]
+    pub client_request_id: Option<String>,
     pub project: String,
     pub goal_id: String,
     pub command: String,
@@ -255,6 +259,7 @@ pub struct JobMetadata {
 #[derive(Debug, Clone, Serialize)]
 pub struct JobInfo {
     pub job_id: String,
+    pub client_request_id: Option<String>,
     pub project: String,
     pub goal_id: String,
     pub command: String,

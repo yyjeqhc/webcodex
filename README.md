@@ -859,6 +859,7 @@ Supported `op` values:
 - `reject`: reject one request using `request_id` and optional `reason`
 - `reject_batch`: reject 1-20 requests using `request_ids` and optional `reason`
 - `create_goal`: create a pending development goal with `project`, `title`, optional `summary`, and optional `ttl_secs`
+- `create_goal_and_approve`: create an active development goal in one audited operation when the user has already approved the bounded task in chat
 - `approve_goal`: activate a pending goal after explicit user approval
 - `reject_goal`: reject a pending goal
 - `list_goals`: list goals with optional `project`, `status`, and `limit`
@@ -888,9 +889,9 @@ Examples:
 {"op":"create_raw_and_approve","project":"private-drop-v4","goal_id":"<goal-id>","command_text":"git status --short","reason":"inspect current state"}
 ```
 
-Recommended flow: GPT calls `create_goal` to propose a bounded task, the goal starts as `pending`, the user explicitly approves the `goal_id` in chat, GPT calls `approve_goal` to activate it, then GPT may use `create_and_approve` or `create_raw_and_approve` within that active goal. `close_goal` ends the permission window.
+Recommended flow: GPT calls `create_goal` to propose a bounded task, the goal starts as `pending`, the user explicitly approves the `goal_id` in chat, GPT calls `approve_goal` to activate it, then GPT may use `create_and_approve` or `create_raw_and_approve` within that active goal. When the user has already approved a bounded task in chat, GPT may use `create_goal_and_approve` to create the active goal in one audited operation. `close_goal` ends the permission window.
 
-`create_goal` does not grant execution rights. Only an `active`, unexpired goal grants bounded auto-approve permission. Goal-scoped `*_and_approve` operations are intended to reduce repeated manual approval during a bounded development task, and still create normal `command_requests` audit records before execution.
+`create_goal` does not grant execution rights. `create_goal_and_approve` should only be used after explicit user approval for the bounded task. Only an `active`, unexpired goal grants bounded auto-approve permission. Goal-scoped `*_and_approve` operations are intended to reduce repeated manual approval during a bounded development task, and still create normal `command_requests` audit records before execution.
 
 This endpoint does not bypass existing safety checks. Raw commands still require `allow_raw_command_requests = true`, configured command requests still require `allow_command_requests = true`, approval remains atomic, and all executions use the stored `command_text` snapshot with SQLite audit records.
 

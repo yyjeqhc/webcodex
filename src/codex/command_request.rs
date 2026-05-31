@@ -290,7 +290,8 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         }
     };
     match body.op.as_str() {
-        "create_goal" => {
+        "create_goal" | "create_goal_and_approve" => {
+            let approve_immediately = body.op == "create_goal_and_approve";
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.render(Json(op_response(
@@ -321,7 +322,10 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 return;
             }
             let now = chrono::Utc::now().timestamp();
-            let goal = build_goal_record(project, title, body.summary, now, ttl_secs);
+            let mut goal = build_goal_record(project, title, body.summary, now, ttl_secs);
+            if approve_immediately {
+                goal.status = "active".to_string();
+            }
             if let Err(e) = db.insert_goal(&goal) {
                 res.render(Json(op_response(
                     &body.op,

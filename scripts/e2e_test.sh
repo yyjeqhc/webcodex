@@ -996,6 +996,24 @@ GOAL_LIST_SUCCESS=$(pyget "$RESP" "success")
 GOAL_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); ids={g['id'] for g in d.get('goals', [])}; print('yes' if '$GOAL_ID' in ids else 'no')")
 assert_eq "Command op list_goals active success" "True" "$GOAL_LIST_SUCCESS"
 assert_eq "Command op list_goals active has id" "yes" "$GOAL_LIST_HAS_ID"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"create_goal_and_approve","project":"test-project","title":"One-step active goal","summary":"Create and activate in one audited call","ttl_secs":600}')
+GOAL_ONE_STEP_SUCCESS=$(pyget "$RESP" "success")
+GOAL_ONE_STEP_ID=$(pyget "$RESP" "goal_id")
+GOAL_ONE_STEP_STATUS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['goal']['status'])")
+assert_eq "Command op create_goal_and_approve success" "True" "$GOAL_ONE_STEP_SUCCESS"
+assert_not_empty "Command op create_goal_and_approve id" "$GOAL_ONE_STEP_ID"
+assert_eq "Command op create_goal_and_approve active" "active" "$GOAL_ONE_STEP_STATUS"
+RESP=$(curl -sf -X POST "$CODEX/command_request_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'op':'create_and_approve','project':'test-project','goal_id':'$GOAL_ONE_STEP_ID','command':'smoke','reason':'one-step goal configured smoke'}))")")
+GOAL_ONE_STEP_CMD_SUCCESS=$(pyget "$RESP" "success")
+GOAL_ONE_STEP_CMD_STDOUT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['record'].get('stdout_tail') or '')")
+assert_eq "Command op one-step goal configured auto approve success" "True" "$GOAL_ONE_STEP_CMD_SUCCESS"
+assert_contains "Command op one-step goal configured stdout" "command-smoke-ok" "$GOAL_ONE_STEP_CMD_STDOUT"
 
 # --- 24e2. Codex Trusted Async Jobs ---
 echo ""

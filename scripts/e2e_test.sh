@@ -118,6 +118,14 @@ echo "check passed"
 exit 0
 CHECKEOF
 chmod +x check.sh
+mkdir -p scripts/codex_jobs
+cat > scripts/codex_jobs/job_smoke.sh << 'JOBEOF'
+#!/usr/bin/env bash
+set -euo pipefail
+echo "script-start:$1"
+echo "script-err:$2" >&2
+JOBEOF
+chmod +x scripts/codex_jobs/job_smoke.sh
 
 git add -A
 git commit -m "init" 2>&1
@@ -1061,6 +1069,33 @@ JOB_FINISHED_AT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.st
 assert_eq "Job status success" "True" "$JOB_STATUS_SUCCESS"
 assert_eq "Job status completed" "completed" "$JOB_STATUS_VALUE"
 assert_not_empty "Job completed has finished_at" "$JOB_FINISHED_AT"
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','script_path':'scripts/codex_jobs/job_smoke.sh','script_args':['alpha value','beta value'],'reason':'job script_path smoke','max_runtime_secs':30}))")")
+JOB_SCRIPT_SUCCESS=$(pyget "$RESP" "success")
+JOB_SCRIPT_ID=$(pyget "$RESP" "job_id")
+assert_eq "Job script_path create success" "True" "$JOB_SCRIPT_SUCCESS"
+assert_not_empty "Job script_path returns job_id" "$JOB_SCRIPT_ID"
+sleep 1
+RESP=$(curl -sf -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'log','job_id':'$JOB_SCRIPT_ID','tail_lines':20}))")")
+JOB_SCRIPT_LOG_SUCCESS=$(pyget "$RESP" "success")
+JOB_SCRIPT_STDOUT=$(pyget "$RESP" "stdout_tail")
+JOB_SCRIPT_STDERR=$(pyget "$RESP" "stderr_tail")
+assert_eq "Job script_path log success" "True" "$JOB_SCRIPT_LOG_SUCCESS"
+assert_contains "Job script_path stdout has arg" "script-start:alpha value" "$JOB_SCRIPT_STDOUT"
+assert_contains "Job script_path stderr has arg" "script-err:beta value" "$JOB_SCRIPT_STDERR"
+RESP=$(curl -s -X POST "$CODEX/job" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "$(python3 -c "import json; print(json.dumps({'project':'test-project','op':'create','goal_id':'$GOAL_ID','script_path':'../evil.sh','reason':'bad script path','max_runtime_secs':30}))")")
+JOB_BAD_SCRIPT_SUCCESS=$(pyget "$RESP" "success")
+JOB_BAD_SCRIPT_ERROR=$(pyget "$RESP" "error")
+assert_eq "Job script_path traversal fails" "False" "$JOB_BAD_SCRIPT_SUCCESS"
+assert_contains "Job script_path traversal error" "script_path" "$JOB_BAD_SCRIPT_ERROR"
 RESP=$(curl -sf -X POST "$CODEX/job" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \

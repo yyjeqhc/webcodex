@@ -902,7 +902,7 @@ This endpoint does not bypass existing safety checks. Raw commands still require
 
 Supported ops:
 
-- `create`: start one shell command in the background and return `job_id` immediately.
+- `create`: start one shell command in the background and return `job_id` immediately. Provide either `command` or `script_path`.
 - `create_batch`: start up to 20 shell commands under the same active goal. The server validates all commands first so ordinary input validation errors do not partially start a batch.
 - `list`: list jobs for a project, optionally filtered by `goal_id` or `status`.
 - `status`: refresh and return one job status.
@@ -917,6 +917,7 @@ Permission model:
 - The goal must be `active` and unexpired.
 - Within that active goal scope, job commands are trusted shell commands; they are not matched against configured command IDs and are not individually approved.
 - Every job is audited on disk under `.codex/jobs/<job_id>/` with `metadata.json`, `command.sh`, `stdout.log`, `stderr.log`, `pid`, `exit_code`, `status`, and `finished_at` when the job ends.
+- `script_path` must be project-relative, cannot use traversal or sensitive paths, and is executed as `bash <script_path> <script_args...>` from the project root.
 - Add `.codex/jobs/` to the project `.gitignore`; job audit logs are runtime artifacts and should not be committed.
 
 Example:
@@ -928,6 +929,20 @@ Example:
   "goal_id": "...",
   "command": "python scripts/run_exp.py --seed 0",
   "reason": "run seed 0",
+  "max_runtime_secs": 7200
+}
+```
+
+For long commands with quoting, pipes, or many arguments, prefer `script_path`:
+
+```json
+{
+  "project": "paper",
+  "op": "create",
+  "goal_id": "...",
+  "script_path": "scripts/codex_jobs/run_seed_extension_overnight_45_46.sh",
+  "script_args": ["--seed", "45"],
+  "reason": "run scripted seed extension",
   "max_runtime_secs": 7200
 }
 ```

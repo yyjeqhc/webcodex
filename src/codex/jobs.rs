@@ -6,10 +6,11 @@ use crate::projects::{ProjectConfig, SshConfig};
 use salvo::prelude::*;
 
 use super::run_project_cmd;
+use super::security::is_sensitive_path;
 use super::shell::shell_escape;
 use super::types::{JobInfo, JobMetadata};
 use base64::Engine;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 const DEFAULT_JOB_MAX_RUNTIME_SECS: i64 = 3600;
 const MAX_JOB_MAX_RUNTIME_SECS: i64 = 604800;
@@ -37,6 +38,78 @@ pub(super) fn validate_job_command(command: &str) -> Result<(), String> {
         return Err("command cannot contain NUL bytes".to_string());
     }
     Ok(())
+}
+
+pub(super) fn validate_job_script_path(script_path: &str) -> Result<(), String> {
+    let path = script_path.trim();
+    if path.is_empty() {
+        return Err("script_path cannot be empty".to_string());
+    }
+    if path.len() > 512 {
+        return Err("script_path is too long; maximum is 512 bytes".to_string());
+    }
+    if path.contains('\0') {
+        return Err("script_path cannot contain NUL bytes".to_string());
+    }
+    if path.starts_with('-') {
+        return Err("script_path cannot start with '-'".to_string());
+    }
+    let p = Path::new(path);
+    if p.is_absolute() {
+        return Err("script_path must be project-relative".to_string());
+    }
+    for component in p.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            _ => {
+                return Err(
+                    "script_path must not contain traversal or absolute components".to_string(),
+                )
+            }
+        }
+    }
+    if is_sensitive_path(path) {
+        return Err("script_path points to a sensitive or blocked path".to_string());
+    }
+    Ok(())
+}
+
+pub(super) fn validate_job_script_args(args: &[String]) -> Result<(), String> {
+    if args.len() > 100 {
+        return Err("script_args must contain at most 100 items".to_string());
+    }
+    for arg in args {
+        if arg.len() > 2000 {
+            return Err("script_args item is too long; maximum is 2000 bytes".to_string());
+        }
+        if arg.contains('\0') {
+            return Err("script_args cannot contain NUL bytes".to_string());
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn build_script_job_command(
+    script_path: &str,
+    script_args: &[String],
+) -> Result<String, String> {
+    validate_job_script_path(script_path)?;
+    validate_job_script_args(script_args)?;
+    let script_q = shell_escape(script_path.trim());
+    let args_q = script_args
+        .iter()
+        .map(|arg| shell_escape(arg))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let mut command = format!(
+        "test -f {script} || {{ echo 'script_path not found or not a file' >&2; exit 127; }}; bash {script}",
+        script = script_q
+    );
+    if !args_q.is_empty() {
+        command.push(' ');
+        command.push_str(&args_q);
+    }
+    Ok(command)
 }
 
 pub(super) fn validate_job_runtime(max_runtime_secs: Option<i64>) -> Result<i64, String> {
@@ -648,14 +721,36 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 res.render(Json(job_response(&op, false, Some(e))));
                 return;
             }
-            let Some(command) = body.command.as_deref() else {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
-                    &op,
-                    false,
-                    Some("command is required".to_string()),
-                )));
-                return;
+            let command = match (body.command.as_deref(), body.script_path.as_deref()) {
+                (Some(_), Some(_)) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(job_response(
+                        &op,
+                        false,
+                        Some("provide either command or script_path, not both".to_string()),
+                    )));
+                    return;
+                }
+                (Some(command), None) => command.to_string(),
+                (None, Some(script_path)) => {
+                    match build_script_job_command(script_path, &body.script_args) {
+                        Ok(command) => command,
+                        Err(e) => {
+                            res.status_code(StatusCode::BAD_REQUEST);
+                            res.render(Json(job_response(&op, false, Some(e))));
+                            return;
+                        }
+                    }
+                }
+                (None, None) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(Json(job_response(
+                        &op,
+                        false,
+                        Some("command or script_path is required".to_string()),
+                    )));
+                    return;
+                }
             };
             let max_runtime_secs = match validate_job_runtime(body.max_runtime_secs) {
                 Ok(v) => v,
@@ -670,7 +765,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     proj,
                     &project,
                     goal_id,
-                    command,
+                    &command,
                     body.reason.clone(),
                     max_runtime_secs,
                     ssh_config,
@@ -680,7 +775,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     proj,
                     &project,
                     goal_id,
-                    command,
+                    &command,
                     body.reason.clone(),
                     max_runtime_secs,
                 )

@@ -1,3 +1,6 @@
 /target
-
+.codex
+data*
+docs*
+*.patch
 /frontend/node_modules

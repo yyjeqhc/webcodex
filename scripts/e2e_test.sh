@@ -624,9 +624,30 @@ RESP=$(curl -sf "$BASE/openapi.json")
 HAS_CREATE=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createMessage' in sys.stdin.read() else 'no')")
 HAS_LIST=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'listMessages' in sys.stdin.read() else 'no')")
 HAS_DESKTOP=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'createDesktopTask' in sys.stdin.read() else 'no')")
+HAS_DESKTOP_CLAIM_NEXT=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'claimNextDesktopTask' in sys.stdin.read() else 'no')")
+HAS_DESKTOP_DETAIL=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'getDesktopTaskDetail' in sys.stdin.read() else 'no')")
+HAS_DESKTOP_OP=$(echo "$RESP" | python3 -c "import sys; print('yes' if 'runDesktopTaskOp' in sys.stdin.read() else 'no')")
+LONG_DESCRIPTIONS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); bad=[]
+
+def walk(x, path=''):
+    if isinstance(x, dict):
+        desc=x.get('description')
+        if isinstance(desc, str) and len(desc) > 300:
+            bad.append(f'{path}.description:{len(desc)}')
+        for k,v in x.items():
+            walk(v, f'{path}.{k}' if path else k)
+    elif isinstance(x, list):
+        for i,v in enumerate(x):
+            walk(v, f'{path}[{i}]')
+walk(d)
+print('|'.join(bad))")
 assert_contains "OpenAPI contains createMessage" "yes" "$HAS_CREATE"
 assert_contains "OpenAPI contains listMessages" "yes" "$HAS_LIST"
 assert_contains "OpenAPI contains createDesktopTask" "yes" "$HAS_DESKTOP"
+assert_contains "OpenAPI contains claimNextDesktopTask" "yes" "$HAS_DESKTOP_CLAIM_NEXT"
+assert_contains "OpenAPI contains getDesktopTaskDetail" "yes" "$HAS_DESKTOP_DETAIL"
+assert_contains "OpenAPI contains runDesktopTaskOp" "yes" "$HAS_DESKTOP_OP"
+assert_eq "OpenAPI descriptions fit Actions limit" "" "$LONG_DESCRIPTIONS"
 
 # --- 12. Channels ---
 echo ""
@@ -648,19 +669,66 @@ DESKTOP_STATUS=$(pyget "$RESP" "task.status")
 assert_eq "Desktop task create success" "True" "$DESKTOP_SUCCESS"
 assert_not_empty "Desktop task has id" "$DESKTOP_ID"
 assert_eq "Desktop task starts pending" "pending" "$DESKTOP_STATUS"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/task_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"create","title":"Aggregated desktop task","instructions":"type: aggregate op smoke","priority":6}')
+DESKTOP_OP_SUCCESS=$(pyget "$RESP" "success")
+DESKTOP_OP_ID=$(pyget "$RESP" "task.id")
+DESKTOP_OP_STATUS=$(pyget "$RESP" "task.status")
+assert_eq "Desktop task_op create success" "True" "$DESKTOP_OP_SUCCESS"
+assert_not_empty "Desktop task_op create has id" "$DESKTOP_OP_ID"
+assert_eq "Desktop task_op create starts pending" "pending" "$DESKTOP_OP_STATUS"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/task_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"op\":\"get\",\"id\":\"$DESKTOP_OP_ID\"}")
+DESKTOP_OP_DETAIL_ID=$(pyget "$RESP" "task.id")
+DESKTOP_OP_EVENTS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('events', [])))")
+assert_eq "Desktop task_op get id" "$DESKTOP_OP_ID" "$DESKTOP_OP_DETAIL_ID"
+assert_eq "Desktop task_op get has event" "1" "$DESKTOP_OP_EVENTS"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/task_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"op":"list","status":"pending","limit":20}')
+DESKTOP_OP_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if any(t.get('id') == '$DESKTOP_OP_ID' for t in d.get('tasks', [])) else 'no')")
+assert_eq "Desktop task_op list has task" "yes" "$DESKTOP_OP_LIST_HAS_ID"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/task_op" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d "{\"op\":\"event\",\"id\":\"$DESKTOP_OP_ID\",\"status\":\"cancelled\",\"worker\":\"e2e\",\"message\":\"aggregate done\"}")
+DESKTOP_OP_DONE=$(pyget "$RESP" "task.status")
+assert_eq "Desktop task_op event updates task" "cancelled" "$DESKTOP_OP_DONE"
+RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks/$DESKTOP_ID")
+DESKTOP_DETAIL_SUCCESS=$(pyget "$RESP" "success")
+DESKTOP_DETAIL_EVENT_COUNT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(len(d.get('events', [])))")
+DESKTOP_DETAIL_FIRST_EVENT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('events', [{}])[0].get('status', ''))")
+assert_eq "Desktop detail success" "True" "$DESKTOP_DETAIL_SUCCESS"
+assert_eq "Desktop detail has created event" "1" "$DESKTOP_DETAIL_EVENT_COUNT"
+assert_eq "Desktop detail first event pending" "pending" "$DESKTOP_DETAIL_FIRST_EVENT"
 RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks?status=pending&limit=10")
 DESKTOP_LIST_SUCCESS=$(pyget "$RESP" "success")
 DESKTOP_LIST_HAS_ID=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if any(t.get('id') == '$DESKTOP_ID' for t in d.get('tasks', [])) else 'no')")
 assert_eq "Desktop task list success" "True" "$DESKTOP_LIST_SUCCESS"
 assert_eq "Desktop pending list has task" "yes" "$DESKTOP_LIST_HAS_ID"
-RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks/$DESKTOP_ID/claim" \
+RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks/claim_next" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d '{"worker":"orb-demo-worker"}')
+DESKTOP_CLAIM_NEXT_ID=$(pyget "$RESP" "task.id")
 DESKTOP_CLAIM_STATUS=$(pyget "$RESP" "task.status")
 DESKTOP_CLAIMED_BY=$(pyget "$RESP" "task.claimed_by")
-assert_eq "Desktop task claim sets running" "running" "$DESKTOP_CLAIM_STATUS"
-assert_eq "Desktop task claim records worker" "orb-demo-worker" "$DESKTOP_CLAIMED_BY"
+assert_eq "Desktop claim_next returns created task" "$DESKTOP_ID" "$DESKTOP_CLAIM_NEXT_ID"
+assert_eq "Desktop claim_next sets running" "running" "$DESKTOP_CLAIM_STATUS"
+assert_eq "Desktop claim_next records worker" "orb-demo-worker" "$DESKTOP_CLAIMED_BY"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks/claim_next" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"worker":"orb-demo-worker"}')
+DESKTOP_EMPTY_SUCCESS=$(pyget "$RESP" "success")
+DESKTOP_EMPTY_TASK=$(pyget "$RESP" "task")
+assert_eq "Desktop claim_next empty queue succeeds" "True" "$DESKTOP_EMPTY_SUCCESS"
+assert_eq "Desktop claim_next empty queue has null task" "" "$DESKTOP_EMPTY_TASK"
 RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks/$DESKTOP_ID/event" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
@@ -671,6 +739,43 @@ DESKTOP_DONE_SHOT=$(pyget "$RESP" "task.screenshot_url")
 assert_eq "Desktop task event completes" "completed" "$DESKTOP_DONE_STATUS"
 assert_eq "Desktop task event stores message" "Demo completed" "$DESKTOP_DONE_EVENT"
 assert_eq "Desktop task event stores screenshot url" "https://example.com/screenshot.png" "$DESKTOP_DONE_SHOT"
+RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks/$DESKTOP_ID")
+DESKTOP_EVENTS=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('|'.join(e.get('status','') for e in d.get('events', [])))")
+DESKTOP_EVENT_SHOT=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if any(e.get('screenshot_url') == 'https://example.com/screenshot.png' for e in d.get('events', [])) else 'no')")
+assert_contains "Desktop detail event timeline has pending" "pending" "$DESKTOP_EVENTS"
+assert_contains "Desktop detail event timeline has running" "running" "$DESKTOP_EVENTS"
+assert_contains "Desktop detail event timeline has completed" "completed" "$DESKTOP_EVENTS"
+assert_eq "Desktop detail event stores screenshot" "yes" "$DESKTOP_EVENT_SHOT"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"title":"Worker demo task https://example.com","instructions":"type: hello from desktop worker\npress_enter: true","priority":3}')
+DESKTOP_WORKER_ID=$(pyget "$RESP" "task.id")
+DROP_TOKEN="$TOKEN" python3 scripts/desktop_worker.py --base "$BASE" --worker e2e-demo-worker --once --dry-run --no-screenshot > "$TMPDIR_DATA/desktop-worker.log"
+assert_contains "Desktop worker claims task" "Claimed task: $DESKTOP_WORKER_ID" "$(cat "$TMPDIR_DATA/desktop-worker.log")"
+assert_contains "Desktop worker updates task" "Updated task: $DESKTOP_WORKER_ID -> completed" "$(cat "$TMPDIR_DATA/desktop-worker.log")"
+RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks?status=completed&limit=10")
+DESKTOP_WORKER_DONE=$(echo "$RESP" | python3 -c "import sys,json; d=json.load(sys.stdin); print('yes' if any(t.get('id') == '$DESKTOP_WORKER_ID' and t.get('claimed_by') == 'e2e-demo-worker' for t in d.get('tasks', [])) else 'no')")
+assert_eq "Desktop worker marks task completed" "yes" "$DESKTOP_WORKER_DONE"
+RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks/$DESKTOP_WORKER_ID")
+DESKTOP_WORKER_EVENT=$(pyget "$RESP" "task.last_event")
+assert_contains "Desktop worker dry-run opens URL" "would open https://example.com" "$DESKTOP_WORKER_EVENT"
+assert_contains "Desktop worker dry-run types text" "would paste" "$DESKTOP_WORKER_EVENT"
+assert_contains "Desktop worker dry-run presses enter" "press Enter" "$DESKTOP_WORKER_EVENT"
+RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks" \
+    -H "Authorization: Bearer $TOKEN" \
+    -H "Content-Type: application/json" \
+    -d '{"title":"WeChat dry-run","instructions":"wechat_to: Alice\nwechat_message: hello from e2e\nwechat_send: true","priority":4}')
+DESKTOP_WECHAT_ID=$(pyget "$RESP" "task.id")
+DROP_TOKEN="$TOKEN" python3 scripts/desktop_worker.py --base "$BASE" --worker e2e-demo-worker --once --dry-run --no-screenshot > "$TMPDIR_DATA/desktop-worker-wechat.log"
+assert_contains "Desktop worker WeChat claims task" "Claimed task: $DESKTOP_WECHAT_ID" "$(cat "$TMPDIR_DATA/desktop-worker-wechat.log")"
+assert_contains "Desktop worker WeChat updates task" "Updated task: $DESKTOP_WECHAT_ID -> completed" "$(cat "$TMPDIR_DATA/desktop-worker-wechat.log")"
+RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks/$DESKTOP_WECHAT_ID")
+DESKTOP_WECHAT_EVENT=$(pyget "$RESP" "task.last_event")
+assert_contains "Desktop worker WeChat dry-run recipient" "WeChat message to Alice" "$DESKTOP_WECHAT_EVENT"
+assert_contains "Desktop worker WeChat defaults to draft" "as draft" "$DESKTOP_WECHAT_EVENT"
+DROP_TOKEN="$TOKEN" python3 scripts/desktop_worker_demo.py --base "$BASE" --worker e2e-demo-worker > "$TMPDIR_DATA/desktop-worker-empty.log"
+assert_contains "Desktop worker demo handles empty queue" "No pending desktop tasks." "$(cat "$TMPDIR_DATA/desktop-worker-empty.log")"
 
 # --- 13. Web UI: Login page ---
 echo ""
@@ -745,6 +850,18 @@ assert_eq "GET /send returns 200" "200" "$HTTP_CODE"
 BODY=$(curl -sf "$BASE/send")
 assert_contains "Send page calls POST /api/messages" "/api/messages" "$BODY"
 assert_contains "Send page references frontend JS" "/assets/app.js" "$BODY"
+HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/desktop")
+assert_eq "GET /desktop returns 200" "200" "$HTTP_CODE"
+BODY=$(curl -sf "$BASE/desktop")
+assert_contains "Desktop page title" "Desktop Agent" "$BODY"
+assert_contains "Desktop page creates tasks" "/api/desktop/tasks" "$BODY"
+assert_contains "Desktop page has type field" "Text to type/send" "$BODY"
+HTTP_CODE=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/desktop/tasks/$DESKTOP_ID")
+assert_eq "GET /desktop/tasks/{id} returns 200" "200" "$HTTP_CODE"
+BODY=$(curl -sf "$BASE/desktop/tasks/$DESKTOP_ID")
+assert_contains "Desktop task page title" "Desktop Task" "$BODY"
+assert_contains "Desktop task page uses detail API" "/api/desktop/tasks/" "$BODY"
+assert_contains "Desktop task page has timeline" "Event Timeline" "$BODY"
 
 # ============================================================================
 # Codex API Tests
@@ -1979,11 +2096,13 @@ for path, methods in spec.get("paths", {}).items():
             ops.append(op["operationId"])
 print("\n".join(sorted(ops)))
 ')
-for op in listProjects getProjectContextBatch applyProjectEdit saveProjectArtifact runProjectGit runProjectCommand runCommandRequestOp runJobOp runProjectCheck writeProjectReport; do
+COMPACT_ACTION_COUNT=$(echo "$COMPACT_OPS" | python3 -c "import sys; print(len([x for x in sys.stdin.read().splitlines() if x.strip()]))")
+assert_eq "codex-openapi-compact.json action count" "11" "$COMPACT_ACTION_COUNT"
+for op in listProjects getProjectContextBatch applyProjectEdit saveProjectArtifact runProjectGit runProjectCommand runCommandRequestOp runJobOp runProjectCheck writeProjectReport runDesktopTaskOp; do
     HAS_OP=$(echo "$COMPACT_OPS" | python3 -c "import sys; op='$op'; print('yes' if op in sys.stdin.read().splitlines() else 'no')")
     assert_eq "codex-openapi-compact.json has $op" "yes" "$HAS_OP"
 done
-for op in getProjectContext applyProjectPatch createCommandRequest createRawCommandRequest listCommandRequests createCommandRequestBatch approveCommandRequest rejectCommandRequest; do
+for op in getProjectContext applyProjectPatch createCommandRequest createRawCommandRequest listCommandRequests createCommandRequestBatch approveCommandRequest rejectCommandRequest createDesktopTask listDesktopTasks getDesktopTaskDetail claimNextDesktopTask claimDesktopTask appendDesktopTaskEvent; do
     HAS_OP=$(echo "$COMPACT_OPS" | python3 -c "import sys; op='$op'; print('yes' if op in sys.stdin.read().splitlines() else 'no')")
     assert_eq "codex-openapi-compact.json hides $op" "no" "$HAS_OP"
 done

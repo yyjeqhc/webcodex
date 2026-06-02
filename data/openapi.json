@@ -99,6 +99,19 @@
           "screenshot_url": {"type": "string", "nullable": true}
         }
       },
+      "DesktopTaskEvent": {
+        "type": "object",
+        "properties": {
+          "id": {"type": "string"},
+          "task_id": {"type": "string"},
+          "status": {"type": "string"},
+          "worker": {"type": "string", "nullable": true},
+          "message": {"type": "string", "nullable": true},
+          "screenshot_url": {"type": "string", "nullable": true},
+          "created_at": {"type": "integer"}
+        },
+        "required": ["id", "task_id", "status", "created_at"]
+      },
       "DesktopTaskResponse": {
         "type": "object",
         "properties": {
@@ -108,6 +121,16 @@
         },
         "required": ["success"]
       },
+      "DesktopTaskDetailResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "task": {"$ref": "#/components/schemas/DesktopTask", "nullable": true},
+          "events": {"type": "array", "items": {"$ref": "#/components/schemas/DesktopTaskEvent"}},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "events"]
+      },
       "DesktopTaskListResponse": {
         "type": "object",
         "properties": {
@@ -116,6 +139,33 @@
           "error": {"type": "string", "nullable": true}
         },
         "required": ["success", "tasks"]
+      },
+      "DesktopTaskOpRequest": {
+        "type": "object",
+        "properties": {
+          "op": {"type": "string", "enum": ["create", "list", "get", "claim_next", "claim", "event"]},
+          "id": {"type": "string", "nullable": true},
+          "title": {"type": "string", "nullable": true},
+          "instructions": {"type": "string", "nullable": true},
+          "priority": {"type": "integer", "nullable": true, "minimum": -100, "maximum": 100},
+          "status": {"type": "string", "nullable": true, "enum": ["pending", "running", "completed", "failed", "needs_input", "cancelled"]},
+          "limit": {"type": "integer", "nullable": true, "minimum": 1, "maximum": 100},
+          "worker": {"type": "string", "nullable": true},
+          "message": {"type": "string", "nullable": true},
+          "screenshot_url": {"type": "string", "nullable": true}
+        },
+        "required": ["op"]
+      },
+      "DesktopTaskOpResponse": {
+        "type": "object",
+        "properties": {
+          "success": {"type": "boolean"},
+          "task": {"$ref": "#/components/schemas/DesktopTask", "nullable": true},
+          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/DesktopTask"}},
+          "events": {"type": "array", "items": {"$ref": "#/components/schemas/DesktopTaskEvent"}},
+          "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success"]
       },
       "ContextRequest": {
         "type": "object",
@@ -859,6 +909,16 @@
         }
       }
     },
+    "/api/desktop/task_op": {
+      "post": {
+        "operationId": "runDesktopTaskOp",
+        "summary": "Run desktop task queue operation",
+        "description": "Aggregate endpoint for desktop tasks: create, list, get, claim_next, claim, or event.",
+        "tags": ["desktop"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskOpRequest"}}}},
+        "responses": {"200": {"description": "Desktop task operation result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskOpResponse"}}}}, "400": {"description": "Bad request"}}
+      }
+    },
     "/api/desktop/tasks": {
       "get": {
         "operationId": "listDesktopTasks",
@@ -878,6 +938,26 @@
         "tags": ["desktop"],
         "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateDesktopTaskRequest"}}}},
         "responses": {"200": {"description": "Created task", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "400": {"description": "Bad request"}}
+      }
+    },
+    "/api/desktop/tasks/{id}": {
+      "get": {
+        "operationId": "getDesktopTaskDetail",
+        "summary": "Get desktop task detail",
+        "description": "Return one desktop task and its event timeline.",
+        "tags": ["desktop"],
+        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "responses": {"200": {"description": "Task detail", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskDetailResponse"}}}}, "404": {"description": "Task not found"}}
+      }
+    },
+    "/api/desktop/tasks/claim_next": {
+      "post": {
+        "operationId": "claimNextDesktopTask",
+        "summary": "Claim the next pending desktop task",
+        "description": "Atomically claim the highest-priority pending desktop task for a worker. Returns success=true and task=null when no pending task exists.",
+        "tags": ["desktop"],
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskClaimRequest"}}}},
+        "responses": {"200": {"description": "Claimed task or empty queue", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "400": {"description": "Bad request"}}
       }
     },
     "/api/desktop/tasks/{id}/claim": {
@@ -948,7 +1028,7 @@
       "post": {
         "operationId": "applyProjectPatch",
         "summary": "Apply a patch",
-        "description": "Apply a patch to a whitelisted project. If request.backend is omitted, the project default_apply_patch_backend from projects.toml is used, falling back to builtin. backend=builtin uses git apply for unified diffs. Experimental backend=codex uses an external Codex apply_patch executable after private-drop validates changed paths and blocks sensitive paths.",
+        "description": "Apply a patch to a whitelisted project. backend=builtin uses git apply; backend=codex uses an external Codex apply_patch after path safety validation.",
         "tags": ["codex"],
         "requestBody": {
           "required": true,

@@ -80,6 +80,17 @@ pub struct DesktopTask {
     pub updated_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DesktopTaskEvent {
+    pub id: String,
+    pub task_id: String,
+    pub status: String,
+    pub worker: Option<String>,
+    pub message: Option<String>,
+    pub screenshot_url: Option<String>,
+    pub created_at: i64,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CreateDesktopTaskRequest {
     pub title: String,
@@ -97,6 +108,29 @@ pub struct DesktopTaskClaimRequest {
 pub struct DesktopTaskEventRequest {
     #[serde(default)]
     pub status: Option<String>,
+    #[serde(default)]
+    pub worker: Option<String>,
+    #[serde(default)]
+    pub message: Option<String>,
+    #[serde(default)]
+    pub screenshot_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DesktopTaskOpRequest {
+    pub op: String,
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub instructions: Option<String>,
+    #[serde(default)]
+    pub priority: Option<i64>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
     #[serde(default)]
     pub worker: Option<String>,
     #[serde(default)]

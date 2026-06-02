@@ -1,4 +1,7 @@
-use crate::{Channel, CodexGoalRecord, CommandAuditRecord, DesktopTask, Message, MessageKind};
+use crate::{
+    Channel, CodexGoalRecord, CommandAuditRecord, DesktopTask, DesktopTaskEvent, Message,
+    MessageKind,
+};
 use rusqlite::{params, Connection};
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -19,6 +22,18 @@ fn row_to_desktop_task(row: &rusqlite::Row) -> rusqlite::Result<DesktopTask> {
         screenshot_url: row.get(7)?,
         created_at: row.get(8)?,
         updated_at: row.get(9)?,
+    })
+}
+
+fn row_to_desktop_task_event(row: &rusqlite::Row) -> rusqlite::Result<DesktopTaskEvent> {
+    Ok(DesktopTaskEvent {
+        id: row.get(0)?,
+        task_id: row.get(1)?,
+        status: row.get(2)?,
+        worker: row.get(3)?,
+        message: row.get(4)?,
+        screenshot_url: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 
@@ -113,7 +128,18 @@ impl Database {
                 updated_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_desktop_tasks_status_priority ON desktop_tasks(status, priority DESC, created_at ASC);
-            CREATE INDEX IF NOT EXISTS idx_desktop_tasks_updated_at ON desktop_tasks(updated_at DESC);",
+            CREATE INDEX IF NOT EXISTS idx_desktop_tasks_updated_at ON desktop_tasks(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS desktop_task_events (
+                id TEXT PRIMARY KEY,
+                task_id TEXT NOT NULL,
+                status TEXT NOT NULL,
+                worker TEXT,
+                message TEXT,
+                screenshot_url TEXT,
+                created_at INTEGER NOT NULL
+            );
+            CREATE INDEX IF NOT EXISTS idx_desktop_task_events_task_created ON desktop_task_events(task_id, created_at ASC);",
 
         )?;
         let has_command_text = {
@@ -503,6 +529,31 @@ impl Database {
         Ok(())
     }
 
+    fn insert_desktop_task_event_locked(
+        conn: &Connection,
+        task_id: &str,
+        status: &str,
+        worker: Option<&str>,
+        message: Option<&str>,
+        screenshot_url: Option<&str>,
+        now: i64,
+    ) -> anyhow::Result<()> {
+        conn.execute(
+            "INSERT INTO desktop_task_events (id, task_id, status, worker, message, screenshot_url, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                task_id,
+                status,
+                worker,
+                message,
+                screenshot_url,
+                now,
+            ],
+        )?;
+        Ok(())
+    }
+
     pub fn insert_desktop_task(&self, task: &DesktopTask) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -521,6 +572,15 @@ impl Database {
                 task.updated_at,
             ],
         )?;
+        Self::insert_desktop_task_event_locked(
+            &conn,
+            &task.id,
+            &task.status,
+            None,
+            task.last_event.as_deref(),
+            None,
+            task.created_at,
+        )?;
         Ok(())
     }
 
@@ -534,6 +594,16 @@ impl Database {
             Some(row) => Ok(Some(row?)),
             None => Ok(None),
         }
+    }
+
+    pub fn list_desktop_task_events(&self, task_id: &str) -> anyhow::Result<Vec<DesktopTaskEvent>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, task_id, status, worker, message, screenshot_url, created_at
+             FROM desktop_task_events WHERE task_id = ?1 ORDER BY created_at ASC",
+        )?;
+        let rows = stmt.query_map(params![task_id], row_to_desktop_task_event)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn list_desktop_tasks(
@@ -568,10 +638,67 @@ impl Database {
         )?;
         drop(conn);
         if changed == 1 {
+            let conn = self.conn.lock().unwrap();
+            Self::insert_desktop_task_event_locked(
+                &conn,
+                id,
+                "running",
+                Some(worker),
+                Some(&format!("claimed by {}", worker)),
+                None,
+                now,
+            )?;
+            drop(conn);
             self.get_desktop_task(id)
         } else {
             Ok(None)
         }
+    }
+
+    pub fn claim_next_desktop_task(
+        &self,
+        worker: &str,
+        now: i64,
+    ) -> anyhow::Result<Option<DesktopTask>> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE desktop_tasks
+             SET status = 'running', claimed_by = ?1, last_event = ?2, updated_at = ?3
+             WHERE id = (
+                 SELECT id FROM desktop_tasks
+                 WHERE status = 'pending'
+                 ORDER BY priority DESC, created_at ASC
+                 LIMIT 1
+             )",
+            params![worker, format!("claimed by {}", worker), now],
+        )?;
+        if changed != 1 {
+            return Ok(None);
+        }
+        let mut stmt = conn.prepare(
+            "SELECT id, title, instructions, status, priority, claimed_by, last_event, screenshot_url, created_at, updated_at
+             FROM desktop_tasks
+             WHERE status = 'running' AND claimed_by = ?1 AND updated_at = ?2
+             ORDER BY priority DESC, created_at ASC
+             LIMIT 1",
+        )?;
+        let mut rows = stmt.query_map(params![worker, now], row_to_desktop_task)?;
+        let task = match rows.next() {
+            Some(row) => Some(row?),
+            None => None,
+        };
+        if let Some(task) = task.as_ref() {
+            Self::insert_desktop_task_event_locked(
+                &conn,
+                &task.id,
+                "running",
+                Some(worker),
+                Some(&format!("claimed by {}", worker)),
+                None,
+                now,
+            )?;
+        }
+        Ok(task)
     }
 
     pub fn update_desktop_task_event(
@@ -595,6 +722,15 @@ impl Database {
         conn.execute(
             "UPDATE desktop_tasks SET status = ?2, claimed_by = ?3, last_event = ?4, screenshot_url = ?5, updated_at = ?6 WHERE id = ?1",
             params![id, next_status, next_worker, next_event, next_screenshot, now],
+        )?;
+        Self::insert_desktop_task_event_locked(
+            &conn,
+            id,
+            next_status,
+            next_worker,
+            next_event,
+            next_screenshot,
+            now,
         )?;
         drop(conn);
         self.get_desktop_task(id)

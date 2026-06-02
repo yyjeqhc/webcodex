@@ -191,7 +191,8 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
         "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
-        "/api/codex/report": spec["paths"]["/api/codex/report"].clone()
+        "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
+        "/api/desktop/task_op": spec["paths"]["/api/desktop/task_op"].clone()
     });
     spec["components"]["schemas"] = serde_json::json!({
         "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
@@ -232,7 +233,11 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
         "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
         "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
-        "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone()
+        "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone(),
+        "DesktopTask": spec["components"]["schemas"]["DesktopTask"].clone(),
+        "DesktopTaskEvent": spec["components"]["schemas"]["DesktopTaskEvent"].clone(),
+        "DesktopTaskOpRequest": spec["components"]["schemas"]["DesktopTaskOpRequest"].clone(),
+        "DesktopTaskOpResponse": spec["components"]["schemas"]["DesktopTaskOpResponse"].clone()
     });
     apply_project_description_to_schema(
         &mut spec,

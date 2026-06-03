@@ -309,6 +309,7 @@ pub(super) fn mode_name(mode: &ContextMode) -> &'static str {
         ContextMode::AgentContext => "agent_context",
         ContextMode::GitStatus => "git_status",
         ContextMode::GitDiff => "git_diff",
+        ContextMode::ExperimentOutputs => "experiment_outputs",
     }
 }
 
@@ -753,6 +754,32 @@ pub(super) fn execute_context_item(
                     )
                 }
             }
+            ContextMode::ExperimentOutputs => {
+                // SSH: run the experiment_outputs shell script remotely
+                let cmd = experiment_outputs_shell_fragment(
+                    item.limit.max(1).min(500),
+                    item.query.as_deref(),
+                );
+                let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 30, ssh_config);
+                if code == 0 {
+                    let (out, truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
+                    ContextResponse {
+                        success: true,
+                        project: project_name.to_string(),
+                        mode: "experiment_outputs".to_string(),
+                        content: Some(out),
+                        items: None,
+                        truncated,
+                        error: None,
+                    }
+                } else {
+                    context_error(
+                        project_name,
+                        &item.mode,
+                        format!("experiment_outputs failed: {}", stderr.trim()),
+                    )
+                }
+            }
         };
         return (resp, 1);
     }
@@ -967,7 +994,228 @@ pub(super) fn execute_context_item(
                 0,
             )
         }
+        ContextMode::ExperimentOutputs => {
+            let (out, truncated) =
+                local_experiment_outputs(&root, item.limit.max(1).min(500), item.query.as_deref());
+            (
+                ContextResponse {
+                    success: true,
+                    project: project_name.to_string(),
+                    mode: "experiment_outputs".to_string(),
+                    content: Some(out),
+                    items: None,
+                    truncated,
+                    error: None,
+                },
+                0,
+            )
+        }
     }
+}
+
+/// Shell fragment for experiment_outputs mode (SSH executor).
+pub(super) fn experiment_outputs_shell_fragment(
+    max_files: usize,
+    since_minutes: Option<&str>,
+) -> String {
+    let max_files = max_files.min(500).max(1);
+    let since_filter = if let Some(mins) = since_minutes {
+        if let Ok(n) = mins.parse::<u64>() {
+            format!(" -mmin -{}", n)
+        } else {
+            String::new()
+        }
+    } else {
+        String::new()
+    };
+    let output_exts = "\\( -name '*.csv' -o -name '*.json' -o -name '*.md' -o -name '*.png' -o -name '*.jpg' -o -name '*.log' -o -name '*.txt' -o -name '*.html' \\)";
+    let checkpoint_exts = "\\( -name '*.pt' -o -name '*.pth' -o -name '*.ckpt' -o -name '*.joblib' -o -name '*.npz' -o -name '*.parquet' -o -name '*.pkl' -o -name '*.h5' -o -name '*.hdf5' \\)";
+    format!(
+        concat!(
+            "printf '=== git_status ===\\n'; git status --short 2>/dev/null | head -50 || true;",
+            " printf '\\n=== output_files ===\\n'; find . -not -path './.git/*' -not -path './target/*' -not -path './node_modules/*' -not -path './__pycache__/*' {output}{since} -type f -print 2>/dev/null | sed 's|^\\./||' | sort | head -n {max} || true;",
+            " printf '\\n=== checkpoint_files ===\\n'; find . -not -path './.git/*' -not -path './target/*' -not -path './node_modules/*' -not -path './__pycache__/*' {ckpt}{since} -type f -print 2>/dev/null | sed 's|^\\./||' | sort | head -n {max} || true;",
+            " printf '\\n=== large_files (>20MB) ===\\n'; find . -not -path './.git/*' -not -path './target/*' -not -path './node_modules/*' -size +20M -type f -print 2>/dev/null | sed 's|^\\./||' | head -n {max} | while IFS= read -r f; do size=$(du -sh \"$f\" 2>/dev/null | cut -f1); ignored=$(git check-ignore -q \"$f\" 2>/dev/null && echo yes || echo no); printf '%s\\tsize=%s\\tgitignored=%s\\n' \"$f\" \"$size\" \"$ignored\"; done || true;",
+            " printf '\\n=== untracked_new ===\\n'; git status --short --untracked-files=all 2>/dev/null | grep '^?' | sed 's/^?? //' | head -30 || true;"
+        ),
+        output = output_exts,
+        since = since_filter,
+        max = max_files,
+        ckpt = checkpoint_exts,
+    )
+}
+
+/// Local implementation of experiment_outputs mode. Returns (content, truncated).
+pub(super) fn local_experiment_outputs(
+    root: &Path,
+    max_files: usize,
+    since_minutes: Option<&str>,
+) -> (String, bool) {
+    let max_files = max_files.min(500).max(1);
+    let mut out = String::new();
+
+    // git status
+    let git_status = run_command("git status --short", root, 10).1;
+    out.push_str("=== git_status ===\n");
+    for line in git_status.lines().take(50) {
+        out.push_str(line);
+        out.push('\n');
+    }
+
+    let output_exts = [
+        "csv", "json", "md", "png", "jpg", "jpeg", "log", "txt", "html",
+    ];
+    let checkpoint_exts = [
+        "pt", "pth", "ckpt", "joblib", "npz", "parquet", "pkl", "h5", "hdf5",
+    ];
+    let since_secs: Option<u64> = since_minutes
+        .and_then(|s| s.parse::<u64>().ok())
+        .map(|m| m * 60);
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+
+    let mut output_files: Vec<String> = Vec::new();
+    let mut checkpoint_files: Vec<String> = Vec::new();
+    let mut large_files: Vec<(String, u64)> = Vec::new();
+
+    fn walk(
+        dir: &Path,
+        base: &Path,
+        output_exts: &[&str],
+        checkpoint_exts: &[&str],
+        since_secs: Option<u64>,
+        now_secs: u64,
+        output_files: &mut Vec<String>,
+        checkpoint_files: &mut Vec<String>,
+        large_files: &mut Vec<(String, u64)>,
+        max_files: usize,
+        depth: usize,
+    ) {
+        if depth > 8 {
+            return;
+        }
+        let entries = match std::fs::read_dir(dir) {
+            Ok(e) => e,
+            Err(_) => return,
+        };
+        let mut sorted: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+        sorted.sort_by_key(|e| e.file_name());
+        for entry in sorted {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if matches!(
+                name.as_str(),
+                ".git" | "target" | "node_modules" | "__pycache__" | ".cache" | "dist" | "build"
+            ) {
+                continue;
+            }
+            let path = entry.path();
+            let rel = path
+                .strip_prefix(base)
+                .unwrap_or(&path)
+                .to_string_lossy()
+                .to_string();
+            if path.is_dir() {
+                walk(
+                    &path,
+                    base,
+                    output_exts,
+                    checkpoint_exts,
+                    since_secs,
+                    now_secs,
+                    output_files,
+                    checkpoint_files,
+                    large_files,
+                    max_files,
+                    depth + 1,
+                );
+            } else if path.is_file() {
+                let meta = match std::fs::metadata(&path) {
+                    Ok(m) => m,
+                    Err(_) => continue,
+                };
+                let size = meta.len();
+                if let Some(since) = since_secs {
+                    let mtime = meta
+                        .modified()
+                        .ok()
+                        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|d| d.as_secs())
+                        .unwrap_or(0);
+                    if now_secs.saturating_sub(mtime) > since {
+                        if size > 20 * 1024 * 1024 && large_files.len() < max_files {
+                            large_files.push((rel, size));
+                        }
+                        continue;
+                    }
+                }
+                let ext = path
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("")
+                    .to_ascii_lowercase();
+                if output_exts.contains(&ext.as_str()) && output_files.len() < max_files {
+                    output_files.push(rel.clone());
+                }
+                if checkpoint_exts.contains(&ext.as_str()) && checkpoint_files.len() < max_files {
+                    checkpoint_files.push(rel.clone());
+                }
+                if size > 20 * 1024 * 1024 && large_files.len() < max_files {
+                    large_files.push((rel, size));
+                }
+            }
+        }
+    }
+
+    walk(
+        root,
+        root,
+        &output_exts,
+        &checkpoint_exts,
+        since_secs,
+        now_secs,
+        &mut output_files,
+        &mut checkpoint_files,
+        &mut large_files,
+        max_files,
+        0,
+    );
+
+    out.push_str("\n=== output_files ===\n");
+    for f in &output_files {
+        out.push_str(f);
+        out.push('\n');
+    }
+    out.push_str("\n=== checkpoint_files ===\n");
+    for f in &checkpoint_files {
+        out.push_str(f);
+        out.push('\n');
+    }
+    out.push_str("\n=== large_files (>20MB) ===\n");
+    for (f, size) in &large_files {
+        let size_mb = *size as f64 / (1024.0 * 1024.0);
+        let gitignored = std::process::Command::new("git")
+            .args(["check-ignore", "-q", f])
+            .current_dir(root)
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false);
+        out.push_str(&format!(
+            "{}\tsize={:.1}MB\tgitignored={}\n",
+            f,
+            size_mb,
+            if gitignored { "yes" } else { "no" }
+        ));
+    }
+    out.push_str("\n=== untracked_new ===\n");
+    let untracked = run_command("git status --short --untracked-files=all", root, 10).1;
+    for line in untracked.lines().filter(|l| l.starts_with("??")).take(30) {
+        out.push_str(line.trim_start_matches("?? "));
+        out.push('\n');
+    }
+
+    truncate_string(out, CONTEXT_MAX_OUTPUT_LEN)
 }
 
 #[handler]
@@ -1248,6 +1496,35 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                     }
                 }
             }
+            ContextMode::ExperimentOutputs => {
+                let cmd = experiment_outputs_shell_fragment(
+                    body.limit.max(1).min(500),
+                    body.query.as_deref(),
+                );
+                let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 30, ssh_config);
+                if code != 0 {
+                    ContextResponse {
+                        success: false,
+                        project: body.project.clone(),
+                        mode: "experiment_outputs".to_string(),
+                        content: None,
+                        items: None,
+                        truncated: false,
+                        error: Some(format!("experiment_outputs failed: {}", stderr.trim())),
+                    }
+                } else {
+                    let (out, truncated) = truncate_string(stdout, MAX_OUTPUT_LEN);
+                    ContextResponse {
+                        success: true,
+                        project: body.project.clone(),
+                        mode: "experiment_outputs".to_string(),
+                        content: Some(out),
+                        items: None,
+                        truncated,
+                        error: None,
+                    }
+                }
+            }
         };
         let ssh_calls = match resp.mode.as_str() {
             "overview" | "tree" | "search" | "grep_context" | "read_file" | "markdown_outline"
@@ -1522,6 +1799,19 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 project: body.project,
                 mode: "git_diff".to_string(),
                 content: Some(content),
+                items: None,
+                truncated,
+                error: None,
+            }));
+        }
+        ContextMode::ExperimentOutputs => {
+            let (out, truncated) =
+                local_experiment_outputs(&root, body.limit.max(1).min(500), body.query.as_deref());
+            res.render(Json(ContextResponse {
+                success: true,
+                project: body.project,
+                mode: "experiment_outputs".to_string(),
+                content: Some(out),
                 items: None,
                 truncated,
                 error: None,

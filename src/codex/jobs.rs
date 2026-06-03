@@ -167,10 +167,69 @@ pub(super) fn tail_lines_from_text(text: &str, tail_lines: usize) -> String {
     lines[start..].join("\n")
 }
 
+/// Read lines starting from since_line (1-based). Returns (text, total_line_count).
+pub(super) fn read_lines_from(text: &str, since_line: usize, max_lines: usize) -> (String, usize) {
+    let lines: Vec<&str> = text.lines().collect();
+    let total = lines.len();
+    if since_line == 0 || since_line > total {
+        return (String::new(), total);
+    }
+    let start = since_line - 1; // convert to 0-based
+    let end = (start + max_lines).min(total);
+    (lines[start..end].join("\n"), total)
+}
+
 pub(super) fn tail_file(path: &Path, tail_lines: usize) -> Option<String> {
     std::fs::read_to_string(path)
         .ok()
         .map(|s| tail_lines_from_text(&s, tail_lines))
+}
+
+/// Returns (text, total_line_count).
+pub(super) fn tail_file_with_count(path: &Path, tail_lines: usize) -> (Option<String>, usize) {
+    match std::fs::read_to_string(path) {
+        Ok(s) => {
+            let total = s.lines().count();
+            (Some(tail_lines_from_text(&s, tail_lines)), total)
+        }
+        Err(_) => (None, 0),
+    }
+}
+
+/// Returns (text, total_line_count).
+pub(super) fn read_from_line_with_count(
+    path: &Path,
+    since_line: usize,
+    max_lines: usize,
+) -> (Option<String>, usize) {
+    match std::fs::read_to_string(path) {
+        Ok(s) => {
+            let (text, total) = read_lines_from(&s, since_line, max_lines);
+            (Some(text), total)
+        }
+        Err(_) => (None, 0),
+    }
+}
+
+/// Check stderr content for OOM signals.
+pub(super) fn detect_oom_hint(stderr: &str) -> Option<String> {
+    let lower = stderr.to_ascii_lowercase();
+    let oom_patterns = [
+        "out of memory",
+        "oom",
+        "killed",
+        "memory error",
+        "memoryerror",
+        "cuda out of memory",
+        "cudaoutofmemoryerror",
+        "cannot allocate memory",
+        "bus error",
+    ];
+    if oom_patterns.iter().any(|p| lower.contains(p)) {
+        Some("possible_oom".to_string())
+    } else {
+        None
+    }
 }
 
 pub(super) fn read_job_metadata_local(root: &Path, job_id: &str) -> Result<JobMetadata, String> {
@@ -220,6 +279,12 @@ pub(super) fn update_job_status_local(root: &Path, meta: &JobMetadata) -> JobInf
         }
     }
     let finished_at = read_finished_at_file(&dir).or(meta.finished_at);
+    // Compute elapsed_secs: wall-clock time from started_at to finished_at (or now if running)
+    let elapsed_secs = meta.started_at.map(|s| finished_at.unwrap_or(now) - s);
+    // Detect OOM hint from stderr tail
+    let oom_hint = tail_file(&dir.join("stderr.log"), 40)
+        .as_deref()
+        .and_then(|s| detect_oom_hint(s));
     JobInfo {
         job_id: meta.job_id.clone(),
         client_request_id: meta.client_request_id.clone(),
@@ -238,6 +303,8 @@ pub(super) fn update_job_status_local(root: &Path, meta: &JobMetadata) -> JobInf
         executor: meta.executor.clone(),
         pid,
         exit_code,
+        elapsed_secs,
+        oom_hint,
     }
 }
 
@@ -417,6 +484,15 @@ pub(super) fn update_job_status_ssh(
             remote_job_status_string(proj, &meta.job_id, ssh_config);
         finished_at = refreshed_finished_at;
     }
+    let resolved_finished_at = finished_at.or(meta.finished_at);
+    let elapsed_secs = meta
+        .started_at
+        .map(|s| resolved_finished_at.unwrap_or(now) - s);
+    // For SSH, we read stderr tail to detect OOM hints
+    let oom_hint = {
+        let stderr_tail = ssh_job_log_stderr_tail(proj, &meta.job_id, 40, ssh_config);
+        detect_oom_hint(&stderr_tail)
+    };
     JobInfo {
         job_id: meta.job_id.clone(),
         client_request_id: meta.client_request_id.clone(),
@@ -430,11 +506,13 @@ pub(super) fn update_job_status_ssh(
         status: status_value,
         created_at: meta.created_at,
         started_at: meta.started_at,
-        finished_at: finished_at.or(meta.finished_at),
+        finished_at: resolved_finished_at,
         max_runtime_secs: meta.max_runtime_secs,
         executor: meta.executor.clone(),
         pid,
         exit_code,
+        elapsed_secs,
+        oom_hint,
     }
 }
 
@@ -573,12 +651,22 @@ pub(super) fn local_job_log(
     root: &Path,
     job_id: &str,
     tail_lines: usize,
-) -> Result<(String, String), String> {
+    since_line: Option<usize>,
+) -> Result<(String, String, usize), String> {
     validate_job_id(job_id)?;
     let dir = local_job_dir(root, job_id);
+    let stdout_path = dir.join("stdout.log");
+    let stderr_path = dir.join("stderr.log");
+    let (stdout_text, total_lines) = if let Some(sl) = since_line.filter(|&n| n > 0) {
+        read_from_line_with_count(&stdout_path, sl, tail_lines)
+    } else {
+        tail_file_with_count(&stdout_path, tail_lines)
+    };
+    let (stderr_text, _) = tail_file_with_count(&stderr_path, tail_lines);
     Ok((
-        tail_file(&dir.join("stdout.log"), tail_lines).unwrap_or_default(),
-        tail_file(&dir.join("stderr.log"), tail_lines).unwrap_or_default(),
+        stdout_text.unwrap_or_default(),
+        stderr_text.unwrap_or_default(),
+        total_lines,
     ))
 }
 
@@ -588,12 +676,48 @@ pub(super) fn ssh_job_log(
     tail_lines: usize,
     ssh_config: Option<&SshConfig>,
 ) -> Result<(String, String), String> {
+    let (out, err, _) = ssh_job_log_with_count(proj, job_id, tail_lines, None, ssh_config)?;
+    Ok((out, err))
+}
+
+/// ssh_job_log with total_lines and since_line support. Returns (stdout, stderr, total_stdout_lines).
+pub(super) fn ssh_job_log_with_count(
+    proj: &ProjectConfig,
+    job_id: &str,
+    tail_lines: usize,
+    since_line: Option<usize>,
+    ssh_config: Option<&SshConfig>,
+) -> Result<(String, String, usize), String> {
     validate_job_id(job_id)?;
     let dir = shell_escape(&job_dir_rel(job_id));
     let n = tail_lines.clamp(1, 1000);
+    // Get total line count of stdout.log and the requested slice
+    let (since_cmd, tail_cmd) = if let Some(sl) = since_line.filter(|&n| n > 0) {
+        (
+            format!("wc -l < {dir}/stdout.log 2>/dev/null || echo 0"),
+            format!(
+                "tail -n +{sl} {dir}/stdout.log 2>/dev/null | head -n {n} || true",
+                sl = sl,
+                n = n,
+                dir = dir
+            ),
+        )
+    } else {
+        (
+            format!("wc -l < {dir}/stdout.log 2>/dev/null || echo 0"),
+            format!(
+                "tail -n {n} {dir}/stdout.log 2>/dev/null || true",
+                n = n,
+                dir = dir
+            ),
+        )
+    };
     let cmd = format!(
-        "printf '__STDOUT__\\n'; tail -n {} {}/stdout.log 2>/dev/null || true; printf '\\n__STDERR__\\n'; tail -n {} {}/stderr.log 2>/dev/null || true",
-        n, dir, n, dir
+        "printf '__TOTAL__\\n'; {total}; printf '__STDOUT__\\n'; {stdout}; printf '\\n__STDERR__\\n'; tail -n {n} {dir}/stderr.log 2>/dev/null || true",
+        total = since_cmd,
+        stdout = tail_cmd,
+        n = n,
+        dir = dir
     );
     let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
     if code != 0 {
@@ -601,11 +725,16 @@ pub(super) fn ssh_job_log(
     }
     let mut out = String::new();
     let mut err = String::new();
+    let mut total_lines: usize = 0;
     let mut section = "";
     for line in stdout.lines() {
         match line {
+            "__TOTAL__" => section = "total",
             "__STDOUT__" => section = "out",
             "__STDERR__" => section = "err",
+            _ if section == "total" => {
+                total_lines = line.trim().parse::<usize>().unwrap_or(0);
+            }
             _ if section == "out" => {
                 out.push_str(line);
                 out.push('\n');
@@ -617,7 +746,28 @@ pub(super) fn ssh_job_log(
             _ => {}
         }
     }
-    Ok((out.trim_end().to_string(), err.trim_end().to_string()))
+    Ok((
+        out.trim_end().to_string(),
+        err.trim_end().to_string(),
+        total_lines,
+    ))
+}
+
+/// Read only stderr tail for OOM detection.
+pub(super) fn ssh_job_log_stderr_tail(
+    proj: &ProjectConfig,
+    job_id: &str,
+    tail_lines: usize,
+    ssh_config: Option<&SshConfig>,
+) -> String {
+    if validate_job_id(job_id).is_err() {
+        return String::new();
+    }
+    let dir = shell_escape(&job_dir_rel(job_id));
+    let n = tail_lines.clamp(1, 200);
+    let cmd = format!("tail -n {n} {dir}/stderr.log 2>/dev/null || true");
+    let (_, stdout, _, _) = run_project_cmd(proj, &cmd, 5, ssh_config);
+    stdout
 }
 
 fn kill_local_tree(pid: i64, signal: &str) {
@@ -840,6 +990,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         stderr_tail: None,
                         summary_markdown: None,
                         error: None,
+                        log_total_lines: None,
+                        next_cursor: None,
                     }));
                     return;
                 }
@@ -888,6 +1040,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     stderr_tail: None,
                     summary_markdown: None,
                     error: None,
+                    log_total_lines: None,
+                    next_cursor: None,
                 })),
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
@@ -967,6 +1121,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         stderr_tail: None,
                         summary_markdown: None,
                         error: None,
+                        log_total_lines: None,
+                        next_cursor: None,
                     }));
                     return;
                 }
@@ -1017,6 +1173,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     stderr_tail: None,
                     summary_markdown: None,
                     error: None,
+                    log_total_lines: None,
+                    next_cursor: None,
                 })),
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
@@ -1093,6 +1251,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         stderr_tail: None,
                         summary_markdown: None,
                         error: None,
+                        log_total_lines: None,
+                        next_cursor: None,
                     }));
                     return;
                 }
@@ -1151,6 +1311,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stderr_tail: None,
                 summary_markdown: None,
                 error: None,
+                log_total_lines: None,
+                next_cursor: None,
             }));
         }
         "list" => {
@@ -1187,6 +1349,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stderr_tail: None,
                 summary_markdown: None,
                 error: None,
+                log_total_lines: None,
+                next_cursor: None,
             }));
         }
         "status" => {
@@ -1241,6 +1405,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     stderr_tail: None,
                     summary_markdown: None,
                     error: None,
+                    log_total_lines: None,
+                    next_cursor: None,
                 })),
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
@@ -1281,24 +1447,35 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 return;
             };
             let tail_lines = body.tail_lines.clamp(1, 1000);
-            let result = if proj.is_ssh() {
-                ssh_job_log(proj, job_id, tail_lines, ssh_config)
+            let since_line = body.since_line;
+            let result: Result<(String, String, usize), String> = if proj.is_ssh() {
+                ssh_job_log_with_count(proj, job_id, tail_lines, since_line, ssh_config)
             } else {
-                local_job_log(&proj.root(), job_id, tail_lines)
+                local_job_log(&proj.root(), job_id, tail_lines, since_line)
             };
             match result {
-                Ok((stdout_tail, stderr_tail)) => res.render(Json(JobOpResponse {
-                    success: true,
-                    op,
-                    job_id: Some(job_id.to_string()),
-                    job_ids: vec![job_id.to_string()],
-                    job: None,
-                    jobs: Vec::new(),
-                    stdout_tail: Some(stdout_tail),
-                    stderr_tail: Some(stderr_tail),
-                    summary_markdown: None,
-                    error: None,
-                })),
+                Ok((stdout_tail, stderr_tail, total_lines)) => {
+                    // next_cursor points to the line after the last returned line
+                    let next_cursor = if total_lines > 0 {
+                        Some(total_lines + 1)
+                    } else {
+                        None
+                    };
+                    res.render(Json(JobOpResponse {
+                        success: true,
+                        op,
+                        job_id: Some(job_id.to_string()),
+                        job_ids: vec![job_id.to_string()],
+                        job: None,
+                        jobs: Vec::new(),
+                        stdout_tail: Some(stdout_tail),
+                        stderr_tail: Some(stderr_tail),
+                        summary_markdown: None,
+                        error: None,
+                        log_total_lines: Some(total_lines),
+                        next_cursor,
+                    }))
+                }
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
         }
@@ -1354,6 +1531,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     stderr_tail: None,
                     summary_markdown: None,
                     error: None,
+                    log_total_lines: None,
+                    next_cursor: None,
                 })),
                 Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
             }
@@ -1381,17 +1560,24 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             }
             let mut tails = Vec::new();
             for job in &jobs {
-                let pair = if proj.is_ssh() {
+                let pair: (String, String) = if proj.is_ssh() {
                     ssh_job_log(
                         proj,
                         &job.job_id,
                         body.tail_lines.clamp(1, 1000),
                         ssh_config,
                     )
+                    .unwrap_or_default()
                 } else {
-                    local_job_log(&proj.root(), &job.job_id, body.tail_lines.clamp(1, 1000))
-                }
-                .unwrap_or_default();
+                    local_job_log(
+                        &proj.root(),
+                        &job.job_id,
+                        body.tail_lines.clamp(1, 1000),
+                        None,
+                    )
+                    .map(|(out, err, _)| (out, err))
+                    .unwrap_or_default()
+                };
                 tails.push(pair);
             }
             let summary = summarize_jobs_markdown(&jobs, &tails);
@@ -1407,6 +1593,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stderr_tail: None,
                 summary_markdown: Some(summary),
                 error: None,
+                log_total_lines: None,
+                next_cursor: None,
             }));
         }
         _ => {

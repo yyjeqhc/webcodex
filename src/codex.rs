@@ -608,11 +608,14 @@ fn ssh_batch_block_to_response(
                 error: None,
             }
         }
-        ContextMode::Search | ContextMode::GrepContext => context_error(
-            project_name,
-            &item.mode,
-            "search-like modes are not supported by single-SSH context batch".to_string(),
-        ),
+        ContextMode::Search | ContextMode::GrepContext | ContextMode::ExperimentOutputs => {
+            // ExperimentOutputs is not supported in single-SSH batch mode; run it standalone.
+            context_error(
+                project_name,
+                &item.mode,
+                "search-like and experiment_outputs modes are not supported by single-SSH context batch".to_string(),
+            )
+        }
     }
 }
 
@@ -649,7 +652,10 @@ pub(super) fn try_ssh_context_batch_once(
     let nonce = uuid::Uuid::new_v4().simple().to_string();
     let mut script = format!("cd {} || exit 2;", shell_escape(&proj.path));
     for (idx, item) in requests.iter().enumerate() {
-        if matches!(item.mode, ContextMode::Search | ContextMode::GrepContext) {
+        if matches!(
+            item.mode,
+            ContextMode::Search | ContextMode::GrepContext | ContextMode::ExperimentOutputs
+        ) {
             return None;
         }
         script.push_str(&format!(" printf '\n__PDCTX_{}_START_{}__\n';", nonce, idx));
@@ -727,7 +733,9 @@ pub(super) fn try_ssh_context_batch_once(
             ContextMode::GitDiff => {
                 script.push_str(" git diff 2>/dev/null || true;");
             }
-            ContextMode::Search | ContextMode::GrepContext => return None,
+            ContextMode::Search | ContextMode::GrepContext | ContextMode::ExperimentOutputs => {
+                return None
+            }
         }
         script.push_str(&format!(" printf '\n__PDCTX_{}_END_{}__\n';", nonce, idx));
     }

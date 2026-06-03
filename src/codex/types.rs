@@ -14,6 +14,9 @@ pub enum ContextMode {
     AgentContext,
     GitStatus,
     GitDiff,
+    /// Read-only aggregate of experiment output files, large files, gitignore status,
+    /// and commit recommendations. Designed for paper/experiment projects.
+    ExperimentOutputs,
 }
 
 #[derive(Debug, Deserialize)]
@@ -239,6 +242,10 @@ pub struct JobOpRequest {
     pub tail_lines: usize,
     #[serde(default)]
     pub max_runtime_secs: Option<i64>,
+    /// For op=log: start reading from this line number (1-based, inclusive).
+    /// Omit or set to 0 to use tail-based reading (last tail_lines lines).
+    #[serde(default)]
+    pub since_line: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -285,6 +292,12 @@ pub struct JobInfo {
     pub executor: String,
     pub pid: Option<i64>,
     pub exit_code: Option<i32>,
+    /// Wall-clock seconds since the job started. Present for running and completed jobs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_secs: Option<i64>,
+    /// OOM hint: "possible_oom" if stderr contains OOM-like signals, null otherwise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub oom_hint: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -299,6 +312,12 @@ pub struct JobOpResponse {
     pub stderr_tail: Option<String>,
     pub summary_markdown: Option<String>,
     pub error: Option<String>,
+    /// For op=log: total line count in stdout.log (enables since_line incremental reads).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub log_total_lines: Option<usize>,
+    /// For op=log: the next since_line value to use for incremental polling.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<usize>,
 }
 
 fn default_channel() -> String {
@@ -325,6 +344,8 @@ pub(super) fn job_response(op: &str, success: bool, error: Option<String>) -> Jo
         stderr_tail: None,
         summary_markdown: None,
         error,
+        log_total_lines: None,
+        next_cursor: None,
     }
 }
 

@@ -5,818 +5,2545 @@
     "version": "0.2.0",
     "description": "A self-hosted private long-text/file drop box API with Codex-like Project API for GPT Actions integration."
   },
-  "servers": [{"url": "http://localhost:8080", "description": "Public server; runtime output uses DROP_PUBLIC_URL when set"}],
+  "servers": [
+    {
+      "url": "http://localhost:8080",
+      "description": "Public server; runtime output uses DROP_PUBLIC_URL when set"
+    }
+  ],
   "components": {
     "securitySchemes": {
-      "bearerAuth": {"type": "http", "scheme": "bearer", "bearerFormat": "JWT"}
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT"
+      }
     },
     "schemas": {
       "HealthResponse": {
         "type": "object",
-        "properties": {"status": {"type": "string"}, "version": {"type": "string"}},
-        "required": ["status", "version"]
+        "properties": {
+          "status": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "version"
+        ]
       },
       "Channel": {
         "type": "object",
         "properties": {
-          "name": {"type": "string"},
-          "display_name": {"type": "string"},
-          "message_count": {"type": "integer"}
+          "name": {
+            "type": "string"
+          },
+          "display_name": {
+            "type": "string"
+          },
+          "message_count": {
+            "type": "integer"
+          }
         },
-        "required": ["name", "display_name", "message_count"]
+        "required": [
+          "name",
+          "display_name",
+          "message_count"
+        ]
       },
       "Message": {
         "type": "object",
         "properties": {
-          "id": {"type": "string"},
-          "channel": {"type": "string"},
-          "kind": {"type": "string", "enum": ["text", "file"]},
-          "title": {"type": "string", "nullable": true},
-          "text": {"type": "string", "nullable": true},
-          "file_name": {"type": "string", "nullable": true},
-          "file_path": {"type": "string", "nullable": true},
-          "file_size": {"type": "integer", "nullable": true},
-          "mime_type": {"type": "string", "nullable": true},
-          "created_at": {"type": "integer"},
-          "expires_at": {"type": "integer", "nullable": true}
+          "id": {
+            "type": "string"
+          },
+          "channel": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "text",
+              "file"
+            ]
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "text": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_name": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_size": {
+            "type": "integer",
+            "nullable": true
+          },
+          "mime_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "expires_at": {
+            "type": "integer",
+            "nullable": true
+          }
         },
-        "required": ["id", "channel", "kind", "created_at"]
+        "required": [
+          "id",
+          "channel",
+          "kind",
+          "created_at"
+        ]
       },
       "CreateMessageRequest": {
         "type": "object",
         "properties": {
-          "channel": {"type": "string"},
-          "title": {"type": "string"},
-          "text": {"type": "string"}
+          "channel": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
         },
-        "required": ["channel", "text"]
+        "required": [
+          "channel",
+          "text"
+        ]
       },
       "MessageListResponse": {
         "type": "object",
         "properties": {
-          "messages": {"type": "array", "items": {"$ref": "#/components/schemas/Message"}},
-          "total": {"type": "integer"},
-          "has_more": {"type": "boolean"}
+          "messages": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/Message"
+            }
+          },
+          "total": {
+            "type": "integer"
+          },
+          "has_more": {
+            "type": "boolean"
+          }
         },
-        "required": ["messages", "total", "has_more"]
+        "required": [
+          "messages",
+          "total",
+          "has_more"
+        ]
       },
       "DesktopTask": {
         "type": "object",
         "properties": {
-          "id": {"type": "string"},
-          "title": {"type": "string"},
-          "instructions": {"type": "string"},
-          "status": {"type": "string", "enum": ["pending", "running", "completed", "failed", "needs_input", "cancelled"]},
-          "priority": {"type": "integer"},
-          "claimed_by": {"type": "string", "nullable": true},
-          "last_event": {"type": "string", "nullable": true},
-          "screenshot_url": {"type": "string", "nullable": true},
-          "created_at": {"type": "integer"},
-          "updated_at": {"type": "integer"}
+          "id": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "needs_input",
+              "cancelled"
+            ]
+          },
+          "priority": {
+            "type": "integer"
+          },
+          "claimed_by": {
+            "type": "string",
+            "nullable": true
+          },
+          "last_event": {
+            "type": "string",
+            "nullable": true
+          },
+          "screenshot_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "updated_at": {
+            "type": "integer"
+          }
         },
-        "required": ["id", "title", "instructions", "status", "priority", "created_at", "updated_at"]
+        "required": [
+          "id",
+          "title",
+          "instructions",
+          "status",
+          "priority",
+          "created_at",
+          "updated_at"
+        ]
       },
       "CreateDesktopTaskRequest": {
         "type": "object",
         "properties": {
-          "title": {"type": "string"},
-          "instructions": {"type": "string"},
-          "priority": {"type": "integer", "nullable": true, "minimum": -100, "maximum": 100}
+          "title": {
+            "type": "string"
+          },
+          "instructions": {
+            "type": "string"
+          },
+          "priority": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": -100,
+            "maximum": 100
+          }
         },
-        "required": ["title", "instructions"]
+        "required": [
+          "title",
+          "instructions"
+        ]
       },
       "DesktopTaskClaimRequest": {
         "type": "object",
-        "properties": {"worker": {"type": "string"}},
-        "required": ["worker"]
+        "properties": {
+          "worker": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "worker"
+        ]
       },
       "DesktopTaskEventRequest": {
         "type": "object",
         "properties": {
-          "status": {"type": "string", "nullable": true, "enum": ["pending", "running", "completed", "failed", "needs_input", "cancelled"]},
-          "worker": {"type": "string", "nullable": true},
-          "message": {"type": "string", "nullable": true},
-          "screenshot_url": {"type": "string", "nullable": true}
+          "status": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "needs_input",
+              "cancelled"
+            ]
+          },
+          "worker": {
+            "type": "string",
+            "nullable": true
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "screenshot_url": {
+            "type": "string",
+            "nullable": true
+          }
         }
       },
       "DesktopTaskEvent": {
         "type": "object",
         "properties": {
-          "id": {"type": "string"},
-          "task_id": {"type": "string"},
-          "status": {"type": "string"},
-          "worker": {"type": "string", "nullable": true},
-          "message": {"type": "string", "nullable": true},
-          "screenshot_url": {"type": "string", "nullable": true},
-          "created_at": {"type": "integer"}
+          "id": {
+            "type": "string"
+          },
+          "task_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "worker": {
+            "type": "string",
+            "nullable": true
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "screenshot_url": {
+            "type": "string",
+            "nullable": true
+          },
+          "created_at": {
+            "type": "integer"
+          }
         },
-        "required": ["id", "task_id", "status", "created_at"]
+        "required": [
+          "id",
+          "task_id",
+          "status",
+          "created_at"
+        ]
       },
       "DesktopTaskResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "task": {"$ref": "#/components/schemas/DesktopTask", "nullable": true},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "task": {
+            "$ref": "#/components/schemas/DesktopTask",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success"]
+        "required": [
+          "success"
+        ]
       },
       "DesktopTaskDetailResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "task": {"$ref": "#/components/schemas/DesktopTask", "nullable": true},
-          "events": {"type": "array", "items": {"$ref": "#/components/schemas/DesktopTaskEvent"}},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "task": {
+            "$ref": "#/components/schemas/DesktopTask",
+            "nullable": true
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesktopTaskEvent"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "events"]
+        "required": [
+          "success",
+          "events"
+        ]
       },
       "DesktopTaskListResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/DesktopTask"}},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesktopTask"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "tasks"]
+        "required": [
+          "success",
+          "tasks"
+        ]
       },
       "DesktopTaskOpRequest": {
         "type": "object",
         "properties": {
-          "op": {"type": "string", "enum": ["create", "list", "get", "claim_next", "claim", "event"]},
-          "id": {"type": "string", "nullable": true},
-          "title": {"type": "string", "nullable": true},
-          "instructions": {"type": "string", "nullable": true},
-          "priority": {"type": "integer", "nullable": true, "minimum": -100, "maximum": 100},
-          "status": {"type": "string", "nullable": true, "enum": ["pending", "running", "completed", "failed", "needs_input", "cancelled"]},
-          "limit": {"type": "integer", "nullable": true, "minimum": 1, "maximum": 100},
-          "worker": {"type": "string", "nullable": true},
-          "message": {"type": "string", "nullable": true},
-          "screenshot_url": {"type": "string", "nullable": true}
+          "op": {
+            "type": "string",
+            "enum": [
+              "create",
+              "list",
+              "get",
+              "claim_next",
+              "claim",
+              "event"
+            ]
+          },
+          "id": {
+            "type": "string",
+            "nullable": true
+          },
+          "title": {
+            "type": "string",
+            "nullable": true
+          },
+          "instructions": {
+            "type": "string",
+            "nullable": true
+          },
+          "priority": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": -100,
+            "maximum": 100
+          },
+          "status": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "needs_input",
+              "cancelled"
+            ]
+          },
+          "limit": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "worker": {
+            "type": "string",
+            "nullable": true
+          },
+          "message": {
+            "type": "string",
+            "nullable": true
+          },
+          "screenshot_url": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["op"]
+        "required": [
+          "op"
+        ]
       },
       "DesktopTaskOpResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "task": {"$ref": "#/components/schemas/DesktopTask", "nullable": true},
-          "tasks": {"type": "array", "items": {"$ref": "#/components/schemas/DesktopTask"}},
-          "events": {"type": "array", "items": {"$ref": "#/components/schemas/DesktopTaskEvent"}},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "task": {
+            "$ref": "#/components/schemas/DesktopTask",
+            "nullable": true
+          },
+          "tasks": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesktopTask"
+            }
+          },
+          "events": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/DesktopTaskEvent"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success"]
+        "required": [
+          "success"
+        ]
       },
       "ContextRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "mode": {"type": "string", "enum": ["overview", "tree", "search", "grep_context", "read_file", "markdown_outline", "read_section", "agent_context", "git_status", "git_diff"], "description": "Context retrieval mode. grep_context returns query matches with nearby lines. agent_context reads AGENTS.md and .codex/memory files. markdown_outline lists Markdown headings. read_section returns one Markdown section matched by query."},
-          "path": {"type": "string", "description": "File path (for read_file, grep_context, markdown_outline, read_section, or scoped tree mode)"},
-          "query": {"type": "string", "description": "Search query (for search or grep_context mode) or heading text (for read_section mode)"},
-          "start_line": {"type": "integer", "default": 1, "description": "Start line for read_file (1-based)"},
-          "limit": {"type": "integer", "default": 200, "description": "Max lines/items to return"},
-          "max_depth": {"type": "integer", "default": 4, "minimum": 1, "maximum": 8, "description": "Maximum directory depth for tree mode"}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "overview",
+              "tree",
+              "search",
+              "grep_context",
+              "read_file",
+              "markdown_outline",
+              "read_section",
+              "agent_context",
+              "git_status",
+              "git_diff",
+              "experiment_outputs"
+            ],
+            "description": "Context mode. Modes: overview=project summary+git status; tree=file tree; search=filename search; grep_context=in-file grep with context; read_file=read file with line numbers; markdown_outline=MD heading outline; read_section=read MD section by heading; agent_context=.codex/context.md; git_status=git status --short; git_diff=git diff; experiment_outputs=read-only aggregate of experiment output files, large files, gitignore status and git status. Designed for paper/experiment project audit."
+          },
+          "path": {
+            "type": "string",
+            "description": "File path (for read_file, grep_context, markdown_outline, read_section, or scoped tree mode)"
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query (for search or grep_context mode) or heading text (for read_section mode)"
+          },
+          "start_line": {
+            "type": "integer",
+            "default": 1,
+            "description": "Start line for read_file (1-based)"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 200,
+            "description": "Max lines/items to return"
+          },
+          "max_depth": {
+            "type": "integer",
+            "default": 4,
+            "minimum": 1,
+            "maximum": 8,
+            "description": "Maximum directory depth for tree mode"
+          }
         },
-        "required": ["project", "mode"]
+        "required": [
+          "project",
+          "mode"
+        ]
       },
       "ContextResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "project": {"type": "string"},
-          "mode": {"type": "string"},
-          "content": {"type": "string", "nullable": true, "description": "Text content (for overview, read_file, grep_context, agent_context, git_status, git_diff)"},
-          "items": {"type": "array", "items": {"type": "string"}, "nullable": true, "description": "List items (for tree, search)"},
-          "truncated": {"type": "boolean"},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "project": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "content": {
+            "type": "string",
+            "nullable": true,
+            "description": "Text content (for overview, read_file, grep_context, agent_context, git_status, git_diff)"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "description": "List items (for tree, search)"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "project", "mode", "truncated"]
+        "required": [
+          "success",
+          "project",
+          "mode",
+          "truncated"
+        ]
       },
       "ContextBatchItem": {
         "type": "object",
         "properties": {
-          "mode": {"type": "string", "enum": ["overview", "tree", "search", "grep_context", "read_file", "markdown_outline", "read_section", "agent_context", "git_status", "git_diff"]},
-          "path": {"type": "string", "description": "File path for read_file, grep_context, markdown_outline, read_section, or scoped tree mode"},
-          "query": {"type": "string", "description": "Search query for search or grep_context mode, or heading text for read_section mode"},
-          "start_line": {"type": "integer", "default": 1},
-          "limit": {"type": "integer", "default": 200},
-          "max_depth": {"type": "integer", "default": 4, "minimum": 1, "maximum": 8}
+          "mode": {
+            "type": "string",
+            "enum": [
+              "overview",
+              "tree",
+              "search",
+              "grep_context",
+              "read_file",
+              "markdown_outline",
+              "read_section",
+              "agent_context",
+              "git_status",
+              "git_diff",
+              "experiment_outputs"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "File path for read_file, grep_context, markdown_outline, read_section, or scoped tree mode"
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query for search or grep_context mode, or heading text for read_section mode"
+          },
+          "start_line": {
+            "type": "integer",
+            "default": 1
+          },
+          "limit": {
+            "type": "integer",
+            "default": 200
+          },
+          "max_depth": {
+            "type": "integer",
+            "default": 4,
+            "minimum": 1,
+            "maximum": 8
+          }
         },
-        "required": ["mode"]
+        "required": [
+          "mode"
+        ]
       },
       "ContextBatchRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "requests": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"$ref": "#/components/schemas/ContextBatchItem"}},
-          "max_total_chars": {"type": "integer", "default": 60000, "minimum": 4000, "maximum": 200000, "description": "Best-effort total response character budget across all batch results"}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "requests": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/ContextBatchItem"
+            }
+          },
+          "max_total_chars": {
+            "type": "integer",
+            "default": 60000,
+            "minimum": 4000,
+            "maximum": 200000,
+            "description": "Best-effort total response character budget across all batch results"
+          }
         },
-        "required": ["project", "requests"]
+        "required": [
+          "project",
+          "requests"
+        ]
       },
       "ContextBatchResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "project": {"type": "string"},
-          "results": {"type": "array", "items": {"$ref": "#/components/schemas/ContextResponse"}},
-          "duration_ms": {"type": "integer"},
-          "ssh_calls": {"type": "integer"},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "project": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextResponse"
+            }
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "ssh_calls": {
+            "type": "integer"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "project", "results", "duration_ms", "ssh_calls"]
+        "required": [
+          "success",
+          "project",
+          "results",
+          "duration_ms",
+          "ssh_calls"
+        ]
       },
       "PatchRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "patch": {"type": "string", "description": "Patch content. backend=builtin expects unified diff/git apply format; backend=codex expects Codex apply_patch format."},
-          "reason": {"type": "string", "description": "Optional explanation for the patch"},
-          "backend": {"type": "string", "enum": ["builtin", "codex"], "default": "project default or builtin", "description": "Optional patch backend override. If omitted, private-drop uses the project's default_apply_patch_backend from projects.toml, falling back to builtin. builtin uses git apply. codex uses an external codex apply_patch executable after private-drop path validation."}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "patch": {
+            "type": "string",
+            "description": "Patch content. backend=builtin expects unified diff/git apply format; backend=codex expects Codex apply_patch format."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Optional explanation for the patch"
+          },
+          "backend": {
+            "type": "string",
+            "enum": [
+              "builtin",
+              "codex"
+            ],
+            "default": "project default or builtin",
+            "description": "Optional patch backend override. If omitted, private-drop uses the project's default_apply_patch_backend from projects.toml, falling back to builtin. builtin uses git apply. codex uses an external codex apply_patch executable after private-drop path validation."
+          }
         },
-        "required": ["project", "patch"]
+        "required": [
+          "project",
+          "patch"
+        ]
       },
       "PatchResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "backend": {"type": "string", "nullable": true},
-          "changed_files": {"type": "array", "items": {"type": "string"}, "nullable": true},
-          "stdout": {"type": "string", "nullable": true},
-          "stderr": {"type": "string", "nullable": true},
-          "exit_code": {"type": "integer", "nullable": true},
-          "duration_ms": {"type": "integer", "nullable": true},
-          "diff": {"type": "string", "nullable": true, "description": "Best-effort git diff after patch execution, including failed codex backend runs that may have partially modified the worktree."},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "backend": {
+            "type": "string",
+            "nullable": true
+          },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "nullable": true
+          },
+          "stdout": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr": {
+            "type": "string",
+            "nullable": true
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer",
+            "nullable": true
+          },
+          "diff": {
+            "type": "string",
+            "nullable": true,
+            "description": "Best-effort git diff after patch execution, including failed codex backend runs that may have partially modified the worktree."
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success"]
+        "required": [
+          "success"
+        ]
       },
       "ReplaceTextEdit": {
         "type": "object",
         "description": "Replace occurrences of old_text with new_text in an existing file. occurrence is 1-based; omit it when old_text appears exactly once.",
         "properties": {
-          "type": {"type": "string", "enum": ["replace_text"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "old_text": {"type": "string", "description": "Exact text to find (must appear at least once)"},
-          "new_text": {"type": "string", "description": "Replacement text"},
-          "occurrence": {"type": "integer", "minimum": 1, "description": "1-based occurrence index; required when old_text matches more than once"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "replace_text"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "old_text": {
+            "type": "string",
+            "description": "Exact text to find (must appear at least once)"
+          },
+          "new_text": {
+            "type": "string",
+            "description": "Replacement text"
+          },
+          "occurrence": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "1-based occurrence index; required when old_text matches more than once"
+          }
         },
-        "required": ["type", "path", "old_text", "new_text"]
+        "required": [
+          "type",
+          "path",
+          "old_text",
+          "new_text"
+        ]
       },
       "ReplaceRangeEdit": {
         "type": "object",
         "description": "Replace a 1-based inclusive line range [start_line, end_line] with new_text.",
         "properties": {
-          "type": {"type": "string", "enum": ["replace_range"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "start_line": {"type": "integer", "minimum": 1, "description": "First line to replace (1-based, inclusive)"},
-          "end_line": {"type": "integer", "minimum": 1, "description": "Last line to replace (1-based, inclusive)"},
-          "new_text": {"type": "string", "description": "Replacement text for the line range"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "replace_range"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "start_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "First line to replace (1-based, inclusive)"
+          },
+          "end_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Last line to replace (1-based, inclusive)"
+          },
+          "new_text": {
+            "type": "string",
+            "description": "Replacement text for the line range"
+          }
         },
-        "required": ["type", "path", "start_line", "end_line", "new_text"]
+        "required": [
+          "type",
+          "path",
+          "start_line",
+          "end_line",
+          "new_text"
+        ]
       },
       "AppendFileEdit": {
         "type": "object",
         "description": "Append text to the end of an existing file.",
         "properties": {
-          "type": {"type": "string", "enum": ["append_file"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "text": {"type": "string", "description": "Text to append"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "append_file"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text to append"
+          }
         },
-        "required": ["type", "path", "text"]
+        "required": [
+          "type",
+          "path",
+          "text"
+        ]
       },
       "CreateFileEdit": {
         "type": "object",
         "description": "Create a new file. Fails if the file already exists.",
         "properties": {
-          "type": {"type": "string", "enum": ["create_file"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "content": {"type": "string", "description": "Initial file content"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "create_file"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "content": {
+            "type": "string",
+            "description": "Initial file content"
+          }
         },
-        "required": ["type", "path", "content"]
+        "required": [
+          "type",
+          "path",
+          "content"
+        ]
       },
       "WriteFileEdit": {
         "type": "object",
         "description": "Write content to a file. Not recommended for small changes — prefer replace_text, replace_range, or create_file instead. Set allow_overwrite=true to overwrite existing files.",
         "properties": {
-          "type": {"type": "string", "enum": ["write_file"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "content": {"type": "string", "description": "Full file content to write"},
-          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "write_file"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "content": {
+            "type": "string",
+            "description": "Full file content to write"
+          },
+          "allow_overwrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "Must be true to overwrite an existing file"
+          }
         },
-        "required": ["type", "path", "content"]
+        "required": [
+          "type",
+          "path",
+          "content"
+        ]
       },
       "CreateBinaryFileEdit": {
         "type": "object",
         "description": "Create a new binary artifact from base64 content. Fails if the file already exists. Intended for PNG/JPG/PDF/WebP/GIF and other generated artifacts.",
         "properties": {
-          "type": {"type": "string", "enum": ["create_binary_file"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "base64_content": {"type": "string", "description": "Base64-encoded file bytes. Decoded size max 5MB."}
+          "type": {
+            "type": "string",
+            "enum": [
+              "create_binary_file"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "base64_content": {
+            "type": "string",
+            "description": "Base64-encoded file bytes. Decoded size max 5MB."
+          }
         },
-        "required": ["type", "path", "base64_content"]
+        "required": [
+          "type",
+          "path",
+          "base64_content"
+        ]
       },
       "WriteBinaryFileEdit": {
         "type": "object",
         "description": "Write a binary artifact from base64 content. Defaults to no overwrite unless allow_overwrite=true.",
         "properties": {
-          "type": {"type": "string", "enum": ["write_binary_file"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "base64_content": {"type": "string", "description": "Base64-encoded file bytes. Decoded size max 5MB."},
-          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "write_binary_file"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "base64_content": {
+            "type": "string",
+            "description": "Base64-encoded file bytes. Decoded size max 5MB."
+          },
+          "allow_overwrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "Must be true to overwrite an existing file"
+          }
         },
-        "required": ["type", "path", "base64_content"]
+        "required": [
+          "type",
+          "path",
+          "base64_content"
+        ]
       },
       "CreateBinaryArtifactEdit": {
         "type": "object",
         "description": "Recommended high-level edit for saving generated images or binary artifacts from base64 content. Fails if the file already exists. Equivalent to create_binary_file with clearer artifact semantics.",
         "properties": {
-          "type": {"type": "string", "enum": ["create_binary_artifact"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "base64_content": {"type": "string", "description": "Base64-encoded artifact bytes. Decoded size max 5MB."}
+          "type": {
+            "type": "string",
+            "enum": [
+              "create_binary_artifact"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "base64_content": {
+            "type": "string",
+            "description": "Base64-encoded artifact bytes. Decoded size max 5MB."
+          }
         },
-        "required": ["type", "path", "base64_content"]
+        "required": [
+          "type",
+          "path",
+          "base64_content"
+        ]
       },
       "WriteBinaryArtifactEdit": {
         "type": "object",
         "description": "Recommended high-level edit for overwriting generated images or binary artifacts from base64 content. Defaults to no overwrite unless allow_overwrite=true.",
         "properties": {
-          "type": {"type": "string", "enum": ["write_binary_artifact"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "base64_content": {"type": "string", "description": "Base64-encoded artifact bytes. Decoded size max 5MB."},
-          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "write_binary_artifact"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "base64_content": {
+            "type": "string",
+            "description": "Base64-encoded artifact bytes. Decoded size max 5MB."
+          },
+          "allow_overwrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "Must be true to overwrite an existing file"
+          }
         },
-        "required": ["type", "path", "base64_content"]
+        "required": [
+          "type",
+          "path",
+          "base64_content"
+        ]
       },
       "CreateBinaryFileFromUploadEdit": {
         "type": "object",
         "description": "Create a new binary artifact by importing a server-accessible upload/temp file. Fails if the file already exists.",
         "properties": {
-          "type": {"type": "string", "enum": ["create_binary_file_from_upload"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "source_file": {"type": "string", "description": "Server-accessible upload/temp file path. Allowed roots include project root, /tmp, /var/tmp, /mnt/data, and DROP_DATA/uploads. Max 5MB."}
+          "type": {
+            "type": "string",
+            "enum": [
+              "create_binary_file_from_upload"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "source_file": {
+            "type": "string",
+            "description": "Server-accessible upload/temp file path. Allowed roots include project root, /tmp, /var/tmp, /mnt/data, and DROP_DATA/uploads. Max 5MB."
+          }
         },
-        "required": ["type", "path", "source_file"]
+        "required": [
+          "type",
+          "path",
+          "source_file"
+        ]
       },
       "WriteBinaryFileFromUploadEdit": {
         "type": "object",
         "description": "Write a binary artifact by importing a server-accessible upload/temp file. Defaults to no overwrite unless allow_overwrite=true.",
         "properties": {
-          "type": {"type": "string", "enum": ["write_binary_file_from_upload"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "source_file": {"type": "string", "description": "Server-accessible upload/temp file path. Allowed roots include project root, /tmp, /var/tmp, /mnt/data, and DROP_DATA/uploads. Max 5MB."},
-          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "write_binary_file_from_upload"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "source_file": {
+            "type": "string",
+            "description": "Server-accessible upload/temp file path. Allowed roots include project root, /tmp, /var/tmp, /mnt/data, and DROP_DATA/uploads. Max 5MB."
+          },
+          "allow_overwrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "Must be true to overwrite an existing file"
+          }
         },
-        "required": ["type", "path", "source_file"]
+        "required": [
+          "type",
+          "path",
+          "source_file"
+        ]
       },
       "CreateBinaryFileFromUrlEdit": {
         "type": "object",
         "description": "Create a new binary artifact by downloading from an http/https URL. Fails if the file already exists. Private/local addresses, redirects, credentials, and oversized responses are rejected.",
         "properties": {
-          "type": {"type": "string", "enum": ["create_binary_file_from_url"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "source_url": {"type": "string", "description": "HTTP/HTTPS source URL. Download timeout 10s, max 5MB, no redirects, no private/local addresses."}
+          "type": {
+            "type": "string",
+            "enum": [
+              "create_binary_file_from_url"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "source_url": {
+            "type": "string",
+            "description": "HTTP/HTTPS source URL. Download timeout 10s, max 5MB, no redirects, no private/local addresses."
+          }
         },
-        "required": ["type", "path", "source_url"]
+        "required": [
+          "type",
+          "path",
+          "source_url"
+        ]
       },
       "WriteBinaryFileFromUrlEdit": {
         "type": "object",
         "description": "Write a binary artifact by downloading from an http/https URL. Defaults to no overwrite unless allow_overwrite=true. Private/local addresses, redirects, credentials, and oversized responses are rejected.",
         "properties": {
-          "type": {"type": "string", "enum": ["write_binary_file_from_url"]},
-          "path": {"type": "string", "description": "Relative file path within the project"},
-          "source_url": {"type": "string", "description": "HTTP/HTTPS source URL. Download timeout 10s, max 5MB, no redirects, no private/local addresses."},
-          "allow_overwrite": {"type": "boolean", "default": false, "description": "Must be true to overwrite an existing file"}
+          "type": {
+            "type": "string",
+            "enum": [
+              "write_binary_file_from_url"
+            ]
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative file path within the project"
+          },
+          "source_url": {
+            "type": "string",
+            "description": "HTTP/HTTPS source URL. Download timeout 10s, max 5MB, no redirects, no private/local addresses."
+          },
+          "allow_overwrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "Must be true to overwrite an existing file"
+          }
         },
-        "required": ["type", "path", "source_url"]
+        "required": [
+          "type",
+          "path",
+          "source_url"
+        ]
       },
       "EditRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "reason": {"type": "string"},
-          "dry_run": {"type": "boolean", "default": false, "description": "If true, returns a diff but does not write files"},
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, returns a diff but does not write files"
+          },
           "edits": {
             "type": "array",
             "items": {
               "oneOf": [
-                {"$ref": "#/components/schemas/ReplaceTextEdit"},
-                {"$ref": "#/components/schemas/ReplaceRangeEdit"},
-                {"$ref": "#/components/schemas/AppendFileEdit"},
-                {"$ref": "#/components/schemas/CreateFileEdit"},
-                {"$ref": "#/components/schemas/WriteFileEdit"},
-                {"$ref": "#/components/schemas/CreateBinaryFileEdit"},
-                {"$ref": "#/components/schemas/WriteBinaryFileEdit"},
-                {"$ref": "#/components/schemas/CreateBinaryArtifactEdit"},
-                {"$ref": "#/components/schemas/WriteBinaryArtifactEdit"},
-                {"$ref": "#/components/schemas/CreateBinaryFileFromUploadEdit"},
-                {"$ref": "#/components/schemas/WriteBinaryFileFromUploadEdit"},
-                {"$ref": "#/components/schemas/CreateBinaryFileFromUrlEdit"},
-                {"$ref": "#/components/schemas/WriteBinaryFileFromUrlEdit"}
+                {
+                  "$ref": "#/components/schemas/ReplaceTextEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/ReplaceRangeEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/AppendFileEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/CreateFileEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/WriteFileEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/CreateBinaryFileEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/WriteBinaryFileEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/CreateBinaryArtifactEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/WriteBinaryArtifactEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/CreateBinaryFileFromUploadEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/WriteBinaryFileFromUploadEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/CreateBinaryFileFromUrlEdit"
+                },
+                {
+                  "$ref": "#/components/schemas/WriteBinaryFileFromUrlEdit"
+                }
               ],
-              "discriminator": {"propertyName": "type", "mapping": {"replace_text": "#/components/schemas/ReplaceTextEdit", "replace_range": "#/components/schemas/ReplaceRangeEdit", "append_file": "#/components/schemas/AppendFileEdit", "create_file": "#/components/schemas/CreateFileEdit", "write_file": "#/components/schemas/WriteFileEdit", "create_binary_file": "#/components/schemas/CreateBinaryFileEdit", "write_binary_file": "#/components/schemas/WriteBinaryFileEdit", "create_binary_artifact": "#/components/schemas/CreateBinaryArtifactEdit", "write_binary_artifact": "#/components/schemas/WriteBinaryArtifactEdit", "create_binary_file_from_upload": "#/components/schemas/CreateBinaryFileFromUploadEdit", "write_binary_file_from_upload": "#/components/schemas/WriteBinaryFileFromUploadEdit", "create_binary_file_from_url": "#/components/schemas/CreateBinaryFileFromUrlEdit", "write_binary_file_from_url": "#/components/schemas/WriteBinaryFileFromUrlEdit"}}
+              "discriminator": {
+                "propertyName": "type",
+                "mapping": {
+                  "replace_text": "#/components/schemas/ReplaceTextEdit",
+                  "replace_range": "#/components/schemas/ReplaceRangeEdit",
+                  "append_file": "#/components/schemas/AppendFileEdit",
+                  "create_file": "#/components/schemas/CreateFileEdit",
+                  "write_file": "#/components/schemas/WriteFileEdit",
+                  "create_binary_file": "#/components/schemas/CreateBinaryFileEdit",
+                  "write_binary_file": "#/components/schemas/WriteBinaryFileEdit",
+                  "create_binary_artifact": "#/components/schemas/CreateBinaryArtifactEdit",
+                  "write_binary_artifact": "#/components/schemas/WriteBinaryArtifactEdit",
+                  "create_binary_file_from_upload": "#/components/schemas/CreateBinaryFileFromUploadEdit",
+                  "write_binary_file_from_upload": "#/components/schemas/WriteBinaryFileFromUploadEdit",
+                  "create_binary_file_from_url": "#/components/schemas/CreateBinaryFileFromUrlEdit",
+                  "write_binary_file_from_url": "#/components/schemas/WriteBinaryFileFromUrlEdit"
+                }
+              }
             }
           }
         },
-        "required": ["project", "edits"]
+        "required": [
+          "project",
+          "edits"
+        ]
       },
       "EditResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "changed_files": {"type": "array", "items": {"type": "string"}},
-          "diff": {"type": "string"},
-          "warnings": {"type": "array", "items": {"type": "string"}},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "diff": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "changed_files", "diff", "warnings"]
+        "required": [
+          "success",
+          "changed_files",
+          "diff",
+          "warnings"
+        ]
       },
       "ArtifactRequest": {
         "type": "object",
         "description": "Save a generated or imported binary artifact to a whitelisted project. Prefer op=save_generated for GPT workflows; it automatically chooses file_id, base64_content, chatgpt_estuary_url, source_url, or source_file in that priority order.",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "op": {"type": "string", "enum": ["save_generated", "save_base64", "save_upload", "save_url"], "description": "Artifact source mode. save_generated is the high-level GPT-friendly mode."},
-          "path": {"type": "string", "description": "Relative destination path inside the project"},
-          "reason": {"type": "string", "nullable": true},
-          "allow_overwrite": {"type": "boolean", "default": false, "description": "If true, overwrite an existing artifact and optional companion markdown"},
-          "base64_content": {"type": "string", "nullable": true, "description": "Base64-encoded artifact bytes; decoded size max 5MB. Used by save_base64 or save_generated."},
-          "file_id": {"type": "string", "nullable": true, "description": "Recommended upload reference. For save_upload/save_generated, resolves a /api/files upload id to DROP_DATA/uploads via the messages table."},
-          "source_file": {"type": "string", "nullable": true, "description": "Low-level fallback for server-accessible upload/temp file path; max 5MB."},
-          "source_url": {"type": "string", "nullable": true, "description": "External HTTP/HTTPS URL with SSRF protection; max 5MB."},
-          "chatgpt_estuary_url": {"type": "string", "nullable": true, "description": "Optional ChatGPT estuary content URL. Must match the narrow chatgpt.com/backend-api/estuary/content allowlist."},
-          "mime_type": {"type": "string", "nullable": true, "description": "Optional caller-provided MIME hint for audit/UI purposes"},
-          "file_name": {"type": "string", "nullable": true, "description": "Optional original/generated artifact name hint"},
-          "alt_text": {"type": "string", "nullable": true, "description": "Optional alt text used when returning markdown_snippet"},
-          "companion_markdown_path": {"type": "string", "nullable": true, "description": "Optional relative path for a companion markdown file that references the artifact"},
-          "companion_markdown_template": {"type": "string", "nullable": true, "description": "Optional template for companion markdown. Supports {{path}}, {{markdown_snippet}}, and {{alt_text}}."}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "op": {
+            "type": "string",
+            "enum": [
+              "save_generated",
+              "save_base64",
+              "save_upload",
+              "save_url"
+            ],
+            "description": "Artifact source mode. save_generated is the high-level GPT-friendly mode."
+          },
+          "path": {
+            "type": "string",
+            "description": "Relative destination path inside the project"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "allow_overwrite": {
+            "type": "boolean",
+            "default": false,
+            "description": "If true, overwrite an existing artifact and optional companion markdown"
+          },
+          "base64_content": {
+            "type": "string",
+            "nullable": true,
+            "description": "Base64-encoded artifact bytes; decoded size max 5MB. Used by save_base64 or save_generated."
+          },
+          "file_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Recommended upload reference. For save_upload/save_generated, resolves a /api/files upload id to DROP_DATA/uploads via the messages table."
+          },
+          "source_file": {
+            "type": "string",
+            "nullable": true,
+            "description": "Low-level fallback for server-accessible upload/temp file path; max 5MB."
+          },
+          "source_url": {
+            "type": "string",
+            "nullable": true,
+            "description": "External HTTP/HTTPS URL with SSRF protection; max 5MB."
+          },
+          "chatgpt_estuary_url": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional ChatGPT estuary content URL. Must match the narrow chatgpt.com/backend-api/estuary/content allowlist."
+          },
+          "mime_type": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional caller-provided MIME hint for audit/UI purposes"
+          },
+          "file_name": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional original/generated artifact name hint"
+          },
+          "alt_text": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional alt text used when returning markdown_snippet"
+          },
+          "companion_markdown_path": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional relative path for a companion markdown file that references the artifact"
+          },
+          "companion_markdown_template": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional template for companion markdown. Supports {{path}}, {{markdown_snippet}}, and {{alt_text}}."
+          }
         },
-        "required": ["project", "op", "path"]
+        "required": [
+          "project",
+          "op",
+          "path"
+        ]
       },
       "ArtifactResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "changed_files": {"type": "array", "items": {"type": "string"}},
-          "saved_path": {"type": "string", "nullable": true},
-          "relative_path": {"type": "string", "nullable": true},
-          "file_size": {"type": "integer", "nullable": true},
-          "mime_type": {"type": "string", "nullable": true},
-          "markdown_snippet": {"type": "string", "nullable": true},
-          "selected_source": {"type": "string", "nullable": true, "description": "Actual artifact source selected by the server, such as file_id, base64_content, chatgpt_estuary_url, source_url, or source_file."},
-          "diff": {"type": "string"},
-          "warnings": {"type": "array", "items": {"type": "string"}},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "saved_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "relative_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "file_size": {
+            "type": "integer",
+            "nullable": true
+          },
+          "mime_type": {
+            "type": "string",
+            "nullable": true
+          },
+          "markdown_snippet": {
+            "type": "string",
+            "nullable": true
+          },
+          "selected_source": {
+            "type": "string",
+            "nullable": true,
+            "description": "Actual artifact source selected by the server, such as file_id, base64_content, chatgpt_estuary_url, source_url, or source_file."
+          },
+          "diff": {
+            "type": "string"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "changed_files", "diff", "warnings"]
+        "required": [
+          "success",
+          "changed_files",
+          "diff",
+          "warnings"
+        ]
       },
       "GitRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "operation": {"type": "string", "enum": ["status", "diff", "log", "add", "commit", "commit_amend_no_edit"], "description": "Controlled git operation to run"},
-          "paths": {"type": "array", "items": {"type": "string"}, "description": "Relative paths for diff/add/commit/commit_amend_no_edit. Required for add, commit, and commit_amend_no_edit."},
-          "message": {"type": "string", "nullable": true, "maxLength": 200, "description": "Commit message. Required for operation=commit."}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "operation": {
+            "type": "string",
+            "enum": [
+              "status",
+              "diff",
+              "log",
+              "add",
+              "commit",
+              "commit_amend_no_edit"
+            ],
+            "description": "Controlled git operation to run"
+          },
+          "paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Relative paths for diff/add/commit/commit_amend_no_edit. Required for add, commit, and commit_amend_no_edit."
+          },
+          "message": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Commit message. Required for operation=commit."
+          }
         },
-        "required": ["project", "operation"]
+        "required": [
+          "project",
+          "operation"
+        ]
       },
       "GitResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "project": {"type": "string"},
-          "operation": {"type": "string"},
-          "exit_code": {"type": "integer", "nullable": true},
-          "duration_ms": {"type": "integer"},
-          "stdout_tail": {"type": "string", "nullable": true},
-          "stderr_tail": {"type": "string", "nullable": true},
-          "truncated": {"type": "boolean"},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "project": {
+            "type": "string"
+          },
+          "operation": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "stdout_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "project", "operation", "duration_ms", "truncated"]
+        "required": [
+          "success",
+          "project",
+          "operation",
+          "duration_ms",
+          "truncated"
+        ]
       },
       "CommandRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "command": {"type": "string", "description": "Command id configured under [projects.<name>.commands]"}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "command": {
+            "type": "string",
+            "description": "Command id configured under [projects.<name>.commands]"
+          }
         },
-        "required": ["project", "command"]
+        "required": [
+          "project",
+          "command"
+        ]
       },
       "CommandRequestCreate": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "command": {"type": "string", "description": "Command id configured under [projects.<name>.commands]"},
-          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Why this command is requested"}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "command": {
+            "type": "string",
+            "description": "Command id configured under [projects.<name>.commands]"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "Why this command is requested"
+          }
         },
-        "required": ["project", "command"]
+        "required": [
+          "project",
+          "command"
+        ]
       },
       "RawCommandRequestCreate": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "command_text": {"type": "string", "maxLength": 2000, "description": "Exact single-line command to request. Requires allow_raw_command_requests=true and is blocked if it contains high-risk tokens."},
-          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Why this raw command is requested"}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "command_text": {
+            "type": "string",
+            "maxLength": 2000,
+            "description": "Exact single-line command to request. Requires allow_raw_command_requests=true and is blocked if it contains high-risk tokens."
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "Why this raw command is requested"
+          }
         },
-        "required": ["project", "command_text"]
+        "required": [
+          "project",
+          "command_text"
+        ]
       },
       "CommandRequestBatchItem": {
         "type": "object",
         "properties": {
-          "command": {"type": "string", "description": "Command id configured under [projects.<name>.commands]"},
-          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Why this command is requested"}
+          "command": {
+            "type": "string",
+            "description": "Command id configured under [projects.<name>.commands]"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "Why this command is requested"
+          }
         },
-        "required": ["command"]
+        "required": [
+          "command"
+        ]
       },
       "CommandRequestBatchCreate": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "requests": {"type": "array", "minItems": 1, "maxItems": 20, "items": {"$ref": "#/components/schemas/CommandRequestBatchItem"}}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "requests": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 20,
+            "items": {
+              "$ref": "#/components/schemas/CommandRequestBatchItem"
+            }
+          }
         },
-        "required": ["project", "requests"]
+        "required": [
+          "project",
+          "requests"
+        ]
       },
       "CommandRequestsListRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "nullable": true, "description": "Optional project filter"},
-          "status": {"type": "string", "nullable": true, "enum": ["pending", "running", "completed", "failed", "rejected", "expired"], "description": "Optional status filter"},
-          "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}
+          "project": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional project filter"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "rejected",
+              "expired"
+            ],
+            "description": "Optional status filter"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          }
         }
       },
       "CommandApproveRequest": {
         "type": "object",
         "properties": {
-          "request_id": {"type": "string", "description": "Command request id to approve and execute"}
+          "request_id": {
+            "type": "string",
+            "description": "Command request id to approve and execute"
+          }
         },
-        "required": ["request_id"]
+        "required": [
+          "request_id"
+        ]
       },
       "CommandRejectRequest": {
         "type": "object",
         "properties": {
-          "request_id": {"type": "string", "description": "Command request id to reject"},
-          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Rejection reason"}
+          "request_id": {
+            "type": "string",
+            "description": "Command request id to reject"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "Rejection reason"
+          }
         },
-        "required": ["request_id"]
+        "required": [
+          "request_id"
+        ]
       },
       "CommandRequestOpRequest": {
         "type": "object",
         "properties": {
-          "op": {"type": "string", "enum": ["list", "create", "create_raw", "create_batch", "approve", "approve_batch", "reject", "reject_batch", "create_goal", "create_goal_and_approve", "approve_goal", "reject_goal", "list_goals", "close_goal", "create_raw_and_approve", "create_and_approve"], "description": "Command request or goal operation to perform"},
-          "project": {"type": "string", "nullable": true, "description": "Project name for create/list/goal filters"},
-          "command": {"type": "string", "nullable": true, "description": "Configured command id for op=create or op=create_and_approve"},
-          "command_text": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Raw single-line command for op=create_raw or op=create_raw_and_approve; provide either command_text or script_path, not both"},
-          "script_path": {"type": "string", "nullable": true, "maxLength": 512, "description": "Project-relative script path for op=create_raw or op=create_raw_and_approve. The server validates the path and runs it via bash."},
-          "script_args": {"type": "array", "items": {"type": "string", "maxLength": 2000}, "maxItems": 100, "description": "Arguments passed to script_path for op=create_raw or op=create_raw_and_approve"},
-          "reason": {"type": "string", "nullable": true, "maxLength": 2000, "description": "Reason for create/reject/goal operations"},
-          "title": {"type": "string", "nullable": true, "maxLength": 200, "description": "Goal title for op=create_goal or op=create_goal_and_approve"},
-          "summary": {"type": "string", "nullable": true, "maxLength": 4000, "description": "Goal summary for op=create_goal or op=create_goal_and_approve"},
-          "goal_id": {"type": "string", "nullable": true, "description": "Goal id for op=approve_goal/reject_goal/close_goal/create_raw_and_approve/create_and_approve"},
-          "ttl_secs": {"type": "integer", "nullable": true, "minimum": 60, "maximum": 28800, "description": "Goal TTL in seconds for op=create_goal or op=create_goal_and_approve"},
-          "requests": {"type": "array", "items": {"$ref": "#/components/schemas/CommandRequestBatchItem"}, "description": "Batch items for op=create_batch"},
-          "request_id": {"type": "string", "nullable": true, "description": "Request id for op=approve or op=reject"},
-          "request_ids": {"type": "array", "items": {"type": "string"}, "description": "Request ids for op=approve_batch or op=reject_batch"},
-          "status": {"type": "string", "nullable": true, "enum": ["pending", "running", "completed", "failed", "rejected", "expired", "active", "closed"], "description": "Status filter for op=list or op=list_goals"},
-          "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}
+          "op": {
+            "type": "string",
+            "enum": [
+              "list",
+              "create",
+              "create_raw",
+              "create_batch",
+              "approve",
+              "approve_batch",
+              "reject",
+              "reject_batch",
+              "create_goal",
+              "create_goal_and_approve",
+              "approve_goal",
+              "reject_goal",
+              "list_goals",
+              "close_goal",
+              "create_raw_and_approve",
+              "create_and_approve"
+            ],
+            "description": "Command request or goal operation to perform"
+          },
+          "project": {
+            "type": "string",
+            "nullable": true,
+            "description": "Project name for create/list/goal filters"
+          },
+          "command": {
+            "type": "string",
+            "nullable": true,
+            "description": "Configured command id for op=create or op=create_and_approve"
+          },
+          "command_text": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "Raw single-line command for op=create_raw or op=create_raw_and_approve; provide either command_text or script_path, not both"
+          },
+          "script_path": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 512,
+            "description": "Project-relative script path for op=create_raw or op=create_raw_and_approve. The server validates the path and runs it via bash."
+          },
+          "script_args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "maxItems": 100,
+            "description": "Arguments passed to script_path for op=create_raw or op=create_raw_and_approve"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 2000,
+            "description": "Reason for create/reject/goal operations"
+          },
+          "title": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 200,
+            "description": "Goal title for op=create_goal or op=create_goal_and_approve"
+          },
+          "summary": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 4000,
+            "description": "Goal summary for op=create_goal or op=create_goal_and_approve"
+          },
+          "goal_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Goal id for op=approve_goal/reject_goal/close_goal/create_raw_and_approve/create_and_approve"
+          },
+          "ttl_secs": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 60,
+            "maximum": 28800,
+            "description": "Goal TTL in seconds for op=create_goal or op=create_goal_and_approve"
+          },
+          "requests": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CommandRequestBatchItem"
+            },
+            "description": "Batch items for op=create_batch"
+          },
+          "request_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Request id for op=approve or op=reject"
+          },
+          "request_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Request ids for op=approve_batch or op=reject_batch"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "pending",
+              "running",
+              "completed",
+              "failed",
+              "rejected",
+              "expired",
+              "active",
+              "closed"
+            ],
+            "description": "Status filter for op=list or op=list_goals"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          }
         },
-        "required": ["op"]
+        "required": [
+          "op"
+        ]
       },
       "CommandRequestOpResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "op": {"type": "string"},
-          "records": {"type": "array", "items": {"type": "object"}},
-          "goals": {"type": "array", "items": {"type": "object"}},
-          "request_id": {"type": "string", "nullable": true},
-          "record": {"type": "object", "nullable": true},
-          "goal_id": {"type": "string", "nullable": true},
-          "goal": {"type": "object", "nullable": true},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "op": {
+            "type": "string"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "goals": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "request_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "record": {
+            "type": "object",
+            "nullable": true
+          },
+          "goal_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "goal": {
+            "type": "object",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "op", "records"]
+        "required": [
+          "success",
+          "op",
+          "records"
+        ]
       },
       "JobOpRequest": {
         "type": "object",
         "description": "Trusted active-goal scoped async shell jobs. create/create_batch require project and active goal_id; command text is audited to .codex/jobs/<job_id>.",
         "properties": {
-          "op": {"type": "string", "enum": ["create", "create_batch", "check", "list", "status", "log", "stop", "summarize"], "description": "Job operation"},
-          "project": {"type": "string", "nullable": true, "description": "Runtime-validated project name"},
-          "goal_id": {"type": "string", "nullable": true, "description": "Active goal id required for create/create_batch; optional filter for list/summarize"},
-          "job_id": {"type": "string", "nullable": true, "description": "Job id for status/log/stop"},
-          "client_request_id": {"type": "string", "nullable": true, "maxLength": 128, "description": "Caller-supplied idempotency key for create/create_batch/check. Reuse it after a timeout to recover the created job via create/list/status/log/stop/summarize."},
-          "suite": {"type": "string", "nullable": true, "description": "Configured project check suite for op=check, for example fmt, test, build, e2e, or full"},
-          "command": {"type": "string", "nullable": true, "maxLength": 8000, "description": "Shell command for op=create; provide either command or script_path, not both"},
-          "script_path": {"type": "string", "nullable": true, "maxLength": 512, "description": "Project-relative script path for op=create. The server validates the path and runs it via bash."},
-          "script_args": {"type": "array", "items": {"type": "string", "maxLength": 2000}, "maxItems": 100, "description": "Arguments passed to script_path for op=create"},
-          "commands": {"type": "array", "items": {"type": "string"}, "maxItems": 20, "description": "Shell commands for op=create_batch"},
-          "reason": {"type": "string", "nullable": true, "description": "Reason recorded in metadata.json"},
-          "status": {"type": "string", "nullable": true, "enum": ["running", "completed", "failed", "stopped", "timeout"], "description": "Optional status filter for list/summarize"},
-          "limit": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100},
-          "tail_lines": {"type": "integer", "default": 80, "minimum": 1, "maximum": 1000},
-          "max_runtime_secs": {"type": "integer", "nullable": true, "minimum": 1, "maximum": 604800, "description": "Maximum runtime before timeout stop is attempted"}
+          "op": {
+            "type": "string",
+            "enum": [
+              "create",
+              "create_batch",
+              "check",
+              "list",
+              "status",
+              "log",
+              "stop",
+              "summarize"
+            ],
+            "description": "Job operation: create=launch async job (requires active goal); create_batch=launch multiple jobs; check=run configured suite as async job; status=get job status+elapsed_secs+oom_hint (use instead of ps/pgrep); log=get stdout/stderr tail with log_total_lines+next_cursor for incremental polling; stop=kill job; list=list jobs; summarize=Markdown summary with log tails."
+          },
+          "project": {
+            "type": "string",
+            "nullable": true,
+            "description": "Runtime-validated project name"
+          },
+          "goal_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Active goal id required for create/create_batch; optional filter for list/summarize"
+          },
+          "job_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Job id for status/log/stop"
+          },
+          "client_request_id": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 128,
+            "description": "Caller-supplied idempotency key for create/create_batch/check. Reuse it after a timeout to recover the created job via create/list/status/log/stop/summarize."
+          },
+          "suite": {
+            "type": "string",
+            "nullable": true,
+            "description": "Configured project check suite for op=check, for example fmt, test, build, e2e, or full"
+          },
+          "command": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 8000,
+            "description": "Shell command for op=create; provide either command or script_path, not both"
+          },
+          "script_path": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 512,
+            "description": "Project-relative script path for op=create. The server validates the path and runs it via bash."
+          },
+          "script_args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 2000
+            },
+            "maxItems": 100,
+            "description": "Arguments passed to script_path for op=create"
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 20,
+            "description": "Shell commands for op=create_batch"
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true,
+            "description": "Reason recorded in metadata.json"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "stopped",
+              "timeout"
+            ],
+            "description": "Optional status filter for list/summarize"
+          },
+          "limit": {
+            "type": "integer",
+            "default": 20,
+            "minimum": 1,
+            "maximum": 100
+          },
+          "tail_lines": {
+            "type": "integer",
+            "default": 80,
+            "minimum": 1,
+            "maximum": 1000
+          },
+          "max_runtime_secs": {
+            "type": "integer",
+            "nullable": true,
+            "minimum": 1,
+            "maximum": 604800,
+            "description": "Maximum runtime before timeout stop is attempted"
+          },
+          "since_line": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "For op=log: start reading stdout.log from this line number (1-based, inclusive). Omit or set to 0 to use tail-based reading (last tail_lines lines). Use next_cursor from the previous log response for incremental polling."
+          }
         },
-        "required": ["op"]
+        "required": [
+          "op"
+        ]
       },
       "JobInfo": {
         "type": "object",
         "properties": {
-          "job_id": {"type": "string"},
-          "client_request_id": {"type": "string", "nullable": true},
-          "project": {"type": "string"},
-          "goal_id": {"type": "string"},
-          "command": {"type": "string"},
-          "kind": {"type": "string", "nullable": true, "enum": ["command", "script", "check"]},
-          "suite": {"type": "string", "nullable": true},
-          "script_path": {"type": "string", "nullable": true},
-          "reason": {"type": "string", "nullable": true},
-          "status": {"type": "string", "enum": ["running", "completed", "failed", "stopped", "timeout"]},
-          "created_at": {"type": "integer"},
-          "started_at": {"type": "integer", "nullable": true},
-          "finished_at": {"type": "integer", "nullable": true},
-          "max_runtime_secs": {"type": "integer"},
-          "executor": {"type": "string", "enum": ["local", "ssh"]},
-          "pid": {"type": "integer", "nullable": true},
-          "exit_code": {"type": "integer", "nullable": true}
+          "job_id": {
+            "type": "string"
+          },
+          "client_request_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "project": {
+            "type": "string"
+          },
+          "goal_id": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true,
+            "enum": [
+              "command",
+              "script",
+              "check"
+            ]
+          },
+          "suite": {
+            "type": "string",
+            "nullable": true
+          },
+          "script_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "running",
+              "completed",
+              "failed",
+              "stopped",
+              "timeout"
+            ]
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "started_at": {
+            "type": "integer",
+            "nullable": true
+          },
+          "finished_at": {
+            "type": "integer",
+            "nullable": true
+          },
+          "max_runtime_secs": {
+            "type": "integer"
+          },
+          "executor": {
+            "type": "string",
+            "enum": [
+              "local",
+              "ssh"
+            ]
+          },
+          "pid": {
+            "type": "integer",
+            "nullable": true
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "elapsed_secs": {
+            "type": "integer",
+            "description": "Wall-clock seconds since the job started. Present for running and completed jobs. Null for pending or jobs where started_at is unknown."
+          },
+          "oom_hint": {
+            "type": "string",
+            "description": "OOM signal hint. Value 'possible_oom' if stderr tail contains known OOM patterns (Killed, CUDA out of memory, MemoryError, etc.). Null if no signal detected. Check this when a job fails unexpectedly."
+          }
         },
-        "required": ["job_id", "project", "goal_id", "command", "status", "created_at", "max_runtime_secs", "executor"]
+        "required": [
+          "job_id",
+          "project",
+          "goal_id",
+          "command",
+          "status",
+          "created_at",
+          "max_runtime_secs",
+          "executor"
+        ]
       },
       "JobOpResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "op": {"type": "string"},
-          "job_id": {"type": "string", "nullable": true},
-          "job_ids": {"type": "array", "items": {"type": "string"}},
-          "job": {"$ref": "#/components/schemas/JobInfo", "nullable": true},
-          "jobs": {"type": "array", "items": {"$ref": "#/components/schemas/JobInfo"}},
-          "stdout_tail": {"type": "string", "nullable": true},
-          "stderr_tail": {"type": "string", "nullable": true},
-          "summary_markdown": {"type": "string", "nullable": true},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "op": {
+            "type": "string"
+          },
+          "job_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "job_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "job": {
+            "$ref": "#/components/schemas/JobInfo",
+            "nullable": true
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/JobInfo"
+            }
+          },
+          "stdout_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "summary_markdown": {
+            "type": "string",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "log_total_lines": {
+            "type": "integer",
+            "description": "For op=log: total number of lines currently in stdout.log. Use this with since_line for incremental polling. Present only when op=log returns successfully."
+          },
+          "next_cursor": {
+            "type": "integer",
+            "description": "For op=log: the since_line value to use in the next incremental log request to read only new output. Equal to log_total_lines + 1. Null if no lines were read."
+          }
         },
-        "required": ["success", "op", "job_ids", "jobs"]
+        "required": [
+          "success",
+          "op",
+          "job_ids",
+          "jobs"
+        ]
       },
       "CommandResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "project": {"type": "string"},
-          "command": {"type": "string"},
-          "exit_code": {"type": "integer", "nullable": true},
-          "duration_ms": {"type": "integer"},
-          "stdout_tail": {"type": "string", "nullable": true},
-          "stderr_tail": {"type": "string", "nullable": true},
-          "truncated": {"type": "boolean"},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "project": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "stdout_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "project", "command", "duration_ms", "truncated"]
+        "required": [
+          "success",
+          "project",
+          "command",
+          "duration_ms",
+          "truncated"
+        ]
       },
       "CommandRequestResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "request_id": {"type": "string", "nullable": true},
-          "record": {"type": "object", "nullable": true, "description": "Audited command request record"},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "record": {
+            "type": "object",
+            "nullable": true,
+            "description": "Audited command request record"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success"]
+        "required": [
+          "success"
+        ]
       },
       "CommandRequestsListResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "records": {"type": "array", "items": {"type": "object"}},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "records"]
+        "required": [
+          "success",
+          "records"
+        ]
       },
       "CommandRequestBatchResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "records": {"type": "array", "items": {"type": "object"}},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "records": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "records"]
+        "required": [
+          "success",
+          "records"
+        ]
       },
       "ProjectCapabilities": {
         "type": "object",
         "properties": {
-          "edit": {"type": "boolean"},
-          "patch": {"type": "boolean"},
-          "artifact": {"type": "boolean"},
-          "git": {"type": "boolean"},
-          "checks": {"type": "boolean"},
-          "jobs": {"type": "boolean"},
-          "command_requests": {"type": "boolean"},
-          "raw_command_requests": {"type": "boolean"},
-          "configured_commands": {"type": "boolean"},
-          "reports": {"type": "boolean"}
+          "edit": {
+            "type": "boolean"
+          },
+          "patch": {
+            "type": "boolean"
+          },
+          "artifact": {
+            "type": "boolean"
+          },
+          "git": {
+            "type": "boolean"
+          },
+          "checks": {
+            "type": "boolean"
+          },
+          "jobs": {
+            "type": "boolean"
+          },
+          "command_requests": {
+            "type": "boolean"
+          },
+          "raw_command_requests": {
+            "type": "boolean"
+          },
+          "configured_commands": {
+            "type": "boolean"
+          },
+          "reports": {
+            "type": "boolean"
+          }
         },
-        "required": ["edit", "patch", "artifact", "git", "checks", "jobs", "command_requests", "raw_command_requests", "configured_commands", "reports"]
+        "required": [
+          "edit",
+          "patch",
+          "artifact",
+          "git",
+          "checks",
+          "jobs",
+          "command_requests",
+          "raw_command_requests",
+          "configured_commands",
+          "reports"
+        ]
       },
       "ProjectCapabilityInfo": {
         "type": "object",
         "properties": {
-          "name": {"type": "string"},
-          "executor": {"type": "string", "enum": ["local", "ssh"]},
-          "root": {"type": "string"},
-          "ssh_target": {"type": "string", "nullable": true},
-          "ssh_endpoints": {"type": "array", "items": {"type": "string"}, "description": "Ordered SSH endpoints used for fallback. Empty for local projects."},
-          "allowed_checks": {"type": "array", "items": {"type": "string"}},
-          "configured_checks": {"type": "array", "items": {"type": "string"}},
-          "commands": {"type": "array", "items": {"type": "string"}},
-          "default_apply_patch_backend": {"type": "string", "enum": ["builtin", "codex"], "description": "Effective project default patch backend when request.backend is omitted."},
-          "capabilities": {"$ref": "#/components/schemas/ProjectCapabilities"}
+          "name": {
+            "type": "string"
+          },
+          "executor": {
+            "type": "string",
+            "enum": [
+              "local",
+              "ssh"
+            ]
+          },
+          "root": {
+            "type": "string"
+          },
+          "ssh_target": {
+            "type": "string",
+            "nullable": true
+          },
+          "ssh_endpoints": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Ordered SSH endpoints used for fallback. Empty for local projects."
+          },
+          "allowed_checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "configured_checks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "default_apply_patch_backend": {
+            "type": "string",
+            "enum": [
+              "builtin",
+              "codex"
+            ],
+            "description": "Effective project default patch backend when request.backend is omitted."
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/ProjectCapabilities"
+          }
         },
-        "required": ["name", "executor", "root", "ssh_endpoints", "allowed_checks", "configured_checks", "commands", "default_apply_patch_backend", "capabilities"]
+        "required": [
+          "name",
+          "executor",
+          "root",
+          "ssh_endpoints",
+          "allowed_checks",
+          "configured_checks",
+          "commands",
+          "default_apply_patch_backend",
+          "capabilities"
+        ]
       },
       "InstanceInfo": {
         "type": "object",
         "properties": {
-          "service": {"type": "string"},
-          "api": {"type": "string"},
-          "schema": {"type": "string"},
-          "package_version": {"type": "string"},
-          "server_time": {"type": "integer"},
-          "pid": {"type": "integer"},
-          "hostname": {"type": "string", "nullable": true},
-          "data_dir": {"type": "string"},
-          "projects_config_path": {"type": "string"},
-          "public_url": {"type": "string", "nullable": true}
+          "service": {
+            "type": "string"
+          },
+          "api": {
+            "type": "string"
+          },
+          "schema": {
+            "type": "string"
+          },
+          "package_version": {
+            "type": "string"
+          },
+          "server_time": {
+            "type": "integer"
+          },
+          "pid": {
+            "type": "integer"
+          },
+          "hostname": {
+            "type": "string",
+            "nullable": true
+          },
+          "data_dir": {
+            "type": "string"
+          },
+          "projects_config_path": {
+            "type": "string"
+          },
+          "public_url": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["service", "api", "schema", "package_version", "server_time", "pid", "data_dir", "projects_config_path"]
+        "required": [
+          "service",
+          "api",
+          "schema",
+          "package_version",
+          "server_time",
+          "pid",
+          "data_dir",
+          "projects_config_path"
+        ]
       },
       "ProjectsResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "projects": {"type": "array", "items": {"$ref": "#/components/schemas/ProjectCapabilityInfo"}},
-          "project_names": {"type": "array", "items": {"type": "string"}},
-          "instance": {"$ref": "#/components/schemas/InstanceInfo"},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "projects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectCapabilityInfo"
+            }
+          },
+          "project_names": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "instance": {
+            "$ref": "#/components/schemas/InstanceInfo"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "projects", "project_names"]
+        "required": [
+          "success",
+          "projects",
+          "project_names"
+        ]
       },
-      
       "CheckRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "suite": {"type": "string", "enum": ["fmt", "test", "build", "e2e", "full"], "description": "Check suite to run"}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "suite": {
+            "type": "string",
+            "enum": [
+              "fmt",
+              "test",
+              "build",
+              "e2e",
+              "full"
+            ],
+            "description": "Check suite to run"
+          }
         },
-        "required": ["project", "suite"]
+        "required": [
+          "project",
+          "suite"
+        ]
       },
       "CheckResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "suite": {"type": "string", "nullable": true},
-          "exit_code": {"type": "integer", "nullable": true},
-          "duration_ms": {"type": "integer", "nullable": true},
-          "stdout_tail": {"type": "string", "nullable": true, "description": "Last part of stdout (max 50000 chars)"},
-          "stderr_tail": {"type": "string", "nullable": true, "description": "Last part of stderr (max 50000 chars)"},
-          "truncated": {"type": "boolean"},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "suite": {
+            "type": "string",
+            "nullable": true
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer",
+            "nullable": true
+          },
+          "stdout_tail": {
+            "type": "string",
+            "nullable": true,
+            "description": "Last part of stdout (max 50000 chars)"
+          },
+          "stderr_tail": {
+            "type": "string",
+            "nullable": true,
+            "description": "Last part of stderr (max 50000 chars)"
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success", "truncated"]
+        "required": [
+          "success",
+          "truncated"
+        ]
       },
       "ReportRequest": {
         "type": "object",
         "properties": {
-          "project": {"type": "string", "description": "Project name from whitelist"},
-          "status": {"type": "string", "enum": ["completed", "failed", "blocked"], "description": "Operation status"},
-          "title": {"type": "string", "description": "Report title"},
-          "summary": {"type": "string", "description": "Detailed summary"},
-          "channel": {"type": "string", "default": "omo", "description": "Channel to post message to"}
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "completed",
+              "failed",
+              "blocked"
+            ],
+            "description": "Operation status"
+          },
+          "title": {
+            "type": "string",
+            "description": "Report title"
+          },
+          "summary": {
+            "type": "string",
+            "description": "Detailed summary"
+          },
+          "channel": {
+            "type": "string",
+            "default": "omo",
+            "description": "Channel to post message to"
+          }
         },
-        "required": ["project", "status", "title", "summary"]
+        "required": [
+          "project",
+          "status",
+          "title",
+          "summary"
+        ]
       },
       "ReportResponse": {
         "type": "object",
         "properties": {
-          "success": {"type": "boolean"},
-          "report_id": {"type": "string", "nullable": true},
-          "message_id": {"type": "string", "nullable": true},
-          "path": {"type": "string", "nullable": true},
-          "error": {"type": "string", "nullable": true}
+          "success": {
+            "type": "boolean"
+          },
+          "report_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "message_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "path": {
+            "type": "string",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
         },
-        "required": ["success"]
+        "required": [
+          "success"
+        ]
       }
     }
   },
-  "security": [{"bearerAuth": []}],
+  "security": [
+    {
+      "bearerAuth": []
+    }
+  ],
   "paths": {
     "/api/health": {
       "get": {
         "operationId": "healthCheck",
         "summary": "Health check",
-        "tags": ["health"],
+        "tags": [
+          "health"
+        ],
         "security": [],
         "responses": {
-          "200": {"description": "Health status", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/HealthResponse"}}}}
+          "200": {
+            "description": "Health status",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -824,9 +2551,23 @@
       "get": {
         "operationId": "listChannels",
         "summary": "List all channels",
-        "tags": ["channels"],
+        "tags": [
+          "channels"
+        ],
         "responses": {
-          "200": {"description": "List of channels", "content": {"application/json": {"schema": {"type": "array", "items": {"$ref": "#/components/schemas/Channel"}}}}}
+          "200": {
+            "description": "List of channels",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Channel"
+                  }
+                }
+              }
+            }
+          }
         }
       }
     },
@@ -834,28 +2575,83 @@
       "get": {
         "operationId": "listMessages",
         "summary": "List messages",
-        "tags": ["messages"],
+        "tags": [
+          "messages"
+        ],
         "parameters": [
-          {"name": "channel", "in": "query", "schema": {"type": "string"}, "description": "Filter by channel"},
-          {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 50, "maximum": 200}, "description": "Max messages"},
-          {"name": "before", "in": "query", "schema": {"type": "integer"}, "description": "Before timestamp"}
+          {
+            "name": "channel",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filter by channel"
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 50,
+              "maximum": 200
+            },
+            "description": "Max messages"
+          },
+          {
+            "name": "before",
+            "in": "query",
+            "schema": {
+              "type": "integer"
+            },
+            "description": "Before timestamp"
+          }
         ],
         "responses": {
-          "200": {"description": "List of messages", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/MessageListResponse"}}}}
+          "200": {
+            "description": "List of messages",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MessageListResponse"
+                }
+              }
+            }
+          }
         }
       },
       "post": {
         "operationId": "createMessage",
         "summary": "Create a text message",
-        "tags": ["messages"],
+        "tags": [
+          "messages"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateMessageRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateMessageRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Created message", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}},
-          "400": {"description": "Bad request"},
-          "413": {"description": "Payload too large"}
+          "200": {
+            "description": "Created message",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "413": {
+            "description": "Payload too large"
+          }
         }
       }
     },
@@ -863,21 +2659,58 @@
       "get": {
         "operationId": "getMessage",
         "summary": "Get a message by ID",
-        "tags": ["messages"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "tags": [
+          "messages"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
-          "200": {"description": "Message details", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}},
-          "404": {"description": "Not found"}
+          "200": {
+            "description": "Message details",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Not found"
+          }
         }
       },
       "delete": {
         "operationId": "deleteMessage",
         "summary": "Delete a message",
-        "tags": ["messages"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "tags": [
+          "messages"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
-          "200": {"description": "Deleted"},
-          "404": {"description": "Not found"}
+          "200": {
+            "description": "Deleted"
+          },
+          "404": {
+            "description": "Not found"
+          }
         }
       }
     },
@@ -885,15 +2718,52 @@
       "post": {
         "operationId": "uploadFile",
         "summary": "Upload a file",
-        "tags": ["files"],
-        "parameters": [{"name": "channel", "in": "query", "schema": {"type": "string", "default": "files"}}],
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "default": "files"
+            }
+          }
+        ],
         "requestBody": {
           "required": true,
-          "content": {"multipart/form-data": {"schema": {"type": "object", "properties": {"file": {"type": "string", "format": "binary"}}, "required": ["file"]}}}
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "File uploaded", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Message"}}}},
-          "413": {"description": "File too large"}
+          "200": {
+            "description": "File uploaded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Message"
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "File too large"
+          }
         }
       }
     },
@@ -901,11 +2771,26 @@
       "get": {
         "operationId": "downloadFile",
         "summary": "Download a file",
-        "tags": ["files"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+        "tags": [
+          "files"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
         "responses": {
-          "200": {"description": "File content"},
-          "404": {"description": "Not found"}
+          "200": {
+            "description": "File content"
+          },
+          "404": {
+            "description": "Not found"
+          }
         }
       }
     },
@@ -914,9 +2799,34 @@
         "operationId": "runDesktopTaskOp",
         "summary": "Run desktop task queue operation",
         "description": "Aggregate endpoint for desktop tasks: create, list, get, claim_next, claim, or event.",
-        "tags": ["desktop"],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskOpRequest"}}}},
-        "responses": {"200": {"description": "Desktop task operation result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskOpResponse"}}}}, "400": {"description": "Bad request"}}
+        "tags": [
+          "desktop"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesktopTaskOpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Desktop task operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopTaskOpResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
+        }
       }
     },
     "/api/desktop/tasks": {
@@ -924,20 +2834,81 @@
         "operationId": "listDesktopTasks",
         "summary": "List desktop automation tasks",
         "description": "List queued desktop/computer-use tasks for a future worker. Filter by status to let workers poll pending tasks.",
-        "tags": ["desktop"],
-        "parameters": [
-          {"name": "status", "in": "query", "schema": {"type": "string", "enum": ["pending", "running", "completed", "failed", "needs_input", "cancelled"]}},
-          {"name": "limit", "in": "query", "schema": {"type": "integer", "default": 20, "minimum": 1, "maximum": 100}}
+        "tags": [
+          "desktop"
         ],
-        "responses": {"200": {"description": "Desktop tasks", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskListResponse"}}}}}
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "running",
+                "completed",
+                "failed",
+                "needs_input",
+                "cancelled"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "minimum": 1,
+              "maximum": 100
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Desktop tasks",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopTaskListResponse"
+                }
+              }
+            }
+          }
+        }
       },
       "post": {
         "operationId": "createDesktopTask",
         "summary": "Create a desktop automation task",
         "description": "Create a task that can later be claimed and executed by a desktop/computer-use worker.",
-        "tags": ["desktop"],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CreateDesktopTaskRequest"}}}},
-        "responses": {"200": {"description": "Created task", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "400": {"description": "Bad request"}}
+        "tags": [
+          "desktop"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateDesktopTaskRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Created task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopTaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
+        }
       }
     },
     "/api/desktop/tasks/{id}": {
@@ -945,9 +2916,34 @@
         "operationId": "getDesktopTaskDetail",
         "summary": "Get desktop task detail",
         "description": "Return one desktop task and its event timeline.",
-        "tags": ["desktop"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "responses": {"200": {"description": "Task detail", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskDetailResponse"}}}}, "404": {"description": "Task not found"}}
+        "tags": [
+          "desktop"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task detail",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopTaskDetailResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Task not found"
+          }
+        }
       }
     },
     "/api/desktop/tasks/claim_next": {
@@ -955,29 +2951,122 @@
         "operationId": "claimNextDesktopTask",
         "summary": "Claim the next pending desktop task",
         "description": "Atomically claim the highest-priority pending desktop task for a worker. Returns success=true and task=null when no pending task exists.",
-        "tags": ["desktop"],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskClaimRequest"}}}},
-        "responses": {"200": {"description": "Claimed task or empty queue", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "400": {"description": "Bad request"}}
+        "tags": [
+          "desktop"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesktopTaskClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Claimed task or empty queue",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopTaskResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
+        }
       }
     },
     "/api/desktop/tasks/{id}/claim": {
       "post": {
         "operationId": "claimDesktopTask",
         "summary": "Claim a pending desktop task",
-        "tags": ["desktop"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskClaimRequest"}}}},
-        "responses": {"200": {"description": "Claimed task", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "409": {"description": "Task is missing or not pending"}}
+        "tags": [
+          "desktop"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesktopTaskClaimRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Claimed task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopTaskResponse"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Task is missing or not pending"
+          }
+        }
       }
     },
     "/api/desktop/tasks/{id}/event": {
       "post": {
         "operationId": "appendDesktopTaskEvent",
         "summary": "Update a desktop task with worker event state",
-        "tags": ["desktop"],
-        "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
-        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskEventRequest"}}}},
-        "responses": {"200": {"description": "Updated task", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/DesktopTaskResponse"}}}}, "404": {"description": "Task not found"}}
+        "tags": [
+          "desktop"
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DesktopTaskEventRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated task",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DesktopTaskResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Task not found"
+          }
+        }
       }
     },
     "/api/codex/projects": {
@@ -985,10 +3074,23 @@
         "operationId": "listProjects",
         "summary": "List runtime project capabilities",
         "description": "Return configured projects and their runtime capabilities, including executor, checks, configured commands, and permission flags. Use this instead of relying on project enums in the OpenAPI schema.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "responses": {
-          "200": {"description": "Configured project capabilities", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ProjectsResponse"}}}},
-          "500": {"description": "Projects config not loaded"}
+          "200": {
+            "description": "Configured project capabilities",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectsResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "description": "Projects config not loaded"
+          }
         }
       }
     },
@@ -997,14 +3099,33 @@
         "operationId": "getProjectContext",
         "summary": "Read-only project observation",
         "description": "Observe a whitelisted project: get overview, file tree, search, read files, git status/diff.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Context response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextResponse"}}}},
-          "400": {"description": "Bad request"}
+          "200": {
+            "description": "Context response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
         }
       }
     },
@@ -1013,14 +3134,33 @@
         "operationId": "getProjectContextBatch",
         "summary": "Run multiple project context observations in one request",
         "description": "Batch up to 20 context observations for one whitelisted project. Useful for reducing GPT Action round trips; SSH projects also benefit from ControlMaster reuse.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextBatchRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContextBatchRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Batch context response", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ContextBatchResponse"}}}},
-          "400": {"description": "Bad request"}
+          "200": {
+            "description": "Batch context response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ContextBatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
         }
       }
     },
@@ -1029,15 +3169,36 @@
         "operationId": "applyProjectPatch",
         "summary": "Apply a patch",
         "description": "Apply a patch to a whitelisted project. backend=builtin uses git apply; backend=codex uses an external Codex apply_patch after path safety validation.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PatchRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PatchRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Patch result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/PatchResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Patch not allowed for this project"}
+          "200": {
+            "description": "Patch result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Patch not allowed for this project"
+          }
         }
       }
     },
@@ -1046,16 +3207,39 @@
         "operationId": "applyProjectEdit",
         "summary": "Apply safe structured file edits",
         "description": "Apply replace_text, replace_range, append_file, create_file, or guarded write_file edits to a whitelisted project. Returns a diff and supports dry_run.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EditRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/EditRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Edit result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/EditResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Edit not allowed or unsafe path"},
-          "413": {"description": "Edit payload too large"}
+          "200": {
+            "description": "Edit result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EditResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Edit not allowed or unsafe path"
+          },
+          "413": {
+            "description": "Edit payload too large"
+          }
         }
       }
     },
@@ -1064,16 +3248,39 @@
         "operationId": "saveProjectArtifact",
         "summary": "Save a generated or imported project artifact",
         "description": "Save a binary artifact to a whitelisted project from base64, a server-side upload/temp file, or an external HTTP/HTTPS URL. Internally reuses applyProjectEdit binary artifact safety checks.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ArtifactRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Artifact save result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ArtifactResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Artifact save not allowed or unsafe path"},
-          "413": {"description": "Artifact payload too large"}
+          "200": {
+            "description": "Artifact save result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ArtifactResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Artifact save not allowed or unsafe path"
+          },
+          "413": {
+            "description": "Artifact payload too large"
+          }
         }
       }
     },
@@ -1082,15 +3289,36 @@
         "operationId": "runProjectGit",
         "summary": "Run a controlled git operation",
         "description": "Run fixed git operations on a whitelisted project. Supports status, diff, log, add, commit, and commit_amend_no_edit. Does not expose arbitrary shell.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/GitRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Git result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/GitResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Git mutation not allowed"}
+          "200": {
+            "description": "Git result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GitResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Git mutation not allowed"
+          }
         }
       }
     },
@@ -1099,14 +3327,33 @@
         "operationId": "runProjectCommand",
         "summary": "Run a whitelisted project command",
         "description": "Run a command configured in projects.toml under [projects.<name>.commands]. The request only chooses a command id; it does not accept arbitrary shell commands.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Command result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandResponse"}}}},
-          "400": {"description": "Bad request or unknown command"}
+          "200": {
+            "description": "Command result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or unknown command"
+          }
         }
       }
     },
@@ -1115,15 +3362,36 @@
         "operationId": "createCommandRequest",
         "summary": "Create an auditable command request",
         "description": "Create a pending request for a configured project command. The command is not executed until approved via command_approve. Requires allow_command_requests=true for the project.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestCreate"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequestCreate"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Command request created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Command requests disabled"}
+          "200": {
+            "description": "Command request created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Command requests disabled"
+          }
         }
       }
     },
@@ -1132,16 +3400,39 @@
         "operationId": "runCommandRequestOp",
         "summary": "Run an aggregated command request operation",
         "description": "Single aggregated endpoint for command request workflow operations. Use op=list/create/create_raw/create_batch/approve/approve_batch/reject/reject_batch to reduce GPT Action count while preserving audit and approval semantics.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestOpRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequestOpRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Command request operation result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestOpResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Operation disabled"},
-          "404": {"description": "Request not found"}
+          "200": {
+            "description": "Command request operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandRequestOpResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Operation disabled"
+          },
+          "404": {
+            "description": "Request not found"
+          }
         }
       }
     },
@@ -1150,15 +3441,36 @@
         "operationId": "createRawCommandRequest",
         "summary": "Create an auditable raw command request",
         "description": "Create a pending request for an exact single-line command. Requires allow_raw_command_requests=true. The command is not executed until approved, is audited, expires like other command requests, and is rejected if it contains high-risk tokens.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/RawCommandRequestCreate"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RawCommandRequestCreate"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Raw command request created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
-          "400": {"description": "Bad request or blocked command"},
-          "403": {"description": "Raw command requests disabled"}
+          "200": {
+            "description": "Raw command request created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or blocked command"
+          },
+          "403": {
+            "description": "Raw command requests disabled"
+          }
         }
       }
     },
@@ -1167,14 +3479,33 @@
         "operationId": "listCommandRequests",
         "summary": "List audited command requests",
         "description": "List command request audit records, optionally filtered by project and status.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestsListRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequestsListRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Command request records", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestsListResponse"}}}},
-          "400": {"description": "Bad request"}
+          "200": {
+            "description": "Command request records",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandRequestsListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
         }
       }
     },
@@ -1183,15 +3514,36 @@
         "operationId": "createCommandRequestBatch",
         "summary": "Create multiple auditable command requests",
         "description": "Create 1-20 pending command requests for one project in a single call. Commands are not executed until individually approved.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestBatchCreate"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRequestBatchCreate"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Command requests created", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestBatchResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Command requests disabled"}
+          "200": {
+            "description": "Command requests created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandRequestBatchResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Command requests disabled"
+          }
         }
       }
     },
@@ -1200,16 +3552,39 @@
         "operationId": "approveCommandRequest",
         "summary": "Approve and execute a pending command request",
         "description": "Atomically claim a pending command request, execute the stored command_text snapshot, and record stdout/stderr/exit status in SQLite audit records.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandApproveRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandApproveRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Command request execution result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Command requests disabled"},
-          "404": {"description": "Request not found"}
+          "200": {
+            "description": "Command request execution result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Command requests disabled"
+          },
+          "404": {
+            "description": "Request not found"
+          }
         }
       }
     },
@@ -1218,15 +3593,36 @@
         "operationId": "rejectCommandRequest",
         "summary": "Reject a pending command request",
         "description": "Reject a pending command request and store the rejection reason in the audit record.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRejectRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CommandRejectRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Command request rejected", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CommandRequestResponse"}}}},
-          "400": {"description": "Bad request"},
-          "404": {"description": "Request not found"}
+          "200": {
+            "description": "Command request rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CommandRequestResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "404": {
+            "description": "Request not found"
+          }
         }
       }
     },
@@ -1234,16 +3630,37 @@
       "post": {
         "operationId": "runJobOp",
         "summary": "Run or manage trusted active-goal async shell jobs",
-        "description": "Active-goal scoped async shell jobs for trusted experiment/training/reproduction workflows. create/create_batch require an active, unexpired goal for the same project and audit all commands under .codex/jobs/<job_id>.",
-        "tags": ["codex"],
+        "description": "Active-goal scoped async shell jobs for trusted experiment/training/reproduction workflows. Preferred interface for long-running checks, experiments, training/eval jobs, multiline scripts, or any command that may exceed HTTP/Action/nginx timeouts. Use client_request_id for idempotent retry and 504 recovery. create/create_batch require an active, unexpired goal for the same project and audit all commands under .codex/jobs/. For op=log, use since_line (from prev next_cursor) for incremental polling; response includes log_total_lines and next_cursor. For op=status, response JobInfo includes elapsed_secs and oom_hint.",
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JobOpRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/JobOpRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Job operation result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/JobOpResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Goal not active or project mismatch"}
+          "200": {
+            "description": "Job operation result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/JobOpResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Goal not active or project mismatch"
+          }
         }
       }
     },
@@ -1251,16 +3668,37 @@
       "post": {
         "operationId": "runProjectCheck",
         "summary": "Run a project check suite",
-        "description": "Run a pre-configured check command (fmt, test, build, e2e, full) on a whitelisted project.",
-        "tags": ["codex"],
+        "description": "Run a pre-configured short check command (fmt, quick test, build, short e2e) on a whitelisted project. Use only for checks expected to finish quickly. For long checks or anything that may exceed 30 seconds, use runJobOp with op='check' instead.",
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CheckRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CheckRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Check result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/CheckResponse"}}}},
-          "400": {"description": "Bad request"},
-          "403": {"description": "Check suite not allowed"}
+          "200": {
+            "description": "Check result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CheckResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "403": {
+            "description": "Check suite not allowed"
+          }
         }
       }
     },
@@ -1269,14 +3707,33 @@
         "operationId": "writeProjectReport",
         "summary": "Write an operation report",
         "description": "Write a GPT/Codex operation report to local storage and post a summary message to a channel.",
-        "tags": ["codex"],
+        "tags": [
+          "codex"
+        ],
         "requestBody": {
           "required": true,
-          "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReportRequest"}}}
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportRequest"
+              }
+            }
+          }
         },
         "responses": {
-          "200": {"description": "Report result", "content": {"application/json": {"schema": {"$ref": "#/components/schemas/ReportResponse"}}}},
-          "400": {"description": "Bad request"}
+          "200": {
+            "description": "Report result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ReportResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request"
+          }
         }
       }
     }

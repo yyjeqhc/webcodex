@@ -1,9 +1,9 @@
 use super::edit::edit_error;
+use super::edit::finalize_edit_response;
 use super::shell::shell_escape;
 use super::ssh::{build_ssh_command, build_ssh_targets, is_pre_start_ssh_connect_failure};
-use super::truncate_string;
 use super::types::{EditRequest, EditResponse};
-use super::{CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN};
+use super::CHECK_TIMEOUT_SECS;
 use crate::projects::{ProjectConfig, SshConfig};
 use std::time::Instant;
 
@@ -668,18 +668,13 @@ pub(super) fn ssh_apply_project_edit(
                 ))
             }
         };
-        let (truncated_diff, diff_truncated) = truncate_string(resp.diff, MAX_OUTPUT_LEN);
-        resp.diff = truncated_diff;
-        if diff_truncated {
-            resp.warnings.push("Remote diff was truncated".to_string());
-        }
         if !stderr.is_empty() {
             resp.warnings.push(format!(
                 "Remote stderr: {}",
                 stderr.chars().take(500).collect::<String>()
             ));
         }
-        return resp;
+        return finalize_edit_response(resp, body);
     }
 
     edit_error("No SSH endpoints configured".to_string())

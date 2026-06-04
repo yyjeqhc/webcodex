@@ -1332,6 +1332,7 @@ mod tests {
             project: "test".to_string(),
             reason: None,
             dry_run: false,
+            response_mode: None,
             edits: vec![EditOperation::ReplaceText {
                 path: "src/main.rs".to_string(),
                 old_text: user_input.to_string(),

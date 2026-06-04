@@ -164,6 +164,19 @@ pub async fn codex_openapi_json(res: &mut Response) {
     res.render(Json(spec));
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn apply_project_edit_description_stays_under_300_chars() {
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        let description = spec["paths"]["/api/codex/edit"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(description.len() <= 300, "{}", description.len());
+    }
+}
+
 #[handler]
 pub async fn codex_openapi_compact_json(res: &mut Response) {
     let mut spec =

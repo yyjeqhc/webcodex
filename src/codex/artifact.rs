@@ -307,6 +307,7 @@ pub(super) fn plan_artifact_request(
             project: body.project.clone(),
             reason: body.reason.clone(),
             dry_run: false,
+            response_mode: None,
             edits,
         },
         saved_path: body.path.clone(),

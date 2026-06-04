@@ -2,7 +2,8 @@ use super::apply_edit_request_with_metrics;
 use super::get_projects;
 use super::security::is_sensitive_path;
 use super::source::read_binary_from_url;
-use super::types::{EditOperation, EditRequest, EditResponse};
+use super::truncate_string;
+use super::types::{EditOperation, EditRequest, EditResponse, EditResponseMode};
 use crate::projects::{canonicalize_and_verify, ProjectConfig};
 use base64::Engine;
 use salvo::prelude::*;
@@ -12,15 +13,46 @@ use std::path::{Path, PathBuf};
 const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
 const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
+const MAX_EDIT_DIFF_LEN: usize = 40_000;
 
 pub(super) fn edit_error(error: String) -> EditResponse {
     EditResponse {
         success: false,
         changed_files: Vec::new(),
         diff: String::new(),
+        diff_truncated: false,
         warnings: Vec::new(),
         error: Some(error),
     }
+}
+
+fn effective_response_mode(body: &EditRequest) -> EditResponseMode {
+    body.response_mode.unwrap_or(EditResponseMode::Full)
+}
+
+pub(super) fn finalize_edit_response(
+    mut response: EditResponse,
+    body: &EditRequest,
+) -> EditResponse {
+    let (truncated_diff, diff_truncated) = truncate_string(response.diff, MAX_EDIT_DIFF_LEN);
+    response.diff = truncated_diff;
+    response.diff_truncated = diff_truncated;
+    if diff_truncated {
+        response
+            .warnings
+            .push("diff truncated; use git_diff or read_file to inspect".to_string());
+    }
+    match effective_response_mode(body) {
+        EditResponseMode::Full => {}
+        EditResponseMode::Summary => {
+            response.diff.clear();
+        }
+        EditResponseMode::Minimal => {
+            response.diff.clear();
+            response.warnings.clear();
+        }
+    }
+    response
 }
 
 pub(super) fn edit_path(edit: &EditOperation) -> &str {
@@ -591,13 +623,17 @@ pub(super) fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest)
             }
         }
     }
-    EditResponse {
-        success: true,
-        changed_files,
-        diff,
-        warnings: Vec::new(),
-        error: None,
-    }
+    finalize_edit_response(
+        EditResponse {
+            success: true,
+            changed_files,
+            diff,
+            diff_truncated: false,
+            warnings: Vec::new(),
+            error: None,
+        },
+        body,
+    )
 }
 
 pub(super) fn decode_binary_artifact(
@@ -630,6 +666,73 @@ pub(super) fn validate_binary_size(bytes: Vec<u8>, label: &str) -> Result<Vec<u8
         ));
     }
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn empty_request(mode: Option<EditResponseMode>) -> EditRequest {
+        EditRequest {
+            project: "demo".to_string(),
+            reason: None,
+            dry_run: false,
+            response_mode: mode,
+            edits: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn finalize_edit_response_summary_omits_diff() {
+        let resp = finalize_edit_response(
+            EditResponse {
+                success: true,
+                changed_files: vec!["a.txt".to_string()],
+                diff: "hello".to_string(),
+                diff_truncated: false,
+                warnings: vec!["note".to_string()],
+                error: None,
+            },
+            &empty_request(Some(EditResponseMode::Summary)),
+        );
+        assert!(resp.diff.is_empty());
+        assert_eq!(resp.warnings, vec!["note".to_string()]);
+    }
+
+    #[test]
+    fn finalize_edit_response_minimal_omits_diff_and_warnings() {
+        let resp = finalize_edit_response(
+            EditResponse {
+                success: true,
+                changed_files: vec!["a.txt".to_string()],
+                diff: "hello".to_string(),
+                diff_truncated: false,
+                warnings: vec!["note".to_string()],
+                error: None,
+            },
+            &empty_request(Some(EditResponseMode::Minimal)),
+        );
+        assert!(resp.diff.is_empty());
+        assert!(resp.warnings.is_empty());
+    }
+
+    #[test]
+    fn finalize_edit_response_full_truncates_large_diff() {
+        let resp = finalize_edit_response(
+            EditResponse {
+                success: true,
+                changed_files: vec!["a.txt".to_string()],
+                diff: "x".repeat(MAX_EDIT_DIFF_LEN + 100),
+                diff_truncated: false,
+                warnings: Vec::new(),
+                error: None,
+            },
+            &empty_request(Some(EditResponseMode::Full)),
+        );
+        assert!(resp.diff_truncated);
+        assert!(resp.diff.len() <= MAX_EDIT_DIFF_LEN);
+        assert!(resp.warnings.iter().any(|w| w.contains("diff truncated")));
+    }
 }
 
 pub(super) fn allowed_upload_roots(project_root: &Path) -> Vec<PathBuf> {

@@ -511,7 +511,17 @@ pub struct EditRequest {
     pub reason: Option<String>,
     #[serde(default)]
     pub dry_run: bool,
+    #[serde(default)]
+    pub response_mode: Option<EditResponseMode>,
     pub edits: Vec<EditOperation>,
+}
+
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EditResponseMode {
+    Full,
+    Summary,
+    Minimal,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -590,6 +600,8 @@ pub struct EditResponse {
     pub success: bool,
     pub changed_files: Vec<String>,
     pub diff: String,
+    #[serde(default)]
+    pub diff_truncated: bool,
     pub warnings: Vec<String>,
     pub error: Option<String>,
 }

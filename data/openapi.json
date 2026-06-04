@@ -1132,6 +1132,15 @@
             "default": false,
             "description": "If true, returns a diff but does not write files"
           },
+          "response_mode": {
+            "type": "string",
+            "enum": [
+              "full",
+              "summary",
+              "minimal"
+            ],
+            "description": "Response detail. Use summary for larger edits to reduce timeout risk."
+          },
           "edits": {
             "type": "array",
             "items": {
@@ -1217,6 +1226,10 @@
           "diff": {
             "type": "string"
           },
+          "diff_truncated": {
+            "type": "boolean",
+            "description": "True when diff output was truncated."
+          },
           "warnings": {
             "type": "array",
             "items": {
@@ -1232,6 +1245,7 @@
           "success",
           "changed_files",
           "diff",
+          "diff_truncated",
           "warnings"
         ]
       },
@@ -3206,7 +3220,7 @@
       "post": {
         "operationId": "applyProjectEdit",
         "summary": "Apply safe structured file edits",
-        "description": "Apply replace_text, replace_range, append_file, create_file, or guarded write_file edits to a whitelisted project. Returns a diff and supports dry_run.",
+        "description": "Apply structured file edits. Prefer response_mode=summary for larger edits. If this times out, do not retry immediately; first check git_status or read the target file to confirm whether the edit was applied.",
         "tags": [
           "codex"
         ],

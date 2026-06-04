@@ -390,6 +390,27 @@ pub struct ContextBatchResponse {
     pub ssh_calls: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// True when the request was rejected by preflight checks before execution.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight_rejected: Option<bool>,
+    /// Estimated total character count from preflight (present when rejected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub estimated_chars: Option<usize>,
+    /// Server-enforced maximum allowed characters (present when rejected).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_allowed_chars: Option<usize>,
+    /// Server-enforced maximum allowed batch items (present when rejected or warned).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_allowed_items: Option<usize>,
+    /// Whether the project is SSH (present when rejected or warned).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_is_ssh: Option<bool>,
+    /// Human-readable suggestion for how to split the request (present when rejected).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+    /// Operational warnings (e.g., batch size hints).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub warnings: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -748,7 +769,7 @@ pub struct ProjectsResponse {
 
 #[cfg(test)]
 mod tests {
-    use super::{EditResponse, JobOpRequest, JobOpResponse};
+    use super::{ContextBatchResponse, EditResponse, JobOpRequest, JobOpResponse};
 
     #[test]
     fn edit_response_deserializes_without_diff_truncated_field() {
@@ -903,5 +924,53 @@ mod tests {
             !serialized.contains("warnings"),
             "empty warnings should be omitted from serialized JSON"
         );
+    }
+
+    #[test]
+    fn context_batch_response_omits_new_fields_when_default() {
+        // Verify that a ContextBatchResponse without preflight info omits those fields
+        let response = ContextBatchResponse {
+            success: true,
+            project: "test".to_string(),
+            results: Vec::new(),
+            duration_ms: 100,
+            ssh_calls: 0,
+            error: None,
+            preflight_rejected: None,
+            estimated_chars: None,
+            max_allowed_chars: None,
+            max_allowed_items: None,
+            project_is_ssh: None,
+            suggestion: None,
+            warnings: Vec::new(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(!json.contains("preflight_rejected"));
+        assert!(!json.contains("estimated_chars"));
+        assert!(!json.contains("suggestion"));
+        assert!(!json.contains("warnings"));
+    }
+
+    #[test]
+    fn context_batch_response_includes_preflight_fields_when_rejected() {
+        let response = ContextBatchResponse {
+            success: false,
+            project: "test".to_string(),
+            results: Vec::new(),
+            duration_ms: 0,
+            ssh_calls: 0,
+            error: Some("too large".to_string()),
+            preflight_rejected: Some(true),
+            estimated_chars: Some(150_000),
+            max_allowed_chars: Some(120_000),
+            max_allowed_items: Some(8),
+            project_is_ssh: Some(true),
+            suggestion: Some("Split into smaller batches.".to_string()),
+            warnings: Vec::new(),
+        };
+        let json = serde_json::to_string(&response).unwrap();
+        assert!(json.contains("\"preflight_rejected\":true"));
+        assert!(json.contains("\"estimated_chars\":150000"));
+        assert!(json.contains("\"suggestion\":\"Split into smaller batches.\""));
     }
 }

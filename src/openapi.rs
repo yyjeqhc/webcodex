@@ -69,6 +69,21 @@ fn apply_job_recovery_guidance(spec: &mut serde_json::Value) {
     }
 }
 
+fn apply_context_batch_guidance(spec: &mut serde_json::Value) {
+    // Ensure context_batch endpoint description includes batch-size guidance.
+    // The static openapi.json already has the full description; this is a fallback
+    // in case the static schema is missing it.
+    let endpoint = &mut spec["paths"]["/api/codex/context_batch"]["post"]["description"];
+    if endpoint
+        .as_str()
+        .map_or(true, |s| !s.contains("preflight_rejected"))
+    {
+        *endpoint = serde_json::json!(
+            "Batch context observations for one project. For SSH projects or large reads, keep batches small: at most 8 items for SSH, max_total_chars <=80000. If rejected as too large (preflight_rejected=true), split by file/section instead of retrying the same request. git_diff and agent_context are heavy; avoid mixing many read_file items with them."
+        );
+    }
+}
+
 #[handler]
 pub async fn codex_openapi_json(res: &mut Response) {
     let mut spec =
@@ -183,6 +198,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
     );
     apply_edit_timeout_guidance(&mut spec);
     apply_job_recovery_guidance(&mut spec);
+    apply_context_batch_guidance(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -219,6 +235,68 @@ mod tests {
         assert!(description.contains("check git_status"));
         assert!(response_mode_description.contains("multi-file edits"));
         assert!(response_mode_description.contains("use summary"));
+    }
+
+    #[test]
+    fn context_batch_description_mentions_split_and_ssh() {
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        let description = spec["paths"]["/api/codex/context_batch"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            description.contains("split") || description.contains("Split"),
+            "context_batch description should mention split: {}",
+            description
+        );
+        assert!(
+            description.contains("SSH"),
+            "context_batch description should mention SSH: {}",
+            description
+        );
+        assert!(
+            description.contains("preflight_rejected"),
+            "context_batch description should mention preflight_rejected: {}",
+            description
+        );
+    }
+
+    #[test]
+    fn context_batch_max_total_chars_description_mentions_limit() {
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        let description = spec["components"]["schemas"]["ContextBatchRequest"]["properties"]
+            ["max_total_chars"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            description.contains("80000"),
+            "max_total_chars description should mention 80000: {}",
+            description
+        );
+    }
+
+    #[test]
+    fn context_batch_response_has_preflight_fields() {
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        let props = &spec["components"]["schemas"]["ContextBatchResponse"]["properties"];
+        assert!(
+            !props["preflight_rejected"].is_null(),
+            "ContextBatchResponse should have preflight_rejected"
+        );
+        assert!(
+            !props["estimated_chars"].is_null(),
+            "ContextBatchResponse should have estimated_chars"
+        );
+        assert!(
+            !props["suggestion"].is_null(),
+            "ContextBatchResponse should have suggestion"
+        );
+        assert!(
+            !props["warnings"].is_null(),
+            "ContextBatchResponse should have warnings"
+        );
     }
 }
 
@@ -313,6 +391,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
     );
     apply_edit_timeout_guidance(&mut spec);
     apply_job_recovery_guidance(&mut spec);
+    apply_context_batch_guidance(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));

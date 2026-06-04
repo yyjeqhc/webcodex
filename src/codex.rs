@@ -1613,4 +1613,217 @@ mod ssh_command_tests {
         assert!(args.contains(&"root@example".to_string()));
         assert!(!args.iter().any(|arg| arg == "sh" || arg == "-c"));
     }
+
+    // --- Context batch preflight tests ---
+
+    fn make_batch_request(
+        items: Vec<ContextBatchItem>,
+        max_total_chars: usize,
+    ) -> ContextBatchRequest {
+        ContextBatchRequest {
+            project: "test".to_string(),
+            requests: items,
+            max_total_chars,
+        }
+    }
+
+    #[test]
+    fn preflight_local_small_batch_passes() {
+        let req = make_batch_request(
+            vec![
+                ContextBatchItem {
+                    mode: ContextMode::Overview,
+                    path: None,
+                    query: None,
+                    start_line: 1,
+                    limit: 200,
+                    max_depth: default_tree_max_depth(),
+                },
+                ContextBatchItem {
+                    mode: ContextMode::ReadFile,
+                    path: Some("README.md".to_string()),
+                    query: None,
+                    start_line: 1,
+                    limit: 50,
+                    max_depth: default_tree_max_depth(),
+                },
+            ],
+            60_000,
+        );
+        let result = context::preflight_context_batch(&req, false, "test");
+        assert!(result.is_ok(), "Small local batch should pass preflight");
+    }
+
+    #[test]
+    fn preflight_rejects_max_total_chars_over_hard_limit() {
+        let req = make_batch_request(
+            vec![ContextBatchItem {
+                mode: ContextMode::Overview,
+                path: None,
+                query: None,
+                start_line: 1,
+                limit: 200,
+                max_depth: default_tree_max_depth(),
+            }],
+            200_000, // exceeds PREFLIGHT_MAX_TOTAL_CHARS (120_000)
+        );
+        let result = context::preflight_context_batch(&req, false, "test");
+        assert!(
+            result.is_err(),
+            "Should reject max_total_chars over hard limit"
+        );
+        let resp = result.unwrap_err();
+        assert!(!resp.success);
+        assert_eq!(resp.preflight_rejected, Some(true));
+        assert!(resp.error.as_ref().unwrap().contains("too large"));
+        assert!(resp.suggestion.is_some());
+        assert!(resp.max_allowed_chars.is_some());
+    }
+
+    #[test]
+    fn preflight_ssh_rejects_too_many_items() {
+        let items: Vec<ContextBatchItem> = (0..10)
+            .map(|_| ContextBatchItem {
+                mode: ContextMode::ReadFile,
+                path: Some("file.txt".to_string()),
+                query: None,
+                start_line: 1,
+                limit: 50,
+                max_depth: default_tree_max_depth(),
+            })
+            .collect();
+        let req = make_batch_request(items, 60_000);
+        let result = context::preflight_context_batch(&req, true, "test");
+        assert!(result.is_err(), "Should reject SSH batch with >8 items");
+        let resp = result.unwrap_err();
+        assert!(!resp.success);
+        assert_eq!(resp.preflight_rejected, Some(true));
+        assert_eq!(resp.project_is_ssh, Some(true));
+        assert!(resp.max_allowed_items.is_some());
+        assert!(resp.suggestion.as_ref().unwrap().contains("SSH"));
+    }
+
+    #[test]
+    fn preflight_ssh_small_batch_passes() {
+        let items: Vec<ContextBatchItem> = (0..6)
+            .map(|_| ContextBatchItem {
+                mode: ContextMode::ReadFile,
+                path: Some("file.txt".to_string()),
+                query: None,
+                start_line: 1,
+                limit: 50,
+                max_depth: default_tree_max_depth(),
+            })
+            .collect();
+        let req = make_batch_request(items, 60_000);
+        let result = context::preflight_context_batch(&req, true, "test");
+        assert!(
+            result.is_ok(),
+            "SSH batch with 6 items should pass preflight"
+        );
+    }
+
+    #[test]
+    fn preflight_rejects_large_read_file_limit_on_ssh() {
+        let req = make_batch_request(
+            vec![ContextBatchItem {
+                mode: ContextMode::ReadFile,
+                path: Some("big.rs".to_string()),
+                query: None,
+                start_line: 1,
+                limit: 800, // exceeds PREFLIGHT_MAX_READ_FILE_LIMIT (400)
+                max_depth: default_tree_max_depth(),
+            }],
+            60_000,
+        );
+        let result = context::preflight_context_batch(&req, true, "test");
+        assert!(
+            result.is_err(),
+            "Should reject SSH read_file with limit > 400"
+        );
+        let resp = result.unwrap_err();
+        assert!(resp.error.as_ref().unwrap().contains("read_file limit"));
+    }
+
+    #[test]
+    fn preflight_rejects_git_diff_plus_many_reads() {
+        // git_diff estimates 40k, 5 read_file(limit=400) each estimates 48k = 240k total
+        let mut items = vec![ContextBatchItem {
+            mode: ContextMode::GitDiff,
+            path: None,
+            query: None,
+            start_line: 1,
+            limit: 200,
+            max_depth: default_tree_max_depth(),
+        }];
+        for _ in 0..5 {
+            items.push(ContextBatchItem {
+                mode: ContextMode::ReadFile,
+                path: Some("file.rs".to_string()),
+                query: None,
+                start_line: 1,
+                limit: 400,
+                max_depth: default_tree_max_depth(),
+            });
+        }
+        // max_total_chars = 60k but estimate ≈ 40k + 5*48k = 280k → 3x budget
+        let req = make_batch_request(items, 60_000);
+        let result = context::preflight_context_batch(&req, false, "test");
+        assert!(
+            result.is_err(),
+            "Should reject git_diff + many read_file as too large"
+        );
+        let resp = result.unwrap_err();
+        assert!(resp.estimated_chars.is_some());
+        assert!(resp.suggestion.is_some());
+        assert!(resp.suggestion.as_ref().unwrap().contains("Split"));
+    }
+
+    #[test]
+    fn preflight_rejection_contains_suggestion() {
+        let req = make_batch_request(
+            vec![ContextBatchItem {
+                mode: ContextMode::Overview,
+                path: None,
+                query: None,
+                start_line: 1,
+                limit: 200,
+                max_depth: default_tree_max_depth(),
+            }],
+            200_000,
+        );
+        let result = context::preflight_context_batch(&req, true, "test");
+        let resp = result.unwrap_err();
+        assert!(resp.suggestion.is_some());
+        assert!(!resp.suggestion.as_ref().unwrap().is_empty());
+        assert_eq!(resp.preflight_rejected, Some(true));
+        assert!(resp.estimated_chars.is_some());
+        assert!(resp.max_allowed_chars.is_some());
+        assert_eq!(resp.project_is_ssh, Some(true));
+    }
+
+    #[test]
+    fn preflight_local_large_batch_warns() {
+        // 13 items on local → should get a warning but still pass
+        let items: Vec<ContextBatchItem> = (0..13)
+            .map(|_| ContextBatchItem {
+                mode: ContextMode::ReadFile,
+                path: Some("f.txt".to_string()),
+                query: None,
+                start_line: 1,
+                limit: 50,
+                max_depth: default_tree_max_depth(),
+            })
+            .collect();
+        let req = make_batch_request(items, 120_000);
+        let result = context::preflight_context_batch(&req, false, "test");
+        assert!(result.is_ok(), "Local 13 items should pass (not SSH)");
+        let warnings = result.unwrap();
+        assert!(!warnings.is_empty(), "Should have warning about batch size");
+        assert!(
+            warnings[0].contains("splitting")
+                || warnings[0].contains("Splitting")
+                || warnings[0].contains("batches")
+        );
+    }
 }

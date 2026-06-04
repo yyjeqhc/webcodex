@@ -593,13 +593,15 @@
           },
           "limit": {
             "type": "integer",
-            "default": 200
+            "default": 200,
+            "description": "Max lines/items to return. For read_file on SSH projects, keep <=400 to avoid timeouts."
           },
           "max_depth": {
             "type": "integer",
             "default": 4,
             "minimum": 1,
-            "maximum": 8
+            "maximum": 8,
+            "description": "Tree depth limit. Avoid >5 for SSH projects."
           }
         },
         "required": [
@@ -625,8 +627,8 @@
             "type": "integer",
             "default": 60000,
             "minimum": 4000,
-            "maximum": 200000,
-            "description": "Best-effort total response character budget across all batch results"
+            "maximum": 120000,
+            "description": "Best-effort total response character budget across all batch results. Recommended <=80000; server hard limit 120000. Larger values risk timeouts especially on SSH projects."
           }
         },
         "required": [
@@ -658,6 +660,43 @@
           "error": {
             "type": "string",
             "nullable": true
+          },
+          "preflight_rejected": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True when the request was rejected by preflight checks before execution."
+          },
+          "estimated_chars": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Estimated total character count from preflight (present when rejected)."
+          },
+          "max_allowed_chars": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Server-enforced maximum allowed characters (present when rejected)."
+          },
+          "max_allowed_items": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Server-enforced maximum allowed batch items (present when rejected or warned)."
+          },
+          "project_is_ssh": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "Whether the project is SSH (present when rejected or warned)."
+          },
+          "suggestion": {
+            "type": "string",
+            "nullable": true,
+            "description": "Human-readable suggestion for how to split the request (present when rejected)."
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Operational warnings (e.g., batch size hints)."
           }
         },
         "required": [
@@ -3170,7 +3209,7 @@
       "post": {
         "operationId": "getProjectContextBatch",
         "summary": "Run multiple project context observations in one request",
-        "description": "Batch up to 20 context observations for one whitelisted project. Useful for reducing GPT Action round trips; SSH projects also benefit from ControlMaster reuse.",
+        "description": "Batch context observations for one project. For SSH projects or large reads, keep batches small: at most 8 items for SSH, max_total_chars <=80000. If rejected as too large (preflight_rejected=true), split by file/section instead of retrying the same request. git_diff and agent_context are heavy; avoid mixing many read_file items with them.",
         "tags": [
           "codex"
         ],

@@ -29,6 +29,17 @@ pub(super) const MAX_TREE_DEPTH: usize = 8;
 pub(super) const MAX_READ_FILE_LIMIT: usize = 2_000;
 const CONTEXT_MAX_OUTPUT_LEN: usize = 50_000;
 
+/// Server hard limit for max_total_chars — requests above this are rejected by preflight.
+const PREFLIGHT_MAX_TOTAL_CHARS: usize = 120_000;
+/// Recommended max_total_chars for compact/GPT usage.
+const PREFLIGHT_RECOMMENDED_MAX_CHARS: usize = 80_000;
+/// Max batch items for local projects before warning.
+const PREFLIGHT_LOCAL_MAX_ITEMS: usize = 12;
+/// Hard max batch items for SSH projects — requests above this are rejected.
+const PREFLIGHT_SSH_MAX_ITEMS: usize = 8;
+/// Max read_file limit before preflight rejection.
+const PREFLIGHT_MAX_READ_FILE_LIMIT: usize = 400;
+
 pub(super) fn truncate_context_line(line: &str) -> (String, bool) {
     if line.len() <= MAX_CONTEXT_LINE_LEN {
         return (line.to_string(), false);
@@ -512,6 +523,191 @@ pub(super) fn enforce_context_batch_total_limit(
             *items = kept;
         }
     }
+}
+
+/// Lightweight cost estimate for a context batch request.
+/// Used to reject obviously oversized requests before execution.
+pub(super) struct BatchCostEstimate {
+    /// Estimated total character output.
+    pub estimated_chars: usize,
+    /// Number of batch items.
+    #[allow(dead_code)]
+    pub item_count: usize,
+    /// Whether any item has a very large limit (e.g., read_file limit > 400).
+    pub has_oversized_item: bool,
+    /// Warnings generated during estimation (not blocking).
+    pub warnings: Vec<String>,
+}
+
+/// Estimate the cost of a context batch request before execution.
+/// This is a rough heuristic — the goal is to catch obviously oversized requests,
+/// not to predict exact output sizes.
+pub(super) fn estimate_context_batch_cost(
+    req: &ContextBatchRequest,
+    project_is_ssh: bool,
+) -> BatchCostEstimate {
+    let mut estimated_chars = 0usize;
+    let mut has_oversized_item = false;
+    let mut warnings = Vec::new();
+
+    for item in &req.requests {
+        let item_est = match item.mode {
+            ContextMode::Overview => 5_000,
+            ContextMode::Tree => {
+                let depth_factor = if item.max_depth > 5 { 1.5 } else { 1.0 };
+                ((item.limit.min(MAX_TREE_ITEMS)) as f64 * 120.0 * depth_factor) as usize
+            }
+            ContextMode::Search => (item.limit.min(MAX_SEARCH_RESULTS) as f64 * 200.0) as usize,
+            ContextMode::GrepContext => (item.limit as f64 * 250.0) as usize,
+            ContextMode::ReadFile => {
+                let eff_limit = item.limit.min(MAX_READ_FILE_LIMIT);
+                if eff_limit > PREFLIGHT_MAX_READ_FILE_LIMIT {
+                    has_oversized_item = true;
+                }
+                eff_limit * 120
+            }
+            ContextMode::MarkdownOutline => (item.limit as f64 * 80.0) as usize,
+            ContextMode::ReadSection => (item.limit as f64 * 150.0) as usize,
+            ContextMode::AgentContext => 50_000,
+            ContextMode::GitStatus => 8_000,
+            ContextMode::GitDiff => 40_000,
+            ContextMode::ExperimentOutputs => 30_000,
+        };
+        estimated_chars = estimated_chars.saturating_add(item_est);
+    }
+
+    // Warn if local batch has many items
+    if !project_is_ssh && req.requests.len() > PREFLIGHT_LOCAL_MAX_ITEMS {
+        warnings.push(format!(
+            "Batch has {} items; consider splitting into smaller batches of at most {}.",
+            req.requests.len(),
+            PREFLIGHT_LOCAL_MAX_ITEMS
+        ));
+    }
+
+    BatchCostEstimate {
+        estimated_chars,
+        item_count: req.requests.len(),
+        has_oversized_item,
+        warnings,
+    }
+}
+
+/// Run preflight checks on a context batch request.
+/// Returns `Ok(warnings)` if the request is allowed, or `Err(response)` if it should be rejected.
+pub(super) fn preflight_context_batch(
+    req: &ContextBatchRequest,
+    project_is_ssh: bool,
+    project_name: &str,
+) -> Result<Vec<String>, ContextBatchResponse> {
+    let estimate = estimate_context_batch_cost(req, project_is_ssh);
+
+    // Check 1: max_total_chars exceeds server hard limit
+    if req.max_total_chars > PREFLIGHT_MAX_TOTAL_CHARS {
+        return Err(ContextBatchResponse {
+            success: false,
+            project: project_name.to_string(),
+            results: Vec::new(),
+            duration_ms: 0,
+            ssh_calls: 0,
+            error: Some(format!(
+                "context batch too large: max_total_chars={} exceeds server limit {}",
+                req.max_total_chars, PREFLIGHT_MAX_TOTAL_CHARS
+            )),
+            preflight_rejected: Some(true),
+            estimated_chars: Some(estimate.estimated_chars),
+            max_allowed_chars: Some(PREFLIGHT_MAX_TOTAL_CHARS),
+            max_allowed_items: None,
+            project_is_ssh: Some(project_is_ssh),
+            suggestion: Some(format!(
+                "Reduce max_total_chars to {} or below. Split this request into smaller batches.",
+                PREFLIGHT_RECOMMENDED_MAX_CHARS
+            )),
+            warnings: Vec::new(),
+        });
+    }
+
+    // Check 2: estimated output exceeds max_total_chars significantly (2x margin)
+    // This catches requests where the sum of per-item estimates far exceeds what the client
+    // asked for — even if they set max_total_chars under the server limit.
+    if estimate.estimated_chars > req.max_total_chars * 3 {
+        return Err(ContextBatchResponse {
+            success: false,
+            project: project_name.to_string(),
+            results: Vec::new(),
+            duration_ms: 0,
+            ssh_calls: 0,
+            error: Some(format!(
+                "context batch too large: estimated {} chars exceeds 3x budget of {}",
+                estimate.estimated_chars, req.max_total_chars
+            )),
+            preflight_rejected: Some(true),
+            estimated_chars: Some(estimate.estimated_chars),
+            max_allowed_chars: Some(PREFLIGHT_MAX_TOTAL_CHARS),
+            max_allowed_items: None,
+            project_is_ssh: Some(project_is_ssh),
+            suggestion: Some(
+                "Split this request into smaller batches by file or section. \
+                 Reduce limit per item or request fewer items per batch."
+                    .to_string(),
+            ),
+            warnings: Vec::new(),
+        });
+    }
+
+    // Check 3: SSH project — too many batch items
+    if project_is_ssh && req.requests.len() > PREFLIGHT_SSH_MAX_ITEMS {
+        return Err(ContextBatchResponse {
+            success: false,
+            project: project_name.to_string(),
+            results: Vec::new(),
+            duration_ms: 0,
+            ssh_calls: 0,
+            error: Some(format!(
+                "context batch too large for SSH project: {} items exceeds limit of {}",
+                req.requests.len(),
+                PREFLIGHT_SSH_MAX_ITEMS
+            )),
+            preflight_rejected: Some(true),
+            estimated_chars: Some(estimate.estimated_chars),
+            max_allowed_chars: Some(PREFLIGHT_MAX_TOTAL_CHARS),
+            max_allowed_items: Some(PREFLIGHT_SSH_MAX_ITEMS),
+            project_is_ssh: Some(project_is_ssh),
+            suggestion: Some(format!(
+                "Split into smaller batches of at most {} items for SSH projects.",
+                PREFLIGHT_SSH_MAX_ITEMS
+            )),
+            warnings: Vec::new(),
+        });
+    }
+
+    // Check 4: oversized read_file limit (limit > 400) on SSH
+    if project_is_ssh && estimate.has_oversized_item {
+        return Err(ContextBatchResponse {
+            success: false,
+            project: project_name.to_string(),
+            results: Vec::new(),
+            duration_ms: 0,
+            ssh_calls: 0,
+            error: Some(
+                "context batch too large for SSH project: read_file limit exceeds 400 lines"
+                    .to_string(),
+            ),
+            preflight_rejected: Some(true),
+            estimated_chars: Some(estimate.estimated_chars),
+            max_allowed_chars: Some(PREFLIGHT_MAX_TOTAL_CHARS),
+            max_allowed_items: Some(PREFLIGHT_SSH_MAX_ITEMS),
+            project_is_ssh: Some(project_is_ssh),
+            suggestion: Some(
+                "Reduce read_file limit to 400 or below for SSH projects, \
+                 or split into multiple smaller reads."
+                    .to_string(),
+            ),
+            warnings: Vec::new(),
+        });
+    }
+
+    Ok(estimate.warnings)
 }
 
 pub(super) fn markdown_outline_shell_fragment(path: &str, limit: usize) -> String {
@@ -1832,6 +2028,13 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
             error: Some(
                 "Projects not configured. Set PROJECTS_CONFIG or create projects.toml".to_string(),
             ),
+            preflight_rejected: None,
+            estimated_chars: None,
+            max_allowed_chars: None,
+            max_allowed_items: None,
+            project_is_ssh: None,
+            suggestion: None,
+            warnings: Vec::new(),
         }));
         return;
     };
@@ -1846,6 +2049,13 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 duration_ms: 0,
                 ssh_calls: 0,
                 error: Some(format!("Invalid JSON: {}", e)),
+                preflight_rejected: None,
+                estimated_chars: None,
+                max_allowed_chars: None,
+                max_allowed_items: None,
+                project_is_ssh: None,
+                suggestion: None,
+                warnings: Vec::new(),
             }));
             return;
         }
@@ -1859,6 +2069,13 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
             duration_ms: 0,
             ssh_calls: 0,
             error: Some("requests must contain 1-20 items".to_string()),
+            preflight_rejected: None,
+            estimated_chars: None,
+            max_allowed_chars: None,
+            max_allowed_items: None,
+            project_is_ssh: None,
+            suggestion: None,
+            warnings: Vec::new(),
         }));
         return;
     }
@@ -1873,57 +2090,98 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 duration_ms: 0,
                 ssh_calls: 0,
                 error: Some(e),
+                preflight_rejected: None,
+                estimated_chars: None,
+                max_allowed_chars: None,
+                max_allowed_items: None,
+                project_is_ssh: None,
+                suggestion: None,
+                warnings: Vec::new(),
             }));
             return;
         }
     };
 
-    let start = Instant::now();
-    let (mut results, ssh_calls) = if proj.is_ssh() {
-        match try_ssh_context_batch_once(proj, &body.project, &body.requests, projects.ssh.as_ref())
-        {
-            Some((results, ssh_calls)) => (results, ssh_calls),
-            None => {
-                let mut ssh_calls = 0;
+    // Preflight check: reject obviously oversized requests before execution
+    let project_is_ssh = proj.is_ssh();
+    match preflight_context_batch(&body, project_is_ssh, &body.project) {
+        Ok(preflight_warnings) => {
+            // Request is allowed; preflight_warnings may contain non-blocking hints
+            let start = Instant::now();
+            let (mut results, ssh_calls) = if project_is_ssh {
+                match try_ssh_context_batch_once(
+                    proj,
+                    &body.project,
+                    &body.requests,
+                    projects.ssh.as_ref(),
+                ) {
+                    Some((results, ssh_calls)) => (results, ssh_calls),
+                    None => {
+                        let mut ssh_calls = 0;
+                        let mut results = Vec::with_capacity(body.requests.len());
+                        for item in &body.requests {
+                            let (resp, calls) = execute_context_item(
+                                proj,
+                                &body.project,
+                                item,
+                                projects.ssh.as_ref(),
+                            );
+                            ssh_calls += calls;
+                            results.push(resp);
+                        }
+                        (results, ssh_calls)
+                    }
+                }
+            } else {
                 let mut results = Vec::with_capacity(body.requests.len());
                 for item in &body.requests {
-                    let (resp, calls) =
-                        execute_context_item(proj, &body.project, item, projects.ssh.as_ref());
-                    ssh_calls += calls;
+                    let (resp, _) = execute_context_item(proj, &body.project, item, None);
                     results.push(resp);
                 }
-                (results, ssh_calls)
-            }
+                (results, 0)
+            };
+            enforce_context_batch_total_limit(&mut results, body.max_total_chars);
+            let success = results.iter().all(|r| r.success);
+            let duration_ms = start.elapsed().as_millis() as u64;
+            tracing::info!(
+                target: "codex.metrics",
+                operation = "getProjectContextBatch",
+                project = %body.project,
+                executor = if project_is_ssh { "ssh" } else { "local" },
+                success = success,
+                request_count = results.len(),
+                duration_ms = duration_ms,
+                ssh_calls = ssh_calls,
+                control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
+                "codex_context_batch_completed"
+            );
+            res.render(Json(ContextBatchResponse {
+                success,
+                project: body.project,
+                results,
+                duration_ms,
+                ssh_calls,
+                error: None,
+                preflight_rejected: None,
+                estimated_chars: None,
+                max_allowed_chars: None,
+                max_allowed_items: None,
+                project_is_ssh: None,
+                suggestion: None,
+                warnings: preflight_warnings,
+            }));
         }
-    } else {
-        let mut results = Vec::with_capacity(body.requests.len());
-        for item in &body.requests {
-            let (resp, _) = execute_context_item(proj, &body.project, item, None);
-            results.push(resp);
+        Err(rejection_response) => {
+            // Preflight rejected the request — return structured error
+            tracing::warn!(
+                target: "codex.metrics",
+                operation = "getProjectContextBatch",
+                project = %body.project,
+                executor = if project_is_ssh { "ssh" } else { "local" },
+                estimated_chars = ?rejection_response.estimated_chars,
+                "preflight_rejected"
+            );
+            res.render(Json(rejection_response));
         }
-        (results, 0)
-    };
-    enforce_context_batch_total_limit(&mut results, body.max_total_chars);
-    let success = results.iter().all(|r| r.success);
-    let duration_ms = start.elapsed().as_millis() as u64;
-    tracing::info!(
-        target: "codex.metrics",
-        operation = "getProjectContextBatch",
-        project = %body.project,
-        executor = if proj.is_ssh() { "ssh" } else { "local" },
-        success = success,
-        request_count = results.len(),
-        duration_ms = duration_ms,
-        ssh_calls = ssh_calls,
-        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
-        "codex_context_batch_completed"
-    );
-    res.render(Json(ContextBatchResponse {
-        success,
-        project: body.project,
-        results,
-        duration_ms,
-        ssh_calls,
-        error: None,
-    }));
+    }
 }

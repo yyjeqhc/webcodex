@@ -177,6 +177,16 @@ pub(super) fn validate_command_name(command: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn unsupported_create_trusted_raw_error(op: &str) -> Option<String> {
+    if op == "create_trusted_raw" {
+        Some(
+            "create_trusted_raw currently supports only create_trusted_raw_and_approve; use create_trusted_raw_and_approve for short trusted commands or runJobOp create trusted=true + script_text for async jobs".to_string()
+        )
+    } else {
+        None
+    }
+}
+
 pub(super) fn command_error(project: &str, command: &str, error: String) -> CommandResponse {
     CommandResponse {
         success: false,
@@ -1109,6 +1119,22 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             )));
         }
         "create_trusted_raw" | "create_trusted_raw_and_approve" => {
+            if let Some(err) = unsupported_create_trusted_raw_error(&body.op) {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(CommandRequestOpResponse {
+                    success: false,
+                    op: body.op,
+                    records: Vec::new(),
+                    goals: Vec::new(),
+                    request_id: None,
+                    record: None,
+                    goal_id: None,
+                    goal: None,
+                    error: Some(err),
+                    trusted_result: None,
+                }));
+                return;
+            }
             let approve_immediately = body.op == "create_trusted_raw_and_approve";
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
@@ -1283,29 +1309,6 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 }));
                 return;
             }
-            // If not approving immediately, reject: create_trusted_raw (non-approve)
-            // is currently unsupported because the approve workflow does not know
-            // how to re-execute trusted raw commands. Use create_trusted_raw_and_approve
-            // for short trusted commands, or runJobOp create with trusted=true +
-            // script_text for async jobs.
-            if !approve_immediately {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(CommandRequestOpResponse {
-                    success: false,
-                    op: body.op,
-                    records: Vec::new(),
-                    goals: Vec::new(),
-                    request_id: None,
-                    record: None,
-                    goal_id: None,
-                    goal: None,
-                    error: Some(
-                        "create_trusted_raw currently supports only create_trusted_raw_and_approve; use create_trusted_raw_and_approve for short trusted commands or runJobOp create trusted=true + script_text for async jobs".to_string()
-                    ),
-                    trusted_result: None,
-                }));
-                return;
-            }
             // Execute immediately for create_trusted_raw_and_approve
             let wrapped = build_trusted_wrapper(&script);
             let start_time = chrono::Utc::now().timestamp();
@@ -1409,6 +1412,25 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Some("unsupported op".to_string()),
             )));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::unsupported_create_trusted_raw_error;
+
+    #[test]
+    fn create_trusted_raw_is_rejected_early() {
+        let err = unsupported_create_trusted_raw_error("create_trusted_raw");
+        assert!(err.is_some());
+        assert!(err
+            .unwrap()
+            .contains("create_trusted_raw currently supports only create_trusted_raw_and_approve"));
+    }
+
+    #[test]
+    fn create_trusted_raw_and_approve_is_not_rejected_by_helper() {
+        assert!(unsupported_create_trusted_raw_error("create_trusted_raw_and_approve").is_none());
     }
 }
 

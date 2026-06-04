@@ -353,6 +353,9 @@ pub(super) fn create_local_job(
     // For trusted_script_text, the command is a placeholder that will be
     // replaced with the actual script.sh path after generating job_id.
     let is_trusted_script = trusted_script_text.is_some();
+    if let Some(script_text) = trusted_script_text {
+        validate_trusted_script(script_text)?;
+    }
     if !is_trusted_script {
         validate_job_command(command)?;
     }
@@ -2680,6 +2683,76 @@ mod tests {
             "stdout should contain script output, got: {}",
             stdout
         );
+    }
+
+    #[test]
+    fn create_local_job_with_empty_trusted_script_text_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = ProjectConfig {
+            path: tmp.path().to_string_lossy().to_string(),
+            executor: crate::projects::Executor::Local,
+            host: None,
+            ssh_hosts: Vec::new(),
+            user: None,
+            allow_patch: true,
+            allow_command_requests: true,
+            allow_raw_command_requests: true,
+            default_apply_patch_backend: None,
+            allowed_checks: vec![],
+            checks: None,
+            commands: HashMap::new(),
+        };
+        std::fs::create_dir_all(tmp.path().join(".codex/jobs")).unwrap();
+
+        let result = create_local_job(
+            &proj,
+            "test-project",
+            "goal-test",
+            "",
+            None,
+            Some("trusted_script".to_string()),
+            None,
+            None,
+            Some("test reason".to_string()),
+            60,
+            Some(""),
+        );
+        assert!(result.is_err(), "empty trusted script should fail");
+    }
+
+    #[test]
+    fn create_local_job_with_nul_trusted_script_text_fails() {
+        let tmp = tempfile::tempdir().unwrap();
+        let proj = ProjectConfig {
+            path: tmp.path().to_string_lossy().to_string(),
+            executor: crate::projects::Executor::Local,
+            host: None,
+            ssh_hosts: Vec::new(),
+            user: None,
+            allow_patch: true,
+            allow_command_requests: true,
+            allow_raw_command_requests: true,
+            default_apply_patch_backend: None,
+            allowed_checks: vec![],
+            checks: None,
+            commands: HashMap::new(),
+        };
+        std::fs::create_dir_all(tmp.path().join(".codex/jobs")).unwrap();
+
+        let result = create_local_job(
+            &proj,
+            "test-project",
+            "goal-test",
+            "",
+            None,
+            Some("trusted_script".to_string()),
+            None,
+            None,
+            Some("test reason".to_string()),
+            60,
+            Some("echo\0bad"),
+        );
+        assert!(result.is_err(), "NUL trusted script should fail");
     }
 
     #[test]

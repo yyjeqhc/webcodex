@@ -858,6 +858,16 @@ pub(super) fn summarize_jobs_markdown(jobs: &[JobInfo], log_tails: &[(String, St
 
 // --- recover / status detail=basic helpers ---
 
+/// Determine the effective detail level for op=status.
+/// Only explicit "logs" triggers log reading; everything else is "basic".
+/// This function is extracted for testability.
+fn effective_status_detail(detail: Option<&str>) -> &'static str {
+    match detail {
+        Some("logs") => "logs",
+        _ => "basic",
+    }
+}
+
 /// Lightweight metadata-only job info for local jobs.
 /// Reads metadata.json + status/exit_code/finished_at files only.
 /// No kill -0, no OOM detection, no log reading.
@@ -1008,6 +1018,8 @@ fn find_local_job_id_by_client_request_id(
 }
 
 /// Find an SSH job ID by client_request_id using a single grep-based SSH command.
+/// Note: SSH recover by client_request_id scans recent job metadata only (last 100 dirs);
+/// job_id is more direct when available.
 fn find_ssh_job_id_by_client_request_id(
     proj: &ProjectConfig,
     client_request_id: &str,
@@ -1106,6 +1118,8 @@ fn local_job_info_basic(root: &Path, job_id: &str) -> Result<JobInfo, String> {
 }
 
 /// Lightweight status update for SSH jobs (skip kill -0, kill_tree, OOM detection).
+/// Note: basic is metadata/status-file based and may be stale for SSH jobs;
+/// use detail=logs, log, or summarize for deeper inspection.
 fn update_job_status_ssh_basic(
     proj: &ProjectConfig,
     meta: &JobMetadata,
@@ -1719,16 +1733,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             // - Default (None) → "basic" (lightweight, no OOM, no logs)
             // - Explicit "basic" → same as default
             // - Explicit "logs" → basic + include log tails in response
-            // - If tail_lines > 0 and detail is not explicitly set → auto "logs"
-            //   (方案A: backward-compatible with callers who pass tail_lines)
-            let detail_str = body.detail.as_deref().unwrap_or("basic");
-            let effective_detail = if detail_str == "logs"
-                || (detail_str == "basic" && body.tail_lines > 0 && body.detail.is_none())
-            {
-                "logs"
-            } else {
-                "basic"
-            };
+            // tail_lines does NOT implicitly trigger logs; only explicit detail=logs reads logs.
+            let effective_detail = effective_status_detail(body.detail.as_deref());
 
             let job_result = if proj.is_ssh() {
                 if effective_detail == "basic" {
@@ -2333,6 +2339,55 @@ mod tests {
     }
 
     #[test]
+    fn openapi_no_auto_upgrade_text() {
+        let spec: serde_json::Value =
+            serde_json::from_str(include_str!("../../data/openapi.json")).unwrap();
+
+        // detail description must NOT contain "auto-upgrades"
+        let detail_desc = spec["components"]["schemas"]["JobOpRequest"]["properties"]["detail"]
+            ["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            !detail_desc.contains("auto-upgrades"),
+            "detail description should not contain 'auto-upgrades', got: {}",
+            detail_desc
+        );
+
+        // detail description must contain "basic" and "logs"
+        assert!(
+            detail_desc.contains("basic"),
+            "detail description should mention 'basic', got: {}",
+            detail_desc
+        );
+        assert!(
+            detail_desc.contains("logs"),
+            "detail description should mention 'logs', got: {}",
+            detail_desc
+        );
+
+        // runJobOp description must mention "recover"
+        let job_desc = spec["paths"]["/api/codex/job"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            job_desc.contains("recover"),
+            "runJobOp description should mention 'recover', got: {}",
+            job_desc
+        );
+        assert!(
+            job_desc.contains("detail=basic"),
+            "runJobOp description should mention 'detail=basic', got: {}",
+            job_desc
+        );
+        assert!(
+            job_desc.contains("detail=logs"),
+            "runJobOp description should mention 'detail=logs', got: {}",
+            job_desc
+        );
+    }
+
+    #[test]
     fn old_status_request_without_detail_deserializes() {
         // Simulate an old client sending a request without the detail field
         let request: JobOpRequest = serde_json::from_str(
@@ -2347,5 +2402,43 @@ mod tests {
         assert_eq!(request.op, "status");
         assert!(request.detail.is_none());
         assert_eq!(request.tail_lines, 80);
+    }
+
+    #[test]
+    fn effective_status_detail_default_is_basic() {
+        assert_eq!(effective_status_detail(None), "basic");
+    }
+
+    #[test]
+    fn effective_status_detail_basic_is_basic() {
+        assert_eq!(effective_status_detail(Some("basic")), "basic");
+    }
+
+    #[test]
+    fn effective_status_detail_logs_is_logs() {
+        assert_eq!(effective_status_detail(Some("logs")), "logs");
+    }
+
+    #[test]
+    fn effective_status_detail_unknown_is_basic() {
+        assert_eq!(effective_status_detail(Some("anything_else")), "basic");
+    }
+
+    #[test]
+    fn tail_lines_does_not_trigger_logs() {
+        // Even with tail_lines > 0, detail=None must resolve to "basic"
+        let request: JobOpRequest = serde_json::from_str(
+            r#"{
+                "op": "status",
+                "project": "myproj",
+                "job_id": "abc-123",
+                "tail_lines": 80
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(request.tail_lines, 80);
+        assert!(request.detail.is_none());
+        // effective_status_detail must return "basic" even though tail_lines > 0
+        assert_eq!(effective_status_detail(request.detail.as_deref()), "basic");
     }
 }

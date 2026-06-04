@@ -64,7 +64,7 @@ fn apply_job_recovery_guidance(spec: &mut serde_json::Value) {
         spec["components"]["schemas"]["JobOpRequest"]["properties"]["detail"] = serde_json::json!({
             "type": "string",
             "enum": ["basic", "logs"],
-            "description": "For op=status: basic (default, lightweight) or logs (include log tails). If tail_lines>0 and detail is not set, auto-upgrades to logs."
+            "description": "For op=status: basic (default, lightweight, no logs) or logs (include stdout/stderr tails). tail_lines only affects detail=logs or op=log."
         });
     }
 }

@@ -1935,7 +1935,7 @@
           "detail": {
             "type": "string",
             "enum": ["basic", "logs"],
-            "description": "For op=status: response detail level. basic (default)=lightweight status, no OOM detection, minimal SSH; logs=basic+include stdout/stderr tails. If tail_lines>0 and detail is not set, auto-upgrades to logs."
+            "description": "For op=status: response detail level. basic (default, lightweight, no logs) or logs (include stdout/stderr tails). tail_lines only affects detail=logs or op=log."
           }
         },
         "required": [
@@ -3667,7 +3667,7 @@
       "post": {
         "operationId": "runJobOp",
         "summary": "Run or manage trusted active-goal async shell jobs",
-        "description": "Active-goal scoped async shell jobs. Use client_request_id for idempotent retry. If create/status times out, do not rerun the job; first call recover with the same client_request_id. Use status detail=basic for cheap state checks; use detail=logs or log op only when logs are needed. create/create_batch require an active goal. For op=log, use since_line for incremental polling. For op=status, default detail=basic returns lightweight status without OOM detection; detail=logs includes log tails.",
+        "description": "Active-goal scoped async shell jobs. Use client_request_id for idempotent retry. If create/status times out, do not rerun the job; first call recover with the same client_request_id. Use status detail=basic for cheap state checks; use detail=logs or log op only when logs are needed. basic is metadata/status-file based and may be stale for SSH jobs; use detail=logs, log, or summarize for deeper inspection. create/create_batch require an active goal. For op=log, use since_line for incremental polling. For op=status, default detail=basic returns lightweight status without OOM detection; detail=logs includes log tails.",
         "tags": [
           "codex"
         ],

@@ -160,3 +160,46 @@ pub struct AgentModelProfileRecord {
     pub max_rounds: Option<usize>,
     pub updated_at: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionSessionRecord {
+    pub session_id: String,
+    pub title: Option<String>,
+    pub note: Option<String>,
+    pub status: String,
+    pub created_at: i64,
+    pub updated_at: i64,
+    pub closed_at: Option<i64>,
+    pub first_event_at: Option<i64>,
+    pub last_event_at: Option<i64>,
+    pub total_actions: i64,
+    pub success_count: i64,
+    pub failed_count: i64,
+    pub timeout_or_unknown_count: i64,
+    pub warning_count: i64,
+    pub total_duration_ms: i64,
+    pub changed_files_count: i64,
+    pub job_ids_count: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ActionEventRecord {
+    pub event_id: String,
+    pub session_id: String,
+    pub started_at: i64,
+    pub ended_at: i64,
+    pub duration_ms: i64,
+    pub endpoint: String,
+    pub operation: Option<String>,
+    pub action_name: String,
+    pub project: Option<String>,
+    pub status: String,
+    pub http_status: Option<i64>,
+    pub error_summary: Option<String>,
+    pub warning_summary: Option<String>,
+    pub changed_files_json: String,
+    pub ids_json: String,
+    pub summary_json: String,
+    pub request_bytes: Option<i64>,
+    pub response_bytes: Option<i64>,
+}

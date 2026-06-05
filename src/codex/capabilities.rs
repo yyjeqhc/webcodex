@@ -1,8 +1,13 @@
 use super::get_projects;
 use super::types::{InstanceInfo, ProjectCapabilities, ProjectCapabilityInfo, ProjectsResponse};
+use crate::action_sessions::{
+    record_action_event, request_action_session_id, ActionAuditEventInput,
+};
 use crate::auth::get_config;
+use crate::get_db;
 use crate::projects::{Executor, ProjectChecks, ProjectConfig};
 use salvo::prelude::*;
+use serde_json::json;
 
 fn configured_checks(checks: &Option<ProjectChecks>) -> Vec<String> {
     let Some(checks) = checks else {
@@ -104,16 +109,50 @@ fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
 }
 
 #[handler]
-pub async fn codex_projects(depot: &mut Depot, res: &mut Response) {
+pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let audit_db = get_db(depot);
+    let explicit_session_id = request_action_session_id(req);
     let Some(projects) = get_projects(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(ProjectsResponse {
+        let response = ProjectsResponse {
             success: false,
             projects: Vec::new(),
             project_names: Vec::new(),
             instance: Some(instance_info(depot)),
             error: Some("Projects config not loaded".to_string()),
-        }));
+        };
+        let error_summary = response.error.clone();
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(response));
+        if let Some(db) = audit_db.as_ref() {
+            let ended_at = chrono::Utc::now().timestamp();
+            record_action_event(
+                db,
+                ActionAuditEventInput {
+                    explicit_session_id,
+                    session_title: None,
+                    endpoint: "/api/codex/projects".to_string(),
+                    action_name: "getCodexProjects".to_string(),
+                    operation: Some("list".to_string()),
+                    project: None,
+                    status: "failed".to_string(),
+                    http_status: Some(StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i64),
+                    started_at,
+                    ended_at,
+                    duration_ms: (ended_at - started_at).max(0) * 1000,
+                    error_summary,
+                    warning_summary: None,
+                    changed_files: Vec::new(),
+                    ids: json!({}),
+                    summary: json!({
+                        "project_count": 0,
+                        "project_names_count": 0,
+                    }),
+                    request_bytes: None,
+                    response_bytes: None,
+                },
+            );
+        }
         return;
     };
     let mut project_names = projects.available_project_names();
@@ -123,11 +162,103 @@ pub async fn codex_projects(depot: &mut Depot, res: &mut Response) {
         .filter_map(|name| projects.projects.get(name).map(|p| project_info(name, p)))
         .collect::<Vec<_>>();
     infos.sort_by(|a, b| a.name.cmp(&b.name));
-    res.render(Json(ProjectsResponse {
+    let response = ProjectsResponse {
         success: true,
         projects: infos,
         project_names,
         instance: Some(instance_info(depot)),
         error: None,
-    }));
+    };
+    let project_count = response.projects.len();
+    let project_names_count = response.project_names.len();
+    let ssh_project_count = response
+        .projects
+        .iter()
+        .filter(|project| project.executor == "ssh")
+        .count();
+    res.render(Json(response));
+    if let Some(db) = audit_db.as_ref() {
+        let ended_at = chrono::Utc::now().timestamp();
+        record_action_event(
+            db,
+            ActionAuditEventInput {
+                explicit_session_id,
+                session_title: None,
+                endpoint: "/api/codex/projects".to_string(),
+                action_name: "getCodexProjects".to_string(),
+                operation: Some("list".to_string()),
+                project: None,
+                status: "success".to_string(),
+                http_status: Some(200),
+                started_at,
+                ended_at,
+                duration_ms: (ended_at - started_at).max(0) * 1000,
+                error_summary: None,
+                warning_summary: None,
+                changed_files: Vec::new(),
+                ids: json!({}),
+                summary: json!({
+                    "project_count": project_count,
+                    "project_names_count": project_names_count,
+                    "ssh_project_count": ssh_project_count,
+                }),
+                request_bytes: None,
+                response_bytes: None,
+            },
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::action_sessions::{
+        compute_stats, decode_event, record_action_event, ActionAuditEventInput,
+    };
+    use crate::Database;
+    use serde_json::json;
+    use std::sync::Arc;
+
+    #[test]
+    fn projects_event_is_lightweight_and_counted() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open(&tmp.path().join("drop.db")).unwrap());
+        record_action_event(
+            &db,
+            ActionAuditEventInput {
+                explicit_session_id: Some("session-projects".to_string()),
+                session_title: None,
+                endpoint: "/api/codex/projects".to_string(),
+                action_name: "getCodexProjects".to_string(),
+                operation: Some("list".to_string()),
+                project: None,
+                status: "success".to_string(),
+                http_status: Some(200),
+                started_at: 1,
+                ended_at: 2,
+                duration_ms: 10,
+                error_summary: None,
+                warning_summary: None,
+                changed_files: Vec::new(),
+                ids: json!({}),
+                summary: json!({
+                    "project_count": 2,
+                    "project_names_count": 2,
+                    "instance": {"public_url": "http://localhost:8080"}
+                }),
+                request_bytes: None,
+                response_bytes: None,
+            },
+        );
+        let event = decode_event(
+            db.list_action_events("session-projects", 10)
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap(),
+        );
+        assert_eq!(event.endpoint, "/api/codex/projects");
+        assert_eq!(event.summary["project_count"], 2);
+        let stats = compute_stats(&[event]);
+        assert_eq!(stats.by_endpoint["/api/codex/projects"], 1);
+    }
 }

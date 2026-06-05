@@ -16,10 +16,14 @@ use super::types::{
     RawCommandRequestCreate,
 };
 use super::{run_project_cmd, CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN};
+use crate::action_sessions::{
+    record_action_event, request_action_session_id, summarize_command_text, ActionAuditEventInput,
+};
 use crate::get_db;
 use crate::projects::ProjectConfig;
 use crate::{CodexGoalRecord, CommandAuditRecord};
 use salvo::prelude::*;
+use serde_json::json;
 
 pub(super) const MAX_COMMAND_REASON_LEN: usize = 2_000;
 pub(super) const MAX_RAW_COMMAND_LEN: usize = 2_000;
@@ -29,6 +33,182 @@ pub(super) const DEFAULT_GOAL_TTL_SECS: i64 = 2 * 60 * 60;
 pub(super) const MAX_GOAL_TTL_SECS: i64 = 8 * 60 * 60;
 pub(super) const MAX_COMMAND_REQUEST_BATCH: usize = 20;
 pub(super) const COMMAND_REQUEST_TTL_SECS: i64 = 2 * 60 * 60;
+
+fn record_command_request_op_event(
+    db: &std::sync::Arc<crate::Database>,
+    explicit_session_id: Option<String>,
+    started_at: i64,
+    body: &CommandRequestOpRequest,
+    response: &CommandRequestOpResponse,
+    http_status: i64,
+) {
+    let ended_at = chrono::Utc::now().timestamp();
+    let records = response
+        .record
+        .clone()
+        .into_iter()
+        .chain(response.records.clone())
+        .collect::<Vec<_>>();
+    let project = body
+        .project
+        .clone()
+        .or_else(|| records.first().map(|record| record.project.clone()))
+        .or_else(|| response.goal.as_ref().map(|goal| goal.project.clone()))
+        .or_else(|| response.goals.first().map(|goal| goal.project.clone()));
+    let status = if response.success {
+        "success".to_string()
+    } else if http_status == StatusCode::BAD_REQUEST.as_u16() as i64
+        || http_status == StatusCode::FORBIDDEN.as_u16() as i64
+        || http_status == StatusCode::NOT_FOUND.as_u16() as i64
+        || http_status == StatusCode::CONFLICT.as_u16() as i64
+    {
+        "rejected".to_string()
+    } else {
+        "failed".to_string()
+    };
+    let trusted_result = response.trusted_result.as_ref().map(|result| {
+        json!({
+            "exit_code": result.exit_code,
+            "duration_ms": result.duration_ms,
+            "stdout_truncated": result.stdout_truncated,
+            "stderr_truncated": result.stderr_truncated,
+            "blocked_by_denylist": result.blocked_by_denylist,
+        })
+    });
+    record_action_event(
+        db,
+        ActionAuditEventInput {
+            explicit_session_id,
+            session_title: None,
+            endpoint: "/api/codex/command_request_op".to_string(),
+            action_name: "runCommandRequestOp".to_string(),
+            operation: Some(body.op.clone()),
+            project,
+            status,
+            http_status: Some(http_status),
+            started_at,
+            ended_at,
+            duration_ms: (ended_at - started_at).max(0) * 1000,
+            error_summary: response.error.clone(),
+            warning_summary: None,
+            changed_files: Vec::new(),
+            ids: json!({
+                "request_id": response.request_id.clone().or_else(|| response.record.as_ref().map(|record| record.id.clone())),
+                "request_ids": records.iter().map(|record| record.id.clone()).collect::<Vec<_>>(),
+                "goal_id": response.goal_id.clone().or_else(|| response.goal.as_ref().map(|goal| goal.id.clone())),
+            }),
+            summary: json!({
+                "record_count": records.len(),
+                "record_statuses": records.iter().map(|record| record.status.clone()).collect::<Vec<_>>(),
+                "command_id": body.command,
+                "reason": body.reason.as_deref().map(|text| summarize_command_text("reason", text)),
+                "command_text": body.command_text.as_deref().map(|text| summarize_command_text("command_text", text)),
+                "script_text": body.script_text.as_deref().map(|text| summarize_command_text("script_text", text)),
+                "script_path": body.script_path,
+                "script_args_count": body.script_args.len(),
+                "trusted_result": trusted_result,
+                "response_mode": body.response_mode,
+                "status_filter": body.status,
+            }),
+            request_bytes: None,
+            response_bytes: None,
+        },
+    );
+}
+
+fn record_check_action_event(
+    db: &std::sync::Arc<crate::Database>,
+    explicit_session_id: Option<String>,
+    started_at: i64,
+    body: &CheckRequest,
+    response: &CheckResponse,
+    http_status: i64,
+) {
+    let ended_at = chrono::Utc::now().timestamp();
+    record_action_event(
+        db,
+        ActionAuditEventInput {
+            explicit_session_id,
+            session_title: None,
+            endpoint: "/api/codex/check".to_string(),
+            action_name: "runProjectCheck".to_string(),
+            operation: Some(body.suite.clone()),
+            project: Some(body.project.clone()),
+            status: if response.success {
+                "success".to_string()
+            } else if http_status == StatusCode::BAD_REQUEST.as_u16() as i64
+                || http_status == StatusCode::FORBIDDEN.as_u16() as i64
+            {
+                "rejected".to_string()
+            } else {
+                "failed".to_string()
+            },
+            http_status: Some(http_status),
+            started_at,
+            ended_at,
+            duration_ms: response.duration_ms.unwrap_or(0) as i64,
+            error_summary: response.error.clone(),
+            warning_summary: None,
+            changed_files: Vec::new(),
+            ids: json!({}),
+            summary: json!({
+                "suite": body.suite,
+                "exit_code": response.exit_code,
+                "truncated": response.truncated,
+            }),
+            request_bytes: None,
+            response_bytes: None,
+        },
+    );
+}
+
+fn record_command_action_event(
+    db: &std::sync::Arc<crate::Database>,
+    explicit_session_id: Option<String>,
+    started_at: i64,
+    body: &CommandRequest,
+    response: &CommandResponse,
+    http_status: i64,
+) {
+    let ended_at = chrono::Utc::now().timestamp();
+    let status = if response.success {
+        "success".to_string()
+    } else if http_status == StatusCode::BAD_REQUEST.as_u16() as i64
+        || http_status == StatusCode::FORBIDDEN.as_u16() as i64
+        || http_status == StatusCode::NOT_FOUND.as_u16() as i64
+    {
+        "rejected".to_string()
+    } else {
+        "failed".to_string()
+    };
+    record_action_event(
+        db,
+        ActionAuditEventInput {
+            explicit_session_id,
+            session_title: None,
+            endpoint: "/api/codex/command".to_string(),
+            action_name: "runProjectCommand".to_string(),
+            operation: Some(body.command.clone()),
+            project: Some(body.project.clone()),
+            status,
+            http_status: Some(http_status),
+            started_at,
+            ended_at,
+            duration_ms: response.duration_ms as i64,
+            error_summary: response.error.clone(),
+            warning_summary: None,
+            changed_files: Vec::new(),
+            ids: json!({}),
+            summary: json!({
+                "command_id": body.command,
+                "exit_code": response.exit_code,
+                "truncated": response.truncated,
+            }),
+            request_bytes: None,
+            response_bytes: None,
+        },
+    );
+}
 
 pub(super) fn validate_goal_text(title: &str, summary: &Option<String>) -> Result<(), String> {
     let len = title.chars().count();
@@ -290,6 +470,26 @@ pub(super) fn build_goal_record(
 
 #[handler]
 pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let audit_db = get_db(depot);
+    let explicit_session_id = request_action_session_id(req);
+    let pending_command_op_body: Option<CommandRequestOpRequest>;
+    macro_rules! render_command_op {
+        (Json($response:expr)) => {{
+            let response = $response;
+            if let (Some(db), Some(body)) = (audit_db.as_ref(), pending_command_op_body.as_ref()) {
+                record_command_request_op_event(
+                    db,
+                    explicit_session_id.clone(),
+                    started_at,
+                    body,
+                    &response,
+                    res.status_code.unwrap_or(StatusCode::OK).as_u16() as i64,
+                );
+            }
+            res.render(Json(response));
+        }};
+    }
     let Some(projects) = get_projects(depot) else {
         res.render(Json(op_response(
             "unknown",
@@ -321,12 +521,13 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             return;
         }
     };
+    pending_command_op_body = Some(body.clone());
     match body.op.as_str() {
         "create_goal" | "create_goal_and_approve" => {
             let approve_immediately = body.op == "create_goal_and_approve";
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -337,20 +538,20 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             let title = body.title.unwrap_or_else(|| "Development goal".to_string());
             if let Err(e) = validate_goal_text(&title, &body.summary) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             let ttl_secs = match validate_goal_ttl(body.ttl_secs) {
                 Ok(ttl) => ttl,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if let Err(e) = projects.get_project(&project) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             let now = chrono::Utc::now().timestamp();
@@ -359,7 +560,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 goal.status = "active".to_string();
             }
             if let Err(e) = db.insert_goal(&goal) {
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -367,7 +568,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 )));
                 return;
             }
-            res.render(Json(op_response_with_goals(
+            render_command_op!(Json(op_response_with_goals(
                 &body.op,
                 true,
                 Vec::new(),
@@ -379,19 +580,19 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             if let Some(status) = &body.status {
                 if let Err(e) = validate_goal_status(status) {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             }
             match db.list_goals(body.project.as_deref(), body.status.as_deref(), body.limit) {
-                Ok(goals) => res.render(Json(op_response_with_goals(
+                Ok(goals) => render_command_op!(Json(op_response_with_goals(
                     &body.op,
                     true,
                     Vec::new(),
                     goals,
                     None,
                 ))),
-                Err(e) => res.render(Json(op_response(
+                Err(e) => render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -402,7 +603,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         "close_goal" => {
             let Some(goal_id) = body.goal_id else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -416,7 +617,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 chrono::Utc::now().timestamp(),
                 body.reason.as_deref(),
             ) {
-                Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                Ok(Some(goal)) => render_command_op!(Json(op_response_with_goals(
                     &body.op,
                     true,
                     Vec::new(),
@@ -425,14 +626,14 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 ))),
                 Ok(None) => {
                     res.status_code(StatusCode::NOT_FOUND);
-                    res.render(Json(op_response(
+                    render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
                         Some("Goal not found".to_string()),
                     )));
                 }
-                Err(e) => res.render(Json(op_response(
+                Err(e) => render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -443,7 +644,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         "approve_goal" => {
             let Some(goal_id) = body.goal_id else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -456,7 +657,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(Some(goal)) => goal,
                 Ok(None) => {
                     res.status_code(StatusCode::NOT_FOUND);
-                    res.render(Json(op_response(
+                    render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
@@ -465,7 +666,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     return;
                 }
                 Err(e) => {
-                    res.render(Json(op_response(
+                    render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
@@ -475,7 +676,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 }
             };
             if current.status != "pending" {
-                res.render(Json(op_response_with_goals(
+                render_command_op!(Json(op_response_with_goals(
                     &body.op,
                     false,
                     Vec::new(),
@@ -495,7 +696,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     .ok()
                     .flatten()
                     .unwrap_or(current);
-                res.render(Json(op_response_with_goals(
+                render_command_op!(Json(op_response_with_goals(
                     &body.op,
                     false,
                     Vec::new(),
@@ -505,7 +706,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 return;
             }
             match db.update_pending_goal_status(&goal_id, "active", None, None) {
-                Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                Ok(Some(goal)) => render_command_op!(Json(op_response_with_goals(
                     &body.op,
                     true,
                     Vec::new(),
@@ -513,7 +714,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     None,
                 ))),
                 Ok(None) => match db.get_goal(&goal_id) {
-                    Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                    Ok(Some(goal)) => render_command_op!(Json(op_response_with_goals(
                         &body.op,
                         false,
                         Vec::new(),
@@ -522,21 +723,21 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     ))),
                     Ok(None) => {
                         res.status_code(StatusCode::NOT_FOUND);
-                        res.render(Json(op_response(
+                        render_command_op!(Json(op_response(
                             &body.op,
                             false,
                             Vec::new(),
                             Some("Goal not found".to_string()),
                         )));
                     }
-                    Err(e) => res.render(Json(op_response(
+                    Err(e) => render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
                         Some(format!("Failed to load goal: {}", e)),
                     ))),
                 },
-                Err(e) => res.render(Json(op_response(
+                Err(e) => render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -547,7 +748,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         "reject_goal" => {
             let Some(goal_id) = body.goal_id else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -558,7 +759,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             let now = chrono::Utc::now().timestamp();
             let reason = body.reason.as_deref().unwrap_or("Goal rejected");
             match db.update_pending_goal_status(&goal_id, "rejected", Some(now), Some(reason)) {
-                Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                Ok(Some(goal)) => render_command_op!(Json(op_response_with_goals(
                     &body.op,
                     true,
                     Vec::new(),
@@ -566,7 +767,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     None,
                 ))),
                 Ok(None) => match db.get_goal(&goal_id) {
-                    Ok(Some(goal)) => res.render(Json(op_response_with_goals(
+                    Ok(Some(goal)) => render_command_op!(Json(op_response_with_goals(
                         &body.op,
                         false,
                         Vec::new(),
@@ -575,21 +776,21 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     ))),
                     Ok(None) => {
                         res.status_code(StatusCode::NOT_FOUND);
-                        res.render(Json(op_response(
+                        render_command_op!(Json(op_response(
                             &body.op,
                             false,
                             Vec::new(),
                             Some("Goal not found".to_string()),
                         )));
                     }
-                    Err(e) => res.render(Json(op_response(
+                    Err(e) => render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
                         Some(format!("Failed to load goal: {}", e)),
                     ))),
                 },
-                Err(e) => res.render(Json(op_response(
+                Err(e) => render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -600,7 +801,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         "create_raw_and_approve" => {
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -610,7 +811,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             };
             let Some(goal_id) = body.goal_id else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -626,7 +827,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(command_text) => command_text,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
@@ -634,31 +835,31 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(goal) => goal,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if let Err(e) = validate_command_request_reason(&body.reason) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             if let Err(e) = validate_raw_command_text(&command_text) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             let proj = match projects.get_project(&project) {
                 Ok(p) => p,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if !proj.allow_raw_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -680,7 +881,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             );
             let request_id = record.id.clone();
             if let Err(e) = db.insert_command_request(&record) {
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -690,7 +891,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             }
             let resp = approve_command_request_inner(&projects, &db, request_id);
             let records = resp.record.clone().into_iter().collect::<Vec<_>>();
-            res.render(Json(CommandRequestOpResponse {
+            render_command_op!(Json(CommandRequestOpResponse {
                 success: resp.success,
                 op: body.op,
                 records,
@@ -706,7 +907,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         "create_and_approve" => {
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -716,7 +917,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             };
             let Some(goal_id) = body.goal_id else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -726,7 +927,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             };
             let Some(command) = body.command else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -738,26 +939,26 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(goal) => goal,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if let Err(e) = validate_command_request_reason(&body.reason) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             let proj = match projects.get_project(&project) {
                 Ok(p) => p,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if !proj.allow_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -769,7 +970,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(cmd) => cmd,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
@@ -787,7 +988,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             );
             let request_id = record.id.clone();
             if let Err(e) = db.insert_command_request(&record) {
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -797,7 +998,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             }
             let resp = approve_command_request_inner(&projects, &db, request_id);
             let records = resp.record.clone().into_iter().collect::<Vec<_>>();
-            res.render(Json(CommandRequestOpResponse {
+            render_command_op!(Json(CommandRequestOpResponse {
                 success: resp.success,
                 op: body.op,
                 records,
@@ -814,7 +1015,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             if let Some(status) = &body.status {
                 if let Err(e) = validate_command_request_status(status) {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             }
@@ -823,8 +1024,8 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 body.status.as_deref(),
                 body.limit,
             ) {
-                Ok(records) => res.render(Json(op_response(&body.op, true, records, None))),
-                Err(e) => res.render(Json(op_response(
+                Ok(records) => render_command_op!(Json(op_response(&body.op, true, records, None))),
+                Err(e) => render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -835,7 +1036,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         "create" => {
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -845,7 +1046,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             };
             let Some(command) = body.command else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -855,20 +1056,20 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             };
             if let Err(e) = validate_command_request_reason(&body.reason) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             let proj = match projects.get_project(&project) {
                 Ok(p) => p,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if !proj.allow_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -880,7 +1081,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(cmd) => cmd,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
@@ -892,7 +1093,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 chrono::Utc::now().timestamp(),
             );
             if let Err(e) = db.insert_command_request(&record) {
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -900,12 +1101,12 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 )));
                 return;
             }
-            res.render(Json(op_response(&body.op, true, vec![record], None)));
+            render_command_op!(Json(op_response(&body.op, true, vec![record], None)));
         }
         "create_raw" => {
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -921,31 +1122,31 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(command_text) => command_text,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if let Err(e) = validate_command_request_reason(&body.reason) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             if let Err(e) = validate_raw_command_text(&command_text) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             let proj = match projects.get_project(&project) {
                 Ok(p) => p,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if !proj.allow_raw_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -961,7 +1162,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 chrono::Utc::now().timestamp(),
             );
             if let Err(e) = db.insert_command_request(&record) {
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -969,12 +1170,12 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 )));
                 return;
             }
-            res.render(Json(op_response(&body.op, true, vec![record], None)));
+            render_command_op!(Json(op_response(&body.op, true, vec![record], None)));
         }
         "create_batch" => {
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -984,7 +1185,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             };
             if body.requests.is_empty() || body.requests.len() > MAX_COMMAND_REQUEST_BATCH {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -999,13 +1200,13 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(p) => p,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if !proj.allow_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -1018,14 +1219,14 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             for item in body.requests {
                 if let Err(e) = validate_command_request_reason(&item.reason) {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
                 let command_text = match get_project_command(proj, &item.command) {
                     Ok(cmd) => cmd,
                     Err(e) => {
                         res.status_code(StatusCode::BAD_REQUEST);
-                        res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                        render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                         return;
                     }
                 };
@@ -1039,7 +1240,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             }
             for record in &records {
                 if let Err(e) = db.insert_command_request(record) {
-                    res.render(Json(op_response(
+                    render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
@@ -1048,12 +1249,12 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     return;
                 }
             }
-            res.render(Json(op_response(&body.op, true, records, None)));
+            render_command_op!(Json(op_response(&body.op, true, records, None)));
         }
         "approve" | "reject" => {
             let Some(request_id) = body.request_id else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -1067,7 +1268,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 reject_command_request_inner(&db, request_id, body.reason)
             };
             let records = resp.record.clone().into_iter().collect::<Vec<_>>();
-            res.render(Json(CommandRequestOpResponse {
+            render_command_op!(Json(CommandRequestOpResponse {
                 success: resp.success,
                 op: body.op,
                 records,
@@ -1083,7 +1284,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         "approve_batch" | "reject_batch" => {
             if body.request_ids.is_empty() || body.request_ids.len() > MAX_COMMAND_REQUEST_BATCH {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -1111,7 +1312,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     records.push(record);
                 }
             }
-            res.render(Json(op_response(
+            render_command_op!(Json(op_response(
                 &body.op,
                 all_success,
                 records,
@@ -1121,7 +1322,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         "create_trusted_raw" | "create_trusted_raw_and_approve" => {
             if let Some(err) = unsupported_create_trusted_raw_error(&body.op) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(CommandRequestOpResponse {
+                render_command_op!(Json(CommandRequestOpResponse {
                     success: false,
                     op: body.op,
                     records: Vec::new(),
@@ -1138,7 +1339,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             let approve_immediately = body.op == "create_trusted_raw_and_approve";
             let Some(project) = body.project else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -1152,7 +1353,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 (None, Some(cmd_text)) => cmd_text.to_string(),
                 (Some(_), Some(_)) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(
+                    render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
@@ -1162,7 +1363,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 }
                 (None, None) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(
+                    render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
@@ -1173,19 +1374,19 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             };
             if let Err(e) = validate_trusted_script(&script) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             if let Err(e) = validate_trusted_reason(&body.reason) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                 return;
             }
             let timeout_secs = match validate_trusted_timeout(body.timeout_secs) {
                 Ok(t) => t,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
@@ -1193,7 +1394,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(m) => m,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
@@ -1201,7 +1402,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             if approve_immediately {
                 let Some(_goal_id) = body.goal_id.as_deref() else {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(
+                    render_command_op!(Json(op_response(
                         &body.op,
                         false,
                         Vec::new(),
@@ -1215,13 +1416,13 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 Ok(p) => p,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                    render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
                     return;
                 }
             };
             if !proj.allow_raw_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -1248,7 +1449,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     true,
                 );
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(CommandRequestOpResponse {
+                render_command_op!(Json(CommandRequestOpResponse {
                     success: false,
                     op: body.op,
                     records: Vec::new(),
@@ -1279,7 +1480,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     true,
                 );
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(CommandRequestOpResponse {
+                render_command_op!(Json(CommandRequestOpResponse {
                     success: false,
                     op: body.op,
                     records: Vec::new(),
@@ -1295,7 +1496,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             }
             if let Some(err) = check_background_escape(&script) {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(CommandRequestOpResponse {
+                render_command_op!(Json(CommandRequestOpResponse {
                     success: false,
                     op: body.op,
                     records: Vec::new(),
@@ -1363,7 +1564,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             );
             let request_id = record.id.clone();
             if let Err(e) = db.insert_command_request(&record) {
-                res.render(Json(op_response(
+                render_command_op!(Json(op_response(
                     &body.op,
                     false,
                     Vec::new(),
@@ -1386,7 +1587,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 success = success,
                 "codex_trusted_raw_executed"
             );
-            res.render(Json(CommandRequestOpResponse {
+            render_command_op!(Json(CommandRequestOpResponse {
                 success,
                 op: body.op.clone(),
                 records: vec![record],
@@ -1405,7 +1606,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
         }
         _ => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(op_response(
+            render_command_op!(Json(op_response(
                 &body.op,
                 false,
                 Vec::new(),
@@ -1417,7 +1618,16 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
 
 #[cfg(test)]
 mod tests {
-    use super::unsupported_create_trusted_raw_error;
+    use super::*;
+    use crate::action_sessions::{compute_stats, decode_event};
+    use crate::Database;
+    use std::sync::Arc;
+
+    fn test_db() -> (tempfile::TempDir, Arc<Database>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open(&tmp.path().join("drop.db")).unwrap());
+        (tmp, db)
+    }
 
     #[test]
     fn create_trusted_raw_is_rejected_early() {
@@ -1431,6 +1641,201 @@ mod tests {
     #[test]
     fn create_trusted_raw_and_approve_is_not_rejected_by_helper() {
         assert!(unsupported_create_trusted_raw_error("create_trusted_raw_and_approve").is_none());
+    }
+
+    #[test]
+    fn record_command_request_op_event_sanitizes_trusted_raw_summary() {
+        let (_tmp, db) = test_db();
+        let body = CommandRequestOpRequest {
+            op: "create_trusted_raw_and_approve".to_string(),
+            project: Some("demo".to_string()),
+            command: Some("trusted_raw".to_string()),
+            command_text: Some("printf hello".to_string()),
+            script_path: None,
+            script_args: vec!["a".to_string()],
+            reason: Some("collect diagnostics".to_string()),
+            title: None,
+            summary: None,
+            goal_id: Some("goal-1".to_string()),
+            ttl_secs: None,
+            requests: Vec::new(),
+            request_id: Some("req-1".to_string()),
+            request_ids: vec!["req-1".to_string()],
+            status: None,
+            limit: 20,
+            script_text: Some("printf hello\ncat .env".to_string()),
+            timeout_secs: Some(10),
+            response_mode: Some("summary".to_string()),
+        };
+        let response = CommandRequestOpResponse {
+            success: true,
+            op: body.op.clone(),
+            records: vec![CommandAuditRecord {
+                id: "req-1".to_string(),
+                project: "demo".to_string(),
+                command: "trusted_raw".to_string(),
+                command_text: Some("printf hello".to_string()),
+                reason: Some("collect diagnostics".to_string()),
+                status: "completed".to_string(),
+                created_at: 1,
+                approved_at: Some(2),
+                executed_at: Some(3),
+                exit_code: Some(0),
+                stdout_tail: Some("stdout raw".to_string()),
+                stderr_tail: Some("stderr raw".to_string()),
+                error: None,
+            }],
+            goals: Vec::new(),
+            request_id: Some("req-1".to_string()),
+            record: None,
+            goal_id: Some("goal-1".to_string()),
+            goal: None,
+            error: None,
+            trusted_result: Some(crate::codex::types::TrustedRawCommandResult {
+                exit_code: 0,
+                duration_ms: 42,
+                cwd: "/tmp/demo".to_string(),
+                stdout_tail: Some("stdout raw".to_string()),
+                stderr_tail: Some("stderr raw".to_string()),
+                stdout_truncated: true,
+                stderr_truncated: false,
+                audit_log_path: None,
+                blocked_by_denylist: false,
+            }),
+        };
+        record_command_request_op_event(
+            &db,
+            Some("session-command".to_string()),
+            100,
+            &body,
+            &response,
+            200,
+        );
+        let event = decode_event(
+            db.list_action_events("session-command", 10)
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap(),
+        );
+        assert_eq!(event.endpoint, "/api/codex/command_request_op");
+        assert_eq!(
+            event.operation.as_deref(),
+            Some("create_trusted_raw_and_approve")
+        );
+        assert_eq!(event.ids["request_id"], "req-1");
+        assert_eq!(event.summary["command_id"], "trusted_raw");
+        assert!(event.summary["command_text"]["sha256"].is_string());
+        assert!(event.summary["script_text"]["sha256"].is_string());
+        assert!(event.summary["reason"]["sha256"].is_string());
+        assert_eq!(event.summary["trusted_result"]["exit_code"], 0);
+        assert_eq!(event.summary["trusted_result"]["duration_ms"], 42);
+        assert_eq!(event.summary["trusted_result"]["stdout_truncated"], true);
+        let summary_text = event.summary.to_string();
+        assert!(!summary_text.contains("stdout raw"));
+        assert!(!summary_text.contains("stderr raw"));
+        assert!(!summary_text.contains("cat .env"));
+        let stats = compute_stats(&[event]);
+        assert_eq!(stats.command_count, 1);
+    }
+
+    #[test]
+    fn record_command_request_op_event_marks_rejected_failures() {
+        let (_tmp, db) = test_db();
+        let body = CommandRequestOpRequest {
+            op: "approve".to_string(),
+            project: Some("demo".to_string()),
+            command: None,
+            command_text: None,
+            script_path: None,
+            script_args: Vec::new(),
+            reason: None,
+            title: None,
+            summary: None,
+            goal_id: None,
+            ttl_secs: None,
+            requests: Vec::new(),
+            request_id: Some("req-missing".to_string()),
+            request_ids: Vec::new(),
+            status: None,
+            limit: 20,
+            script_text: None,
+            timeout_secs: None,
+            response_mode: None,
+        };
+        let response = CommandRequestOpResponse {
+            success: false,
+            op: "approve".to_string(),
+            records: Vec::new(),
+            goals: Vec::new(),
+            request_id: Some("req-missing".to_string()),
+            record: None,
+            goal_id: None,
+            goal: None,
+            error: Some("Command request not found".to_string()),
+            trusted_result: None,
+        };
+        record_command_request_op_event(
+            &db,
+            Some("session-command-fail".to_string()),
+            100,
+            &body,
+            &response,
+            404,
+        );
+        let event = decode_event(
+            db.list_action_events("session-command-fail", 10)
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap(),
+        );
+        assert_eq!(event.status, "rejected");
+    }
+
+    #[test]
+    fn record_command_action_event_tracks_direct_command_without_raw_output() {
+        let (_tmp, db) = test_db();
+        let body = CommandRequest {
+            project: "demo".to_string(),
+            command: "build".to_string(),
+        };
+        let response = CommandResponse {
+            success: false,
+            project: "demo".to_string(),
+            command: "build".to_string(),
+            exit_code: Some(7),
+            duration_ms: 123,
+            stdout_tail: Some("sensitive stdout".to_string()),
+            stderr_tail: Some("sensitive stderr".to_string()),
+            truncated: true,
+            error: Some("command failed".to_string()),
+        };
+        record_command_action_event(
+            &db,
+            Some("session-direct-command".to_string()),
+            200,
+            &body,
+            &response,
+            500,
+        );
+        let event = decode_event(
+            db.list_action_events("session-direct-command", 10)
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap(),
+        );
+        assert_eq!(event.endpoint, "/api/codex/command");
+        assert_eq!(event.operation.as_deref(), Some("build"));
+        assert_eq!(event.status, "failed");
+        assert_eq!(event.summary["command_id"], "build");
+        assert_eq!(event.summary["exit_code"], 7);
+        let summary_text = event.summary.to_string();
+        assert!(!summary_text.contains("sensitive stdout"));
+        assert!(!summary_text.contains("sensitive stderr"));
+        let stats = compute_stats(&[event]);
+        assert_eq!(stats.command_count, 1);
     }
 }
 
@@ -2078,8 +2483,28 @@ pub async fn codex_command_request(req: &mut Request, depot: &mut Depot, res: &m
 
 #[handler]
 pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let audit_db = get_db(depot);
+    let explicit_session_id = request_action_session_id(req);
+    let mut pending_command_body: Option<CommandRequest> = None;
+    macro_rules! render_command {
+        (Json($response:expr)) => {{
+            let response = $response;
+            if let (Some(db), Some(body)) = (audit_db.as_ref(), pending_command_body.as_ref()) {
+                record_command_action_event(
+                    db,
+                    explicit_session_id.clone(),
+                    started_at,
+                    body,
+                    &response,
+                    res.status_code.unwrap_or(StatusCode::OK).as_u16() as i64,
+                );
+            }
+            res.render(Json(response));
+        }};
+    }
     let Some(projects) = get_projects(depot) else {
-        res.render(Json(CommandResponse {
+        render_command!(Json(CommandResponse {
             success: false,
             project: String::new(),
             command: String::new(),
@@ -2096,7 +2521,7 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
         Ok(b) => b,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(CommandResponse {
+            render_command!(Json(CommandResponse {
                 success: false,
                 project: String::new(),
                 command: String::new(),
@@ -2110,11 +2535,12 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
             return;
         }
     };
+    pending_command_body = Some(body.clone());
     let proj = match projects.get_project(&body.project) {
         Ok(p) => p,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(command_error(&body.project, &body.command, e)));
+            render_command!(Json(command_error(&body.project, &body.command, e)));
             return;
         }
     };
@@ -2122,7 +2548,7 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
         Ok(cmd) => cmd,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(command_error(&body.project, &body.command, e)));
+            render_command!(Json(command_error(&body.project, &body.command, e)));
             return;
         }
     };
@@ -2145,7 +2571,7 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
         control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
         "codex_command_completed"
     );
-    res.render(Json(CommandResponse {
+    render_command!(Json(CommandResponse {
         success,
         project: body.project,
         command: body.command,
@@ -2164,6 +2590,9 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
 
 #[handler]
 pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let audit_db = get_db(depot);
+    let explicit_session_id = request_action_session_id(req);
     let Some(projects) = get_projects(depot) else {
         res.render(Json(CheckResponse {
             success: false,
@@ -2265,14 +2694,25 @@ pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Respons
         "codex_check_completed"
     );
 
-    res.render(Json(CheckResponse {
+    let response = CheckResponse {
         success: code == 0,
-        suite: Some(body.suite),
+        suite: Some(body.suite.clone()),
         exit_code: Some(code),
         duration_ms: Some(duration_ms),
         stdout_tail: Some(stdout_tail),
         stderr_tail: Some(stderr_tail),
         truncated,
         error: None,
-    }));
+    };
+    if let Some(db) = audit_db.as_ref() {
+        record_check_action_event(
+            db,
+            explicit_session_id,
+            started_at,
+            &body,
+            &response,
+            StatusCode::OK.as_u16() as i64,
+        );
+    }
+    res.render(Json(response));
 }

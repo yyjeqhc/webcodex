@@ -1,8 +1,13 @@
 use crate::{
+    action_sessions::{
+        record_action_event, request_action_session_id, summarize_command_text,
+        ActionAuditEventInput,
+    },
     get_db, json_error, CreateDesktopTaskRequest, DesktopTask, DesktopTaskClaimRequest,
     DesktopTaskEvent, DesktopTaskEventRequest, DesktopTaskOpRequest,
 };
 use salvo::prelude::*;
+use serde_json::json;
 use uuid::Uuid;
 
 #[derive(Debug, serde::Serialize)]
@@ -78,8 +83,65 @@ fn create_task_from_fields(title: &str, instructions: &str, priority: Option<i64
     }
 }
 
+fn record_desktop_action_event(
+    db: &std::sync::Arc<crate::Database>,
+    explicit_session_id: Option<String>,
+    started_at: i64,
+    body: &DesktopTaskOpRequest,
+    response: &DesktopTaskOpResponse,
+    http_status: i64,
+) {
+    let ended_at = chrono::Utc::now().timestamp();
+    record_action_event(
+        db,
+        ActionAuditEventInput {
+            explicit_session_id,
+            session_title: None,
+            endpoint: "/api/desktop/task_op".to_string(),
+            action_name: "runDesktopTaskOp".to_string(),
+            operation: Some(body.op.clone()),
+            project: None,
+            status: if response.success {
+                "success".to_string()
+            } else if http_status == StatusCode::BAD_REQUEST.as_u16() as i64
+                || http_status == StatusCode::NOT_FOUND.as_u16() as i64
+                || http_status == StatusCode::CONFLICT.as_u16() as i64
+            {
+                "rejected".to_string()
+            } else {
+                "failed".to_string()
+            },
+            http_status: Some(http_status),
+            started_at,
+            ended_at,
+            duration_ms: (ended_at - started_at).max(0) * 1000,
+            error_summary: response.error.clone(),
+            warning_summary: None,
+            changed_files: Vec::new(),
+            ids: json!({
+                "task_id": response.task.as_ref().map(|task| task.id.clone()).or_else(|| body.id.clone()),
+                "task_ids": response.tasks.iter().map(|task| task.id.clone()).collect::<Vec<_>>(),
+            }),
+            summary: json!({
+                "status": response.task.as_ref().map(|task| task.status.clone()).or_else(|| body.status.clone()),
+                "worker": body.worker.clone().or_else(|| response.task.as_ref().and_then(|task| task.claimed_by.clone())),
+                "event_count": response.events.len(),
+                "task_count": response.tasks.len(),
+                "priority": response.task.as_ref().map(|task| task.priority).or(body.priority),
+                "instructions": body.instructions.as_deref().map(|text| summarize_command_text("instructions", text)),
+                "message": body.message.as_deref().map(|text| summarize_command_text("message", text)),
+                "screenshot_url": body.screenshot_url.clone(),
+            }),
+            request_bytes: None,
+            response_bytes: None,
+        },
+    );
+}
+
 #[handler]
 pub async fn desktop_task_op(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let explicit_session_id = request_action_session_id(req);
     let Some(db) = get_db(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, "No database"));
@@ -98,8 +160,8 @@ pub async fn desktop_task_op(req: &mut Request, depot: &mut Depot, res: &mut Res
     };
     match body.op.as_str() {
         "create" => {
-            let title = body.title.unwrap_or_default();
-            let instructions = body.instructions.unwrap_or_default();
+            let title = body.title.clone().unwrap_or_default();
+            let instructions = body.instructions.clone().unwrap_or_default();
             if title.trim().is_empty() || instructions.trim().is_empty() {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.render(json_error(
@@ -110,16 +172,42 @@ pub async fn desktop_task_op(req: &mut Request, depot: &mut Depot, res: &mut Res
             }
             let task = create_task_from_fields(&title, &instructions, body.priority);
             match db.insert_desktop_task(&task) {
-                Ok(_) => res.render(desktop_op_response(Some(task))),
+                Ok(_) => {
+                    let response = DesktopTaskOpResponse {
+                        success: true,
+                        task: Some(task),
+                        tasks: Vec::new(),
+                        events: Vec::new(),
+                        error: None,
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::OK.as_u16() as i64,
+                    );
+                    res.render(Json(response));
+                }
                 Err(e) => {
                     res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some(e.to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
             }
         }
@@ -135,93 +223,177 @@ pub async fn desktop_task_op(req: &mut Request, depot: &mut Depot, res: &mut Res
                 body.status.as_deref(),
                 body.limit.unwrap_or(20).clamp(1, 100),
             ) {
-                Ok(tasks) => res.render(Json(DesktopTaskOpResponse {
-                    success: true,
-                    task: None,
-                    tasks,
-                    events: Vec::new(),
-                    error: None,
-                })),
+                Ok(tasks) => {
+                    let response = DesktopTaskOpResponse {
+                        success: true,
+                        task: None,
+                        tasks,
+                        events: Vec::new(),
+                        error: None,
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::OK.as_u16() as i64,
+                    );
+                    res.render(Json(response));
+                }
                 Err(e) => {
                     res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some(e.to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
             }
         }
         "get" => {
-            let id = body.id.unwrap_or_default();
+            let id = body.id.clone().unwrap_or_default();
             match db.get_desktop_task(&id) {
                 Ok(Some(task)) => match db.list_desktop_task_events(&id) {
-                    Ok(events) => res.render(Json(DesktopTaskOpResponse {
-                        success: true,
-                        task: Some(task),
-                        tasks: Vec::new(),
-                        events,
-                        error: None,
-                    })),
+                    Ok(events) => {
+                        let response = DesktopTaskOpResponse {
+                            success: true,
+                            task: Some(task),
+                            tasks: Vec::new(),
+                            events,
+                            error: None,
+                        };
+                        record_desktop_action_event(
+                            &db,
+                            explicit_session_id.clone(),
+                            started_at,
+                            &body,
+                            &response,
+                            StatusCode::OK.as_u16() as i64,
+                        );
+                        res.render(Json(response));
+                    }
                     Err(e) => {
                         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                        res.render(Json(DesktopTaskOpResponse {
+                        let response = DesktopTaskOpResponse {
                             success: false,
                             task: None,
                             tasks: Vec::new(),
                             events: Vec::new(),
                             error: Some(e.to_string()),
-                        }));
+                        };
+                        record_desktop_action_event(
+                            &db,
+                            explicit_session_id.clone(),
+                            started_at,
+                            &body,
+                            &response,
+                            StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i64,
+                        );
+                        res.render(Json(response));
                     }
                 },
                 Ok(None) => {
                     res.status_code(StatusCode::NOT_FOUND);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some("task not found".to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::NOT_FOUND.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
                 Err(e) => {
                     res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some(e.to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
             }
         }
         "claim_next" => {
-            let worker = body.worker.unwrap_or_default();
+            let worker = body.worker.clone().unwrap_or_default();
             if worker.trim().is_empty() {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.render(json_error(StatusCode::BAD_REQUEST, "worker is required"));
                 return;
             }
             match db.claim_next_desktop_task(worker.trim(), chrono::Utc::now().timestamp()) {
-                Ok(task) => res.render(desktop_op_response(task)),
+                Ok(task) => {
+                    let response = DesktopTaskOpResponse {
+                        success: true,
+                        task,
+                        tasks: Vec::new(),
+                        events: Vec::new(),
+                        error: None,
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::OK.as_u16() as i64,
+                    );
+                    res.render(Json(response));
+                }
                 Err(e) => {
                     res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some(e.to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
             }
         }
         "claim" => {
-            let id = body.id.unwrap_or_default();
-            let worker = body.worker.unwrap_or_default();
+            let id = body.id.clone().unwrap_or_default();
+            let worker = body.worker.clone().unwrap_or_default();
             if id.is_empty() || worker.trim().is_empty() {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.render(json_error(
@@ -231,31 +403,66 @@ pub async fn desktop_task_op(req: &mut Request, depot: &mut Depot, res: &mut Res
                 return;
             }
             match db.claim_desktop_task(&id, worker.trim(), chrono::Utc::now().timestamp()) {
-                Ok(Some(task)) => res.render(desktop_op_response(Some(task))),
+                Ok(Some(task)) => {
+                    let response = DesktopTaskOpResponse {
+                        success: true,
+                        task: Some(task),
+                        tasks: Vec::new(),
+                        events: Vec::new(),
+                        error: None,
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::OK.as_u16() as i64,
+                    );
+                    res.render(Json(response));
+                }
                 Ok(None) => {
                     res.status_code(StatusCode::CONFLICT);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some("task is missing or not pending".to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::CONFLICT.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
                 Err(e) => {
                     res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some(e.to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
             }
         }
         "event" => {
-            let id = body.id.unwrap_or_default();
+            let id = body.id.clone().unwrap_or_default();
             if id.is_empty() {
                 res.status_code(StatusCode::BAD_REQUEST);
                 res.render(json_error(StatusCode::BAD_REQUEST, "id is required"));
@@ -276,26 +483,61 @@ pub async fn desktop_task_op(req: &mut Request, depot: &mut Depot, res: &mut Res
                 body.screenshot_url.as_deref(),
                 chrono::Utc::now().timestamp(),
             ) {
-                Ok(Some(task)) => res.render(desktop_op_response(Some(task))),
+                Ok(Some(task)) => {
+                    let response = DesktopTaskOpResponse {
+                        success: true,
+                        task: Some(task),
+                        tasks: Vec::new(),
+                        events: Vec::new(),
+                        error: None,
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::OK.as_u16() as i64,
+                    );
+                    res.render(Json(response));
+                }
                 Ok(None) => {
                     res.status_code(StatusCode::NOT_FOUND);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some("task not found".to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::NOT_FOUND.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
                 Err(e) => {
                     res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-                    res.render(Json(DesktopTaskOpResponse {
+                    let response = DesktopTaskOpResponse {
                         success: false,
                         task: None,
                         tasks: Vec::new(),
                         events: Vec::new(),
                         error: Some(e.to_string()),
-                    }));
+                    };
+                    record_desktop_action_event(
+                        &db,
+                        explicit_session_id.clone(),
+                        started_at,
+                        &body,
+                        &response,
+                        StatusCode::INTERNAL_SERVER_ERROR.as_u16() as i64,
+                    );
+                    res.render(Json(response));
                 }
             }
         }

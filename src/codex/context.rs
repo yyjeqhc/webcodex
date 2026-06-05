@@ -8,8 +8,13 @@ use super::{
     agent_context_shell_fragment, run_project_cmd, ssh_grep_context, ssh_overview, ssh_read_file,
     ssh_search, ssh_tree, truncate_string, try_ssh_context_batch_once, MAX_OUTPUT_LEN,
 };
+use crate::action_sessions::{
+    record_action_event, request_action_session_id, ActionAuditEventInput,
+};
+use crate::get_db;
 use crate::projects::{canonicalize_and_verify, ProjectConfig, SshConfig};
 use salvo::prelude::*;
+use serde_json::json;
 use std::path::Path;
 use std::time::Instant;
 
@@ -2018,6 +2023,10 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
 
 #[handler]
 pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit_started_at = chrono::Utc::now().timestamp();
+    let audit_clock = Instant::now();
+    let audit_db = get_db(depot);
+    let explicit_session_id = request_action_session_id(req);
     let Some(projects) = get_projects(depot) else {
         res.render(Json(ContextBatchResponse {
             success: false,
@@ -2155,7 +2164,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
                 "codex_context_batch_completed"
             );
-            res.render(Json(ContextBatchResponse {
+            let response = ContextBatchResponse {
                 success,
                 project: body.project,
                 results,
@@ -2169,7 +2178,55 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 project_is_ssh: None,
                 suggestion: None,
                 warnings: preflight_warnings,
-            }));
+            };
+            if let Some(db) = audit_db.as_ref() {
+                let ended_at = chrono::Utc::now().timestamp();
+                let modes = body
+                    .requests
+                    .iter()
+                    .map(|item| format!("{:?}", item.mode).to_ascii_lowercase())
+                    .collect::<Vec<_>>();
+                record_action_event(
+                    db,
+                    ActionAuditEventInput {
+                        explicit_session_id: explicit_session_id.clone(),
+                        session_title: None,
+                        endpoint: "/api/codex/context_batch".to_string(),
+                        action_name: "getProjectContextBatch".to_string(),
+                        operation: Some(modes.join(",")),
+                        project: Some(response.project.clone()),
+                        status: if response.success {
+                            "success".to_string()
+                        } else {
+                            "failed".to_string()
+                        },
+                        http_status: Some(200),
+                        started_at: audit_started_at,
+                        ended_at,
+                        duration_ms: duration_ms as i64,
+                        error_summary: response.error.clone(),
+                        warning_summary: if response.warnings.is_empty() {
+                            None
+                        } else {
+                            Some(response.warnings.join(" | "))
+                        },
+                        changed_files: Vec::new(),
+                        ids: json!({}),
+                        summary: json!({
+                            "modes": modes,
+                            "count": body.requests.len(),
+                            "max_total_chars": body.max_total_chars,
+                            "estimated_chars": response.estimated_chars,
+                            "preflight_rejected": false,
+                            "ssh_calls": response.ssh_calls,
+                            "project_is_ssh": project_is_ssh,
+                        }),
+                        request_bytes: None,
+                        response_bytes: None,
+                    },
+                );
+            }
+            res.render(Json(response));
         }
         Err(rejection_response) => {
             // Preflight rejected the request — return structured error
@@ -2181,6 +2238,48 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 estimated_chars = ?rejection_response.estimated_chars,
                 "preflight_rejected"
             );
+            if let Some(db) = audit_db.as_ref() {
+                let ended_at = chrono::Utc::now().timestamp();
+                let modes = body
+                    .requests
+                    .iter()
+                    .map(|item| format!("{:?}", item.mode).to_ascii_lowercase())
+                    .collect::<Vec<_>>();
+                record_action_event(
+                    db,
+                    ActionAuditEventInput {
+                        explicit_session_id,
+                        session_title: None,
+                        endpoint: "/api/codex/context_batch".to_string(),
+                        action_name: "getProjectContextBatch".to_string(),
+                        operation: Some(modes.join(",")),
+                        project: Some(rejection_response.project.clone()),
+                        status: "rejected".to_string(),
+                        http_status: Some(200),
+                        started_at: audit_started_at,
+                        ended_at,
+                        duration_ms: audit_clock.elapsed().as_millis() as i64,
+                        error_summary: rejection_response.error.clone(),
+                        warning_summary: if rejection_response.warnings.is_empty() {
+                            None
+                        } else {
+                            Some(rejection_response.warnings.join(" | "))
+                        },
+                        changed_files: Vec::new(),
+                        ids: json!({}),
+                        summary: json!({
+                            "modes": modes,
+                            "count": body.requests.len(),
+                            "max_total_chars": body.max_total_chars,
+                            "estimated_chars": rejection_response.estimated_chars,
+                            "preflight_rejected": true,
+                            "project_is_ssh": project_is_ssh,
+                        }),
+                        request_bytes: None,
+                        response_bytes: None,
+                    },
+                );
+            }
             res.render(Json(rejection_response));
         }
     }

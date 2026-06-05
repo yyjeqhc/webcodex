@@ -4,7 +4,12 @@ use super::shell::sanitize_tail;
 use super::shell::{shell_escape, shell_join_paths};
 use super::types::{GitOperation, GitRequest, GitResponse};
 use super::{run_project_cmd, CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN};
+use crate::action_sessions::{
+    record_action_event, request_action_session_id, ActionAuditEventInput,
+};
+use crate::get_db;
 use salvo::prelude::*;
+use serde_json::json;
 
 pub(super) const MAX_GIT_PATHS: usize = 50;
 pub(super) const MAX_GIT_PATH_LEN: usize = 512;
@@ -86,6 +91,9 @@ pub(super) fn git_command_for_request(body: &GitRequest) -> Result<String, Strin
 
 #[handler]
 pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let audit_db = get_db(depot);
+    let explicit_session_id = request_action_session_id(req);
     let Some(projects) = get_projects(depot) else {
         res.render(Json(GitResponse {
             success: false,
@@ -166,9 +174,9 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
         control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
         "codex_git_completed"
     );
-    res.render(Json(GitResponse {
+    let response = GitResponse {
         success,
-        project: body.project,
+        project: body.project.clone(),
         operation: git_operation_name(&body.operation).to_string(),
         exit_code: Some(code),
         duration_ms,
@@ -180,7 +188,47 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
         } else {
             Some("git operation failed".to_string())
         },
-    }));
+    };
+    res.render(Json(response));
+    if let Some(db) = audit_db.as_ref() {
+        let ended_at = chrono::Utc::now().timestamp();
+        record_action_event(
+            db,
+            ActionAuditEventInput {
+                explicit_session_id,
+                session_title: None,
+                endpoint: "/api/codex/git".to_string(),
+                action_name: "runProjectGit".to_string(),
+                operation: Some(git_operation_name(&body.operation).to_string()),
+                project: Some(body.project.clone()),
+                status: if success {
+                    "success".to_string()
+                } else {
+                    "failed".to_string()
+                },
+                http_status: Some(200),
+                started_at,
+                ended_at,
+                duration_ms: duration_ms as i64,
+                error_summary: if success {
+                    None
+                } else {
+                    Some("git operation failed".to_string())
+                },
+                warning_summary: None,
+                changed_files: body.paths.clone(),
+                ids: json!({}),
+                summary: json!({
+                    "operation": git_operation_name(&body.operation),
+                    "path_count": body.paths.len(),
+                    "paths": body.paths,
+                    "truncated": truncated,
+                }),
+                request_bytes: None,
+                response_bytes: None,
+            },
+        );
+    }
 }
 
 pub(super) fn git_operation_name(operation: &GitOperation) -> &'static str {

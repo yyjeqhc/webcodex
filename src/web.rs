@@ -25,7 +25,7 @@ fn app_shell(title: &str, page_js: &str) -> String {
 <body>
 <div class="container">
 <div class="header"><h1>Private Drop</h1></div>
-<div class="nav"><a href="/channels">Channels</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a><a href="/desktop">Desktop</a><a href="/agent/playground">Agent</a></div>
+<div class="nav"><a href="/channels">Channels</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a><a href="/desktop">Desktop</a><a href="/agent/playground">Agent</a><a href="/actions/sessions">Actions</a></div>
 <div id="app"><div class="loading">Loading...</div></div>
 </div>
 <script defer>
@@ -522,6 +522,139 @@ pub async fn agent_playground_page(_req: &mut Request, _depot: &mut Depot, res: 
 })()
 "#;
     res.render(Text::Html(app_shell("Agent Playground", page_js)));
+}
+
+#[handler]
+pub async fn action_sessions_page(_req: &mut Request, _depot: &mut Depot, res: &mut Response) {
+    let page_js = r#"
+(async function(){
+    if(!requireToken())return;
+    var app=document.getElementById('app');
+    function statCard(label,value,sub){
+        return '<div class="stat-card"><div class="stat-label">'+escapeHtml(label)+'</div><div class="stat-value">'+escapeHtml(value)+'</div><div class="stat-sub">'+escapeHtml(sub||'')+'</div></div>';
+    }
+    async function load(){
+        var status=document.getElementById('statusFilter')?document.getElementById('statusFilter').value:'';
+        var r=await apiCall('/api/codex/action_sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({op:'list',status:status||null,limit:50})});
+        if(!r)return;
+        var d=await r.json();
+        if(!r.ok||!d.success){app.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to load action sessions')+'</div>';return}
+        var sessions=d.sessions||[];
+        var openCount=sessions.filter(function(s){return s.session.status==='open'}).length;
+        var totalActions=sessions.reduce(function(sum,s){return sum+(s.session.total_actions||0)},0);
+        var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2>Action Sessions</h2><div class="form-actions"><button id="refresh" class="btn btn-sm btn-primary">Refresh</button></div></div>'+
+            '<div class="card"><div class="toolbar"><div class="form-group" style="min-width:180px"><label for="statusFilter">Status</label><select id="statusFilter"><option value="">all</option><option value="open">open</option><option value="closed">closed</option></select></div></div></div>'+
+            '<div class="stats-grid">'+
+            statCard('Sessions',String(sessions.length),'recent list')+
+            statCard('Open',String(openCount),'rolling active')+
+            statCard('Actions',String(totalActions),'total calls')+
+            statCard('Failures',String(sessions.reduce(function(sum,s){return sum+(s.session.failed_count||0)},0)),'failed/rejected')+
+            '</div>';
+        if(sessions.length===0){
+            html+='<div class="card"><p>No action sessions recorded yet</p></div>';
+        }else{
+            sessions.forEach(function(item){
+                var s=item.session;
+                html+='<a href="/actions/sessions/'+encodeURIComponent(s.session_id)+'" style="color:inherit;text-decoration:none"><div class="card">'+
+                    '<div class="card-header"><div><div class="card-title">'+escapeHtml(s.title||('Session '+s.session_id.slice(0,8)))+'</div><div class="card-meta">'+escapeHtml(s.status)+' · '+fmtTime(s.created_at)+' · last '+escapeHtml(s.last_event_at?fmtTime(s.last_event_at):'n/a')+'</div></div><span class="channel-badge">'+escapeHtml(String(s.total_actions||0))+' actions</span></div>'+
+                    '<div class="session-meta-row"><span>success '+escapeHtml(String(s.success_count||0))+'</span><span>failed '+escapeHtml(String(s.failed_count||0))+'</span><span>warnings '+escapeHtml(String(s.warning_count||0))+'</span><span>duration '+escapeHtml(String(s.total_duration_ms||0))+'ms</span></div>'+
+                    '<div class="card-meta">top endpoints: '+escapeHtml((item.top_endpoints||[]).join(', ')||'n/a')+'</div>'+
+                    '<div class="card-meta">top projects: '+escapeHtml((item.top_projects||[]).join(', ')||'n/a')+'</div>'+
+                '</div></a>';
+            });
+        }
+        app.innerHTML=html;
+        var select=document.getElementById('statusFilter');
+        if(select){select.value=status||'';select.addEventListener('change',load)}
+        document.getElementById('refresh').addEventListener('click',load);
+    }
+    await load();
+})()
+"#;
+    res.render(Text::Html(app_shell("Action Sessions", page_js)));
+}
+
+#[handler]
+pub async fn action_session_detail_page(req: &mut Request, _depot: &mut Depot, res: &mut Response) {
+    let id = req.param::<String>("id").unwrap_or_default();
+    let page_js = format!(
+        r#"
+(async function(){{
+    if(!requireToken())return;
+    var sessionId={id_json};
+    var app=document.getElementById('app');
+    function statCard(label,value,sub){{
+        return '<div class="stat-card"><div class="stat-label">'+escapeHtml(label)+'</div><div class="stat-value">'+escapeHtml(value)+'</div><div class="stat-sub">'+escapeHtml(sub||'')+'</div></div>';
+    }}
+    function summaryBlock(title,obj){{
+        var entries=Object.entries(obj||{{}});
+        if(entries.length===0)return '<div class="card"><div class="card-title">'+escapeHtml(title)+'</div><p class="card-meta">No data</p></div>';
+        return '<div class="card"><div class="card-title" style="margin-bottom:8px">'+escapeHtml(title)+'</div>'+
+            '<table class="table"><tbody>'+entries.map(function(entry){{return '<tr><td>'+escapeHtml(entry[0])+'</td><td>'+escapeHtml(String(entry[1]))+'</td></tr>'}}).join('')+'</tbody></table></div>';
+    }}
+    async function updateSession(payload){{
+        var r=await apiCall('/api/codex/action_sessions',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify(payload)}});
+        if(!r)return null;
+        return await r.json();
+    }}
+    async function load(){{
+        var r=await apiCall('/api/codex/action_sessions',{{method:'POST',headers:{{'Content-Type':'application/json'}},body:JSON.stringify({{op:'get',session_id:sessionId,limit:200}})}});
+        if(!r)return;
+        var d=await r.json();
+        if(!r.ok||!d.success||!d.session){{app.innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to load session')+'</div>';return}}
+        var s=d.session;
+        var stats=d.stats||{{}};
+        var events=d.events||[];
+        var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><div><a href="/actions/sessions" style="display:inline-block;margin-bottom:8px;color:#3498db;text-decoration:none">← Back</a><h2>'+escapeHtml(s.title||('Session '+s.session_id.slice(0,8)))+'</h2><div class="card-meta">'+escapeHtml(s.session_id)+' · '+escapeHtml(s.status)+'</div></div><div class="form-actions"><button id="refresh" class="btn btn-sm btn-primary">Refresh</button>'+(s.status==='open'?'<button id="closeSession" class="btn btn-sm btn-danger">Close</button>':'')+'</div></div>'+
+            '<div id="msg"></div>'+
+            '<div class="card"><div class="form-group"><label for="sessionTitle">Title</label><input id="sessionTitle" value="'+escapeHtml(s.title||'')+'" placeholder="Optional title"></div><div class="form-group"><label for="sessionNote">Note</label><textarea id="sessionNote" rows="4" placeholder="Optional note">'+escapeHtml(s.note||'')+'</textarea></div><div class="form-actions"><button id="saveMeta" class="btn btn-primary">Save</button></div></div>'+
+            '<div class="stats-grid">'+
+            statCard('Actions',String(s.total_actions||0),'total')+
+            statCard('Success',String(s.success_count||0),'completed')+
+            statCard('Failed',String(s.failed_count||0),'failed/rejected')+
+            statCard('Timeout/Unknown',String(s.timeout_or_unknown_count||0),'uncertain')+
+            statCard('Jobs',String(stats.job_count||0),'job ops')+
+            statCard('Edits',String(stats.edit_count||0),'edit ops')+
+            statCard('Context',String(stats.context_count||0),'read ops')+
+            statCard('Duration',String(s.total_duration_ms||0)+'ms','total wall time')+
+            '</div>'+
+            summaryBlock('Endpoint Counts',stats.by_endpoint)+
+            summaryBlock('Project Counts',stats.by_project)+
+            '<h3 style="margin:20px 0 12px">Timeline</h3>';
+        if(events.length===0){{
+            html+='<div class="card"><p>No events</p></div>';
+        }}else{{
+            events.forEach(function(ev){{
+                var ids=ev.ids&&Object.keys(ev.ids).length?JSON.stringify(ev.ids):'';
+                var summary=ev.summary&&Object.keys(ev.summary).length?JSON.stringify(ev.summary,null,2):'';
+                html+='<div class="card"><div class="card-header"><div><div class="card-title">'+escapeHtml(ev.action_name)+'</div><div class="card-meta">'+fmtTime(ev.started_at)+' · '+escapeHtml(ev.endpoint)+' · '+escapeHtml(ev.operation||'')+'</div></div><span class="channel-badge">'+escapeHtml(ev.status)+'</span></div>'+
+                    '<div class="session-meta-row"><span>project '+escapeHtml(ev.project||'n/a')+'</span><span>duration '+escapeHtml(String(ev.duration_ms))+'ms</span><span>http '+escapeHtml(ev.http_status==null?'n/a':String(ev.http_status))+'</span></div>'+
+                    (ev.error_summary?'<div class="alert alert-error">'+escapeHtml(ev.error_summary)+'</div>':'')+
+                    (ev.warning_summary?'<div class="alert alert-info">'+escapeHtml(ev.warning_summary)+'</div>':'')+
+                    (ev.changed_files&&ev.changed_files.length?'<div class="card-meta">changed files: '+escapeHtml(ev.changed_files.join(', '))+'</div>':'')+
+                    (ids?'<pre class="card-text" style="max-height:none">'+escapeHtml(ids)+'</pre>':'')+
+                    (summary?'<pre class="card-text" style="max-height:none">'+escapeHtml(summary)+'</pre>':'')+
+                '</div>';
+            }});
+        }}
+        app.innerHTML=html;
+        document.getElementById('refresh').addEventListener('click',load);
+        document.getElementById('saveMeta').addEventListener('click',async function(){{
+            var result=await updateSession({{op:'rename',session_id:sessionId,title:document.getElementById('sessionTitle').value.trim(),note:document.getElementById('sessionNote').value.trim()}});
+            if(result&&result.success){{document.getElementById('msg').innerHTML='<div class="alert alert-success">Session updated</div>';load();}}else{{document.getElementById('msg').innerHTML='<div class="alert alert-error">'+escapeHtml((result&&result.error)||'Update failed')+'</div>';}}
+        }});
+        var closeBtn=document.getElementById('closeSession');
+        if(closeBtn)closeBtn.addEventListener('click',async function(){{
+            var result=await updateSession({{op:'close',session_id:sessionId}});
+            if(result&&result.success){{document.getElementById('msg').innerHTML='<div class="alert alert-success">Session closed</div>';load();}}else{{document.getElementById('msg').innerHTML='<div class="alert alert-error">'+escapeHtml((result&&result.error)||'Close failed')+'</div>';}}
+        }});
+    }}
+    await load();
+}})()
+"#,
+        id_json = serde_json::to_string(&id).unwrap()
+    );
+    res.render(Text::Html(app_shell("Action Session", &page_js)));
 }
 
 #[handler]

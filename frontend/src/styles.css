@@ -80,6 +80,69 @@ body {
   line-height: 1.5;
 }
 
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.stat-card {
+  background: white;
+  border-radius: 8px;
+  padding: 14px;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08);
+}
+
+.stat-label {
+  color: #666;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.stat-value {
+  font-size: 24px;
+  font-weight: 600;
+}
+
+.stat-sub {
+  color: #777;
+  font-size: 12px;
+  margin-top: 4px;
+}
+
+.toolbar {
+  display: flex;
+  gap: 12px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+
+.table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.table td {
+  border-top: 1px solid #eee;
+  padding: 8px 0;
+  vertical-align: top;
+}
+
+.session-meta-row {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  color: #666;
+  font-size: 13px;
+  margin: 8px 0;
+}
+
+.alert-info {
+  background: #e8f4fd;
+  color: #0b4f7d;
+}
+
 .btn {
   padding: 8px 16px;
   border: none;

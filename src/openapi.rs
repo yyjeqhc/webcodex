@@ -1,3 +1,4 @@
+use crate::action_sessions::ACTION_SESSION_GUIDANCE;
 use crate::json_error;
 use salvo::prelude::*;
 
@@ -82,6 +83,163 @@ fn apply_context_batch_guidance(spec: &mut serde_json::Value) {
             "Batch context observations for one project. For SSH projects or large reads, keep batches small: at most 8 items for SSH, max_total_chars <=80000. If rejected as too large (preflight_rejected=true), split by file/section instead of retrying the same request. git_diff and agent_context are heavy; avoid mixing many read_file items with them."
         );
     }
+}
+
+fn append_action_session_guidance(description: &str) -> String {
+    if description.contains("X-Action-Session-Id") {
+        description.to_string()
+    } else {
+        format!("{} {}", description.trim(), ACTION_SESSION_GUIDANCE)
+    }
+}
+
+fn apply_action_session_openapi(spec: &mut serde_json::Value) {
+    let paths = [
+        "/api/codex/projects",
+        "/api/codex/context_batch",
+        "/api/codex/edit",
+        "/api/codex/artifact",
+        "/api/codex/git",
+        "/api/codex/command",
+        "/api/codex/command_request_op",
+        "/api/codex/job",
+        "/api/codex/check",
+        "/api/codex/report",
+        "/api/desktop/task_op",
+    ];
+    for path in paths {
+        if let Some(description) = spec["paths"][path]["post"]["description"].as_str() {
+            spec["paths"][path]["post"]["description"] =
+                serde_json::json!(append_action_session_guidance(description));
+        }
+    }
+    spec["paths"]["/api/codex/action_sessions"] = serde_json::json!({
+        "post": {
+            "operationId": "runActionSessionOp",
+            "summary": "Query or manage action sessions",
+            "description": "List, inspect, rename, close, or summarize recorded action sessions.",
+            "tags": ["codex"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ActionSessionOpRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Action session operation result",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ActionSessionOpResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["components"]["schemas"]["ActionSessionRecord"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "session_id": {"type": "string"},
+            "title": {"type": "string", "nullable": true},
+            "note": {"type": "string", "nullable": true},
+            "status": {"type": "string"},
+            "created_at": {"type": "integer"},
+            "updated_at": {"type": "integer"},
+            "closed_at": {"type": "integer", "nullable": true},
+            "first_event_at": {"type": "integer", "nullable": true},
+            "last_event_at": {"type": "integer", "nullable": true},
+            "total_actions": {"type": "integer"},
+            "success_count": {"type": "integer"},
+            "failed_count": {"type": "integer"},
+            "timeout_or_unknown_count": {"type": "integer"},
+            "warning_count": {"type": "integer"},
+            "total_duration_ms": {"type": "integer"},
+            "changed_files_count": {"type": "integer"},
+            "job_ids_count": {"type": "integer"}
+        },
+        "required": ["session_id", "status", "created_at", "updated_at", "total_actions", "success_count", "failed_count", "timeout_or_unknown_count", "warning_count", "total_duration_ms", "changed_files_count", "job_ids_count"]
+    });
+    spec["components"]["schemas"]["ActionSessionStats"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "by_endpoint": {"type": "object", "additionalProperties": {"type": "integer"}},
+            "by_project": {"type": "object", "additionalProperties": {"type": "integer"}},
+            "by_status": {"type": "object", "additionalProperties": {"type": "integer"}},
+            "edit_count": {"type": "integer"},
+            "context_count": {"type": "integer"},
+            "job_count": {"type": "integer"},
+            "command_count": {"type": "integer"},
+            "report_count": {"type": "integer"},
+            "artifact_count": {"type": "integer"},
+            "git_count": {"type": "integer"},
+            "desktop_count": {"type": "integer"},
+            "changed_files_distinct_count": {"type": "integer"},
+            "job_ids_distinct_count": {"type": "integer"}
+        },
+        "required": ["by_endpoint", "by_project", "by_status", "edit_count", "context_count", "job_count", "command_count", "report_count", "artifact_count", "git_count", "desktop_count", "changed_files_distinct_count", "job_ids_distinct_count"]
+    });
+    spec["components"]["schemas"]["ActionEventView"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "event_id": {"type": "string"},
+            "session_id": {"type": "string"},
+            "started_at": {"type": "integer"},
+            "ended_at": {"type": "integer"},
+            "duration_ms": {"type": "integer"},
+            "endpoint": {"type": "string"},
+            "operation": {"type": "string", "nullable": true},
+            "action_name": {"type": "string"},
+            "project": {"type": "string", "nullable": true},
+            "status": {"type": "string"},
+            "http_status": {"type": "integer", "nullable": true},
+            "error_summary": {"type": "string", "nullable": true},
+            "warning_summary": {"type": "string", "nullable": true},
+            "changed_files": {"type": "array", "items": {"type": "string"}},
+            "ids": {"type": "object"},
+            "summary": {"type": "object"},
+            "request_bytes": {"type": "integer", "nullable": true},
+            "response_bytes": {"type": "integer", "nullable": true}
+        },
+        "required": ["event_id", "session_id", "started_at", "ended_at", "duration_ms", "endpoint", "action_name", "status", "changed_files", "ids", "summary"]
+    });
+    spec["components"]["schemas"]["ActionSessionListItem"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "session": {"$ref": "#/components/schemas/ActionSessionRecord"},
+            "stats": {"$ref": "#/components/schemas/ActionSessionStats"},
+            "top_endpoints": {"type": "array", "items": {"type": "string"}},
+            "top_projects": {"type": "array", "items": {"type": "string"}}
+        },
+        "required": ["session", "stats", "top_endpoints", "top_projects"]
+    });
+    spec["components"]["schemas"]["ActionSessionOpRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "op": {"type": "string", "enum": ["list", "get", "events", "stats", "rename", "close"]},
+            "session_id": {"type": "string", "nullable": true},
+            "status": {"type": "string", "nullable": true},
+            "title": {"type": "string", "nullable": true},
+            "note": {"type": "string", "nullable": true},
+            "limit": {"type": "integer", "nullable": true}
+        },
+        "required": ["op"]
+    });
+    spec["components"]["schemas"]["ActionSessionOpResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": {"type": "boolean"},
+            "op": {"type": "string"},
+            "sessions": {"type": "array", "items": {"$ref": "#/components/schemas/ActionSessionListItem"}},
+            "session": {"$ref": "#/components/schemas/ActionSessionRecord", "nullable": true},
+            "stats": {"$ref": "#/components/schemas/ActionSessionStats", "nullable": true},
+            "events": {"type": "array", "items": {"$ref": "#/components/schemas/ActionEventView"}},
+            "error": {"type": "string", "nullable": true}
+        },
+        "required": ["success", "op", "sessions", "events"]
+    });
 }
 
 fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
@@ -301,6 +459,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
     apply_job_recovery_guidance(&mut spec);
     apply_context_batch_guidance(&mut spec);
     apply_trusted_command_guidance(&mut spec);
+    apply_action_session_openapi(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -308,7 +467,9 @@ pub async fn codex_openapi_json(res: &mut Response) {
 
 #[cfg(test)]
 mod tests {
-    use super::{apply_edit_timeout_guidance, apply_trusted_command_guidance};
+    use super::{
+        apply_action_session_openapi, apply_edit_timeout_guidance, apply_trusted_command_guidance,
+    };
 
     #[test]
     fn apply_project_edit_description_stays_under_300_chars() {
@@ -442,6 +603,62 @@ mod tests {
             "CommandRequestOpResponse trusted_result should be added"
         );
     }
+
+    #[test]
+    fn action_sessions_openapi_is_exposed() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_action_session_openapi(&mut spec);
+        assert!(
+            !spec["paths"]["/api/codex/action_sessions"]["post"].is_null(),
+            "action_sessions endpoint should exist"
+        );
+        assert!(
+            !spec["components"]["schemas"]["ActionSessionOpRequest"].is_null(),
+            "ActionSessionOpRequest schema should exist"
+        );
+        assert!(
+            !spec["components"]["schemas"]["ActionSessionOpResponse"].is_null(),
+            "ActionSessionOpResponse schema should exist"
+        );
+    }
+
+    #[test]
+    fn action_session_guidance_mentions_header() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_action_session_openapi(&mut spec);
+        let description = spec["paths"]["/api/codex/edit"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(description.contains("X-Action-Session-Id"));
+        assert!(description.contains("rolling action sessions"));
+    }
+
+    #[test]
+    fn compact_openapi_includes_action_sessions_path() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_action_session_openapi(&mut spec);
+        let compact_paths = serde_json::json!({
+            "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
+            "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
+            "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+            "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
+            "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
+            "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
+            "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
+            "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
+            "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
+            "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
+            "/api/desktop/task_op": spec["paths"]["/api/desktop/task_op"].clone(),
+            "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
+        });
+        assert!(
+            !compact_paths["/api/codex/action_sessions"]["post"].is_null(),
+            "compact schema should include action_sessions"
+        );
+    }
 }
 
 #[handler]
@@ -472,7 +689,8 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
         "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
-        "/api/desktop/task_op": spec["paths"]["/api/desktop/task_op"].clone()
+        "/api/desktop/task_op": spec["paths"]["/api/desktop/task_op"].clone(),
+        "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
     });
     spec["components"]["schemas"] = serde_json::json!({
         "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
@@ -517,7 +735,13 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         "DesktopTask": spec["components"]["schemas"]["DesktopTask"].clone(),
         "DesktopTaskEvent": spec["components"]["schemas"]["DesktopTaskEvent"].clone(),
         "DesktopTaskOpRequest": spec["components"]["schemas"]["DesktopTaskOpRequest"].clone(),
-        "DesktopTaskOpResponse": spec["components"]["schemas"]["DesktopTaskOpResponse"].clone()
+        "DesktopTaskOpResponse": spec["components"]["schemas"]["DesktopTaskOpResponse"].clone(),
+        "ActionSessionRecord": spec["components"]["schemas"]["ActionSessionRecord"].clone(),
+        "ActionSessionStats": spec["components"]["schemas"]["ActionSessionStats"].clone(),
+        "ActionEventView": spec["components"]["schemas"]["ActionEventView"].clone(),
+        "ActionSessionListItem": spec["components"]["schemas"]["ActionSessionListItem"].clone(),
+        "ActionSessionOpRequest": spec["components"]["schemas"]["ActionSessionOpRequest"].clone(),
+        "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone()
     });
     apply_project_description_to_schema(
         &mut spec,
@@ -537,6 +761,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
     apply_job_recovery_guidance(&mut spec);
     apply_context_batch_guidance(&mut spec);
     apply_trusted_command_guidance(&mut spec);
+    apply_action_session_openapi(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));

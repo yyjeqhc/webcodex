@@ -4,9 +4,14 @@ use super::security::is_sensitive_path;
 use super::source::read_binary_from_url;
 use super::truncate_string;
 use super::types::{EditOperation, EditRequest, EditResponse, EditResponseMode};
+use crate::action_sessions::{
+    record_action_event, request_action_session_id, ActionAuditEventInput,
+};
+use crate::get_db;
 use crate::projects::{canonicalize_and_verify, ProjectConfig};
 use base64::Engine;
 use salvo::prelude::*;
+use serde_json::json;
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
@@ -802,6 +807,10 @@ pub(super) fn read_binary_from_upload(
 
 #[handler]
 pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let audit_clock = std::time::Instant::now();
+    let audit_db = get_db(depot);
+    let explicit_session_id = request_action_session_id(req);
     let Some(projects) = get_projects(depot) else {
         res.render(Json(edit_error("Projects not configured".to_string())));
         return;
@@ -856,5 +865,67 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
         }
     }
     let response = apply_edit_request_with_metrics(&projects, proj, &body, "applyProjectEdit");
+    if let Some(db) = audit_db.as_ref() {
+        let ended_at = chrono::Utc::now().timestamp();
+        let changed_files = response.changed_files.clone();
+        let edit_types = body
+            .edits
+            .iter()
+            .map(|edit| match edit {
+                EditOperation::ReplaceText { .. } => "replace_text",
+                EditOperation::ReplaceRange { .. } => "replace_range",
+                EditOperation::AppendFile { .. } => "append_file",
+                EditOperation::CreateFile { .. } => "create_file",
+                EditOperation::WriteFile { .. } => "write_file",
+                EditOperation::CreateBinaryFile { .. } => "create_binary_file",
+                EditOperation::WriteBinaryFile { .. } => "write_binary_file",
+                EditOperation::CreateBinaryArtifact { .. } => "create_binary_artifact",
+                EditOperation::WriteBinaryArtifact { .. } => "write_binary_artifact",
+                EditOperation::CreateBinaryFileFromUpload { .. } => {
+                    "create_binary_file_from_upload"
+                }
+                EditOperation::WriteBinaryFileFromUpload { .. } => "write_binary_file_from_upload",
+                EditOperation::CreateBinaryFileFromUrl { .. } => "create_binary_file_from_url",
+                EditOperation::WriteBinaryFileFromUrl { .. } => "write_binary_file_from_url",
+            })
+            .collect::<Vec<_>>();
+        record_action_event(
+            db,
+            ActionAuditEventInput {
+                explicit_session_id,
+                session_title: None,
+                endpoint: "/api/codex/edit".to_string(),
+                action_name: "applyProjectEdit".to_string(),
+                operation: Some(edit_types.join(",")),
+                project: Some(body.project.clone()),
+                status: if response.success {
+                    "success".to_string()
+                } else {
+                    "failed".to_string()
+                },
+                http_status: Some(res.status_code.unwrap_or(StatusCode::OK).as_u16() as i64),
+                started_at,
+                ended_at,
+                duration_ms: audit_clock.elapsed().as_millis() as i64,
+                error_summary: response.error.clone(),
+                warning_summary: if response.warnings.is_empty() {
+                    None
+                } else {
+                    Some(response.warnings.join(" | "))
+                },
+                changed_files,
+                ids: json!({}),
+                summary: json!({
+                    "edit_types": edit_types,
+                    "paths": body.edits.iter().map(|edit| edit_path(edit).to_string()).collect::<Vec<_>>(),
+                    "response_mode": body.response_mode,
+                    "dry_run": body.dry_run,
+                    "diff_truncated": response.diff_truncated,
+                }),
+                request_bytes: None,
+                response_bytes: None,
+            },
+        );
+    }
     res.render(Json(response));
 }

@@ -5,9 +5,13 @@ use super::trusted::{
     check_background_escape, check_denylist, check_secret_read, validate_trusted_script,
 };
 use super::types::{job_response, JobOpRequest, JobOpResponse};
+use crate::action_sessions::{
+    record_action_event, request_action_session_id, summarize_command_text, ActionAuditEventInput,
+};
 use crate::get_db;
 use crate::projects::{ProjectConfig, SshConfig};
 use salvo::prelude::*;
+use serde_json::json;
 
 use super::run_project_cmd;
 use super::security::is_sensitive_path;
@@ -17,6 +21,111 @@ use std::path::{Component, Path, PathBuf};
 
 const DEFAULT_JOB_MAX_RUNTIME_SECS: i64 = 3600;
 const MAX_JOB_MAX_RUNTIME_SECS: i64 = 604800;
+
+fn record_job_action_event(
+    db: &std::sync::Arc<crate::Database>,
+    explicit_session_id: Option<String>,
+    started_at: i64,
+    body: &JobOpRequest,
+    response: &JobOpResponse,
+    http_status: i64,
+) {
+    let ended_at = chrono::Utc::now().timestamp();
+    let jobs = response
+        .job
+        .clone()
+        .into_iter()
+        .chain(response.jobs.clone())
+        .collect::<Vec<_>>();
+    let resolved_project = body
+        .project
+        .clone()
+        .or_else(|| response.job.as_ref().map(|job| job.project.clone()))
+        .or_else(|| response.jobs.first().map(|job| job.project.clone()));
+    let status = if response.success {
+        "success".to_string()
+    } else if http_status == StatusCode::BAD_REQUEST.as_u16() as i64
+        || http_status == StatusCode::FORBIDDEN.as_u16() as i64
+        || http_status == StatusCode::NOT_FOUND.as_u16() as i64
+        || http_status == StatusCode::CONFLICT.as_u16() as i64
+    {
+        "rejected".to_string()
+    } else {
+        "failed".to_string()
+    };
+    let command_summary = body
+        .command
+        .as_deref()
+        .map(|text| summarize_command_text("command_text", text));
+    let script_summary = body
+        .script_text
+        .as_deref()
+        .map(|text| summarize_command_text("script_text", text));
+    let summary_length = response
+        .summary_markdown
+        .as_ref()
+        .map(|s| s.chars().count());
+    let stdout_chars = response.stdout_tail.as_ref().map(|s| s.chars().count());
+    let stderr_chars = response.stderr_tail.as_ref().map(|s| s.chars().count());
+    let log_truncated = matches!(body.op.as_str(), "log" | "status")
+        && response
+            .log_total_lines
+            .map(|total| total > body.tail_lines)
+            .unwrap_or(false);
+    record_action_event(
+        db,
+        ActionAuditEventInput {
+            explicit_session_id,
+            session_title: None,
+            endpoint: "/api/codex/job".to_string(),
+            action_name: "runJobOp".to_string(),
+            operation: Some(body.op.clone()),
+            project: resolved_project,
+            status,
+            http_status: Some(http_status),
+            started_at,
+            ended_at,
+            duration_ms: (ended_at - started_at).max(0) * 1000,
+            error_summary: response.error.clone(),
+            warning_summary: if response.warnings.is_empty() {
+                None
+            } else {
+                Some(response.warnings.join(" | "))
+            },
+            changed_files: Vec::new(),
+            ids: json!({
+                "job_id": response.job_id,
+                "job_ids": response.job_ids,
+                "client_request_id": body.client_request_id,
+                "goal_id": body.goal_id,
+            }),
+            summary: json!({
+                "project": body.project,
+                "suite": body.suite,
+                "status": response.job.as_ref().map(|job| job.status.clone()),
+                "job_statuses": jobs.iter().map(|job| job.status.clone()).collect::<Vec<_>>(),
+                "exit_code": response.job.as_ref().and_then(|job| job.exit_code),
+                "exit_codes": jobs.iter().filter_map(|job| job.exit_code).collect::<Vec<_>>(),
+                "metadata_only": response.metadata_only,
+                "logs_included": response.logs_included,
+                "log_total_lines": response.log_total_lines,
+                "summary_length": summary_length,
+                "stdout_chars": stdout_chars,
+                "stderr_chars": stderr_chars,
+                "log_truncated": log_truncated,
+                "tail_lines": body.tail_lines,
+                "since_line": body.since_line,
+                "command": command_summary,
+                "script_text": script_summary,
+                "trusted": body.trusted,
+                "max_runtime_secs": body.max_runtime_secs,
+                "job_count": jobs.len().max(response.job_ids.len()),
+            }),
+            request_bytes: None,
+            response_bytes: None,
+        },
+    );
+}
 
 pub(super) fn validate_job_id(job_id: &str) -> Result<(), String> {
     if job_id.is_empty()
@@ -1227,6 +1336,26 @@ fn ssh_job_info_basic(
 
 #[handler]
 pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let audit_db = get_db(depot);
+    let explicit_session_id = request_action_session_id(req);
+    let pending_job_body: Option<JobOpRequest>;
+    macro_rules! render_job {
+        (Json($response:expr)) => {{
+            let response = $response;
+            if let (Some(db), Some(body)) = (audit_db.as_ref(), pending_job_body.as_ref()) {
+                record_job_action_event(
+                    db,
+                    explicit_session_id.clone(),
+                    started_at,
+                    body,
+                    &response,
+                    res.status_code.unwrap_or(StatusCode::OK).as_u16() as i64,
+                );
+            }
+            res.render(Json(response));
+        }};
+    }
     let Some(projects) = get_projects(depot) else {
         res.render(Json(job_response(
             "unknown",
@@ -1256,11 +1385,12 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         }
     };
     let op = body.op.clone();
+    pending_job_body = Some(body.clone());
     let project = match body.project.clone() {
         Some(p) => p,
         None => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(job_response(
+            render_job!(Json(job_response(
                 &op,
                 false,
                 Some("project is required".to_string()),
@@ -1272,7 +1402,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         Ok(p) => p,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(job_response(&op, false, Some(e))));
+            render_job!(Json(job_response(&op, false, Some(e))));
             return;
         }
     };
@@ -1281,7 +1411,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
     if let Some(client_request_id) = client_request_id {
         if let Err(e) = validate_client_request_id(client_request_id) {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(job_response(&op, false, Some(e))));
+            render_job!(Json(job_response(&op, false, Some(e))));
             return;
         }
     }
@@ -1289,7 +1419,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         "check" => {
             let Some(goal_id) = body.goal_id.as_deref() else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some("goal_id is required".to_string()),
@@ -1298,12 +1428,12 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             };
             if let Err(e) = require_active_goal(&db, goal_id, &project) {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(job_response(&op, false, Some(e))));
+                render_job!(Json(job_response(&op, false, Some(e))));
                 return;
             }
             let Some(suite) = body.suite.as_deref() else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some("suite is required".to_string()),
@@ -1312,7 +1442,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             };
             if !proj.is_check_allowed(suite) {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some(format!(
@@ -1326,7 +1456,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             let command = match proj.get_check_command(suite) {
                 Ok(c) => c,
                 Err(e) => {
-                    res.render(Json(job_response(&op, false, Some(e))));
+                    render_job!(Json(job_response(&op, false, Some(e))));
                     return;
                 }
             };
@@ -1334,7 +1464,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 Ok(v) => v,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(job_response(&op, false, Some(e))));
+                    render_job!(Json(job_response(&op, false, Some(e))));
                     return;
                 }
             };
@@ -1348,7 +1478,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 filter_jobs_by_client_request_id(&mut existing, Some(client_request_id));
                 existing.sort_by_key(|j| -j.created_at);
                 if let Some(job) = existing.first().cloned() {
-                    res.render(Json(JobOpResponse {
+                    render_job!(Json(JobOpResponse {
                         success: true,
                         op,
                         job_id: Some(job.job_id.clone()),
@@ -1403,7 +1533,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 )
             };
             match result {
-                Ok(job) => res.render(Json(JobOpResponse {
+                Ok(job) => render_job!(Json(JobOpResponse {
                     success: true,
                     op,
                     job_id: Some(job.job_id.clone()),
@@ -1420,13 +1550,13 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     logs_included: None,
                     warnings: Vec::new(),
                 })),
-                Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
+                Err(e) => render_job!(Json(job_response(&op, false, Some(e)))),
             }
         }
         "create" => {
             let Some(goal_id) = body.goal_id.as_deref() else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some("goal_id is required".to_string()),
@@ -1435,7 +1565,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             };
             if let Err(e) = require_active_goal(&db, goal_id, &project) {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(job_response(&op, false, Some(e))));
+                render_job!(Json(job_response(&op, false, Some(e))));
                 return;
             }
             // Determine the command source: trusted script_text, command, or script_path
@@ -1450,29 +1580,29 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     // Validate the trusted script
                     if let Err(e) = validate_trusted_script(script_text) {
                         res.status_code(StatusCode::BAD_REQUEST);
-                        res.render(Json(job_response(&op, false, Some(e))));
+                        render_job!(Json(job_response(&op, false, Some(e))));
                         return;
                     }
                     // Safety checks
                     if let Some(err) = check_denylist(script_text) {
                         res.status_code(StatusCode::BAD_REQUEST);
-                        res.render(Json(job_response(&op, false, Some(err))));
+                        render_job!(Json(job_response(&op, false, Some(err))));
                         return;
                     }
                     if let Some(err) = check_secret_read(script_text) {
                         res.status_code(StatusCode::BAD_REQUEST);
-                        res.render(Json(job_response(&op, false, Some(err))));
+                        render_job!(Json(job_response(&op, false, Some(err))));
                         return;
                     }
                     if let Some(err) = check_background_escape(script_text) {
                         res.status_code(StatusCode::BAD_REQUEST);
-                        res.render(Json(job_response(&op, false, Some(err))));
+                        render_job!(Json(job_response(&op, false, Some(err))));
                         return;
                     }
                     // Reject SSH for now
                     if proj.is_ssh() {
                         res.status_code(StatusCode::BAD_REQUEST);
-                        res.render(Json(job_response(
+                        render_job!(Json(job_response(
                             &op,
                             false,
                             Some("trusted script_text jobs are currently supported only for local executor; use script_path or create a script file in project for SSH jobs".to_string()),
@@ -1494,7 +1624,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 // script_text without trusted=true
                 (Some(_), false, _, _) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(job_response(
+                    render_job!(Json(job_response(
                         &op,
                         false,
                         Some("script_text requires trusted=true".to_string()),
@@ -1504,7 +1634,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 // script_text conflicts with command/script_path
                 (Some(_), true, Some(_), _) | (Some(_), true, _, Some(_)) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(job_response(
+                    render_job!(Json(job_response(
                         &op,
                         false,
                         Some(
@@ -1517,7 +1647,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 // Original command or script_path mode (not trusted)
                 (None, _, Some(_), Some(_)) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(job_response(
+                    render_job!(Json(job_response(
                         &op,
                         false,
                         Some("provide either command or script_path, not both".to_string()),
@@ -1537,14 +1667,14 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         ),
                         Err(e) => {
                             res.status_code(StatusCode::BAD_REQUEST);
-                            res.render(Json(job_response(&op, false, Some(e))));
+                            render_job!(Json(job_response(&op, false, Some(e))));
                             return;
                         }
                     }
                 }
                 (None, _, None, None) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(job_response(
+                    render_job!(Json(job_response(
                         &op,
                         false,
                         Some(
@@ -1559,7 +1689,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 Ok(v) => v,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(job_response(&op, false, Some(e))));
+                    render_job!(Json(job_response(&op, false, Some(e))));
                     return;
                 }
             };
@@ -1573,7 +1703,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 filter_jobs_by_client_request_id(&mut existing, Some(client_request_id));
                 existing.sort_by_key(|j| -j.created_at);
                 if let Some(job) = existing.first().cloned() {
-                    res.render(Json(JobOpResponse {
+                    render_job!(Json(JobOpResponse {
                         success: true,
                         op,
                         job_id: Some(job.job_id.clone()),
@@ -1626,11 +1756,11 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             let job = match result {
                 Ok(job) => job,
                 Err(e) => {
-                    res.render(Json(job_response(&op, false, Some(e))));
+                    render_job!(Json(job_response(&op, false, Some(e))));
                     return;
                 }
             };
-            res.render(Json(JobOpResponse {
+            render_job!(Json(JobOpResponse {
                 success: true,
                 op,
                 job_id: Some(job.job_id.clone()),
@@ -1651,7 +1781,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         "create_batch" => {
             let Some(goal_id) = body.goal_id.as_deref() else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some("goal_id is required".to_string()),
@@ -1660,12 +1790,12 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             };
             if let Err(e) = require_active_goal(&db, goal_id, &project) {
                 res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(job_response(&op, false, Some(e))));
+                render_job!(Json(job_response(&op, false, Some(e))));
                 return;
             }
             if body.commands.is_empty() || body.commands.len() > 20 {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some("commands must contain 1..20 items".to_string()),
@@ -1676,14 +1806,14 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 Ok(v) => v,
                 Err(e) => {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(job_response(&op, false, Some(e))));
+                    render_job!(Json(job_response(&op, false, Some(e))));
                     return;
                 }
             };
             for command in &body.commands {
                 if let Err(e) = validate_job_command(command) {
                     res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(Json(job_response(&op, false, Some(e))));
+                    render_job!(Json(job_response(&op, false, Some(e))));
                     return;
                 }
             }
@@ -1709,7 +1839,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         .iter()
                         .map(|j| j.job_id.clone())
                         .collect::<Vec<_>>();
-                    res.render(Json(JobOpResponse {
+                    render_job!(Json(JobOpResponse {
                         success: true,
                         op,
                         job_id: job_ids.first().cloned(),
@@ -1768,13 +1898,13 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 match result {
                     Ok(job) => jobs.push(job),
                     Err(e) => {
-                        res.render(Json(job_response(&op, false, Some(e))));
+                        render_job!(Json(job_response(&op, false, Some(e))));
                         return;
                     }
                 }
             }
             let job_ids = jobs.iter().map(|j| j.job_id.clone()).collect::<Vec<_>>();
-            res.render(Json(JobOpResponse {
+            render_job!(Json(JobOpResponse {
                 success: true,
                 op,
                 job_id: job_ids.first().cloned(),
@@ -1815,7 +1945,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 });
             }
             let job_ids = jobs.iter().map(|j| j.job_id.clone()).collect::<Vec<_>>();
-            res.render(Json(JobOpResponse {
+            render_job!(Json(JobOpResponse {
                 success: true,
                 op,
                 job_id: job_ids.first().cloned(),
@@ -1850,7 +1980,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 jobs.sort_by_key(|j| -j.created_at);
                 let Some(job) = jobs.first() else {
                     res.status_code(StatusCode::NOT_FOUND);
-                    res.render(Json(job_response(
+                    render_job!(Json(job_response(
                         &op,
                         false,
                         Some("job not found for client_request_id".to_string()),
@@ -1861,7 +1991,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 &job_id_owned
             } else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some("job_id or client_request_id is required".to_string()),
@@ -1914,7 +2044,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         };
                         let next_cursor =
                             log_total_lines.and_then(|t| if t > 0 { Some(t + 1) } else { None });
-                        res.render(Json(JobOpResponse {
+                        render_job!(Json(JobOpResponse {
                             success: true,
                             op,
                             job_id: Some(job.job_id.clone()),
@@ -1933,7 +2063,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         }))
                     } else {
                         // basic: no logs
-                        res.render(Json(JobOpResponse {
+                        render_job!(Json(JobOpResponse {
                             success: true,
                             op,
                             job_id: Some(job.job_id.clone()),
@@ -1952,7 +2082,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         }))
                     }
                 }
-                Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
+                Err(e) => render_job!(Json(job_response(&op, false, Some(e)))),
             }
         }
         "log" => {
@@ -1972,7 +2102,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 jobs.sort_by_key(|j| -j.created_at);
                 let Some(job) = jobs.first() else {
                     res.status_code(StatusCode::NOT_FOUND);
-                    res.render(Json(job_response(
+                    render_job!(Json(job_response(
                         &op,
                         false,
                         Some("job not found for client_request_id".to_string()),
@@ -1983,7 +2113,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 &job_id_owned
             } else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some("job_id or client_request_id is required".to_string()),
@@ -2005,7 +2135,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     } else {
                         None
                     };
-                    res.render(Json(JobOpResponse {
+                    render_job!(Json(JobOpResponse {
                         success: true,
                         op,
                         job_id: Some(job_id.to_string()),
@@ -2023,7 +2153,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         warnings: Vec::new(),
                     }))
                 }
-                Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
+                Err(e) => render_job!(Json(job_response(&op, false, Some(e)))),
             }
         }
         "stop" => {
@@ -2043,7 +2173,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 jobs.sort_by_key(|j| -j.created_at);
                 let Some(job) = jobs.first() else {
                     res.status_code(StatusCode::NOT_FOUND);
-                    res.render(Json(job_response(
+                    render_job!(Json(job_response(
                         &op,
                         false,
                         Some("job not found for client_request_id".to_string()),
@@ -2054,7 +2184,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 &job_id_owned
             } else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(job_response(
+                render_job!(Json(job_response(
                     &op,
                     false,
                     Some("job_id or client_request_id is required".to_string()),
@@ -2067,7 +2197,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stop_local_job(&proj.root(), job_id)
             };
             match result {
-                Ok(job) => res.render(Json(JobOpResponse {
+                Ok(job) => render_job!(Json(JobOpResponse {
                     success: true,
                     op,
                     job_id: Some(job.job_id.clone()),
@@ -2084,7 +2214,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     logs_included: None,
                     warnings: Vec::new(),
                 })),
-                Err(e) => res.render(Json(job_response(&op, false, Some(e)))),
+                Err(e) => render_job!(Json(job_response(&op, false, Some(e)))),
             }
         }
         "summarize" => {
@@ -2132,7 +2262,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             }
             let summary = summarize_jobs_markdown(&jobs, &tails);
             let job_ids = jobs.iter().map(|j| j.job_id.clone()).collect::<Vec<_>>();
-            res.render(Json(JobOpResponse {
+            render_job!(Json(JobOpResponse {
                 success: true,
                 op,
                 job_id: job_ids.first().cloned(),
@@ -2178,7 +2308,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     }
                     None => {
                         res.status_code(StatusCode::NOT_FOUND);
-                        res.render(Json(JobOpResponse {
+                        render_job!(Json(JobOpResponse {
                             success: false,
                             op: op.clone(),
                             job_id: None,
@@ -2200,7 +2330,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 }
             } else {
                 res.status_code(StatusCode::BAD_REQUEST);
-                res.render(Json(JobOpResponse {
+                render_job!(Json(JobOpResponse {
                     success: false,
                     op: op.clone(),
                     job_id: None,
@@ -2225,7 +2355,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 recover_local_job_info(&proj.root(), resolved_job_id)
             };
             match result {
-                Ok(job) => res.render(Json(JobOpResponse {
+                Ok(job) => render_job!(Json(JobOpResponse {
                     success: true,
                     op,
                     job_id: Some(job.job_id.clone()),
@@ -2242,7 +2372,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     logs_included: Some(false),
                     warnings: Vec::new(),
                 })),
-                Err(e) => res.render(Json(JobOpResponse {
+                Err(e) => render_job!(Json(JobOpResponse {
                     success: false,
                     op,
                     job_id: None,
@@ -2263,7 +2393,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         }
         _ => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(job_response(
+            render_job!(Json(job_response(
                 &op,
                 false,
                 Some("unsupported job op".to_string()),
@@ -2275,9 +2405,12 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::action_sessions::{compute_stats, decode_event};
     use crate::projects::ProjectConfig;
+    use crate::Database;
     use std::collections::HashMap;
     use std::fs;
+    use std::sync::Arc;
 
     /// Create a minimal local job directory for testing.
     fn create_test_job_dir(root: &Path, job_id: &str, client_request_id: Option<&str>) -> PathBuf {
@@ -2315,6 +2448,12 @@ mod tests {
         fs::write(dir.join("stdout.log"), "line1\nline2\nline3\n").unwrap();
         fs::write(dir.join("stderr.log"), "some error output\n").unwrap();
         dir
+    }
+
+    fn test_db() -> (tempfile::TempDir, Arc<Database>) {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Arc::new(Database::open(&tmp.path().join("drop.db")).unwrap());
+        (tmp, db)
     }
 
     #[test]
@@ -2801,5 +2940,158 @@ mod tests {
             !dir.join("script.sh").exists(),
             "script.sh should NOT exist for non-trusted jobs"
         );
+    }
+
+    #[test]
+    fn record_job_action_event_sanitizes_log_and_summary_payloads() {
+        let (_tmp, db) = test_db();
+        let body = JobOpRequest {
+            op: "log".to_string(),
+            project: Some("demo".to_string()),
+            goal_id: Some("goal-1".to_string()),
+            job_id: Some("job-1".to_string()),
+            client_request_id: Some("client-1".to_string()),
+            suite: Some("test".to_string()),
+            command: Some("echo visible".to_string()),
+            script_path: None,
+            script_args: Vec::new(),
+            script_text: Some("printf visible\ncat .env".to_string()),
+            trusted: Some(true),
+            commands: Vec::new(),
+            reason: Some("please stream the logs".to_string()),
+            status: None,
+            limit: 20,
+            tail_lines: 2,
+            max_runtime_secs: Some(30),
+            detail: Some("logs".to_string()),
+            since_line: Some(4),
+            response_mode: Some("summary".to_string()),
+        };
+        let response = JobOpResponse {
+            success: true,
+            op: "log".to_string(),
+            job_id: Some("job-1".to_string()),
+            job_ids: vec!["job-1".to_string()],
+            job: Some(JobInfo {
+                job_id: "job-1".to_string(),
+                client_request_id: Some("client-1".to_string()),
+                project: "demo".to_string(),
+                goal_id: "goal-1".to_string(),
+                command: "echo visible".to_string(),
+                kind: Some("command".to_string()),
+                suite: Some("test".to_string()),
+                script_path: None,
+                reason: None,
+                status: "completed".to_string(),
+                created_at: 1,
+                started_at: Some(2),
+                finished_at: Some(3),
+                max_runtime_secs: 30,
+                executor: "local".to_string(),
+                pid: None,
+                exit_code: Some(0),
+                elapsed_secs: Some(1),
+                oom_hint: None,
+            }),
+            jobs: Vec::new(),
+            stdout_tail: Some("line1\nline2".to_string()),
+            stderr_tail: Some("err1".to_string()),
+            summary_markdown: Some("# summary\nreal body".to_string()),
+            error: None,
+            log_total_lines: Some(10),
+            next_cursor: Some(11),
+            metadata_only: Some(false),
+            logs_included: Some(true),
+            warnings: Vec::new(),
+        };
+        record_job_action_event(
+            &db,
+            Some("session-job".to_string()),
+            100,
+            &body,
+            &response,
+            200,
+        );
+        let events = db.list_action_events("session-job", 10).unwrap();
+        let event = decode_event(events.into_iter().next().unwrap());
+        assert_eq!(event.endpoint, "/api/codex/job");
+        assert_eq!(event.operation.as_deref(), Some("log"));
+        assert_eq!(event.ids["job_id"], "job-1");
+        assert_eq!(event.summary["tail_lines"], 2);
+        assert_eq!(event.summary["since_line"], 4);
+        assert_eq!(event.summary["log_total_lines"], 10);
+        assert_eq!(event.summary["stdout_chars"], 11);
+        assert_eq!(event.summary["stderr_chars"], 4);
+        assert_eq!(event.summary["log_truncated"], true);
+        assert_eq!(event.summary["summary_length"], 19);
+        assert!(event.summary["command"]["sha256"].is_string());
+        assert!(event.summary["script_text"]["sha256"].is_string());
+        let summary_text = event.summary.to_string();
+        assert!(!summary_text.contains("line1"));
+        assert!(!summary_text.contains("err1"));
+        assert!(!summary_text.contains("real body"));
+        let stats = compute_stats(&[event]);
+        assert_eq!(stats.job_count, 1);
+    }
+
+    #[test]
+    fn record_job_action_event_marks_rejected_failures() {
+        let (_tmp, db) = test_db();
+        let body = JobOpRequest {
+            op: "recover".to_string(),
+            project: Some("demo".to_string()),
+            goal_id: Some("goal-1".to_string()),
+            job_id: None,
+            client_request_id: Some("missing".to_string()),
+            suite: None,
+            command: None,
+            script_path: None,
+            script_args: Vec::new(),
+            script_text: None,
+            trusted: None,
+            commands: Vec::new(),
+            reason: None,
+            status: None,
+            limit: 20,
+            tail_lines: 80,
+            max_runtime_secs: None,
+            detail: None,
+            since_line: None,
+            response_mode: None,
+        };
+        let response = JobOpResponse {
+            success: false,
+            op: "recover".to_string(),
+            job_id: None,
+            job_ids: Vec::new(),
+            job: None,
+            jobs: Vec::new(),
+            stdout_tail: None,
+            stderr_tail: None,
+            summary_markdown: None,
+            error: Some("job not found for client_request_id".to_string()),
+            log_total_lines: None,
+            next_cursor: None,
+            metadata_only: Some(true),
+            logs_included: None,
+            warnings: Vec::new(),
+        };
+        record_job_action_event(
+            &db,
+            Some("session-job-fail".to_string()),
+            100,
+            &body,
+            &response,
+            404,
+        );
+        let event = decode_event(
+            db.list_action_events("session-job-fail", 10)
+                .unwrap()
+                .into_iter()
+                .next()
+                .unwrap(),
+        );
+        assert_eq!(event.status, "rejected");
+        assert_eq!(event.summary["metadata_only"], true);
     }
 }

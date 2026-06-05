@@ -119,7 +119,7 @@ pub struct GitRequest {
     pub message: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CommandRequest {
     pub project: String,
     pub command: String,
@@ -147,7 +147,7 @@ pub struct CommandRequestBatchCreate {
     pub requests: Vec<CommandRequestBatchItem>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CommandRequestBatchItem {
     pub command: String,
     #[serde(default)]
@@ -176,7 +176,7 @@ pub struct CommandRejectRequest {
     pub reason: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct CommandRequestOpRequest {
     pub op: String,
     #[serde(default)]
@@ -221,7 +221,7 @@ pub struct CommandRequestOpRequest {
     pub response_mode: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Clone)]
 pub struct JobOpRequest {
     pub op: String,
     #[serde(default)]

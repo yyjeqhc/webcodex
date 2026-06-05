@@ -7,12 +7,37 @@ use super::types::{
     EditResponse,
 };
 use super::url_security::{is_allowed_chatgpt_estuary_url, validate_source_url};
+use crate::action_sessions::{
+    record_action_event, request_action_session_id, ActionAuditEventInput,
+};
 use crate::{Config, Database, MessageKind};
 use salvo::prelude::*;
+use serde_json::json;
 use std::path::Path;
 use std::sync::Arc;
 
 const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
+
+fn artifact_source_mode(body: &ArtifactRequest) -> &'static str {
+    match body.op {
+        ArtifactOperation::SaveBase64 => "base64",
+        ArtifactOperation::SaveUpload => {
+            if body.file_id.as_deref().is_some() {
+                "upload"
+            } else {
+                "source_file"
+            }
+        }
+        ArtifactOperation::SaveUrl => {
+            if body.chatgpt_estuary_url.as_deref().is_some() {
+                "generated"
+            } else {
+                "url"
+            }
+        }
+        ArtifactOperation::SaveGenerated => "generated",
+    }
+}
 
 pub(super) fn resolve_upload_file_id(
     config: &Config,
@@ -359,6 +384,8 @@ pub(super) fn artifact_response_from_edit(
 
 #[handler]
 pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let explicit_session_id = request_action_session_id(req);
     let Some(projects) = get_projects(depot) else {
         res.render(Json(edit_error("Projects not configured".to_string())));
         return;
@@ -475,5 +502,48 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
     }
     let response =
         apply_edit_request_with_metrics(&projects, proj, edit_body, "saveProjectArtifact");
-    res.render(Json(artifact_response_from_edit(&plan, response)));
+    let artifact_response = artifact_response_from_edit(&plan, response);
+    if let Some(db) = Some(db.clone()) {
+        let ended_at = chrono::Utc::now().timestamp();
+        record_action_event(
+            &db,
+            ActionAuditEventInput {
+                explicit_session_id,
+                session_title: None,
+                endpoint: "/api/codex/artifact".to_string(),
+                action_name: "saveProjectArtifact".to_string(),
+                operation: Some(format!("{:?}", artifact_body.op).to_ascii_lowercase()),
+                project: Some(artifact_body.project.clone()),
+                status: if artifact_response.success {
+                    "success".to_string()
+                } else {
+                    "failed".to_string()
+                },
+                http_status: Some(res.status_code.unwrap_or(StatusCode::OK).as_u16() as i64),
+                started_at,
+                ended_at,
+                duration_ms: (ended_at - started_at).max(0) * 1000,
+                error_summary: artifact_response.error.clone(),
+                warning_summary: if artifact_response.warnings.is_empty() {
+                    None
+                } else {
+                    Some(artifact_response.warnings.join(" | "))
+                },
+                changed_files: artifact_response.changed_files.clone(),
+                ids: json!({}),
+                summary: json!({
+                    "path": artifact_body.path,
+                    "mime_type": artifact_response.mime_type,
+                    "selected_source": artifact_response.selected_source,
+                    "source_mode": artifact_source_mode(&artifact_body),
+                    "allow_overwrite": artifact_body.allow_overwrite,
+                    "file_name": artifact_body.file_name,
+                    "companion_markdown_path": artifact_body.companion_markdown_path,
+                }),
+                request_bytes: None,
+                response_bytes: None,
+            },
+        );
+    }
+    res.render(Json(artifact_response));
 }

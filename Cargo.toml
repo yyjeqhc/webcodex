@@ -18,6 +18,7 @@ toml = "0.8"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 url = "2"
+sha2 = "0.10"
 
 [dev-dependencies]
 tempfile = "3"

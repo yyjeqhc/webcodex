@@ -1,11 +1,17 @@
+use crate::action_sessions::{
+    record_action_event, request_action_session_id, ActionAuditEventInput,
+};
 use crate::{get_db, Message, MessageKind};
 
 use super::get_projects;
 use super::types::{ReportRequest, ReportResponse};
 use salvo::prelude::*;
+use serde_json::json;
 
 #[handler]
 pub async fn codex_report(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let started_at = chrono::Utc::now().timestamp();
+    let explicit_session_id = request_action_session_id(req);
     let Some(projects) = get_projects(depot) else {
         res.render(Json(ReportResponse {
             success: false,
@@ -117,21 +123,69 @@ pub async fn codex_report(req: &mut Request, depot: &mut Depot, res: &mut Respon
     let message_id = message.id.clone();
     if let Err(e) = db.insert_message(&message) {
         // Report was written but message failed
-        res.render(Json(ReportResponse {
+        let response = ReportResponse {
             success: true,
             report_id: Some(report_id),
             message_id: None,
             path: Some(report_path.to_string_lossy().to_string()),
             error: Some(format!("Report written but message insert failed: {}", e)),
-        }));
+        };
+        record_action_event(
+            &db,
+            ActionAuditEventInput {
+                explicit_session_id,
+                session_title: None,
+                endpoint: "/api/codex/report".to_string(),
+                action_name: "writeProjectReport".to_string(),
+                operation: Some(body.status.clone()),
+                project: Some(body.project.clone()),
+                status: "success".to_string(),
+                http_status: Some(200),
+                started_at,
+                ended_at: chrono::Utc::now().timestamp(),
+                duration_ms: 0,
+                error_summary: response.error.clone(),
+                warning_summary: response.error.clone(),
+                changed_files: vec![report_path.to_string_lossy().to_string()],
+                ids: json!({"report_id": response.report_id, "message_id": response.message_id}),
+                summary: json!({"channel": body.channel, "title": body.title, "status": body.status}),
+                request_bytes: None,
+                response_bytes: None,
+            },
+        );
+        res.render(Json(response));
         return;
     }
 
-    res.render(Json(ReportResponse {
+    let response = ReportResponse {
         success: true,
         report_id: Some(report_id),
         message_id: Some(message_id),
         path: Some(report_path.to_string_lossy().to_string()),
         error: None,
-    }));
+    };
+    record_action_event(
+        &db,
+        ActionAuditEventInput {
+            explicit_session_id,
+            session_title: None,
+            endpoint: "/api/codex/report".to_string(),
+            action_name: "writeProjectReport".to_string(),
+            operation: Some(body.status.clone()),
+            project: Some(body.project.clone()),
+            status: "success".to_string(),
+            http_status: Some(200),
+            started_at,
+            ended_at: chrono::Utc::now().timestamp(),
+            duration_ms: 0,
+            error_summary: None,
+            warning_summary: None,
+            changed_files: vec![report_path.to_string_lossy().to_string()],
+            ids: json!({"report_id": response.report_id, "message_id": response.message_id}),
+            summary: json!({"channel": body.channel, "title": body.title, "status": body.status}),
+            request_bytes: None,
+            response_bytes: None,
+        },
+    );
+    res.render(Json(response));
 }

@@ -3193,7 +3193,7 @@
       "post": {
         "operationId": "listProjects",
         "summary": "List runtime project capabilities",
-        "description": "Return configured projects and their runtime capabilities, including executor, checks, configured commands, and permission flags. Use this instead of relying on project enums in the OpenAPI schema.",
+        "description": "List configured projects and runtime capabilities. Lightweight discovery endpoint.",
         "tags": [
           "codex"
         ],
@@ -3253,7 +3253,7 @@
       "post": {
         "operationId": "getProjectContextBatch",
         "summary": "Run multiple project context observations in one request",
-        "description": "Batch context observations for one project. For SSH projects or large reads, keep batches small: at most 8 items for SSH, max_total_chars <=80000. If rejected as too large (preflight_rejected=true), split by file/section instead of retrying the same request. git_diff and agent_context are heavy; avoid mixing many read_file items with them.",
+        "description": "Batch project context reads. For SSH keep batches small; if preflight_rejected=true, split the request.",
         "tags": [
           "codex"
         ],
@@ -3326,7 +3326,7 @@
       "post": {
         "operationId": "applyProjectEdit",
         "summary": "Apply safe structured file edits",
-        "description": "Apply structured file edits. Prefer response_mode=summary for larger edits. If this times out, do not retry immediately; first check git_status or read the target file to confirm whether the edit was applied.",
+        "description": "Apply project edits. Use response_mode=summary for larger edits. If timeout occurs, check the result before retrying.",
         "tags": [
           "codex"
         ],
@@ -3367,7 +3367,7 @@
       "post": {
         "operationId": "saveProjectArtifact",
         "summary": "Save a generated or imported project artifact",
-        "description": "Save a binary artifact to a whitelisted project from base64, a server-side upload/temp file, or an external HTTP/HTTPS URL. Internally reuses applyProjectEdit binary artifact safety checks.",
+        "description": "Save a generated artifact to a whitelisted project. Bytes/content are not logged.",
         "tags": [
           "codex"
         ],
@@ -3408,7 +3408,7 @@
       "post": {
         "operationId": "runProjectGit",
         "summary": "Run a controlled git operation",
-        "description": "Run fixed git operations on a whitelisted project. Supports status, diff, log, add, commit, and commit_amend_no_edit. Does not expose arbitrary shell.",
+        "description": "Run fixed git operations such as status, diff, log, add, commit, or amend. No push.",
         "tags": [
           "codex"
         ],
@@ -3446,7 +3446,7 @@
       "post": {
         "operationId": "runProjectCommand",
         "summary": "Run a whitelisted project command",
-        "description": "Run a command configured in projects.toml under [projects.<name>.commands]. The request only chooses a command id; it does not accept arbitrary shell commands.",
+        "description": "Run a configured project command. Use command_request_op for ad hoc or multi-line shell, or runJobOp for long jobs.",
         "tags": [
           "codex"
         ],
@@ -3519,7 +3519,7 @@
       "post": {
         "operationId": "runCommandRequestOp",
         "summary": "Run an aggregated command request operation",
-        "description": "Single aggregated endpoint for command request workflow operations. Use op=list/create/create_raw/create_batch/approve/approve_batch/reject/reject_batch to reduce GPT Action count while preserving audit and approval semantics. Trusted raw mode: use create_trusted_raw_and_approve for short multi-line shell commands (timeout default 120s, max 1800s). create_trusted_raw (non-approve) is currently unsupported; use create_trusted_raw_and_approve or runJobOp create with trusted=true + script_text instead. For long-running scripts use runJobOp create with trusted=true + script_text (local executor only; SSH not yet supported). Use response_mode=summary for large output. If timeout, recover with runJobOp recover/status first.",
+        "description": "Command requests: create_trusted_raw_and_approve for short scripts; create_trusted_raw unsupported; runJobOp for long jobs.",
         "tags": [
           "codex"
         ],
@@ -3750,7 +3750,7 @@
       "post": {
         "operationId": "runJobOp",
         "summary": "Run or manage trusted active-goal async shell jobs",
-        "description": "Active-goal scoped async shell jobs. Use client_request_id for idempotent retry. If create/status times out, do not rerun the job; first call recover with the same client_request_id. Use status detail=basic for cheap state checks; use detail=logs or log op only when logs are needed. basic is metadata/status-file based and may be stale for SSH jobs; use detail=logs, log, or summarize for deeper inspection. create/create_batch require an active goal. For op=log, use since_line for incremental polling. For op=status, default detail=basic returns lightweight status without OOM detection; detail=logs includes log tails. Trusted script_text: use trusted=true + script_text for multi-line scripts (local executor only; SSH not yet supported). Script is written to .codex/jobs/<job_id>/script.sh with shebang and set -euo pipefail.",
+        "description": "Create/manage async active-goal jobs. Use recover after timeout. detail=basic is lightweight; detail=logs includes tails.",
         "tags": [
           "codex"
         ],
@@ -3788,7 +3788,7 @@
       "post": {
         "operationId": "runProjectCheck",
         "summary": "Run a project check suite",
-        "description": "Run a pre-configured short check command (fmt, quick test, build, short e2e) on a whitelisted project. Use only for checks expected to finish quickly. For long checks or anything that may exceed 30 seconds, use runJobOp with op='check' instead.",
+        "description": "Run a configured project check such as fmt, test, build, or e2e. Use runJobOp for long checks.",
         "tags": [
           "codex"
         ],

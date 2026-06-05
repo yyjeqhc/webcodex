@@ -50,7 +50,7 @@ fn apply_project_description_to_schema(spec: &mut serde_json::Value, schema_name
 
 fn apply_edit_timeout_guidance(spec: &mut serde_json::Value) {
     spec["paths"]["/api/codex/edit"]["post"]["description"] = serde_json::json!(
-        "Apply structured file edits. For larger or multi-file edits, prefer response_mode=summary. If this times out, do not retry immediately; first check git_status or read the target file to confirm whether the edit was applied."
+        "Apply edits. Use response_mode=summary for larger edits. If timeout occurs, check git_status or the result before retrying."
     );
     spec["components"]["schemas"]["EditRequest"]["properties"]["response_mode"]["description"] = serde_json::json!(
         "Response detail. For larger or multi-file edits, use summary to reduce timeout risk."
@@ -80,7 +80,7 @@ fn apply_context_batch_guidance(spec: &mut serde_json::Value) {
         .map_or(true, |s| !s.contains("preflight_rejected"))
     {
         *endpoint = serde_json::json!(
-            "Batch context observations for one project. For SSH projects or large reads, keep batches small: at most 8 items for SSH, max_total_chars <=80000. If rejected as too large (preflight_rejected=true), split by file/section instead of retrying the same request. git_diff and agent_context are heavy; avoid mixing many read_file items with them."
+            "Batch project context reads. For SSH keep batches small; if preflight_rejected=true, split the request."
         );
     }
 }
@@ -250,7 +250,7 @@ fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
         .map_or(true, |s| !s.contains("create_trusted_raw"))
     {
         *cr_op_desc = serde_json::json!(
-            "Command request operations with goal-based approval. Trusted raw mode: use create_trusted_raw_and_approve for short multi-line shell commands (timeout default 120s, max 1800s). create_trusted_raw (non-approve) is currently unsupported; use create_trusted_raw_and_approve or runJobOp create with trusted=true + script_text instead. For long-running scripts use runJobOp create with trusted=true + script_text (local executor only; SSH not yet supported). Use response_mode=summary for large output. If timeout, recover with runJobOp recover/status first."
+            "Command requests: create_trusted_raw_and_approve for short scripts; create_trusted_raw unsupported; runJobOp for long jobs."
         );
     }
 
@@ -261,7 +261,7 @@ fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
         .map_or(true, |s| !s.contains("script_text"))
     {
         *job_desc = serde_json::json!(
-            "Job operations. create: use command, script_path, or trusted=true with script_text for multi-line scripts (local executor only; SSH not yet supported for script_text). Script is written to .codex/jobs/<job_id>/script.sh with shebang and set -euo pipefail. recover/status first if timeout. detail=basic (default) or detail=logs."
+            "Create/manage async active-goal jobs. Use recover after timeout. detail=basic is lightweight; detail=logs includes tails."
         );
     }
 
@@ -471,6 +471,24 @@ mod tests {
         apply_action_session_openapi, apply_edit_timeout_guidance, apply_trusted_command_guidance,
     };
 
+    fn assert_operation_descriptions_within_limit(spec: &serde_json::Value) {
+        let paths = spec["paths"].as_object().unwrap();
+        for (path, operations) in paths {
+            let operations = operations.as_object().unwrap();
+            for (method, operation) in operations {
+                if let Some(description) = operation["description"].as_str() {
+                    assert!(
+                        description.len() <= 300,
+                        "{} {} description length {} > 300",
+                        method,
+                        path,
+                        description.len()
+                    );
+                }
+            }
+        }
+    }
+
     #[test]
     fn apply_project_edit_description_stays_under_300_chars() {
         let spec: serde_json::Value =
@@ -658,6 +676,16 @@ mod tests {
             !compact_paths["/api/codex/action_sessions"]["post"].is_null(),
             "compact schema should include action_sessions"
         );
+    }
+
+    #[test]
+    fn openapi_operation_descriptions_stay_under_300_chars() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_edit_timeout_guidance(&mut spec);
+        apply_trusted_command_guidance(&mut spec);
+        apply_action_session_openapi(&mut spec);
+        assert_operation_descriptions_within_limit(&spec);
     }
 }
 

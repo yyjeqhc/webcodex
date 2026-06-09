@@ -590,7 +590,7 @@
           "if_fingerprint": {
             "type": "string",
             "nullable": true,
-            "description": "For local read_file: pass a prior result_metadata.fingerprint to omit unchanged content."
+            "description": "For read_file: pass prior result_metadata.fingerprint to omit unchanged content."
           },
           "start_line": {
             "type": "integer",
@@ -657,7 +657,7 @@
           "fingerprint": {
             "type": "string",
             "nullable": true,
-            "description": "Opaque local file fingerprint for repeated read_file calls."
+            "description": "Opaque file fingerprint for repeated read_file calls."
           },
           "unchanged": {
             "type": "boolean",
@@ -1246,6 +1246,13 @@
               "minimal"
             ],
             "description": "Response detail. Use summary for larger edits to reduce timeout risk."
+          },
+          "expected_fingerprints": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "description": "Optional path->fingerprint guard from context_batch result_metadata. Rejects stale edits."
           },
           "edits": {
             "type": "array",

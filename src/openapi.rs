@@ -542,6 +542,21 @@ mod tests {
         })
     }
 
+    fn gpt_paths_from_spec(spec: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
+            "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
+            "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+            "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
+            "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
+            "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
+            "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
+            "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
+            "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
+            "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
+        })
+    }
+
     fn count_operations(paths: &serde_json::Value) -> usize {
         paths
             .as_object()
@@ -682,6 +697,11 @@ mod tests {
         assert!(
             !item_props["if_fingerprint"].is_null(),
             "ContextBatchItem should have if_fingerprint"
+        );
+        let edit_props = &spec["components"]["schemas"]["EditRequest"]["properties"];
+        assert!(
+            !edit_props["expected_fingerprints"].is_null(),
+            "EditRequest should have expected_fingerprints"
         );
         let props = &spec["components"]["schemas"]["ContextBatchResponse"]["properties"];
         assert!(
@@ -883,6 +903,69 @@ mod tests {
     }
 
     #[test]
+    fn gpt_openapi_schema_is_slimmer_and_valid() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_edit_timeout_guidance(&mut spec);
+        apply_trusted_command_guidance(&mut spec);
+        apply_action_session_openapi(&mut spec);
+        spec["paths"] = gpt_paths_from_spec(&spec);
+        spec["components"]["schemas"] = serde_json::json!({
+            "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
+            "ContextBatchItem": spec["components"]["schemas"]["ContextBatchItem"].clone(),
+            "ContextBatchRequest": spec["components"]["schemas"]["ContextBatchRequest"].clone(),
+            "ContextBatchResultMetadata": spec["components"]["schemas"]["ContextBatchResultMetadata"].clone(),
+            "ContextBatchResponse": spec["components"]["schemas"]["ContextBatchResponse"].clone(),
+            "ReplaceTextEdit": spec["components"]["schemas"]["ReplaceTextEdit"].clone(),
+            "ReplaceRangeEdit": spec["components"]["schemas"]["ReplaceRangeEdit"].clone(),
+            "AppendFileEdit": spec["components"]["schemas"]["AppendFileEdit"].clone(),
+            "CreateFileEdit": spec["components"]["schemas"]["CreateFileEdit"].clone(),
+            "WriteFileEdit": spec["components"]["schemas"]["WriteFileEdit"].clone(),
+            "CreateBinaryFileEdit": spec["components"]["schemas"]["CreateBinaryFileEdit"].clone(),
+            "WriteBinaryFileEdit": spec["components"]["schemas"]["WriteBinaryFileEdit"].clone(),
+            "CreateBinaryArtifactEdit": spec["components"]["schemas"]["CreateBinaryArtifactEdit"].clone(),
+            "WriteBinaryArtifactEdit": spec["components"]["schemas"]["WriteBinaryArtifactEdit"].clone(),
+            "CreateBinaryFileFromUploadEdit": spec["components"]["schemas"]["CreateBinaryFileFromUploadEdit"].clone(),
+            "WriteBinaryFileFromUploadEdit": spec["components"]["schemas"]["WriteBinaryFileFromUploadEdit"].clone(),
+            "CreateBinaryFileFromUrlEdit": spec["components"]["schemas"]["CreateBinaryFileFromUrlEdit"].clone(),
+            "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
+            "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
+            "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+            "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
+            "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
+            "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
+            "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
+            "CommandRequestBatchItem": spec["components"]["schemas"]["CommandRequestBatchItem"].clone(),
+            "CommandRequestOpRequest": spec["components"]["schemas"]["CommandRequestOpRequest"].clone(),
+            "CommandRequestOpResponse": spec["components"]["schemas"]["CommandRequestOpResponse"].clone(),
+            "JobOpRequest": spec["components"]["schemas"]["JobOpRequest"].clone(),
+            "JobInfo": spec["components"]["schemas"]["JobInfo"].clone(),
+            "JobOpResponse": spec["components"]["schemas"]["JobOpResponse"].clone(),
+            "ProjectCapabilities": spec["components"]["schemas"]["ProjectCapabilities"].clone(),
+            "ProjectCapabilityInfo": spec["components"]["schemas"]["ProjectCapabilityInfo"].clone(),
+            "InstanceInfo": spec["components"]["schemas"]["InstanceInfo"].clone(),
+            "ProjectsResponse": spec["components"]["schemas"]["ProjectsResponse"].clone(),
+            "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
+            "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
+            "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
+            "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone(),
+            "ActionSessionRecord": spec["components"]["schemas"]["ActionSessionRecord"].clone(),
+            "ActionSessionStats": spec["components"]["schemas"]["ActionSessionStats"].clone(),
+            "ActionEventView": spec["components"]["schemas"]["ActionEventView"].clone(),
+            "ActionSessionListItem": spec["components"]["schemas"]["ActionSessionListItem"].clone(),
+            "ActionSessionOpRequest": spec["components"]["schemas"]["ActionSessionOpRequest"].clone(),
+            "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone()
+        });
+        assert!(count_operations(&spec["paths"]) <= 10);
+        assert!(spec["paths"]["/api/codex/command"].is_null());
+        assert!(spec["paths"]["/api/desktop/task_op"].is_null());
+        assert_operation_descriptions_within_limit(&spec);
+        assert_all_descriptions_within_limit(&spec);
+        assert_unique_operation_ids(&spec["paths"]);
+        assert_refs_resolve(&spec);
+    }
+
+    #[test]
     fn openapi_operation_descriptions_stay_under_300_chars() {
         let mut spec: serde_json::Value =
             serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
@@ -985,6 +1068,104 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
             "ArtifactRequest",
             "GitRequest",
             "CommandRequest",
+            "CommandRequestOpRequest",
+            "JobOpRequest",
+            "CheckRequest",
+            "ReportRequest",
+        ],
+    );
+    apply_edit_timeout_guidance(&mut spec);
+    apply_job_recovery_guidance(&mut spec);
+    apply_context_batch_guidance(&mut spec);
+    apply_trusted_command_guidance(&mut spec);
+    apply_action_session_openapi(&mut spec);
+    spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
+        serde_json::json!("Report channel; not the project field.");
+    res.render(Json(spec));
+}
+
+#[handler]
+pub async fn codex_openapi_gpt_json(res: &mut Response) {
+    let mut spec =
+        match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
+            Ok(spec) => spec,
+            Err(e) => {
+                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                res.render(json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &e.to_string(),
+                ));
+                return;
+            }
+        };
+    spec["openapi"] = serde_json::json!("3.1.0");
+    spec["servers"] = serde_json::json!([{ "url": public_url(), "description": "Public server" }]);
+    spec["info"] = serde_json::json!({"title":"Private Drop GPT Codex API","version":env!("CARGO_PKG_VERSION"),"description":"Slim Codex API for online GPT Actions. Keeps only core project workflow operations."});
+    spec["paths"] = serde_json::json!({
+        "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
+        "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
+        "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+        "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
+        "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
+        "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
+        "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
+        "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
+        "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
+        "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
+    });
+    spec["components"]["schemas"] = serde_json::json!({
+        "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
+        "ContextBatchItem": spec["components"]["schemas"]["ContextBatchItem"].clone(),
+        "ContextBatchRequest": spec["components"]["schemas"]["ContextBatchRequest"].clone(),
+        "ContextBatchResultMetadata": spec["components"]["schemas"]["ContextBatchResultMetadata"].clone(),
+        "ContextBatchResponse": spec["components"]["schemas"]["ContextBatchResponse"].clone(),
+        "ReplaceTextEdit": spec["components"]["schemas"]["ReplaceTextEdit"].clone(),
+        "ReplaceRangeEdit": spec["components"]["schemas"]["ReplaceRangeEdit"].clone(),
+        "AppendFileEdit": spec["components"]["schemas"]["AppendFileEdit"].clone(),
+        "CreateFileEdit": spec["components"]["schemas"]["CreateFileEdit"].clone(),
+        "WriteFileEdit": spec["components"]["schemas"]["WriteFileEdit"].clone(),
+        "CreateBinaryFileEdit": spec["components"]["schemas"]["CreateBinaryFileEdit"].clone(),
+        "WriteBinaryFileEdit": spec["components"]["schemas"]["WriteBinaryFileEdit"].clone(),
+        "CreateBinaryArtifactEdit": spec["components"]["schemas"]["CreateBinaryArtifactEdit"].clone(),
+        "WriteBinaryArtifactEdit": spec["components"]["schemas"]["WriteBinaryArtifactEdit"].clone(),
+        "CreateBinaryFileFromUploadEdit": spec["components"]["schemas"]["CreateBinaryFileFromUploadEdit"].clone(),
+        "WriteBinaryFileFromUploadEdit": spec["components"]["schemas"]["WriteBinaryFileFromUploadEdit"].clone(),
+        "CreateBinaryFileFromUrlEdit": spec["components"]["schemas"]["CreateBinaryFileFromUrlEdit"].clone(),
+        "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
+        "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
+        "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+        "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
+        "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
+        "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
+        "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
+        "CommandRequestBatchItem": spec["components"]["schemas"]["CommandRequestBatchItem"].clone(),
+        "CommandRequestOpRequest": spec["components"]["schemas"]["CommandRequestOpRequest"].clone(),
+        "CommandRequestOpResponse": spec["components"]["schemas"]["CommandRequestOpResponse"].clone(),
+        "JobOpRequest": spec["components"]["schemas"]["JobOpRequest"].clone(),
+        "JobInfo": spec["components"]["schemas"]["JobInfo"].clone(),
+        "JobOpResponse": spec["components"]["schemas"]["JobOpResponse"].clone(),
+        "ProjectCapabilities": spec["components"]["schemas"]["ProjectCapabilities"].clone(),
+        "ProjectCapabilityInfo": spec["components"]["schemas"]["ProjectCapabilityInfo"].clone(),
+        "InstanceInfo": spec["components"]["schemas"]["InstanceInfo"].clone(),
+        "ProjectsResponse": spec["components"]["schemas"]["ProjectsResponse"].clone(),
+        "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
+        "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
+        "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
+        "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone(),
+        "ActionSessionRecord": spec["components"]["schemas"]["ActionSessionRecord"].clone(),
+        "ActionSessionStats": spec["components"]["schemas"]["ActionSessionStats"].clone(),
+        "ActionEventView": spec["components"]["schemas"]["ActionEventView"].clone(),
+        "ActionSessionListItem": spec["components"]["schemas"]["ActionSessionListItem"].clone(),
+        "ActionSessionOpRequest": spec["components"]["schemas"]["ActionSessionOpRequest"].clone(),
+        "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone()
+    });
+    apply_project_description_to_schema(
+        &mut spec,
+        &[
+            "ContextBatchRequest",
+            "EditRequest",
+            "ArtifactRequest",
+            "GitRequest",
             "CommandRequestOpRequest",
             "JobOpRequest",
             "CheckRequest",

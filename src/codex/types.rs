@@ -1,5 +1,6 @@
 use crate::{CodexGoalRecord, CommandAuditRecord};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 
 #[derive(Debug, Deserialize, Clone, Copy)]
 #[serde(rename_all = "snake_case")]
@@ -638,6 +639,8 @@ pub struct EditRequest {
     pub dry_run: bool,
     #[serde(default)]
     pub response_mode: Option<EditResponseMode>,
+    #[serde(default)]
+    pub expected_fingerprints: BTreeMap<String, String>,
     pub edits: Vec<EditOperation>,
 }
 

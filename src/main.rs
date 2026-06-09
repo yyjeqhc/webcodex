@@ -42,7 +42,9 @@ pub use models::{
     DesktopTask, DesktopTaskClaimRequest, DesktopTaskEvent, DesktopTaskEventRequest,
     DesktopTaskOpRequest, Message, MessageKind,
 };
-pub(crate) use openapi::{codex_openapi_compact_json, codex_openapi_json, openapi_json};
+pub(crate) use openapi::{
+    codex_openapi_compact_json, codex_openapi_gpt_json, codex_openapi_json, openapi_json,
+};
 pub(crate) use web::{
     action_session_detail_page, action_sessions_page, agent_playground_page, channel_page,
     channels_page, desktop_page, desktop_task_page, frontend_app_js, frontend_styles_css,
@@ -174,6 +176,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let codex_openapi_router = Router::with_path("codex-openapi.json").get(codex_openapi_json);
     let codex_openapi_compact_router =
         Router::with_path("codex-openapi-compact.json").get(codex_openapi_compact_json);
+    let codex_openapi_gpt_router =
+        Router::with_path("codex-openapi-gpt.json").get(codex_openapi_gpt_json);
 
     let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
@@ -183,6 +187,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(openapi_router)
         .push(codex_openapi_router)
         .push(codex_openapi_compact_router)
+        .push(codex_openapi_gpt_router)
         .push(assets_router)
         .push(web_router);
 
@@ -229,6 +234,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
     tracing::info!(
         "Compact Codex OpenAPI: http://localhost:{}/codex-openapi-compact.json",
+        port
+    );
+    tracing::info!(
+        "GPT Codex OpenAPI: http://localhost:{}/codex-openapi-gpt.json",
         port
     );
     Server::new(acceptor).serve(router).await;

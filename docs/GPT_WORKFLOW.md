@@ -1,7 +1,8 @@
 # GPT workflow for Private Drop v4
 
-Use `/codex-openapi-compact.json` for GPT Actions. It keeps the action set small
-while preserving the main Codex loop.
+Use `/codex-openapi-gpt.json` for online GPT Actions. It keeps the action set
+smaller than the compact schema by omitting direct command and desktop task
+actions. Use `/codex-openapi-compact.json` when those extra actions are needed.
 
 ## Core loop
 
@@ -18,9 +19,10 @@ short server-side hints intended to keep GPT on the low-request path.
 
 ## Repeated context reads
 
-Local `read_file` results in `getProjectContextBatch` include
+Local and SSH `read_file` results in `getProjectContextBatch` include
 `result_metadata[].fingerprint`. Reuse that value as `if_fingerprint` for the
-same file on later batch calls:
+same file on later batch calls, and as `expected_fingerprints[path]` before
+editing a file based on cached context:
 
 ```json
 {
@@ -40,6 +42,27 @@ same file on later batch calls:
 If the file is unchanged, the result is marked `unchanged=true` in
 `result_metadata`, `cache_hits` increases, and file content is omitted. Treat
 that as confirmation to use the previously read content.
+
+Before editing a file that was read from cached context, include:
+
+```json
+{
+  "project": "private-drop",
+  "expected_fingerprints": {
+    "src/main.rs": "local-v1-or-ssh-v1-..."
+  },
+  "edits": [
+    {
+      "type": "replace_text",
+      "path": "src/main.rs",
+      "old_text": "old snippet",
+      "new_text": "new snippet"
+    }
+  ]
+}
+```
+
+The server rejects the edit if the file changed after the context read.
 
 ## Long-running task workflow (job+poll — REQUIRED for any task >30s)
 

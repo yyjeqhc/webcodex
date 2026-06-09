@@ -330,12 +330,17 @@ pub(super) fn mode_name(mode: &ContextMode) -> &'static str {
     }
 }
 
-fn system_time_unix_ms(time: SystemTime) -> Option<u64> {
+pub(super) fn system_time_unix_ms(time: SystemTime) -> Option<u64> {
     let ms = time.duration_since(UNIX_EPOCH).ok()?.as_millis();
     Some(ms.min(u128::from(u64::MAX)) as u64)
 }
 
-fn local_file_fingerprint(rel_path: &str, file_size: u64, modified_unix_ms: u64) -> String {
+pub(super) fn file_fingerprint(
+    prefix: &str,
+    rel_path: &str,
+    file_size: u64,
+    modified_unix_ms: u64,
+) -> String {
     let mut hasher = Sha256::new();
     hasher.update(rel_path.as_bytes());
     hasher.update([0]);
@@ -347,7 +352,7 @@ fn local_file_fingerprint(rel_path: &str, file_size: u64, modified_unix_ms: u64)
         .iter()
         .map(|byte| format!("{:02x}", byte))
         .collect::<String>();
-    format!("local-v1-{}", short)
+    format!("{}-{}", prefix, short)
 }
 
 fn local_read_file_metadata(
@@ -372,7 +377,8 @@ fn local_read_file_metadata(
         request_index,
         mode: "read_file".to_string(),
         path: Some(rel_path.to_string()),
-        fingerprint: Some(local_file_fingerprint(
+        fingerprint: Some(file_fingerprint(
+            "local-v1",
             rel_path,
             file_size,
             modified_unix_ms,
@@ -2318,7 +2324,11 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                     &body.requests,
                     projects.ssh.as_ref(),
                 ) {
-                    Some((results, ssh_calls)) => (results, ssh_calls),
+                    Some((results, ssh_metadata, ssh_cache_hits, ssh_calls)) => {
+                        result_metadata.extend(ssh_metadata);
+                        cache_hits += ssh_cache_hits;
+                        (results, ssh_calls)
+                    }
                     None => {
                         let mut ssh_calls = 0;
                         let mut results = Vec::with_capacity(body.requests.len());

@@ -525,12 +525,16 @@ fn ssh_batch_block_to_response(
     proj: &ProjectConfig,
     project_name: &str,
     item: &ContextBatchItem,
+    request_index: usize,
     block: &str,
-) -> ContextResponse {
+) -> (ContextResponse, Option<ContextBatchResultMetadata>) {
     if let Some(err) = block.strip_prefix("__PDCTX_ERROR__:") {
-        return context_error(project_name, &item.mode, err.trim().to_string());
+        return (
+            context_error(project_name, &item.mode, err.trim().to_string()),
+            None,
+        );
     }
-    match item.mode {
+    let response = match item.mode {
         ContextMode::Overview => ssh_overview_from_batch_block(proj, project_name, block),
         ContextMode::Tree => {
             let mut items: Vec<String> = block
@@ -551,21 +555,40 @@ fn ssh_batch_block_to_response(
             }
         }
         ContextMode::ReadFile => {
-            let lines: Vec<String> = block
+            let (content_block, _metadata, unchanged) =
+                parse_ssh_read_file_block(item, request_index, block);
+            if unchanged {
+                return (
+                    ContextResponse {
+                        success: true,
+                        project: project_name.to_string(),
+                        mode: "read_file".to_string(),
+                        content: None,
+                        items: None,
+                        truncated: false,
+                        error: None,
+                    },
+                    _metadata,
+                );
+            }
+            let lines: Vec<String> = content_block
                 .lines()
                 .enumerate()
                 .map(|(i, l)| format!("{:4} | {}", item.start_line + i, l))
                 .collect();
             let (output, truncated) = truncate_string(lines.join("\n"), MAX_OUTPUT_LEN);
-            ContextResponse {
-                success: true,
-                project: project_name.to_string(),
-                mode: "read_file".to_string(),
-                content: Some(output),
-                items: None,
-                truncated,
-                error: None,
-            }
+            return (
+                ContextResponse {
+                    success: true,
+                    project: project_name.to_string(),
+                    mode: "read_file".to_string(),
+                    content: Some(output),
+                    items: None,
+                    truncated,
+                    error: None,
+                },
+                _metadata,
+            );
         }
         ContextMode::MarkdownOutline => mode_content_response(
             project_name,
@@ -617,7 +640,78 @@ fn ssh_batch_block_to_response(
                 "search-like and experiment_outputs modes are not supported by single-SSH context batch".to_string(),
             )
         }
+    };
+    (response, None)
+}
+
+fn parse_ssh_read_file_metadata(
+    item: &ContextBatchItem,
+    request_index: usize,
+    line: &str,
+) -> Option<ContextBatchResultMetadata> {
+    let marker = "__PDCTX_META__:";
+    let data = line.strip_prefix(marker)?;
+    let mut file_size = None;
+    let mut modified_unix_ms = None;
+    let mut total_lines = None;
+    for part in data.split_whitespace() {
+        let Some((key, value)) = part.split_once('=') else {
+            continue;
+        };
+        match key {
+            "size" => file_size = value.parse::<u64>().ok(),
+            "mtime_ms" => modified_unix_ms = value.parse::<u64>().ok(),
+            "total_lines" => total_lines = value.parse::<usize>().ok(),
+            _ => {}
+        }
     }
+    let path = item.path.clone();
+    let fingerprint = match (path.as_deref(), file_size, modified_unix_ms) {
+        (Some(path), Some(size), Some(mtime_ms)) => {
+            Some(file_fingerprint("ssh-v1", path, size, mtime_ms))
+        }
+        _ => None,
+    };
+    Some(ContextBatchResultMetadata {
+        request_index,
+        mode: "read_file".to_string(),
+        path,
+        fingerprint,
+        unchanged: false,
+        file_size,
+        modified_unix_ms,
+        total_lines,
+    })
+}
+
+fn parse_ssh_read_file_block(
+    item: &ContextBatchItem,
+    request_index: usize,
+    block: &str,
+) -> (String, Option<ContextBatchResultMetadata>, bool) {
+    let mut lines = block.lines();
+    let first = lines.next();
+    let mut metadata =
+        first.and_then(|line| parse_ssh_read_file_metadata(item, request_index, line));
+    let mut content_lines = Vec::new();
+    let mut unchanged = false;
+    let consumed_first = metadata.is_some();
+    if !consumed_first {
+        if let Some(line) = first {
+            content_lines.push(line.to_string());
+        }
+    }
+    for line in lines {
+        if consumed_first && line == "__PDCTX_UNCHANGED__" {
+            unchanged = true;
+            if let Some(metadata) = metadata.as_mut() {
+                metadata.unchanged = true;
+            }
+            continue;
+        }
+        content_lines.push(line.to_string());
+    }
+    (content_lines.join("\n"), metadata, unchanged)
 }
 
 pub(super) fn ssh_context_batch_error_results(
@@ -636,15 +730,22 @@ pub(super) fn try_ssh_context_batch_once(
     project_name: &str,
     requests: &[ContextBatchItem],
     ssh_config: Option<&SshConfig>,
-) -> Option<(Vec<ContextResponse>, u64)> {
+) -> Option<(
+    Vec<ContextResponse>,
+    Vec<ContextBatchResultMetadata>,
+    usize,
+    u64,
+)> {
     if requests.is_empty() {
-        return Some((Vec::new(), 0));
+        return Some((Vec::new(), Vec::new(), 0, 0));
     }
     let ssh_targets = match build_ssh_targets(proj) {
         Ok(t) => t,
         Err(e) => {
             return Some((
                 ssh_context_batch_error_results(project_name, requests, e),
+                Vec::new(),
+                0,
                 0,
             ))
         }
@@ -705,7 +806,8 @@ pub(super) fn try_ssh_context_batch_once(
                     Err(_) => return None,
                 };
                 let escaped_path = shell_escape(path);
-                script.push_str(&format!(" if test -f {0}; then sed -n '{1},{2}p' -- {0} | awk '{{ if(length($0)>{3}) print substr($0,1,{3}) \"… [line truncated]\"; else print }}'; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;", escaped_path, item.start_line, end_line, MAX_CONTEXT_LINE_LEN));
+                let expected = shell_escape(item.if_fingerprint.as_deref().unwrap_or(""));
+                script.push_str(&format!(" if test -f {0}; then size=$(wc -c < {0} | tr -d ' '); mtime=$(stat -c %Y -- {0} 2>/dev/null || stat -f %m -- {0} 2>/dev/null || printf '0'); mtime_ms=\"${{mtime}}000\"; total=$(wc -l < {0} | tr -d ' '); fp_hash=$(printf '%s\\000%s\\000%s' {0} \"$size\" \"$mtime_ms\" | sha256sum 2>/dev/null | awk '{{print substr($1,1,24)}}'); fp=\"ssh-v1-${{fp_hash}}\"; printf '__PDCTX_META__:size=%s mtime_ms=%s fingerprint=%s total_lines=%s\\n' \"$size\" \"$mtime_ms\" \"$fp\" \"$total\"; if test -n {4} && test \"$fp\" = {4}; then printf '__PDCTX_UNCHANGED__\\n'; else sed -n '{1},{2}p' -- {0} | awk '{{ if(length($0)>{3}) print substr($0,1,{3}) \"… [line truncated]\"; else print }}'; fi; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;", escaped_path, item.start_line, end_line, MAX_CONTEXT_LINE_LEN, expected));
             }
             ContextMode::MarkdownOutline => {
                 let Some(path) = &item.path else {
@@ -746,16 +848,27 @@ pub(super) fn try_ssh_context_batch_once(
         let error = format!("SSH context batch failed: {}", stderr.trim());
         return Some((
             ssh_context_batch_error_results(project_name, requests, error),
+            Vec::new(),
+            0,
             1,
         ));
     }
     let blocks = parse_ssh_batch_blocks(&stdout, requests.len(), &nonce);
-    let results = requests
-        .iter()
-        .zip(blocks.iter())
-        .map(|(item, block)| ssh_batch_block_to_response(proj, project_name, item, block))
-        .collect();
-    Some((results, 1))
+    let mut results = Vec::with_capacity(requests.len());
+    let mut result_metadata = Vec::new();
+    let mut cache_hits = 0usize;
+    for (idx, (item, block)) in requests.iter().zip(blocks.iter()).enumerate() {
+        let (response, metadata) =
+            ssh_batch_block_to_response(proj, project_name, item, idx, block);
+        if let Some(metadata) = metadata {
+            if metadata.unchanged {
+                cache_hits += 1;
+            }
+            result_metadata.push(metadata);
+        }
+        results.push(response);
+    }
+    Some((results, result_metadata, cache_hits, 1))
 }
 
 // =============================================================================
@@ -1012,6 +1125,28 @@ mod tests {
         assert_eq!(results.len(), requests.len());
         assert!(results.iter().all(|r| !r.success));
         assert!(results.iter().all(|r| r.error.as_deref() == Some("boom")));
+    }
+
+    #[test]
+    fn test_parse_ssh_read_file_block_metadata_unchanged() {
+        let item = ContextBatchItem {
+            mode: ContextMode::ReadFile,
+            path: Some("README.md".to_string()),
+            query: None,
+            if_fingerprint: None,
+            start_line: 1,
+            limit: 10,
+            max_depth: default_tree_max_depth(),
+        };
+        let block = "__PDCTX_META__:size=12 mtime_ms=1000 fingerprint=ignored total_lines=2\n__PDCTX_UNCHANGED__\n";
+        let (content, metadata, unchanged) = parse_ssh_read_file_block(&item, 3, block);
+        let metadata = metadata.unwrap();
+        assert!(unchanged);
+        assert!(content.is_empty());
+        assert_eq!(metadata.request_index, 3);
+        assert!(metadata.unchanged);
+        let expected = file_fingerprint("ssh-v1", "README.md", 12, 1000);
+        assert_eq!(metadata.fingerprint.as_deref(), Some(expected.as_str()));
     }
     #[test]
     fn test_build_ssh_targets() {
@@ -1336,6 +1471,7 @@ mod tests {
             reason: None,
             dry_run: false,
             response_mode: None,
+            expected_fingerprints: Default::default(),
             edits: vec![EditOperation::ReplaceText {
                 path: "src/main.rs".to_string(),
                 old_text: user_input.to_string(),

@@ -1,4 +1,5 @@
 use super::apply_edit_request_with_metrics;
+use super::context::{file_fingerprint, system_time_unix_ms};
 use super::get_projects;
 use super::security::is_sensitive_path;
 use super::source::read_binary_from_url;
@@ -217,6 +218,50 @@ pub(super) fn read_edit_file(path: &Path) -> Result<String, String> {
     std::fs::read_to_string(path).map_err(|e| format!("Failed to read UTF-8 text file: {}", e))
 }
 
+fn validate_expected_fingerprints_local(root: &Path, body: &EditRequest) -> Result<(), String> {
+    if body.expected_fingerprints.is_empty() {
+        return Ok(());
+    }
+    let edited_paths = body
+        .edits
+        .iter()
+        .map(|edit| edit_path(edit).to_string())
+        .collect::<BTreeSet<_>>();
+    for (rel_path, expected) in &body.expected_fingerprints {
+        if !edited_paths.contains(rel_path) {
+            return Err(format!(
+                "expected_fingerprints contains non-edited path: {}",
+                rel_path
+            ));
+        }
+        validate_edit_path(rel_path)?;
+        let full_path = resolve_edit_path(root, rel_path, true)?;
+        let metadata = std::fs::metadata(&full_path)
+            .map_err(|e| format!("Failed to stat {}: {}", rel_path, e))?;
+        if !metadata.is_file() {
+            return Err(format!(
+                "expected_fingerprints path is not a file: {}",
+                rel_path
+            ));
+        }
+        let modified_unix_ms = metadata
+            .modified()
+            .ok()
+            .and_then(system_time_unix_ms)
+            .unwrap_or(0);
+        let actual = file_fingerprint("local-v1", rel_path, metadata.len(), modified_unix_ms);
+        if actual != expected.trim() {
+            return Err(format!(
+                "fingerprint mismatch for {}: expected {}, actual {}",
+                rel_path,
+                expected.trim(),
+                actual
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn replace_nth(
     content: &str,
     old_text: &str,
@@ -320,6 +365,9 @@ pub(super) fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest)
     let root = proj.root();
     if !root.exists() {
         return edit_error("Project root does not exist".to_string());
+    }
+    if let Err(e) = validate_expected_fingerprints_local(&root, body) {
+        return edit_error(e);
     }
     let mut paths: HashMap<String, PathBuf> = HashMap::new();
     let mut originals: HashMap<String, Option<String>> = HashMap::new();
@@ -683,7 +731,25 @@ mod tests {
             reason: None,
             dry_run: false,
             response_mode: mode,
+            expected_fingerprints: Default::default(),
             edits: Vec::new(),
+        }
+    }
+
+    fn local_test_project(root: &Path) -> ProjectConfig {
+        ProjectConfig {
+            path: root.display().to_string(),
+            executor: Default::default(),
+            host: None,
+            ssh_hosts: Vec::new(),
+            user: None,
+            allow_patch: true,
+            allow_command_requests: false,
+            allow_raw_command_requests: false,
+            default_apply_patch_backend: None,
+            allowed_checks: Vec::new(),
+            checks: None,
+            commands: HashMap::new(),
         }
     }
 
@@ -737,6 +803,64 @@ mod tests {
         assert!(resp.diff_truncated);
         assert!(resp.diff.len() <= MAX_EDIT_DIFF_LEN);
         assert!(resp.warnings.iter().any(|w| w.contains("diff truncated")));
+    }
+
+    #[test]
+    fn local_edit_rejects_stale_expected_fingerprint() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.txt");
+        std::fs::write(&file, "hello\n").unwrap();
+        let metadata = std::fs::metadata(&file).unwrap();
+        let modified_unix_ms = metadata
+            .modified()
+            .ok()
+            .and_then(system_time_unix_ms)
+            .unwrap_or(0);
+        let actual = file_fingerprint("local-v1", "a.txt", metadata.len(), modified_unix_ms);
+        let proj = local_test_project(tmp.path());
+
+        let mut stale = std::collections::BTreeMap::new();
+        stale.insert("a.txt".to_string(), "local-v1-stale".to_string());
+        let rejected = local_apply_project_edit(
+            &proj,
+            &EditRequest {
+                project: "demo".to_string(),
+                reason: None,
+                dry_run: false,
+                response_mode: Some(EditResponseMode::Minimal),
+                expected_fingerprints: stale,
+                edits: vec![EditOperation::ReplaceText {
+                    path: "a.txt".to_string(),
+                    old_text: "hello".to_string(),
+                    new_text: "goodbye".to_string(),
+                    occurrence: None,
+                }],
+            },
+        );
+        assert!(!rejected.success);
+        assert!(rejected.error.unwrap().contains("fingerprint mismatch"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello\n");
+
+        let mut expected = std::collections::BTreeMap::new();
+        expected.insert("a.txt".to_string(), actual);
+        let accepted = local_apply_project_edit(
+            &proj,
+            &EditRequest {
+                project: "demo".to_string(),
+                reason: None,
+                dry_run: false,
+                response_mode: Some(EditResponseMode::Minimal),
+                expected_fingerprints: expected,
+                edits: vec![EditOperation::ReplaceText {
+                    path: "a.txt".to_string(),
+                    old_text: "hello".to_string(),
+                    new_text: "goodbye".to_string(),
+                    occurrence: None,
+                }],
+            },
+        );
+        assert!(accepted.success);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "goodbye\n");
     }
 }
 

@@ -684,7 +684,7 @@ Example:
 
 The response contains `results`, one normal context response per request, plus `duration_ms`, `ssh_calls`, and GPT-facing hints such as `recommended_next_action` and `action_budget_hint`. Batches are designed to reduce GPT Action round trips; SSH projects use a single aggregated remote command for supported modes and reuse ControlMaster connections when configured.
 
-For local `read_file` batch items, responses include `result_metadata` entries with an opaque `fingerprint`. On repeated reads, pass that value back as `if_fingerprint`; if the file is unchanged, the server returns `unchanged=true`, increments `cache_hits`, and omits file content for that item. This keeps GPT from rereading the same file content across planning/check/edit loops.
+For `read_file` batch items, local and SSH responses include `result_metadata` entries with an opaque `fingerprint`. On repeated reads, pass that value back as `if_fingerprint`; if the file is unchanged, the server returns `unchanged=true`, increments `cache_hits`, and omits file content for that item. This keeps GPT from rereading the same file content across planning/check/edit loops.
 
 Use `mode="agent_context"` at the start of a new GPT/Codex chat to load project alignment rules. It reads these fixed files when present and marks missing ones without failing:
 
@@ -991,19 +991,20 @@ This endpoint supports both local and SSH executors. SSH jobs are created in the
 
 ## OpenAPI schema variants
 
-Private Drop exposes three OpenAPI schema variants:
+Private Drop exposes four OpenAPI schema variants:
 
 - `/openapi.json`: the full API schema, including message, file, channel, web-adjacent, and Codex project APIs.
 - `/codex-openapi.json`: the full Codex-only schema. It keeps the detailed command request endpoints such as `createCommandRequest`, `createRawCommandRequest`, `listCommandRequests`, `createCommandRequestBatch`, `approveCommandRequest`, and `rejectCommandRequest`. This is useful for debugging or clients that prefer fine-grained operations.
 - `/codex-openapi-compact.json`: the recommended schema for GPT Actions. It exposes a smaller set of core Codex operations and uses `runCommandRequestOp` for command request create/list/approve/reject/batch workflows, reducing the total Action count.
+- `/codex-openapi-gpt.json`: the slimmer online-GPT schema. It omits direct command and desktop task actions, keeping the core project loop smaller and harder to misuse.
 
 For GPT Builder, prefer importing:
 
 ```text
-https://<your-domain>/codex-openapi-compact.json
+https://<your-domain>/codex-openapi-gpt.json
 ```
 
-The compact schema keeps the same `servers[0].url` behavior as the other schemas: it uses `DROP_PUBLIC_URL` when set, otherwise it falls back to `http://localhost:8080`.
+The compact and GPT schemas keep the same `servers[0].url` behavior as the other schemas: they use `DROP_PUBLIC_URL` when set, otherwise they fall back to `http://localhost:8080`.
 
 
 ## GPT workflow and diagram assets

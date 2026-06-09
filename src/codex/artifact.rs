@@ -333,6 +333,7 @@ pub(super) fn plan_artifact_request(
             reason: body.reason.clone(),
             dry_run: false,
             response_mode: None,
+            expected_fingerprints: Default::default(),
             edits,
         },
         saved_path: body.path.clone(),

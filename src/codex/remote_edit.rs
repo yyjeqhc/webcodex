@@ -11,7 +11,7 @@ use std::time::Instant;
 /// Receives project root via argv[1] and edit JSON via stdin.
 /// Returns JSON result on stdout.
 pub(super) const REMOTE_EDIT_SCRIPT: &str = r#####"
-import sys, json, os, difflib, base64, urllib.request, urllib.parse, socket, ipaddress
+import sys, json, os, difflib, base64, urllib.request, urllib.parse, socket, ipaddress, hashlib
 
 SENSITIVE = ('.git', '.env', '.pem', '.key', 'id_rsa', 'id_ed25519',
              'target', 'node_modules')
@@ -79,6 +79,26 @@ def read_file(path):
             return f.read(), None
     except Exception as e:
         return None, 'Failed to read UTF-8 file: ' + str(e)
+
+def file_fingerprint(prefix, rel, size, mtime_ms):
+    h = hashlib.sha256()
+    h.update(rel.encode('utf-8'))
+    h.update(b'\0')
+    h.update(str(size).encode('ascii'))
+    h.update(b'\0')
+    h.update(str(mtime_ms).encode('ascii'))
+    return prefix + '-' + h.hexdigest()[:24]
+
+def stat_fingerprint(path, rel):
+    try:
+        st = os.stat(path)
+    except OSError as e:
+        return None, 'Failed to stat file: ' + str(e)
+    if not os.path.isfile(path):
+        return None, 'expected_fingerprints path is not a file: ' + rel
+    # Match SSH context_batch, which uses stat seconds for portability.
+    mtime_ms = int(st.st_mtime) * 1000
+    return file_fingerprint('ssh-v1', rel, st.st_size, mtime_ms), None
 
 def replace_nth(content, old, new, occ):
     if not old:
@@ -264,6 +284,37 @@ def main():
     if not edits:
         print(json.dumps(err('edits cannot be empty')))
         return
+    expected = body.get('expected_fingerprints') or {}
+    if not isinstance(expected, dict):
+        print(json.dumps(err('expected_fingerprints must be an object mapping path to fingerprint')))
+        return
+    edited_paths = set()
+    for ed in edits:
+        rel = ed.get('path', '')
+        e = validate_path(rel)
+        if e:
+            print(json.dumps(err(e)))
+            return
+        edited_paths.add(rel)
+    for rel, expected_fp in expected.items():
+        if rel not in edited_paths:
+            print(json.dumps(err('expected_fingerprints contains non-edited path: ' + rel)))
+            return
+        e = validate_path(rel)
+        if e:
+            print(json.dumps(err(e)))
+            return
+        full, e = resolve(root, rel, True)
+        if e:
+            print(json.dumps(err(e)))
+            return
+        actual, e = stat_fingerprint(full, rel)
+        if e:
+            print(json.dumps(err(e)))
+            return
+        if actual != str(expected_fp).strip():
+            print(json.dumps(err('fingerprint mismatch for %s: expected %s, actual %s' % (rel, str(expected_fp).strip(), actual))))
+            return
     originals = {}
     current = {}
     paths_map = {}

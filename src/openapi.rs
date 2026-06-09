@@ -489,6 +489,68 @@ mod tests {
         }
     }
 
+    fn assert_all_descriptions_within_limit(spec: &serde_json::Value) {
+        fn walk(path: String, value: &serde_json::Value) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    for (key, child) in map {
+                        let child_path = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{}.{}", path, key)
+                        };
+                        if key == "description" {
+                            if let Some(description) = child.as_str() {
+                                assert!(
+                                    description.len() <= 300,
+                                    "{} description length {} > 300",
+                                    child_path,
+                                    description.len()
+                                );
+                            }
+                        }
+                        walk(child_path, child);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for (idx, child) in items.iter().enumerate() {
+                        walk(format!("{}[{}]", path, idx), child);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        walk(String::new(), spec);
+    }
+
+    fn compact_paths_from_spec(spec: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
+            "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
+            "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+            "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
+            "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
+            "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
+            "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
+            "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
+            "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
+            "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
+            "/api/desktop/task_op": spec["paths"]["/api/desktop/task_op"].clone(),
+            "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
+        })
+    }
+
+    fn count_operations(paths: &serde_json::Value) -> usize {
+        paths
+            .as_object()
+            .unwrap()
+            .values()
+            .flat_map(|path_item| path_item.as_object().unwrap().values())
+            .filter(|operation| !operation["operationId"].is_null())
+            .count()
+    }
+
     #[test]
     fn apply_project_edit_description_stays_under_300_chars() {
         let spec: serde_json::Value =
@@ -658,23 +720,22 @@ mod tests {
         let mut spec: serde_json::Value =
             serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
         apply_action_session_openapi(&mut spec);
-        let compact_paths = serde_json::json!({
-            "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
-            "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
-            "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
-            "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
-            "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
-            "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
-            "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
-            "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
-            "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
-            "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
-            "/api/desktop/task_op": spec["paths"]["/api/desktop/task_op"].clone(),
-            "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
-        });
+        let compact_paths = compact_paths_from_spec(&spec);
         assert!(
             !compact_paths["/api/codex/action_sessions"]["post"].is_null(),
             "compact schema should include action_sessions"
+        );
+    }
+
+    #[test]
+    fn compact_openapi_operation_count_stays_under_gpt_limit() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_action_session_openapi(&mut spec);
+        let compact_paths = compact_paths_from_spec(&spec);
+        assert!(
+            count_operations(&compact_paths) <= 15,
+            "compact schema must stay within the 15-action GPT limit"
         );
     }
 
@@ -686,6 +747,7 @@ mod tests {
         apply_trusted_command_guidance(&mut spec);
         apply_action_session_openapi(&mut spec);
         assert_operation_descriptions_within_limit(&spec);
+        assert_all_descriptions_within_limit(&spec);
     }
 }
 

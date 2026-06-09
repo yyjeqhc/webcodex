@@ -16,6 +16,7 @@ declare global {
 }
 
 const TOKEN_KEY = "drop_token";
+let toastTimer = 0;
 
 function getToken(): string {
   return localStorage.getItem(TOKEN_KEY) || "";
@@ -73,14 +74,51 @@ function fmtTime(timestampSeconds: number): string {
   return new Date(timestampSeconds * 1000).toLocaleString();
 }
 
+function showToast(message: string, tone = "success"): void {
+  let toast = document.getElementById("toast");
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "toast";
+    document.body.appendChild(toast);
+  }
+  toast.textContent = message;
+  toast.className = `toast toast-${tone} toast-visible`;
+  if (toastTimer) window.clearTimeout(toastTimer);
+  toastTimer = window.setTimeout(() => {
+    toast?.classList.remove("toast-visible");
+  }, 1800);
+}
+
 async function deleteMsg(id: string): Promise<void> {
   if (!confirm("Delete this message?")) return;
   const response = await apiCall(`/api/messages/${encodeURIComponent(id)}`, { method: "DELETE" });
   if (response?.ok) window.location.reload();
 }
 
-function copyText(text: string): void {
-  navigator.clipboard.writeText(text).then(() => alert("Copied!"));
+function fallbackCopyText(text: string): void {
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "true");
+  textarea.style.position = "fixed";
+  textarea.style.left = "-9999px";
+  document.body.appendChild(textarea);
+  textarea.select();
+  const copied = document.execCommand("copy");
+  textarea.remove();
+  if (!copied) throw new Error("copy failed");
+}
+
+async function copyText(text: string): Promise<void> {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      fallbackCopyText(text);
+    }
+    showToast("Copied");
+  } catch (_) {
+    showToast("Copy failed", "error");
+  }
 }
 
 Object.assign(window, {

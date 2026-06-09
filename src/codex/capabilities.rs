@@ -5,32 +5,9 @@ use crate::action_sessions::{
 };
 use crate::auth::get_config;
 use crate::get_db;
-use crate::projects::{Executor, ProjectChecks, ProjectConfig};
+use crate::projects::{Executor, ProjectConfig};
 use salvo::prelude::*;
 use serde_json::json;
-
-fn configured_checks(checks: &Option<ProjectChecks>) -> Vec<String> {
-    let Some(checks) = checks else {
-        return Vec::new();
-    };
-    let mut names = Vec::new();
-    if checks.fmt.is_some() {
-        names.push("fmt".to_string());
-    }
-    if checks.test.is_some() {
-        names.push("test".to_string());
-    }
-    if checks.build.is_some() {
-        names.push("build".to_string());
-    }
-    if checks.e2e.is_some() {
-        names.push("e2e".to_string());
-    }
-    if checks.full.is_some() {
-        names.push("full".to_string());
-    }
-    names
-}
 
 fn hostname() -> Option<String> {
     std::env::var("HOSTNAME")
@@ -68,9 +45,9 @@ fn instance_info(depot: &Depot) -> InstanceInfo {
 fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
     let mut commands = project.commands.keys().cloned().collect::<Vec<_>>();
     commands.sort();
-    let mut allowed_checks = project.allowed_checks.clone();
-    allowed_checks.sort();
-    let configured_checks = configured_checks(&project.checks);
+    let allowed_checks = project.effective_allowed_checks();
+    let mut configured_checks = project.configured_check_names();
+    configured_checks.sort();
     let ssh_endpoints = if project.executor == Executor::Ssh {
         project.ssh_targets()
     } else {
@@ -98,7 +75,7 @@ fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
             patch: project.allow_patch(),
             artifact: true,
             git: true,
-            checks: !configured_checks.is_empty() && !project.allowed_checks.is_empty(),
+            checks: !configured_checks.is_empty() && project.checks_enabled(),
             jobs: true,
             command_requests: project.allow_command_requests,
             raw_command_requests: project.allow_raw_command_requests,

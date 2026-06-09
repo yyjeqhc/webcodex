@@ -11,7 +11,9 @@ use std::sync::Arc;
 pub const ACTION_SESSION_IDLE_TIMEOUT_SECS: i64 = 1800;
 const MAX_SUMMARY_TEXT: usize = 500;
 const MAX_PREVIEW_TEXT: usize = 120;
-pub const ACTION_SESSION_GUIDANCE: &str = "Action calls are recorded in rolling action sessions. Optional X-Action-Session-Id groups calls explicitly; otherwise the server reuses an open session within the idle timeout.";
+pub const ACTION_SESSION_GUIDANCE: &str =
+    "Audited in rolling action sessions. Optional X-Action-Session-Id groups related calls.";
+#[cfg(test)]
 pub const AUDITED_ACTION_ROUTES: &[&str] = &[
     "/api/codex/projects",
     "/api/codex/context_batch",
@@ -302,6 +304,7 @@ pub fn request_action_session_id(req: &Request) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+#[cfg(test)]
 pub fn is_audited_action_route(path: &str) -> bool {
     AUDITED_ACTION_ROUTES.contains(&path)
 }

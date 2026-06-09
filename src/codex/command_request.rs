@@ -2654,7 +2654,7 @@ pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Respons
             error: Some(format!(
                 "Check '{}' is not allowed. Allowed: {}",
                 suite,
-                proj.allowed_checks.join(", ")
+                proj.effective_allowed_checks().join(", ")
             )),
         }));
         return;

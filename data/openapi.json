@@ -487,7 +487,7 @@
               "git_diff",
               "experiment_outputs"
             ],
-            "description": "Context mode. Modes: overview=project summary+git status; tree=file tree; search=filename search; grep_context=in-file grep with context; read_file=read file with line numbers; markdown_outline=MD heading outline; read_section=read MD section by heading; agent_context=.codex/context.md; git_status=git status --short; git_diff=git diff; experiment_outputs=read-only aggregate of experiment output files, large files, gitignore status and git status. Designed for paper/experiment project audit."
+            "description": "Context mode: overview, tree, search, grep_context, read_file, markdown_outline, read_section, agent_context, git_status, git_diff, or experiment_outputs."
           },
           "path": {
             "type": "string",
@@ -594,7 +594,7 @@
           "limit": {
             "type": "integer",
             "default": 200,
-            "description": "Max lines/items to return. For read_file on SSH projects, keep <=400 to avoid timeouts."
+            "description": "Max lines/items to return. For read_file on SSH projects, keep <=800 to avoid timeouts."
           },
           "max_depth": {
             "type": "integer",
@@ -618,17 +618,17 @@
           "requests": {
             "type": "array",
             "minItems": 1,
-            "maxItems": 20,
+            "maxItems": 30,
             "items": {
               "$ref": "#/components/schemas/ContextBatchItem"
             }
           },
           "max_total_chars": {
             "type": "integer",
-            "default": 60000,
+            "default": 80000,
             "minimum": 4000,
-            "maximum": 120000,
-            "description": "Best-effort total response character budget across all batch results. Recommended <=80000; server hard limit 120000. Larger values risk timeouts especially on SSH projects."
+            "maximum": 180000,
+            "description": "Best-effort response budget across batch results. Default 80000; recommended <=120000; hard limit 180000. Larger SSH batches may still time out."
           }
         },
         "required": [
@@ -1117,7 +1117,7 @@
           },
           "source_url": {
             "type": "string",
-            "description": "HTTP/HTTPS source URL. Download timeout 10s, max 5MB, no redirects, no private/local addresses."
+            "description": "HTTP/HTTPS source URL. Timeout 10s, max 5MB, no redirects. Private/local addresses require DROP_ALLOW_PRIVATE_SOURCE_URLS=1."
           }
         },
         "required": [
@@ -1142,7 +1142,7 @@
           },
           "source_url": {
             "type": "string",
-            "description": "HTTP/HTTPS source URL. Download timeout 10s, max 5MB, no redirects, no private/local addresses."
+            "description": "HTTP/HTTPS source URL. Timeout 10s, max 5MB, no redirects. Private/local addresses require DROP_ALLOW_PRIVATE_SOURCE_URLS=1."
           },
           "allow_overwrite": {
             "type": "boolean",
@@ -1892,7 +1892,7 @@
       },
       "JobOpRequest": {
         "type": "object",
-        "description": "Trusted active-goal scoped async shell jobs. create/create_batch require project and active goal_id; command text is audited to .codex/jobs/<job_id>. Trusted mode: use trusted=true + script_text for multi-line scripts (short commands: create_trusted_raw_and_approve; long scripts: runJobOp create trusted script_text).",
+        "description": "Async active-goal shell jobs. create/create_batch require project and goal_id. Use check for configured suites, status/log for polling, recover after timeouts, and trusted=true + script_text for multi-line scripts.",
         "properties": {
           "op": {
             "type": "string",
@@ -1907,7 +1907,7 @@
               "summarize",
               "recover"
             ],
-            "description": "Job operation: create=launch async job (requires active goal); create_batch=launch multiple jobs; check=run configured suite as async job; status=get job status+elapsed_secs (detail=basic: lightweight, no OOM; detail=logs: include log tails); log=get stdout/stderr tail with log_total_lines+next_cursor for incremental polling; stop=kill job; list=list jobs; summarize=Markdown summary with log tails; recover=metadata-only recovery after 504, no logs/process checks."
+            "description": "Job op: create/create_batch launch jobs; check runs a configured suite; status/log poll; stop kills; list/summarize inspect jobs; recover returns metadata after timeout."
           },
           "project": {
             "type": "string",

@@ -198,7 +198,7 @@ pub(super) fn ssh_overview(
         proj.path,
         branch,
         status.trim(),
-        proj.allowed_checks.join(", ")
+        proj.effective_allowed_checks().join(", ")
     );
     for f in &important_files {
         let exists = file_status.get(*f).map(String::as_str).unwrap_or("no");
@@ -500,7 +500,7 @@ fn ssh_overview_from_batch_block(
         proj.path,
         branch,
         status.trim(),
-        proj.allowed_checks.join(", ")
+        proj.effective_allowed_checks().join(", ")
     );
     for f in &important_files {
         let exists = file_status.get(*f).map(String::as_str).unwrap_or("no");
@@ -1666,7 +1666,7 @@ mod ssh_command_tests {
                 limit: 200,
                 max_depth: default_tree_max_depth(),
             }],
-            200_000, // exceeds PREFLIGHT_MAX_TOTAL_CHARS (120_000)
+            200_000, // exceeds PREFLIGHT_MAX_TOTAL_CHARS (180_000)
         );
         let result = context::preflight_context_batch(&req, false, "test");
         assert!(
@@ -1683,7 +1683,7 @@ mod ssh_command_tests {
 
     #[test]
     fn preflight_ssh_rejects_too_many_items() {
-        let items: Vec<ContextBatchItem> = (0..10)
+        let items: Vec<ContextBatchItem> = (0..13)
             .map(|_| ContextBatchItem {
                 mode: ContextMode::ReadFile,
                 path: Some("file.txt".to_string()),
@@ -1695,7 +1695,7 @@ mod ssh_command_tests {
             .collect();
         let req = make_batch_request(items, 60_000);
         let result = context::preflight_context_batch(&req, true, "test");
-        assert!(result.is_err(), "Should reject SSH batch with >8 items");
+        assert!(result.is_err(), "Should reject SSH batch with >12 items");
         let resp = result.unwrap_err();
         assert!(!resp.success);
         assert_eq!(resp.preflight_rejected, Some(true));
@@ -1732,7 +1732,7 @@ mod ssh_command_tests {
                 path: Some("big.rs".to_string()),
                 query: None,
                 start_line: 1,
-                limit: 800, // exceeds PREFLIGHT_MAX_READ_FILE_LIMIT (400)
+                limit: 1200, // exceeds PREFLIGHT_MAX_READ_FILE_LIMIT (800)
                 max_depth: default_tree_max_depth(),
             }],
             60_000,
@@ -1740,14 +1740,14 @@ mod ssh_command_tests {
         let result = context::preflight_context_batch(&req, true, "test");
         assert!(
             result.is_err(),
-            "Should reject SSH read_file with limit > 400"
+            "Should reject SSH read_file with limit > 800"
         );
         let resp = result.unwrap_err();
         assert!(resp.error.as_ref().unwrap().contains("read_file limit"));
     }
 
     #[test]
-    fn preflight_rejects_git_diff_plus_many_reads() {
+    fn preflight_local_git_diff_plus_many_reads_warns() {
         // git_diff estimates 40k, 5 read_file(limit=400) each estimates 48k = 240k total
         let mut items = vec![ContextBatchItem {
             mode: ContextMode::GitDiff,
@@ -1771,13 +1771,17 @@ mod ssh_command_tests {
         let req = make_batch_request(items, 60_000);
         let result = context::preflight_context_batch(&req, false, "test");
         assert!(
-            result.is_err(),
-            "Should reject git_diff + many read_file as too large"
+            result.is_ok(),
+            "Local git_diff + many read_file should warn and rely on truncation"
         );
-        let resp = result.unwrap_err();
-        assert!(resp.estimated_chars.is_some());
-        assert!(resp.suggestion.is_some());
-        assert!(resp.suggestion.as_ref().unwrap().contains("Split"));
+        let warnings = result.unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning.contains("Estimated output")),
+            "expected truncation warning, got {:?}",
+            warnings
+        );
     }
 
     #[test]
@@ -1805,8 +1809,8 @@ mod ssh_command_tests {
 
     #[test]
     fn preflight_local_large_batch_warns() {
-        // 13 items on local → should get a warning but still pass
-        let items: Vec<ContextBatchItem> = (0..13)
+        // 25 items on local → should get a warning but still pass
+        let items: Vec<ContextBatchItem> = (0..25)
             .map(|_| ContextBatchItem {
                 mode: ContextMode::ReadFile,
                 path: Some("f.txt".to_string()),
@@ -1818,7 +1822,7 @@ mod ssh_command_tests {
             .collect();
         let req = make_batch_request(items, 120_000);
         let result = context::preflight_context_batch(&req, false, "test");
-        assert!(result.is_ok(), "Local 13 items should pass (not SSH)");
+        assert!(result.is_ok(), "Local 25 items should pass (not SSH)");
         let warnings = result.unwrap();
         assert!(!warnings.is_empty(), "Should have warning about batch size");
         assert!(

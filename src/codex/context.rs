@@ -35,15 +35,15 @@ pub(super) const MAX_READ_FILE_LIMIT: usize = 2_000;
 const CONTEXT_MAX_OUTPUT_LEN: usize = 50_000;
 
 /// Server hard limit for max_total_chars — requests above this are rejected by preflight.
-const PREFLIGHT_MAX_TOTAL_CHARS: usize = 120_000;
+const PREFLIGHT_MAX_TOTAL_CHARS: usize = 180_000;
 /// Recommended max_total_chars for compact/GPT usage.
-const PREFLIGHT_RECOMMENDED_MAX_CHARS: usize = 80_000;
+const PREFLIGHT_RECOMMENDED_MAX_CHARS: usize = 120_000;
 /// Max batch items for local projects before warning.
-const PREFLIGHT_LOCAL_MAX_ITEMS: usize = 12;
+const PREFLIGHT_LOCAL_MAX_ITEMS: usize = 24;
 /// Hard max batch items for SSH projects — requests above this are rejected.
-const PREFLIGHT_SSH_MAX_ITEMS: usize = 8;
+const PREFLIGHT_SSH_MAX_ITEMS: usize = 12;
 /// Max read_file limit before preflight rejection.
-const PREFLIGHT_MAX_READ_FILE_LIMIT: usize = 400;
+const PREFLIGHT_MAX_READ_FILE_LIMIT: usize = 800;
 
 pub(super) fn truncate_context_line(line: &str) -> (String, bool) {
     if line.len() <= MAX_CONTEXT_LINE_LEN {
@@ -538,7 +538,7 @@ pub(super) struct BatchCostEstimate {
     /// Number of batch items.
     #[allow(dead_code)]
     pub item_count: usize,
-    /// Whether any item has a very large limit (e.g., read_file limit > 400).
+    /// Whether any item has a very large limit (e.g., read_file limit > 800).
     pub has_oversized_item: bool,
     /// Warnings generated during estimation (not blocking).
     pub warnings: Vec<String>,
@@ -606,6 +606,7 @@ pub(super) fn preflight_context_batch(
     project_name: &str,
 ) -> Result<Vec<String>, ContextBatchResponse> {
     let estimate = estimate_context_batch_cost(req, project_is_ssh);
+    let mut warnings = estimate.warnings.clone();
 
     // Check 1: max_total_chars exceeds server hard limit
     if req.max_total_chars > PREFLIGHT_MAX_TOTAL_CHARS {
@@ -632,32 +633,37 @@ pub(super) fn preflight_context_batch(
         });
     }
 
-    // Check 2: estimated output exceeds max_total_chars significantly (2x margin)
+    // Check 2: estimated output exceeds max_total_chars significantly.
     // This catches requests where the sum of per-item estimates far exceeds what the client
     // asked for — even if they set max_total_chars under the server limit.
-    if estimate.estimated_chars > req.max_total_chars * 3 {
-        return Err(ContextBatchResponse {
-            success: false,
-            project: project_name.to_string(),
-            results: Vec::new(),
-            duration_ms: 0,
-            ssh_calls: 0,
-            error: Some(format!(
-                "context batch too large: estimated {} chars exceeds 3x budget of {}",
-                estimate.estimated_chars, req.max_total_chars
-            )),
-            preflight_rejected: Some(true),
-            estimated_chars: Some(estimate.estimated_chars),
-            max_allowed_chars: Some(PREFLIGHT_MAX_TOTAL_CHARS),
-            max_allowed_items: None,
-            project_is_ssh: Some(project_is_ssh),
-            suggestion: Some(
-                "Split this request into smaller batches by file or section. \
-                 Reduce limit per item or request fewer items per batch."
-                    .to_string(),
-            ),
-            warnings: Vec::new(),
-        });
+    if estimate.estimated_chars > req.max_total_chars.saturating_mul(3) {
+        if project_is_ssh && estimate.estimated_chars > req.max_total_chars.saturating_mul(5) {
+            return Err(ContextBatchResponse {
+                success: false,
+                project: project_name.to_string(),
+                results: Vec::new(),
+                duration_ms: 0,
+                ssh_calls: 0,
+                error: Some(format!(
+                    "context batch too large for SSH: estimated {} chars exceeds 5x budget of {}",
+                    estimate.estimated_chars, req.max_total_chars
+                )),
+                preflight_rejected: Some(true),
+                estimated_chars: Some(estimate.estimated_chars),
+                max_allowed_chars: Some(PREFLIGHT_MAX_TOTAL_CHARS),
+                max_allowed_items: None,
+                project_is_ssh: Some(project_is_ssh),
+                suggestion: Some(
+                    "Split this SSH request by file or section, or raise max_total_chars."
+                        .to_string(),
+                ),
+                warnings: Vec::new(),
+            });
+        }
+        warnings.push(format!(
+            "Estimated output is {} chars; response will be truncated to max_total_chars={}.",
+            estimate.estimated_chars, req.max_total_chars
+        ));
     }
 
     // Check 3: SSH project — too many batch items
@@ -686,7 +692,7 @@ pub(super) fn preflight_context_batch(
         });
     }
 
-    // Check 4: oversized read_file limit (limit > 400) on SSH
+    // Check 4: oversized read_file limit (limit > 800) on SSH
     if project_is_ssh && estimate.has_oversized_item {
         return Err(ContextBatchResponse {
             success: false,
@@ -695,7 +701,7 @@ pub(super) fn preflight_context_batch(
             duration_ms: 0,
             ssh_calls: 0,
             error: Some(
-                "context batch too large for SSH project: read_file limit exceeds 400 lines"
+                "context batch too large for SSH project: read_file limit exceeds 800 lines"
                     .to_string(),
             ),
             preflight_rejected: Some(true),
@@ -704,7 +710,7 @@ pub(super) fn preflight_context_batch(
             max_allowed_items: Some(PREFLIGHT_SSH_MAX_ITEMS),
             project_is_ssh: Some(project_is_ssh),
             suggestion: Some(
-                "Reduce read_file limit to 400 or below for SSH projects, \
+                "Reduce read_file limit to 800 or below for SSH projects, \
                  or split into multiple smaller reads."
                     .to_string(),
             ),
@@ -712,7 +718,7 @@ pub(super) fn preflight_context_batch(
         });
     }
 
-    Ok(estimate.warnings)
+    Ok(warnings)
 }
 
 pub(super) fn markdown_outline_shell_fragment(path: &str, limit: usize) -> String {
@@ -1013,7 +1019,7 @@ pub(super) fn execute_context_item(
                 "scripts/e2e_test.sh",
                 "src/main.rs",
             ];
-            let mut content = format!("Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:", project_name, root.display(), branch, status, proj.allowed_checks.join(", "));
+            let mut content = format!("Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:", project_name, root.display(), branch, status, proj.effective_allowed_checks().join(", "));
             for f in &important_files {
                 let exists = root.join(f).exists();
                 content.push_str(&format!("\n  {}: {}", f, if exists { "yes" } else { "no" }));
@@ -1781,7 +1787,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 "src/main.rs",
             ];
             let mut content = format!("Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:",
-                body.project, root.display(), branch, status, proj.allowed_checks.join(", "));
+                body.project, root.display(), branch, status, proj.effective_allowed_checks().join(", "));
             for f in &important_files {
                 let exists = root.join(f).exists();
                 content.push_str(&format!("\n  {}: {}", f, if exists { "yes" } else { "no" }));

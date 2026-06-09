@@ -50,16 +50,6 @@ struct DesktopTaskOpResponse {
     error: Option<String>,
 }
 
-fn desktop_op_response(task: Option<DesktopTask>) -> Json<DesktopTaskOpResponse> {
-    Json(DesktopTaskOpResponse {
-        success: true,
-        task,
-        tasks: Vec::new(),
-        events: Vec::new(),
-        error: None,
-    })
-}
-
 fn valid_status(status: &str) -> bool {
     matches!(
         status,

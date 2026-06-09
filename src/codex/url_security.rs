@@ -20,6 +20,12 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
     }
 }
 
+fn allow_private_source_urls() -> bool {
+    std::env::var("DROP_ALLOW_PRIVATE_SOURCE_URLS")
+        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+        .unwrap_or(false)
+}
+
 pub(super) fn is_allowed_chatgpt_estuary_url(url: &reqwest::Url) -> bool {
     url.scheme() == "https"
         && url.host_str() == Some("chatgpt.com")
@@ -43,10 +49,15 @@ pub(super) fn validate_source_url(source_url: &str) -> Result<reqwest::Url, Stri
         .host_str()
         .ok_or_else(|| "source_url must include a host".to_string())?;
     let host_lower = host.to_ascii_lowercase();
-    if host_lower == "localhost" || host_lower.ends_with(".localhost") {
+    if !allow_private_source_urls()
+        && (host_lower == "localhost" || host_lower.ends_with(".localhost"))
+    {
         return Err("source_url host is not allowed".to_string());
     }
     if is_allowed_chatgpt_estuary_url(&url) {
+        return Ok(url);
+    }
+    if allow_private_source_urls() {
         return Ok(url);
     }
     let port = url.port_or_known_default().unwrap_or(80);

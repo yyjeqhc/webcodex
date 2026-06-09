@@ -65,7 +65,7 @@ fn default_limit() -> usize {
     200
 }
 fn default_context_batch_max_total_chars() -> usize {
-    60_000
+    80_000
 }
 pub(super) fn default_tree_max_depth() -> usize {
     4

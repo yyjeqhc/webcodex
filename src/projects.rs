@@ -2,6 +2,10 @@ use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+fn default_true() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize, Clone, Default, PartialEq)]
 #[serde(rename_all = "lowercase")]
 pub enum Executor {
@@ -30,6 +34,7 @@ pub struct ProjectConfig {
     pub ssh_hosts: Vec<String>,
     #[serde(default)]
     pub user: Option<String>,
+    #[serde(default = "default_true")]
     pub allow_patch: bool,
     #[serde(default)]
     pub allow_command_requests: bool,
@@ -37,6 +42,7 @@ pub struct ProjectConfig {
     pub allow_raw_command_requests: bool,
     #[serde(default)]
     pub default_apply_patch_backend: Option<String>,
+    #[serde(default)]
     pub allowed_checks: Vec<String>,
     pub checks: Option<ProjectChecks>,
     #[serde(default)]
@@ -111,7 +117,7 @@ impl ProjectConfig {
     }
 
     pub fn is_check_allowed(&self, suite: &str) -> bool {
-        self.allowed_checks.iter().any(|c| c == suite)
+        self.effective_allowed_checks().iter().any(|c| c == suite)
     }
 
     pub fn get_check_command(&self, suite: &str) -> Result<String, String> {
@@ -128,6 +134,44 @@ impl ProjectConfig {
             _ => None,
         }
         .ok_or_else(|| format!("Check '{}' has no command configured", suite))
+    }
+
+    pub fn configured_check_names(&self) -> Vec<String> {
+        let Some(checks) = &self.checks else {
+            return Vec::new();
+        };
+        let mut names = Vec::new();
+        if checks.fmt.is_some() {
+            names.push("fmt".to_string());
+        }
+        if checks.test.is_some() {
+            names.push("test".to_string());
+        }
+        if checks.build.is_some() {
+            names.push("build".to_string());
+        }
+        if checks.e2e.is_some() {
+            names.push("e2e".to_string());
+        }
+        if checks.full.is_some() {
+            names.push("full".to_string());
+        }
+        names
+    }
+
+    pub fn effective_allowed_checks(&self) -> Vec<String> {
+        let mut names = if self.allowed_checks.is_empty() {
+            self.configured_check_names()
+        } else {
+            self.allowed_checks.clone()
+        };
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    pub fn checks_enabled(&self) -> bool {
+        !self.effective_allowed_checks().is_empty()
     }
 
     pub fn is_ssh(&self) -> bool {
@@ -166,4 +210,54 @@ pub fn canonicalize_and_verify(path: &Path, project_root: &Path) -> Result<PathB
         return Err("Path is outside project directory".to_string());
     }
     Ok(canonical)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ProjectsConfig;
+
+    #[test]
+    fn concise_project_config_defaults_patch_and_checks() {
+        let cfg: ProjectsConfig = toml::from_str(
+            r#"
+            [projects.demo]
+            path = "/tmp/demo"
+
+            [projects.demo.checks]
+            test = "cargo test"
+            build = "cargo build"
+            "#,
+        )
+        .unwrap();
+        let project = cfg.projects.get("demo").unwrap();
+        assert!(project.allow_patch());
+        assert_eq!(
+            project.effective_allowed_checks(),
+            vec!["build".to_string(), "test".to_string()]
+        );
+        assert!(project.is_check_allowed("test"));
+        assert!(project.is_check_allowed("build"));
+    }
+
+    #[test]
+    fn explicit_allowed_checks_still_narrows_configured_checks() {
+        let cfg: ProjectsConfig = toml::from_str(
+            r#"
+            [projects.demo]
+            path = "/tmp/demo"
+            allow_patch = false
+            allowed_checks = ["test"]
+
+            [projects.demo.checks]
+            fmt = "cargo fmt --check"
+            test = "cargo test"
+            "#,
+        )
+        .unwrap();
+        let project = cfg.projects.get("demo").unwrap();
+        assert!(!project.allow_patch());
+        assert_eq!(project.effective_allowed_checks(), vec!["test".to_string()]);
+        assert!(!project.is_check_allowed("fmt"));
+        assert!(project.is_check_allowed("test"));
+    }
 }

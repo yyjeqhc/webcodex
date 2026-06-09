@@ -281,8 +281,8 @@ Create `projects.toml` (or set `PROJECTS_CONFIG` env var to its path):
 ```toml
 [projects.private-drop]
 path = "/root/git/private-drop"
-allow_patch = true
-allowed_checks = ["fmt", "test", "build", "e2e", "full"]
+# allow_patch defaults to true for listed projects.
+# allowed_checks is inferred from configured checks when omitted.
 
 [projects.private-drop.checks]
 fmt = "cargo fmt --check"
@@ -304,8 +304,7 @@ executor = "ssh"
 host = "msi"
 user = "root"
 path = "/root/git/private-drop"
-allow_patch = true
-allowed_checks = ["fmt", "test", "build", "e2e"]
+# allow_patch defaults to true. Add allowed_checks only when narrowing checks.
 
 [projects.private-drop.checks]
 fmt = "cargo fmt --check"
@@ -683,7 +682,7 @@ Example:
 }
 ```
 
-The response contains `results`, one normal context response per request, plus `duration_ms` and `ssh_calls`. Batches are limited to 20 items. This reduces GPT Action round trips; SSH projects use a single aggregated remote command for supported modes and reuse ControlMaster connections when configured.
+The response contains `results`, one normal context response per request, plus `duration_ms` and `ssh_calls`. Batches are designed to reduce GPT Action round trips; SSH projects use a single aggregated remote command for supported modes and reuse ControlMaster connections when configured.
 
 Use `mode="agent_context"` at the start of a new GPT/Codex chat to load project alignment rules. It reads these fixed files when present and marks missing ones without failing:
 
@@ -715,7 +714,7 @@ Example:
 }
 ```
 
-`max_total_chars` is a best-effort total character budget for context batch responses. It truncates later results if needed, which helps avoid large-response gateway failures when reading several long Markdown files.
+`max_total_chars` is a best-effort total character budget for context batch responses. The default is 80,000 characters, the recommended upper range is 120,000, and the server hard limit is 180,000. Later results are truncated if needed, which helps avoid large-response gateway failures while still reducing follow-up requests.
 
 Large repositories should avoid unscoped `tree` calls. Use `tree` with `path`, `limit`, and `max_depth` to inspect a specific directory, for example `{ "mode": "tree", "path": "paper_rebuild_strict", "limit": 80, "max_depth": 2 }`. Context `git_status` uses `--untracked-files=no` so large data directories do not block status checks. `read_file` truncates very long individual lines, which makes CSV/JSONL audit files safer to inspect.
 
@@ -1122,4 +1121,4 @@ Use `create_binary_file_from_url` or `write_binary_file_from_url` to import from
 }
 ```
 
-URL imports are intentionally constrained: only `http` and `https` are allowed, redirects are rejected, credentials in URLs are rejected, localhost/private/link-local addresses are rejected, downloads time out after 10 seconds, and the decoded/downloaded content is limited to 5MB. Upload imports are limited to project-relative files or server-side upload/temp roots such as `/tmp`, `/var/tmp`, `/mnt/data`, and `DROP_DATA/uploads`; sensitive source paths are rejected.
+URL imports are intentionally constrained: only `http` and `https` are allowed, redirects are rejected, credentials in URLs are rejected, downloads time out after 10 seconds, and the decoded/downloaded content is limited to 5MB. Localhost/private/link-local addresses are rejected by default; set `DROP_ALLOW_PRIVATE_SOURCE_URLS=1` only for trusted intranet deployments that need internal artifact imports. Upload imports are limited to project-relative files or server-side upload/temp roots such as `/tmp`, `/var/tmp`, `/mnt/data`, and `DROP_DATA/uploads`; sensitive source paths are rejected.

@@ -127,6 +127,59 @@ fn record_job_action_event(
     );
 }
 
+fn job_recommended_next_action(response: &JobOpResponse) -> String {
+    if !response.success {
+        return match response.op.as_str() {
+            "recover" => {
+                "Use job_id or client_request_id from the create response, then retry recover."
+                    .to_string()
+            }
+            "status" | "log" => {
+                "Use recover with client_request_id if the job_id is unknown.".to_string()
+            }
+            _ => "Fix the rejected job request, then retry only that operation.".to_string(),
+        };
+    }
+    match response.op.as_str() {
+        "create" | "check" | "create_batch" => {
+            "Poll runJobOp status with detail=basic; use detail=logs or op=log only when logs are needed."
+                .to_string()
+        }
+        "status" => {
+            if response.logs_included == Some(true) {
+                "Use next_cursor with op=log for incremental logs, or proceed when job status is complete."
+                    .to_string()
+            } else {
+                "If still running, poll status later; if details are needed, call status with detail=logs."
+                    .to_string()
+            }
+        }
+        "log" => {
+            "Use next_cursor as since_line for incremental log polling; avoid rereading old log lines."
+                .to_string()
+        }
+        "recover" => {
+            "Use status detail=basic to refresh the recovered job, or detail=logs only if output is needed."
+                .to_string()
+        }
+        "list" | "summarize" => "Choose a job_id, then use status detail=basic before reading logs.".to_string(),
+        "stop" => "Call status detail=basic to confirm the stopped job state.".to_string(),
+        _ => "Use the returned job_id/client_request_id for follow-up status or log calls.".to_string(),
+    }
+}
+
+fn apply_job_workflow_hints(response: &mut JobOpResponse) {
+    if response.recommended_next_action.is_none() {
+        response.recommended_next_action = Some(job_recommended_next_action(response));
+    }
+    if response.action_budget_hint.is_none() {
+        response.action_budget_hint = Some(
+            "Prefer status detail=basic; use op=log with since_line/next_cursor for incremental logs."
+                .to_string(),
+        );
+    }
+}
+
 pub(super) fn validate_job_id(job_id: &str) -> Result<(), String> {
     if job_id.is_empty()
         || job_id.len() > 80
@@ -1342,7 +1395,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
     let pending_job_body: Option<JobOpRequest>;
     macro_rules! render_job {
         (Json($response:expr)) => {{
-            let response = $response;
+            let mut response = $response;
+            apply_job_workflow_hints(&mut response);
             if let (Some(db), Some(body)) = (audit_db.as_ref(), pending_job_body.as_ref()) {
                 record_job_action_event(
                     db,
@@ -1357,30 +1411,32 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         }};
     }
     let Some(projects) = get_projects(depot) else {
-        res.render(Json(job_response(
+        let mut response = job_response(
             "unknown",
             false,
             Some("Projects not configured".to_string()),
-        )));
+        );
+        apply_job_workflow_hints(&mut response);
+        res.render(Json(response));
         return;
     };
     let Some(db) = get_db(depot) else {
-        res.render(Json(job_response(
+        let mut response = job_response(
             "unknown",
             false,
             Some("Database not configured".to_string()),
-        )));
+        );
+        apply_job_workflow_hints(&mut response);
+        res.render(Json(response));
         return;
     };
     let body: JobOpRequest = match req.parse_json().await {
         Ok(b) => b,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(job_response(
-                "unknown",
-                false,
-                Some(format!("Invalid JSON: {}", e)),
-            )));
+            let mut response = job_response("unknown", false, Some(format!("Invalid JSON: {}", e)));
+            apply_job_workflow_hints(&mut response);
+            res.render(Json(response));
             return;
         }
     };
@@ -1494,6 +1550,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         metadata_only: None,
                         logs_included: None,
                         warnings: Vec::new(),
+                        recommended_next_action: None,
+                        action_budget_hint: None,
                     }));
                     return;
                 }
@@ -1549,6 +1607,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     metadata_only: None,
                     logs_included: None,
                     warnings: Vec::new(),
+                    recommended_next_action: None,
+                    action_budget_hint: None,
                 })),
                 Err(e) => render_job!(Json(job_response(&op, false, Some(e)))),
             }
@@ -1719,6 +1779,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         metadata_only: None,
                         logs_included: None,
                         warnings: Vec::new(),
+                        recommended_next_action: None,
+                        action_budget_hint: None,
                     }));
                     return;
                 }
@@ -1776,6 +1838,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 metadata_only: None,
                 logs_included: None,
                 warnings: Vec::new(),
+                recommended_next_action: None,
+                action_budget_hint: None,
             }));
         }
         "create_batch" => {
@@ -1855,6 +1919,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         metadata_only: None,
                         logs_included: None,
                         warnings: Vec::new(),
+                        recommended_next_action: None,
+                        action_budget_hint: None,
                     }));
                     return;
                 }
@@ -1920,6 +1986,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 metadata_only: None,
                 logs_included: None,
                 warnings: Vec::new(),
+                recommended_next_action: None,
+                action_budget_hint: None,
             }));
         }
         "list" => {
@@ -1961,6 +2029,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 metadata_only: None,
                 logs_included: None,
                 warnings: Vec::new(),
+                recommended_next_action: None,
+                action_budget_hint: None,
             }));
         }
         "status" => {
@@ -2060,6 +2130,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             metadata_only: Some(false),
                             logs_included: Some(true),
                             warnings: Vec::new(),
+                            recommended_next_action: None,
+                            action_budget_hint: None,
                         }))
                     } else {
                         // basic: no logs
@@ -2079,6 +2151,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             metadata_only: Some(false),
                             logs_included: Some(false),
                             warnings: Vec::new(),
+                            recommended_next_action: None,
+                            action_budget_hint: None,
                         }))
                     }
                 }
@@ -2151,6 +2225,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         metadata_only: None,
                         logs_included: None,
                         warnings: Vec::new(),
+                        recommended_next_action: None,
+                        action_budget_hint: None,
                     }))
                 }
                 Err(e) => render_job!(Json(job_response(&op, false, Some(e)))),
@@ -2213,6 +2289,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     metadata_only: None,
                     logs_included: None,
                     warnings: Vec::new(),
+                    recommended_next_action: None,
+                    action_budget_hint: None,
                 })),
                 Err(e) => render_job!(Json(job_response(&op, false, Some(e)))),
             }
@@ -2278,6 +2356,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 metadata_only: None,
                 logs_included: None,
                 warnings: Vec::new(),
+                recommended_next_action: None,
+                action_budget_hint: None,
             }));
         }
         "recover" => {
@@ -2324,6 +2404,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             metadata_only: Some(true),
                             logs_included: None,
                             warnings: Vec::new(),
+                            recommended_next_action: None,
+                            action_budget_hint: None,
                         }));
                         return;
                     }
@@ -2346,6 +2428,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     metadata_only: None,
                     logs_included: None,
                     warnings: Vec::new(),
+                    recommended_next_action: None,
+                    action_budget_hint: None,
                 }));
                 return;
             };
@@ -2371,6 +2455,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     metadata_only: Some(true),
                     logs_included: Some(false),
                     warnings: Vec::new(),
+                    recommended_next_action: None,
+                    action_budget_hint: None,
                 })),
                 Err(e) => render_job!(Json(JobOpResponse {
                     success: false,
@@ -2388,6 +2474,8 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     metadata_only: Some(true),
                     logs_included: None,
                     warnings: Vec::new(),
+                    recommended_next_action: None,
+                    action_budget_hint: None,
                 })),
             }
         }
@@ -3003,6 +3091,8 @@ mod tests {
             metadata_only: Some(false),
             logs_included: Some(true),
             warnings: Vec::new(),
+            recommended_next_action: None,
+            action_budget_hint: None,
         };
         record_job_action_event(
             &db,
@@ -3075,6 +3165,8 @@ mod tests {
             metadata_only: Some(true),
             logs_included: None,
             warnings: Vec::new(),
+            recommended_next_action: None,
+            action_budget_hint: None,
         };
         record_job_action_event(
             &db,

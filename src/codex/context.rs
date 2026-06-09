@@ -1,8 +1,8 @@
 use super::get_projects;
 use super::shell::{run_command, shell_escape};
 use super::types::{
-    ContextBatchItem, ContextBatchRequest, ContextBatchResponse, ContextMode, ContextRequest,
-    ContextResponse,
+    ContextBatchItem, ContextBatchRequest, ContextBatchResponse, ContextBatchResultMetadata,
+    ContextMode, ContextRequest, ContextResponse,
 };
 use super::{
     agent_context_shell_fragment, run_project_cmd, ssh_grep_context, ssh_overview, ssh_read_file,
@@ -15,8 +15,9 @@ use crate::get_db;
 use crate::projects::{canonicalize_and_verify, ProjectConfig, SshConfig};
 use salvo::prelude::*;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::path::Path;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) const IGNORED_DIRS: &[&str] = &[
     ".git",
@@ -329,6 +330,128 @@ pub(super) fn mode_name(mode: &ContextMode) -> &'static str {
     }
 }
 
+fn system_time_unix_ms(time: SystemTime) -> Option<u64> {
+    let ms = time.duration_since(UNIX_EPOCH).ok()?.as_millis();
+    Some(ms.min(u128::from(u64::MAX)) as u64)
+}
+
+fn local_file_fingerprint(rel_path: &str, file_size: u64, modified_unix_ms: u64) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(rel_path.as_bytes());
+    hasher.update([0]);
+    hasher.update(file_size.to_string().as_bytes());
+    hasher.update([0]);
+    hasher.update(modified_unix_ms.to_string().as_bytes());
+    let digest = hasher.finalize();
+    let short = digest[..12]
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
+    format!("local-v1-{}", short)
+}
+
+fn local_read_file_metadata(
+    root: &Path,
+    rel_path: &str,
+    request_index: usize,
+    unchanged: bool,
+) -> Result<ContextBatchResultMetadata, String> {
+    let canonical = canonicalize_and_verify(&root.join(rel_path), root)?;
+    let metadata =
+        std::fs::metadata(&canonical).map_err(|e| format!("Failed to stat file: {}", e))?;
+    if !metadata.is_file() {
+        return Err("path is not a file".to_string());
+    }
+    let file_size = metadata.len();
+    let modified_unix_ms = metadata
+        .modified()
+        .ok()
+        .and_then(system_time_unix_ms)
+        .unwrap_or(0);
+    Ok(ContextBatchResultMetadata {
+        request_index,
+        mode: "read_file".to_string(),
+        path: Some(rel_path.to_string()),
+        fingerprint: Some(local_file_fingerprint(
+            rel_path,
+            file_size,
+            modified_unix_ms,
+        )),
+        unchanged,
+        file_size: Some(file_size),
+        modified_unix_ms: Some(modified_unix_ms),
+        total_lines: None,
+    })
+}
+
+fn local_read_file_cache_hit_response(
+    root: &Path,
+    project_name: &str,
+    item: &ContextBatchItem,
+    request_index: usize,
+) -> Option<(ContextResponse, ContextBatchResultMetadata)> {
+    if !matches!(item.mode, ContextMode::ReadFile) {
+        return None;
+    }
+    let rel_path = item.path.as_deref()?;
+    let expected = item.if_fingerprint.as_deref()?.trim();
+    if expected.is_empty() || validate_read_file_range(item.start_line, item.limit).is_err() {
+        return None;
+    }
+    let mut metadata = local_read_file_metadata(root, rel_path, request_index, false).ok()?;
+    if metadata.fingerprint.as_deref() != Some(expected) {
+        return None;
+    }
+    metadata.unchanged = true;
+    Some((
+        ContextResponse {
+            success: true,
+            project: project_name.to_string(),
+            mode: "read_file".to_string(),
+            content: None,
+            items: None,
+            truncated: false,
+            error: None,
+        },
+        metadata,
+    ))
+}
+
+fn context_batch_recommended_next_action(
+    success: bool,
+    results: &[ContextResponse],
+    preflight_rejected: bool,
+    cache_hits: usize,
+) -> String {
+    if preflight_rejected {
+        return "Split the context_batch by file or section, then retry only the needed pieces."
+            .to_string();
+    }
+    if !success {
+        return "Retry only failed result indexes or switch to narrower read_file/read_section requests."
+            .to_string();
+    }
+    if results.iter().any(|result| result.truncated) {
+        return "Use narrower read_file ranges or read_section before editing truncated areas."
+            .to_string();
+    }
+    if cache_hits > 0 {
+        return "Proceed with cached context; use applyProjectEdit or runJobOp for the next change."
+            .to_string();
+    }
+    "Use applyProjectEdit for targeted changes, or runJobOp for long checks/builds.".to_string()
+}
+
+fn context_batch_action_budget_hint(cache_hits: usize) -> String {
+    if cache_hits > 0 {
+        "Some read_file content was omitted via if_fingerprint; keep reusing fingerprints for unchanged files."
+            .to_string()
+    } else {
+        "Batch related reads and pass result_metadata.fingerprint as if_fingerprint on repeated read_file calls."
+            .to_string()
+    }
+}
+
 pub(super) fn context_error(project: &str, mode: &ContextMode, error: String) -> ContextResponse {
     ContextResponse {
         success: false,
@@ -630,6 +753,15 @@ pub(super) fn preflight_context_batch(
                 PREFLIGHT_RECOMMENDED_MAX_CHARS
             )),
             warnings: Vec::new(),
+            result_metadata: Vec::new(),
+            cache_hits: None,
+            recommended_next_action: Some(context_batch_recommended_next_action(
+                false,
+                &[],
+                true,
+                0,
+            )),
+            action_budget_hint: Some(context_batch_action_budget_hint(0)),
         });
     }
 
@@ -658,6 +790,15 @@ pub(super) fn preflight_context_batch(
                         .to_string(),
                 ),
                 warnings: Vec::new(),
+                result_metadata: Vec::new(),
+                cache_hits: None,
+                recommended_next_action: Some(context_batch_recommended_next_action(
+                    false,
+                    &[],
+                    true,
+                    0,
+                )),
+                action_budget_hint: Some(context_batch_action_budget_hint(0)),
             });
         }
         warnings.push(format!(
@@ -689,6 +830,15 @@ pub(super) fn preflight_context_batch(
                 PREFLIGHT_SSH_MAX_ITEMS
             )),
             warnings: Vec::new(),
+            result_metadata: Vec::new(),
+            cache_hits: None,
+            recommended_next_action: Some(context_batch_recommended_next_action(
+                false,
+                &[],
+                true,
+                0,
+            )),
+            action_budget_hint: Some(context_batch_action_budget_hint(0)),
         });
     }
 
@@ -715,6 +865,15 @@ pub(super) fn preflight_context_batch(
                     .to_string(),
             ),
             warnings: Vec::new(),
+            result_metadata: Vec::new(),
+            cache_hits: None,
+            recommended_next_action: Some(context_batch_recommended_next_action(
+                false,
+                &[],
+                true,
+                0,
+            )),
+            action_budget_hint: Some(context_batch_action_budget_hint(0)),
         });
     }
 
@@ -1975,6 +2134,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 mode: body.mode,
                 path: body.path.clone(),
                 query: body.query.clone(),
+                if_fingerprint: None,
                 start_line: body.start_line,
                 limit: body.limit,
                 max_depth: body.max_depth,
@@ -2050,6 +2210,13 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
             project_is_ssh: None,
             suggestion: None,
             warnings: Vec::new(),
+            result_metadata: Vec::new(),
+            cache_hits: None,
+            recommended_next_action: Some(
+                "Create projects.toml or set PROJECTS_CONFIG, restart, then retry context_batch."
+                    .to_string(),
+            ),
+            action_budget_hint: Some(context_batch_action_budget_hint(0)),
         }));
         return;
     };
@@ -2071,11 +2238,17 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 project_is_ssh: None,
                 suggestion: None,
                 warnings: Vec::new(),
+                result_metadata: Vec::new(),
+                cache_hits: None,
+                recommended_next_action: Some(
+                    "Fix the JSON body, then retry the same context_batch intent.".to_string(),
+                ),
+                action_budget_hint: Some(context_batch_action_budget_hint(0)),
             }));
             return;
         }
     };
-    if body.requests.is_empty() || body.requests.len() > 20 {
+    if body.requests.is_empty() || body.requests.len() > 30 {
         res.status_code(StatusCode::BAD_REQUEST);
         res.render(Json(ContextBatchResponse {
             success: false,
@@ -2083,7 +2256,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
             results: Vec::new(),
             duration_ms: 0,
             ssh_calls: 0,
-            error: Some("requests must contain 1-20 items".to_string()),
+            error: Some("requests must contain 1-30 items".to_string()),
             preflight_rejected: None,
             estimated_chars: None,
             max_allowed_chars: None,
@@ -2091,6 +2264,12 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
             project_is_ssh: None,
             suggestion: None,
             warnings: Vec::new(),
+            result_metadata: Vec::new(),
+            cache_hits: None,
+            recommended_next_action: Some(
+                "Use 1-30 batch items and group related reads into one context_batch.".to_string(),
+            ),
+            action_budget_hint: Some(context_batch_action_budget_hint(0)),
         }));
         return;
     }
@@ -2112,6 +2291,13 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 project_is_ssh: None,
                 suggestion: None,
                 warnings: Vec::new(),
+                result_metadata: Vec::new(),
+                cache_hits: None,
+                recommended_next_action: Some(
+                    "Call getCodexProjects to choose a valid project, then retry context_batch."
+                        .to_string(),
+                ),
+                action_budget_hint: Some(context_batch_action_budget_hint(0)),
             }));
             return;
         }
@@ -2123,6 +2309,8 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
         Ok(preflight_warnings) => {
             // Request is allowed; preflight_warnings may contain non-blocking hints
             let start = Instant::now();
+            let mut result_metadata = Vec::new();
+            let mut cache_hits = 0usize;
             let (mut results, ssh_calls) = if project_is_ssh {
                 match try_ssh_context_batch_once(
                     proj,
@@ -2149,8 +2337,25 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 }
             } else {
                 let mut results = Vec::with_capacity(body.requests.len());
-                for item in &body.requests {
+                for (idx, item) in body.requests.iter().enumerate() {
+                    if let Some((resp, metadata)) =
+                        local_read_file_cache_hit_response(&proj.root(), &body.project, item, idx)
+                    {
+                        cache_hits += 1;
+                        result_metadata.push(metadata);
+                        results.push(resp);
+                        continue;
+                    }
                     let (resp, _) = execute_context_item(proj, &body.project, item, None);
+                    if matches!(item.mode, ContextMode::ReadFile) {
+                        if let Some(rel_path) = item.path.as_deref() {
+                            if let Ok(metadata) =
+                                local_read_file_metadata(&proj.root(), rel_path, idx, false)
+                            {
+                                result_metadata.push(metadata);
+                            }
+                        }
+                    }
                     results.push(resp);
                 }
                 (results, 0)
@@ -2158,6 +2363,8 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
             enforce_context_batch_total_limit(&mut results, body.max_total_chars);
             let success = results.iter().all(|r| r.success);
             let duration_ms = start.elapsed().as_millis() as u64;
+            let recommended_next_action =
+                context_batch_recommended_next_action(success, &results, false, cache_hits);
             tracing::info!(
                 target: "codex.metrics",
                 operation = "getProjectContextBatch",
@@ -2184,6 +2391,10 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 project_is_ssh: None,
                 suggestion: None,
                 warnings: preflight_warnings,
+                result_metadata,
+                cache_hits: (cache_hits > 0).then_some(cache_hits),
+                recommended_next_action: Some(recommended_next_action),
+                action_budget_hint: Some(context_batch_action_budget_hint(cache_hits)),
             };
             if let Some(db) = audit_db.as_ref() {
                 let ended_at = chrono::Utc::now().timestamp();
@@ -2226,6 +2437,8 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                             "preflight_rejected": false,
                             "ssh_calls": response.ssh_calls,
                             "project_is_ssh": project_is_ssh,
+                            "cache_hits": response.cache_hits.unwrap_or(0),
+                            "metadata_count": response.result_metadata.len(),
                         }),
                         request_bytes: None,
                         response_bytes: None,
@@ -2288,5 +2501,39 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
             }
             res.render(Json(rejection_response));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn local_read_file_cache_hit_omits_unchanged_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.txt");
+        std::fs::write(&file, "hello\nworld\n").unwrap();
+
+        let metadata = local_read_file_metadata(tmp.path(), "a.txt", 0, false).unwrap();
+        let item = ContextBatchItem {
+            mode: ContextMode::ReadFile,
+            path: Some("a.txt".to_string()),
+            query: None,
+            if_fingerprint: metadata.fingerprint.clone(),
+            start_line: 1,
+            limit: 10,
+            max_depth: 4,
+        };
+
+        let (response, hit_metadata) =
+            local_read_file_cache_hit_response(tmp.path(), "proj", &item, 0).unwrap();
+        assert!(response.success);
+        assert_eq!(response.mode, "read_file");
+        assert!(response.content.is_none());
+        assert!(hit_metadata.unchanged);
+        assert_eq!(hit_metadata.fingerprint, metadata.fingerprint);
+
+        std::fs::write(&file, "hello\nworld\nchanged\n").unwrap();
+        assert!(local_read_file_cache_hit_response(tmp.path(), "proj", &item, 0).is_none());
     }
 }

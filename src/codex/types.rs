@@ -42,6 +42,10 @@ pub struct ContextBatchItem {
     pub path: Option<String>,
     #[serde(default)]
     pub query: Option<String>,
+    /// For local read_file in context_batch: if this matches the current
+    /// result_metadata fingerprint, content is omitted and unchanged=true.
+    #[serde(default)]
+    pub if_fingerprint: Option<String>,
     #[serde(default = "default_start_line")]
     pub start_line: usize,
     #[serde(default = "default_limit")]
@@ -353,6 +357,12 @@ pub struct JobOpResponse {
     /// Operational warnings (e.g., compatibility hints).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Suggested next action for GPT clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_next_action: Option<String>,
+    /// Short request-budget guidance for GPT clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_budget_hint: Option<String>,
 }
 
 fn default_channel() -> String {
@@ -384,6 +394,8 @@ pub(super) fn job_response(op: &str, success: bool, error: Option<String>) -> Jo
         metadata_only: None,
         logs_included: None,
         warnings: Vec::new(),
+        recommended_next_action: None,
+        action_budget_hint: None,
     }
 }
 
@@ -431,6 +443,36 @@ pub struct ContextBatchResponse {
     /// Operational warnings (e.g., batch size hints).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub warnings: Vec<String>,
+    /// Per-result cache metadata. Same order as results; currently populated for local read_file.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub result_metadata: Vec<ContextBatchResultMetadata>,
+    /// Number of local read_file results omitted because if_fingerprint matched.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cache_hits: Option<usize>,
+    /// Suggested next action for GPT clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_next_action: Option<String>,
+    /// Short request-budget guidance for GPT clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_budget_hint: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ContextBatchResultMetadata {
+    pub request_index: usize,
+    pub mode: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub unchanged: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modified_unix_ms: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub total_lines: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -809,6 +851,12 @@ pub struct ProjectsResponse {
     pub instance: Option<InstanceInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// Suggested next action for GPT clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_next_action: Option<String>,
+    /// Short request-budget guidance for GPT clients.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub action_budget_hint: Option<String>,
 }
 
 #[cfg(test)]
@@ -894,6 +942,8 @@ mod tests {
             metadata_only: Some(true),
             logs_included: Some(false),
             warnings: Vec::new(),
+            recommended_next_action: None,
+            action_budget_hint: None,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"metadata_only\":true"));
@@ -920,6 +970,8 @@ mod tests {
             metadata_only: None,
             logs_included: None,
             warnings: Vec::new(),
+            recommended_next_action: None,
+            action_budget_hint: None,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(!json.contains("metadata_only"));
@@ -962,6 +1014,8 @@ mod tests {
             metadata_only: None,
             logs_included: None,
             warnings: Vec::new(),
+            recommended_next_action: None,
+            action_budget_hint: None,
         };
         let serialized = serde_json::to_string(&response).unwrap();
         assert!(
@@ -987,6 +1041,10 @@ mod tests {
             project_is_ssh: None,
             suggestion: None,
             warnings: Vec::new(),
+            result_metadata: Vec::new(),
+            cache_hits: None,
+            recommended_next_action: None,
+            action_budget_hint: None,
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(!json.contains("preflight_rejected"));
@@ -1011,6 +1069,10 @@ mod tests {
             project_is_ssh: Some(true),
             suggestion: Some("Split into smaller batches.".to_string()),
             warnings: Vec::new(),
+            result_metadata: Vec::new(),
+            cache_hits: None,
+            recommended_next_action: Some("Split the batch.".to_string()),
+            action_budget_hint: Some("Batch smaller follow-up reads.".to_string()),
         };
         let json = serde_json::to_string(&response).unwrap();
         assert!(json.contains("\"preflight_rejected\":true"));

@@ -12,6 +12,35 @@ while preserving the main Codex loop.
 5. Commit with `runProjectGit` after checks pass.
 6. Write a final report with `writeProjectReport`.
 
+Follow `recommended_next_action` and `action_budget_hint` when present in
+`getCodexProjects`, `getProjectContextBatch`, or `runJobOp` responses. They are
+short server-side hints intended to keep GPT on the low-request path.
+
+## Repeated context reads
+
+Local `read_file` results in `getProjectContextBatch` include
+`result_metadata[].fingerprint`. Reuse that value as `if_fingerprint` for the
+same file on later batch calls:
+
+```json
+{
+  "project": "private-drop",
+  "requests": [
+    {
+      "mode": "read_file",
+      "path": "src/main.rs",
+      "start_line": 1,
+      "limit": 120,
+      "if_fingerprint": "local-v1-..."
+    }
+  ]
+}
+```
+
+If the file is unchanged, the result is marked `unchanged=true` in
+`result_metadata`, `cache_hits` increases, and file content is omitted. Treat
+that as confirmation to use the previously read content.
+
 ## Long-running task workflow (job+poll — REQUIRED for any task >30s)
 
 **Default interface for all long tasks: `runJobOp`.**

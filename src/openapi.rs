@@ -385,6 +385,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
         "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
         "ContextBatchItem": spec["components"]["schemas"]["ContextBatchItem"].clone(),
         "ContextBatchRequest": spec["components"]["schemas"]["ContextBatchRequest"].clone(),
+        "ContextBatchResultMetadata": spec["components"]["schemas"]["ContextBatchResultMetadata"].clone(),
         "ContextBatchResponse": spec["components"]["schemas"]["ContextBatchResponse"].clone(),
         "PatchRequest": spec["components"]["schemas"]["PatchRequest"].clone(),
         "PatchResponse": spec["components"]["schemas"]["PatchResponse"].clone(),
@@ -551,6 +552,60 @@ mod tests {
             .count()
     }
 
+    fn assert_unique_operation_ids(paths: &serde_json::Value) {
+        let mut seen = std::collections::BTreeSet::new();
+        for (path, path_item) in paths.as_object().unwrap() {
+            for (method, operation) in path_item.as_object().unwrap() {
+                let Some(operation_id) = operation["operationId"].as_str() else {
+                    continue;
+                };
+                assert!(
+                    seen.insert(operation_id.to_string()),
+                    "duplicate operationId {} at {} {}",
+                    operation_id,
+                    method,
+                    path
+                );
+            }
+        }
+    }
+
+    fn assert_refs_resolve(spec: &serde_json::Value) {
+        fn walk(path: String, root: &serde_json::Value, value: &serde_json::Value) {
+            match value {
+                serde_json::Value::Object(map) => {
+                    if let Some(reference) = map.get("$ref").and_then(|v| v.as_str()) {
+                        let name = reference
+                            .strip_prefix("#/components/schemas/")
+                            .unwrap_or_else(|| panic!("unsupported ref {} at {}", reference, path));
+                        assert!(
+                            !root["components"]["schemas"][name].is_null(),
+                            "unresolved ref {} at {}",
+                            reference,
+                            path
+                        );
+                    }
+                    for (key, child) in map {
+                        let child_path = if path.is_empty() {
+                            key.clone()
+                        } else {
+                            format!("{}.{}", path, key)
+                        };
+                        walk(child_path, root, child);
+                    }
+                }
+                serde_json::Value::Array(items) => {
+                    for (idx, child) in items.iter().enumerate() {
+                        walk(format!("{}[{}]", path, idx), root, child);
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        walk(String::new(), spec, spec);
+    }
+
     #[test]
     fn apply_project_edit_description_stays_under_300_chars() {
         let spec: serde_json::Value =
@@ -623,6 +678,11 @@ mod tests {
     fn context_batch_response_has_preflight_fields() {
         let spec: serde_json::Value =
             serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        let item_props = &spec["components"]["schemas"]["ContextBatchItem"]["properties"];
+        assert!(
+            !item_props["if_fingerprint"].is_null(),
+            "ContextBatchItem should have if_fingerprint"
+        );
         let props = &spec["components"]["schemas"]["ContextBatchResponse"]["properties"];
         assert!(
             !props["preflight_rejected"].is_null(),
@@ -639,6 +699,22 @@ mod tests {
         assert!(
             !props["warnings"].is_null(),
             "ContextBatchResponse should have warnings"
+        );
+        assert!(
+            !props["result_metadata"].is_null(),
+            "ContextBatchResponse should have result_metadata"
+        );
+        assert!(
+            !props["cache_hits"].is_null(),
+            "ContextBatchResponse should have cache_hits"
+        );
+        assert!(
+            !props["recommended_next_action"].is_null(),
+            "ContextBatchResponse should have recommended_next_action"
+        );
+        assert!(
+            !spec["components"]["schemas"]["ContextBatchResultMetadata"].is_null(),
+            "ContextBatchResultMetadata should exist"
         );
     }
 
@@ -740,6 +816,73 @@ mod tests {
     }
 
     #[test]
+    fn compact_openapi_gpt_lint_stays_strict() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_edit_timeout_guidance(&mut spec);
+        apply_trusted_command_guidance(&mut spec);
+        apply_action_session_openapi(&mut spec);
+        spec["paths"] = compact_paths_from_spec(&spec);
+        spec["components"]["schemas"] = serde_json::json!({
+            "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
+            "ContextBatchItem": spec["components"]["schemas"]["ContextBatchItem"].clone(),
+            "ContextBatchRequest": spec["components"]["schemas"]["ContextBatchRequest"].clone(),
+            "ContextBatchResultMetadata": spec["components"]["schemas"]["ContextBatchResultMetadata"].clone(),
+            "ContextBatchResponse": spec["components"]["schemas"]["ContextBatchResponse"].clone(),
+            "ReplaceTextEdit": spec["components"]["schemas"]["ReplaceTextEdit"].clone(),
+            "ReplaceRangeEdit": spec["components"]["schemas"]["ReplaceRangeEdit"].clone(),
+            "AppendFileEdit": spec["components"]["schemas"]["AppendFileEdit"].clone(),
+            "CreateFileEdit": spec["components"]["schemas"]["CreateFileEdit"].clone(),
+            "WriteFileEdit": spec["components"]["schemas"]["WriteFileEdit"].clone(),
+            "CreateBinaryFileEdit": spec["components"]["schemas"]["CreateBinaryFileEdit"].clone(),
+            "WriteBinaryFileEdit": spec["components"]["schemas"]["WriteBinaryFileEdit"].clone(),
+            "CreateBinaryArtifactEdit": spec["components"]["schemas"]["CreateBinaryArtifactEdit"].clone(),
+            "WriteBinaryArtifactEdit": spec["components"]["schemas"]["WriteBinaryArtifactEdit"].clone(),
+            "CreateBinaryFileFromUploadEdit": spec["components"]["schemas"]["CreateBinaryFileFromUploadEdit"].clone(),
+            "WriteBinaryFileFromUploadEdit": spec["components"]["schemas"]["WriteBinaryFileFromUploadEdit"].clone(),
+            "CreateBinaryFileFromUrlEdit": spec["components"]["schemas"]["CreateBinaryFileFromUrlEdit"].clone(),
+            "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
+            "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
+            "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+            "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
+            "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
+            "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
+            "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
+            "CommandRequest": spec["components"]["schemas"]["CommandRequest"].clone(),
+            "CommandResponse": spec["components"]["schemas"]["CommandResponse"].clone(),
+            "CommandRequestBatchItem": spec["components"]["schemas"]["CommandRequestBatchItem"].clone(),
+            "CommandRequestOpRequest": spec["components"]["schemas"]["CommandRequestOpRequest"].clone(),
+            "CommandRequestOpResponse": spec["components"]["schemas"]["CommandRequestOpResponse"].clone(),
+            "JobOpRequest": spec["components"]["schemas"]["JobOpRequest"].clone(),
+            "JobInfo": spec["components"]["schemas"]["JobInfo"].clone(),
+            "JobOpResponse": spec["components"]["schemas"]["JobOpResponse"].clone(),
+            "ProjectCapabilities": spec["components"]["schemas"]["ProjectCapabilities"].clone(),
+            "ProjectCapabilityInfo": spec["components"]["schemas"]["ProjectCapabilityInfo"].clone(),
+            "InstanceInfo": spec["components"]["schemas"]["InstanceInfo"].clone(),
+            "ProjectsResponse": spec["components"]["schemas"]["ProjectsResponse"].clone(),
+            "CheckRequest": spec["components"]["schemas"]["CheckRequest"].clone(),
+            "CheckResponse": spec["components"]["schemas"]["CheckResponse"].clone(),
+            "ReportRequest": spec["components"]["schemas"]["ReportRequest"].clone(),
+            "ReportResponse": spec["components"]["schemas"]["ReportResponse"].clone(),
+            "DesktopTask": spec["components"]["schemas"]["DesktopTask"].clone(),
+            "DesktopTaskEvent": spec["components"]["schemas"]["DesktopTaskEvent"].clone(),
+            "DesktopTaskOpRequest": spec["components"]["schemas"]["DesktopTaskOpRequest"].clone(),
+            "DesktopTaskOpResponse": spec["components"]["schemas"]["DesktopTaskOpResponse"].clone(),
+            "ActionSessionRecord": spec["components"]["schemas"]["ActionSessionRecord"].clone(),
+            "ActionSessionStats": spec["components"]["schemas"]["ActionSessionStats"].clone(),
+            "ActionEventView": spec["components"]["schemas"]["ActionEventView"].clone(),
+            "ActionSessionListItem": spec["components"]["schemas"]["ActionSessionListItem"].clone(),
+            "ActionSessionOpRequest": spec["components"]["schemas"]["ActionSessionOpRequest"].clone(),
+            "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone()
+        });
+        assert!(count_operations(&spec["paths"]) <= 15);
+        assert_operation_descriptions_within_limit(&spec);
+        assert_all_descriptions_within_limit(&spec);
+        assert_unique_operation_ids(&spec["paths"]);
+        assert_refs_resolve(&spec);
+    }
+
+    #[test]
     fn openapi_operation_descriptions_stay_under_300_chars() {
         let mut spec: serde_json::Value =
             serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
@@ -786,6 +929,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
         "ContextBatchItem": spec["components"]["schemas"]["ContextBatchItem"].clone(),
         "ContextBatchRequest": spec["components"]["schemas"]["ContextBatchRequest"].clone(),
+        "ContextBatchResultMetadata": spec["components"]["schemas"]["ContextBatchResultMetadata"].clone(),
         "ContextBatchResponse": spec["components"]["schemas"]["ContextBatchResponse"].clone(),
         "ReplaceTextEdit": spec["components"]["schemas"]["ReplaceTextEdit"].clone(),
         "ReplaceRangeEdit": spec["components"]["schemas"]["ReplaceRangeEdit"].clone(),

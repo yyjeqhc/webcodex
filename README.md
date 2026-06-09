@@ -682,7 +682,9 @@ Example:
 }
 ```
 
-The response contains `results`, one normal context response per request, plus `duration_ms` and `ssh_calls`. Batches are designed to reduce GPT Action round trips; SSH projects use a single aggregated remote command for supported modes and reuse ControlMaster connections when configured.
+The response contains `results`, one normal context response per request, plus `duration_ms`, `ssh_calls`, and GPT-facing hints such as `recommended_next_action` and `action_budget_hint`. Batches are designed to reduce GPT Action round trips; SSH projects use a single aggregated remote command for supported modes and reuse ControlMaster connections when configured.
+
+For local `read_file` batch items, responses include `result_metadata` entries with an opaque `fingerprint`. On repeated reads, pass that value back as `if_fingerprint`; if the file is unchanged, the server returns `unchanged=true`, increments `cache_hits`, and omits file content for that item. This keeps GPT from rereading the same file content across planning/check/edit loops.
 
 Use `mode="agent_context"` at the start of a new GPT/Codex chat to load project alignment rules. It reads these fixed files when present and marks missing ones without failing:
 

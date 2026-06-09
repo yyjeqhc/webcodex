@@ -97,6 +97,13 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
             project_names: Vec::new(),
             instance: Some(instance_info(depot)),
             error: Some("Projects config not loaded".to_string()),
+            recommended_next_action: Some(
+                "Create projects.toml or set PROJECTS_CONFIG, restart, then call getCodexProjects."
+                    .to_string(),
+            ),
+            action_budget_hint: Some(
+                "Use getCodexProjects once per session, then batch context reads.".to_string(),
+            ),
         };
         let error_summary = response.error.clone();
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
@@ -145,6 +152,14 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
         project_names,
         instance: Some(instance_info(depot)),
         error: None,
+        recommended_next_action: Some(
+            "Pick one project, then call getProjectContextBatch for overview, git_status, tree, and targeted reads."
+                .to_string(),
+        ),
+        action_budget_hint: Some(
+            "Batch related reads; prefer context_batch, edit, job, and action_sessions over many small calls."
+                .to_string(),
+        ),
     };
     let project_count = response.projects.len();
     let project_names_count = response.project_names.len();

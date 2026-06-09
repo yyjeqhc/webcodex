@@ -587,6 +587,11 @@
             "type": "string",
             "description": "Search query for search or grep_context mode, or heading text for read_section mode"
           },
+          "if_fingerprint": {
+            "type": "string",
+            "nullable": true,
+            "description": "For local read_file: pass a prior result_metadata.fingerprint to omit unchanged content."
+          },
           "start_line": {
             "type": "integer",
             "default": 1
@@ -634,6 +639,46 @@
         "required": [
           "project",
           "requests"
+        ]
+      },
+      "ContextBatchResultMetadata": {
+        "type": "object",
+        "properties": {
+          "request_index": {
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "nullable": true
+          },
+          "fingerprint": {
+            "type": "string",
+            "nullable": true,
+            "description": "Opaque local file fingerprint for repeated read_file calls."
+          },
+          "unchanged": {
+            "type": "boolean",
+            "description": "True when if_fingerprint matched and content was omitted."
+          },
+          "file_size": {
+            "type": "integer",
+            "nullable": true
+          },
+          "modified_unix_ms": {
+            "type": "integer",
+            "nullable": true
+          },
+          "total_lines": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "request_index",
+          "mode"
         ]
       },
       "ContextBatchResponse": {
@@ -697,6 +742,28 @@
               "type": "string"
             },
             "description": "Operational warnings (e.g., batch size hints)."
+          },
+          "result_metadata": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContextBatchResultMetadata"
+            },
+            "description": "Per-result cache metadata; use request_index to match results."
+          },
+          "cache_hits": {
+            "type": "integer",
+            "nullable": true,
+            "description": "Number of read_file results omitted because if_fingerprint matched."
+          },
+          "recommended_next_action": {
+            "type": "string",
+            "nullable": true,
+            "description": "Suggested next action for GPT clients."
+          },
+          "action_budget_hint": {
+            "type": "string",
+            "nullable": true,
+            "description": "Short request-budget guidance for GPT clients."
           }
         },
         "required": [
@@ -2193,6 +2260,16 @@
               "type": "string"
             },
             "description": "Operational warnings (e.g., compatibility hints)."
+          },
+          "recommended_next_action": {
+            "type": "string",
+            "nullable": true,
+            "description": "Suggested next action for GPT clients."
+          },
+          "action_budget_hint": {
+            "type": "string",
+            "nullable": true,
+            "description": "Short request-budget guidance for GPT clients."
           }
         },
         "required": [
@@ -2500,6 +2577,16 @@
           "error": {
             "type": "string",
             "nullable": true
+          },
+          "recommended_next_action": {
+            "type": "string",
+            "nullable": true,
+            "description": "Suggested next action for GPT clients."
+          },
+          "action_budget_hint": {
+            "type": "string",
+            "nullable": true,
+            "description": "Short request-budget guidance for GPT clients."
           }
         },
         "required": [

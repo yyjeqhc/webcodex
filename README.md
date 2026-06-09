@@ -12,6 +12,7 @@ A self-hosted private long-text/file drop box. Replace QQ/WeChat's "File Transfe
 - REST API with OpenAPI 3.0 spec
 - SQLite storage (bundled, no system dependency)
 - GPT Actions compatible
+- MCP stdio bridge for Claude/Codex-style MCP clients
 - File download with Content-Disposition header
 - Path traversal protection
 
@@ -168,13 +169,52 @@ Web UI auth: pass `?token=your-secret-token` in the URL, or use the login page w
 
 1. Deploy Private Drop with HTTPS (see Deployment section below)
 2. In ChatGPT, create a GPT with Actions
-3. Import your OpenAPI spec URL: `https://your-server/openapi.json`
+3. Import your OpenAPI spec URL: `https://your-server/codex-openapi-gpt.json`
 4. Set authentication to "API Key" / "Bearer" with your `DROP_TOKEN`
-5. Key operations for GPT:
-   - `createMessage` - Send text to any channel
-   - `listMessages` - Read messages from channels
-   - `getMessage` - Get specific message details
-   - `deleteMessage` - Delete a message
+5. Use the GPT-optimized Codex actions for project context, edits, jobs, checks, reports, and action sessions.
+
+Use `/codex-openapi-gpt.json` for GPT Actions. It stays under GPT's 15-action import limit and keeps operation descriptions short. `/codex-openapi-compact.json` remains available for broader automation.
+
+## MCP Setup
+
+Private Drop also ships a standard stdio MCP bridge:
+
+```bash
+cargo build --release --bin private-drop-mcp
+```
+
+Example MCP client config:
+
+```json
+{
+  "mcpServers": {
+    "private-drop": {
+      "command": "/path/to/private-drop/target/release/private-drop-mcp",
+      "env": {
+        "PRIVATE_DROP_MCP_HTTP_BASE": "http://127.0.0.1:8080",
+        "DROP_TOKEN": "your-secret-token"
+      }
+    }
+  }
+}
+```
+
+The bridge calls the existing HTTP API, so GPT Actions and MCP share the same project config, auth, safety checks, and action-session audit trail. It exposes tools for project discovery, batched context reads, structured edits, artifacts, git, command requests, jobs, checks, reports, and action sessions.
+
+Protocol smoke test:
+
+```bash
+node scripts/mcp_smoke_agent.mjs
+```
+
+If a Private Drop server is already running, test one live HTTP tool call too:
+
+```bash
+PRIVATE_DROP_MCP_HTTP_BASE=http://127.0.0.1:8080 \
+DROP_TOKEN=your-secret-token \
+PRIVATE_DROP_MCP_SMOKE_CALL_HTTP=1 \
+node scripts/mcp_smoke_agent.mjs
+```
 
 ## Channels
 
@@ -373,9 +413,9 @@ curl -X POST http://localhost:8080/api/codex/report \
 
 ### GPT Actions Setup
 
-1. Import `https://your-server/openapi.json` into your GPT Actions
+1. Import `https://your-server/codex-openapi-gpt.json` into your GPT Actions
 2. Set authentication to API Key / Bearer with your `DROP_TOKEN`
-3. GPT can use the `codex` operationIds: `getProjectContext`, `applyProjectEdit`, `applyProjectPatch`, `runProjectCheck`, `writeProjectReport`
+3. GPT can use the Codex operationIds for projects, batch context, edits, artifacts, git, command requests, jobs, checks, reports, and action sessions.
 
 ### Codex Edit API (applyProjectEdit)
 

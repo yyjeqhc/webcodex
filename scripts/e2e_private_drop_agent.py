@@ -203,12 +203,32 @@ max_output_bytes = 262144
                 assert "marker.txt" in context_result["results"][1]["items"], context_result
                 assert "project-marker" in context_result["results"][2]["content"], context_result
                 assert "marker.txt" in context_result["results"][3]["content"], context_result
+                marker_metadata = next(
+                    item for item in context_result["result_metadata"] if item.get("path") == "marker.txt"
+                )
+                marker_fingerprint = marker_metadata["fingerprint"]
+                assert marker_fingerprint.startswith("agent-v1-"), marker_metadata
+                cache_hit = post(
+                    port,
+                    token,
+                    "/api/codex/context_batch",
+                    {
+                        "project": "agent_demo",
+                        "requests": [
+                            {"mode": "read_file", "path": "marker.txt", "if_fingerprint": marker_fingerprint}
+                        ],
+                    },
+                )
+                assert cache_hit["success"], cache_hit
+                assert cache_hit["cache_hits"] == 1, cache_hit
+                assert cache_hit["results"][0].get("content") is None, cache_hit
                 edit_result = post(
                     port,
                     token,
                     "/api/codex/edit",
                     {
                         "project": "agent_demo",
+                        "expected_fingerprints": {"marker.txt": marker_fingerprint},
                         "edits": [
                             {"type": "replace_text", "path": "marker.txt", "old_text": "project-marker", "new_text": "project-marker-updated"},
                             {"type": "append_file", "path": "marker.txt", "text": "append-ok\n"},
@@ -238,6 +258,20 @@ max_output_bytes = 262144
                 assert "append-ok" in edited_read["results"][0]["content"], edited_read
                 assert "created-ok" in edited_read["results"][1]["content"], edited_read
                 assert "written-ok" in edited_read["results"][2]["content"], edited_read
+                stale_edit = post(
+                    port,
+                    token,
+                    "/api/codex/edit",
+                    {
+                        "project": "agent_demo",
+                        "expected_fingerprints": {"marker.txt": marker_fingerprint},
+                        "edits": [
+                            {"type": "replace_text", "path": "marker.txt", "old_text": "append-ok", "new_text": "append-stale"}
+                        ],
+                    },
+                )
+                assert not stale_edit["success"], stale_edit
+                assert "fingerprint mismatch" in stale_edit["error"], stale_edit
                 dry_run_edit = post(
                     port,
                     token,

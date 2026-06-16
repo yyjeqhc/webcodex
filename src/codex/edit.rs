@@ -1,5 +1,5 @@
 use super::apply_edit_request_with_metrics;
-use super::context::{file_fingerprint, system_time_unix_ms};
+use super::context::{content_sha256_fingerprint, file_fingerprint, system_time_unix_ms};
 use super::get_projects;
 use super::security::is_sensitive_path;
 use super::source::read_binary_from_url;
@@ -849,16 +849,28 @@ pub(super) async fn agent_apply_project_edit(
     proj: &ProjectConfig,
     body: &EditRequest,
 ) -> EditResponse {
-    if !body.expected_fingerprints.is_empty() {
-        return edit_error(
-            "expected_fingerprints is not supported for agent executor yet; use expected_sha256 through shellFileOp or retry without stale fingerprint guards"
-                .to_string(),
-        );
-    }
     if body.edits.iter().any(|edit| !edit_is_text_only(edit)) {
         return edit_error(
             "binary edit operations are not supported for agent executor yet".to_string(),
         );
+    }
+    if !body.expected_fingerprints.is_empty() {
+        let edited_paths = body
+            .edits
+            .iter()
+            .map(|edit| edit_path(edit).to_string())
+            .collect::<BTreeSet<_>>();
+        for rel_path in body.expected_fingerprints.keys() {
+            if !edited_paths.contains(rel_path) {
+                return edit_error(format!(
+                    "expected_fingerprints contains non-edited path: {}",
+                    rel_path
+                ));
+            }
+            if let Err(e) = validate_edit_path(rel_path) {
+                return edit_error(e);
+            }
+        }
     }
     let client_id = match proj.agent_client_id() {
         Ok(client_id) => client_id.to_string(),
@@ -984,6 +996,26 @@ pub(super) async fn agent_apply_project_edit(
             _ => return edit_error("unsupported agent edit operation".to_string()),
         }
         changed.insert(rel_path);
+    }
+    if !body.expected_fingerprints.is_empty() {
+        for (rel_path, expected) in &body.expected_fingerprints {
+            let Some(Some(original)) = originals.get(rel_path) else {
+                return edit_error(format!(
+                    "expected_fingerprints path is not an existing text file: {}",
+                    rel_path
+                ));
+            };
+            let actual =
+                content_sha256_fingerprint("agent-v1", rel_path, &sha256_hex_text(original));
+            if actual != expected.trim() {
+                return edit_error(format!(
+                    "fingerprint mismatch for {}: expected {}, actual {}",
+                    rel_path,
+                    expected.trim(),
+                    actual
+                ));
+            }
+        }
     }
     let changed_files: Vec<String> = changed.into_iter().collect();
     let mut diff = String::new();

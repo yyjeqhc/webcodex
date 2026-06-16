@@ -355,6 +355,19 @@ pub(super) fn file_fingerprint(
     format!("{}-{}", prefix, short)
 }
 
+pub(super) fn content_sha256_fingerprint(prefix: &str, rel_path: &str, sha256_hex: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(rel_path.as_bytes());
+    hasher.update([0]);
+    hasher.update(sha256_hex.trim().as_bytes());
+    let digest = hasher.finalize();
+    let short = digest[..12]
+        .iter()
+        .map(|byte| format!("{:02x}", byte))
+        .collect::<String>();
+    format!("{}-{}", prefix, short)
+}
+
 fn local_read_file_metadata(
     root: &Path,
     rel_path: &str,
@@ -1023,6 +1036,88 @@ fn agent_overview_command(project_name: &str, allowed_checks: &[String]) -> Stri
         "printf 'Project: {project}\\nRoot: '; pwd; printf 'Branch: '; git rev-parse --abbrev-ref HEAD 2>/dev/null || true; printf '\\nGit Status:\\n'; git status --short --untracked-files=no 2>/dev/null || true; printf '\\nAllowed Checks: {checks}\\n\\nImportant Files:'; for f in {important}; do if test -e \"$f\"; then printf '\\n  %s: yes' \"$f\"; else printf '\\n  %s: no' \"$f\"; fi; done; printf '\\n'",
         project = project_name, checks = allowed_checks.join(", "), important = important,
     )
+}
+
+async fn agent_read_file_metadata(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    rel_path: &str,
+    request_index: usize,
+    unchanged: bool,
+) -> Result<ContextBatchResultMetadata, String> {
+    validate_agent_context_rel_path(rel_path)?;
+    let cmd = format!(
+        "file={path}; if ! test -f \"$file\"; then printf '__PDCTX_ERROR__:File not found: %s\\n' \"$file\"; exit 0; fi; sha=$(sha256sum \"$file\" 2>/dev/null | awk '{{print $1}}'); size=$(wc -c < \"$file\" 2>/dev/null | tr -d ' '); lines=$(wc -l < \"$file\" 2>/dev/null | tr -d ' '); printf '%s\\t%s\\t%s\\n' \"$sha\" \"$size\" \"$lines\"",
+        path = shell_escape(rel_path),
+    );
+    let (code, stdout, stderr, _) = super::agent_exec::run_agent_project_command(
+        depot,
+        proj,
+        &cmd,
+        10,
+        "codex_context_agent_executor",
+        "agent context metadata command",
+    )
+    .await;
+    if code != 0 {
+        return Err(format!("agent metadata command failed: {}", stderr.trim()));
+    }
+    if let Some(err) = stdout.trim().strip_prefix("__PDCTX_ERROR__:") {
+        return Err(err.trim().to_string());
+    }
+    let parts = stdout.trim().split('\t').collect::<Vec<_>>();
+    if parts.len() != 3 || parts[0].len() != 64 || !parts[0].chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return Err("agent metadata output was invalid".to_string());
+    }
+    let file_size = parts[1].parse::<u64>().ok();
+    let total_lines = parts[2].parse::<usize>().ok();
+    Ok(ContextBatchResultMetadata {
+        request_index,
+        mode: "read_file".to_string(),
+        path: Some(rel_path.to_string()),
+        fingerprint: Some(content_sha256_fingerprint("agent-v1", rel_path, parts[0])),
+        unchanged,
+        file_size,
+        modified_unix_ms: None,
+        total_lines,
+    })
+}
+
+async fn agent_read_file_cache_hit_response(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project_name: &str,
+    item: &ContextBatchItem,
+    request_index: usize,
+) -> Option<(ContextResponse, ContextBatchResultMetadata)> {
+    if !matches!(item.mode, ContextMode::ReadFile) {
+        return None;
+    }
+    let rel_path = item.path.as_deref()?;
+    let expected = item.if_fingerprint.as_deref()?.trim();
+    if expected.is_empty() || validate_read_file_range(item.start_line, item.limit).is_err() {
+        return None;
+    }
+    let mut metadata = agent_read_file_metadata(depot, proj, rel_path, request_index, false)
+        .await
+        .ok()?;
+    if metadata.fingerprint.as_deref() != Some(expected) {
+        return None;
+    }
+    metadata.unchanged = true;
+    Some((
+        ContextResponse {
+            success: true,
+            project: project_name.to_string(),
+            mode: "read_file".to_string(),
+            content: None,
+            items: None,
+            truncated: false,
+            error: None,
+        },
+        metadata,
+    ))
 }
 
 async fn execute_agent_context_item(
@@ -2587,9 +2682,27 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 }
             } else if project_is_agent {
                 let mut results = Vec::with_capacity(body.requests.len());
-                for item in &body.requests {
-                    results
-                        .push(execute_agent_context_item(depot, proj, &body.project, item).await);
+                for (idx, item) in body.requests.iter().enumerate() {
+                    if let Some((resp, metadata)) =
+                        agent_read_file_cache_hit_response(depot, proj, &body.project, item, idx)
+                            .await
+                    {
+                        cache_hits += 1;
+                        result_metadata.push(metadata);
+                        results.push(resp);
+                        continue;
+                    }
+                    let resp = execute_agent_context_item(depot, proj, &body.project, item).await;
+                    if resp.success && matches!(item.mode, ContextMode::ReadFile) {
+                        if let Some(rel_path) = item.path.as_deref() {
+                            if let Ok(metadata) =
+                                agent_read_file_metadata(depot, proj, rel_path, idx, false).await
+                            {
+                                result_metadata.push(metadata);
+                            }
+                        }
+                    }
+                    results.push(resp);
                 }
                 (results, body.requests.len() as u64)
             } else {

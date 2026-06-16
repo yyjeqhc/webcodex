@@ -176,6 +176,28 @@ max_output_bytes = 262144
                 )
                 assert check_result["success"], check_result
                 assert check_result["stdout_tail"].strip() == "check-ok", check_result
+                context_result = post(
+                    port,
+                    token,
+                    "/api/codex/context_batch",
+                    {
+                        "project": "agent_demo",
+                        "requests": [
+                            {"mode": "overview"},
+                            {"mode": "tree", "limit": 20, "max_depth": 2},
+                            {"mode": "read_file", "path": "marker.txt", "limit": 5},
+                            {"mode": "grep_context", "query": "project-marker", "limit": 5},
+                            {"mode": "git_status"},
+                            {"mode": "git_diff"},
+                        ],
+                    },
+                )
+                assert context_result["success"], context_result
+                assert len(context_result["results"]) == 6, context_result
+                assert "Project: agent_demo" in context_result["results"][0]["content"], context_result
+                assert "marker.txt" in context_result["results"][1]["items"], context_result
+                assert "project-marker" in context_result["results"][2]["content"], context_result
+                assert "marker.txt" in context_result["results"][3]["content"], context_result
 
                 file_path = "/tmp/private-drop-agent-e2e-file.txt"
                 file_write = post(

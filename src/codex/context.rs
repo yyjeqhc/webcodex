@@ -13,10 +13,13 @@ use crate::action_sessions::{
 };
 use crate::get_db;
 use crate::projects::{canonicalize_and_verify, ProjectConfig, SshConfig};
+use crate::shell_protocol::ShellJobOpRequest;
+use crate::ShellClientRegistry;
 use salvo::prelude::*;
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::path::Path;
+use std::path::{Component, Path};
+use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) const IGNORED_DIRS: &[&str] = &[
@@ -954,6 +957,346 @@ pub(super) fn local_markdown_file_response(
             ),
         },
         Err(e) => (context_error(project_name, &item.mode, e), 0),
+    }
+}
+
+fn validate_agent_context_rel_path(path: &str) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return Err("absolute paths are not allowed for agent context reads".to_string());
+    }
+    for component in path.components() {
+        match component {
+            Component::Normal(_) | Component::CurDir => {}
+            Component::ParentDir => return Err("path traversal (..) is not allowed".to_string()),
+            _ => return Err("unsupported path component".to_string()),
+        }
+    }
+    Ok(())
+}
+
+async fn run_agent_context_command(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    cmd: &str,
+    timeout_secs: u64,
+) -> (i32, String, String, u64) {
+    let started = Instant::now();
+    let client_id = match proj.agent_client_id() {
+        Ok(client_id) => client_id.to_string(),
+        Err(e) => return (-1, String::new(), e, 0),
+    };
+    let registry = match depot.obtain::<Arc<ShellClientRegistry>>() {
+        Ok(registry) => registry.clone(),
+        Err(_) => {
+            return (
+                -1,
+                String::new(),
+                "Shell client registry not configured".to_string(),
+                0,
+            )
+        }
+    };
+    let job = match registry
+        .start_job(
+            ShellJobOpRequest {
+                op: "start".to_string(),
+                client_id: Some(client_id),
+                cwd: Some(proj.path.clone()),
+                command: Some(cmd.to_string()),
+                timeout_secs: Some(timeout_secs),
+                job_id: None,
+                since_stdout_line: None,
+                since_stderr_line: None,
+                tail_lines: None,
+                limit: None,
+            },
+            "codex_context_agent_executor".to_string(),
+        )
+        .await
+    {
+        Ok(job) => job,
+        Err(e) => return (-1, String::new(), e, started.elapsed().as_millis() as u64),
+    };
+    let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs.max(1) + 2);
+    loop {
+        if Instant::now() >= deadline {
+            let _ = registry.stop_job(&job.job_id).await;
+            let (_, stdout, stderr, _, _) = registry
+                .job_log(&job.job_id, Some(1), Some(1), None)
+                .await
+                .unwrap_or_else(|_| (job.clone(), Some(String::new()), Some(String::new()), 1, 1));
+            return (
+                -1,
+                stdout.unwrap_or_default(),
+                format!(
+                    "{}\nagent context command timed out after {} seconds",
+                    stderr.unwrap_or_default(),
+                    timeout_secs
+                ),
+                started.elapsed().as_millis() as u64,
+            );
+        }
+        match registry.get_job(&job.job_id).await {
+            Ok(info) => {
+                if matches!(
+                    info.status.as_str(),
+                    "completed" | "failed" | "stopped" | "timeout" | "lost"
+                ) {
+                    let (_, stdout, stderr, _, _) = registry
+                        .job_log(&job.job_id, Some(1), Some(1), None)
+                        .await
+                        .unwrap_or_else(|_| {
+                            (info.clone(), Some(String::new()), Some(String::new()), 1, 1)
+                        });
+                    let code = info.exit_code.unwrap_or_else(|| {
+                        if info.status == "completed" {
+                            0
+                        } else {
+                            -1
+                        }
+                    });
+                    let mut stderr = stderr.unwrap_or_default();
+                    if let Some(error) = info.error {
+                        if !error.trim().is_empty() {
+                            if !stderr.trim().is_empty() {
+                                stderr.push('\n');
+                            }
+                            stderr.push_str(&error);
+                        }
+                    }
+                    return (
+                        code,
+                        stdout.unwrap_or_default(),
+                        stderr,
+                        info.duration_ms
+                            .unwrap_or_else(|| started.elapsed().as_millis() as u64),
+                    );
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    if info.status == "queued" { 100 } else { 250 },
+                ))
+                .await;
+            }
+            Err(e) => return (-1, String::new(), e, started.elapsed().as_millis() as u64),
+        }
+    }
+}
+
+fn agent_find_prune_expr() -> &'static str {
+    "-path './.git' -o -path './target' -o -path './node_modules' -o -path './dist' -o -path './build' -o -path './.cache' -o -path './__pycache__'"
+}
+
+fn agent_tree_command(
+    path: Option<&str>,
+    limit: usize,
+    max_depth: usize,
+) -> Result<String, String> {
+    if let Some(path) = path {
+        validate_agent_context_rel_path(path)?;
+    }
+    let limit = normalize_tree_limit(limit);
+    let max_depth = normalize_tree_depth(max_depth);
+    let target = path.unwrap_or(".");
+    Ok(format!(
+        "target={target}; if ! test -e \"$target\"; then printf '__PDCTX_ERROR__:Path not found: %s\\n' \"$target\"; exit 0; fi; find \"$target\" -maxdepth {depth} \\( {prune} \\) -prune -o -print 2>/dev/null | sed 's#^\\./##' | sort | head -n {limit}",
+        target = shell_escape(target), depth = max_depth, prune = agent_find_prune_expr(), limit = limit,
+    ))
+}
+
+fn agent_search_command(path: Option<&str>, query: &str, limit: usize) -> Result<String, String> {
+    if let Some(path) = path {
+        validate_agent_context_rel_path(path)?;
+    }
+    let target = path.unwrap_or(".");
+    let limit = limit.clamp(1, MAX_SEARCH_RESULTS);
+    Ok(format!(
+        "target={target}; if ! test -e \"$target\"; then printf '__PDCTX_ERROR__:Path not found: %s\\n' \"$target\"; exit 0; fi; grep -RIn --exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules --exclude-dir=dist --exclude-dir=build --exclude-dir=.cache --exclude-dir=__pycache__ -- {query} \"$target\" 2>/dev/null | sed 's#^\\./##' | head -n {limit}",
+        target = shell_escape(target), query = shell_escape(query), limit = limit,
+    ))
+}
+
+fn agent_read_file_command(path: &str, start_line: usize, limit: usize) -> Result<String, String> {
+    validate_agent_context_rel_path(path)?;
+    let end_line = validate_read_file_range(start_line, limit)?;
+    Ok(format!(
+        "file={path}; if ! test -f \"$file\"; then printf '__PDCTX_ERROR__:File not found: %s\\n' \"$file\"; exit 0; fi; awk 'NR>={start} && NR<={end} {{ printf \"%4d | %s\\n\", NR, $0 }}' \"$file\"",
+        path = shell_escape(path), start = start_line, end = end_line,
+    ))
+}
+
+fn agent_overview_command(project_name: &str, allowed_checks: &[String]) -> String {
+    let important = "README.md TODO.md Cargo.toml package.json pyproject.toml src/main.rs";
+    format!(
+        "printf 'Project: {project}\\nRoot: '; pwd; printf 'Branch: '; git rev-parse --abbrev-ref HEAD 2>/dev/null || true; printf '\\nGit Status:\\n'; git status --short --untracked-files=no 2>/dev/null || true; printf '\\nAllowed Checks: {checks}\\n\\nImportant Files:'; for f in {important}; do if test -e \"$f\"; then printf '\\n  %s: yes' \"$f\"; else printf '\\n  %s: no' \"$f\"; fi; done; printf '\\n'",
+        project = project_name, checks = allowed_checks.join(", "), important = important,
+    )
+}
+
+async fn execute_agent_context_item(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project_name: &str,
+    item: &ContextBatchItem,
+) -> ContextResponse {
+    let command_result = match item.mode {
+        ContextMode::Overview => Some((
+            agent_overview_command(project_name, &proj.effective_allowed_checks()),
+            "overview",
+            10,
+        )),
+        ContextMode::Tree => {
+            match agent_tree_command(item.path.as_deref(), item.limit, item.max_depth) {
+                Ok(cmd) => Some((cmd, "tree", 10)),
+                Err(e) => return context_error(project_name, &item.mode, e),
+            }
+        }
+        ContextMode::Search => match &item.query {
+            Some(query) => match agent_search_command(item.path.as_deref(), query, item.limit) {
+                Ok(cmd) => Some((cmd, "search", 20)),
+                Err(e) => return context_error(project_name, &item.mode, e),
+            },
+            None => {
+                return context_error(
+                    project_name,
+                    &item.mode,
+                    "query parameter is required for search mode".to_string(),
+                )
+            }
+        },
+        ContextMode::GrepContext => match &item.query {
+            Some(query) => match agent_search_command(item.path.as_deref(), query, item.limit) {
+                Ok(cmd) => Some((cmd, "grep_context", 20)),
+                Err(e) => return context_error(project_name, &item.mode, e),
+            },
+            None => {
+                return context_error(
+                    project_name,
+                    &item.mode,
+                    "query parameter is required for grep_context mode".to_string(),
+                )
+            }
+        },
+        ContextMode::ReadFile => match &item.path {
+            Some(path) => match agent_read_file_command(path, item.start_line, item.limit) {
+                Ok(cmd) => Some((cmd, "read_file", 10)),
+                Err(e) => return context_error(project_name, &item.mode, e),
+            },
+            None => {
+                return context_error(
+                    project_name,
+                    &item.mode,
+                    "path parameter is required for read_file mode".to_string(),
+                )
+            }
+        },
+        ContextMode::MarkdownOutline => match &item.path {
+            Some(path) => {
+                if let Err(e) = validate_agent_context_rel_path(path) {
+                    return context_error(project_name, &item.mode, e);
+                }
+                Some((
+                    markdown_outline_shell_fragment(path, item.limit),
+                    "markdown_outline",
+                    10,
+                ))
+            }
+            None => {
+                return context_error(
+                    project_name,
+                    &item.mode,
+                    "path parameter is required for markdown_outline mode".to_string(),
+                )
+            }
+        },
+        ContextMode::ReadSection => match (&item.path, &item.query) {
+            (Some(path), Some(query)) => {
+                if let Err(e) = validate_agent_context_rel_path(path) {
+                    return context_error(project_name, &item.mode, e);
+                }
+                Some((
+                    markdown_section_shell_fragment(path, query, item.limit),
+                    "read_section",
+                    10,
+                ))
+            }
+            _ => {
+                return context_error(
+                    project_name,
+                    &item.mode,
+                    "path and query parameters are required for read_section mode".to_string(),
+                )
+            }
+        },
+        ContextMode::AgentContext => Some((agent_context_shell_fragment(), "agent_context", 10)),
+        ContextMode::GitStatus => Some((
+            format!("{} 2>/dev/null || true", git_status_command()),
+            "git_status",
+            10,
+        )),
+        ContextMode::GitDiff => Some(("git diff 2>/dev/null || true".to_string(), "git_diff", 30)),
+        ContextMode::ExperimentOutputs => Some((
+            experiment_outputs_shell_fragment(item.limit.max(1).min(500), item.query.as_deref()),
+            "experiment_outputs",
+            30,
+        )),
+    };
+    let Some((cmd, mode, timeout_secs)) = command_result else {
+        return context_error(
+            project_name,
+            &item.mode,
+            "unsupported context mode".to_string(),
+        );
+    };
+    let (code, stdout, stderr, _) =
+        run_agent_context_command(depot, proj, &cmd, timeout_secs).await;
+    if code != 0 {
+        return context_error(
+            project_name,
+            &item.mode,
+            format!("agent context command failed: {}", stderr.trim()),
+        );
+    }
+    if let Some(err) = stdout.trim().strip_prefix("__PDCTX_ERROR__:") {
+        return context_error(project_name, &item.mode, err.trim().to_string());
+    }
+    match item.mode {
+        ContextMode::Tree => {
+            let items = stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>();
+            ContextResponse {
+                success: true,
+                project: project_name.to_string(),
+                mode: mode.to_string(),
+                content: None,
+                items: Some(items.clone()),
+                truncated: items.len() >= normalize_tree_limit(item.limit),
+                error: None,
+            }
+        }
+        ContextMode::Search => {
+            let items = stdout
+                .lines()
+                .filter(|line| !line.trim().is_empty())
+                .map(|line| line.to_string())
+                .collect::<Vec<_>>();
+            ContextResponse {
+                success: true,
+                project: project_name.to_string(),
+                mode: mode.to_string(),
+                content: None,
+                items: Some(items.clone()),
+                truncated: items.len() >= item.limit.clamp(1, MAX_SEARCH_RESULTS),
+                error: None,
+            }
+        }
+        _ => mode_content_response(project_name, mode, stdout, MAX_OUTPUT_LEN),
     }
 }
 
@@ -2311,6 +2654,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
 
     // Preflight check: reject obviously oversized requests before execution
     let project_is_ssh = proj.is_ssh();
+    let project_is_agent = proj.is_agent();
     match preflight_context_batch(&body, project_is_ssh, &body.project) {
         Ok(preflight_warnings) => {
             // Request is allowed; preflight_warnings may contain non-blocking hints
@@ -2345,6 +2689,13 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                         (results, ssh_calls)
                     }
                 }
+            } else if project_is_agent {
+                let mut results = Vec::with_capacity(body.requests.len());
+                for item in &body.requests {
+                    results
+                        .push(execute_agent_context_item(depot, proj, &body.project, item).await);
+                }
+                (results, body.requests.len() as u64)
             } else {
                 let mut results = Vec::with_capacity(body.requests.len());
                 for (idx, item) in body.requests.iter().enumerate() {
@@ -2379,7 +2730,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 target: "codex.metrics",
                 operation = "getProjectContextBatch",
                 project = %body.project,
-                executor = if project_is_ssh { "ssh" } else { "local" },
+                executor = if project_is_agent { "agent" } else if project_is_ssh { "ssh" } else { "local" },
                 success = success,
                 request_count = results.len(),
                 duration_ms = duration_ms,
@@ -2447,6 +2798,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                             "preflight_rejected": false,
                             "ssh_calls": response.ssh_calls,
                             "project_is_ssh": project_is_ssh,
+                            "project_is_agent": project_is_agent,
                             "cache_hits": response.cache_hits.unwrap_or(0),
                             "metadata_count": response.result_metadata.len(),
                         }),
@@ -2463,7 +2815,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 target: "codex.metrics",
                 operation = "getProjectContextBatch",
                 project = %body.project,
-                executor = if project_is_ssh { "ssh" } else { "local" },
+                executor = if project_is_agent { "agent" } else if project_is_ssh { "ssh" } else { "local" },
                 estimated_chars = ?rejection_response.estimated_chars,
                 "preflight_rejected"
             );
@@ -2503,6 +2855,7 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                             "estimated_chars": rejection_response.estimated_chars,
                             "preflight_rejected": true,
                             "project_is_ssh": project_is_ssh,
+                            "project_is_agent": project_is_agent,
                         }),
                         request_bytes: None,
                         response_bytes: None,

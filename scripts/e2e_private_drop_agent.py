@@ -349,6 +349,19 @@ max_output_bytes = 262144
                 else:
                     raise RuntimeError(f"job did not stop: {stop_job_id}")
                 assert stop_status["job"]["status"] == "stopped", stop_status
+                action_stats = post(
+                    port,
+                    token,
+                    "/api/codex/action_sessions",
+                    {"op": "stats", "limit": 5},
+                )
+                assert action_stats["success"], action_stats
+                assert action_stats["sessions"], action_stats
+                shell_count = action_stats["sessions"][0]["stats"]["shell_count"]
+                assert shell_count >= 4, action_stats
+                assert action_stats["sessions"][0]["stats"]["by_endpoint"]["/api/shell/run"] >= 1
+                assert action_stats["sessions"][0]["stats"]["by_endpoint"]["/api/shell/file"] >= 1
+                assert action_stats["sessions"][0]["stats"]["by_endpoint"]["/api/shell/job"] >= 1
                 print("AGENT_E2E_OK", result["request_id"], result["client_id"], job_id, stop_job_id)
             finally:
                 if agent is not None:

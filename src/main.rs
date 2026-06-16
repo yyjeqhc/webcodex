@@ -9,6 +9,7 @@ use tracing_subscriber::EnvFilter;
 #[cfg(test)]
 use uuid::Uuid;
 
+mod action_audit;
 mod action_sessions;
 mod agent;
 mod auth;

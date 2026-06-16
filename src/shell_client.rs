@@ -1,3 +1,4 @@
+use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
     ShellAgentPollResponse, ShellAgentResultRequest, ShellAgentResultResponse,
@@ -7,6 +8,7 @@ use crate::shell_protocol::{
     ShellRunResponse,
 };
 use salvo::prelude::*;
+use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
@@ -858,26 +860,145 @@ fn get_registry(depot: &Depot) -> Option<Arc<ShellClientRegistry>> {
     depot.obtain::<Arc<ShellClientRegistry>>().ok().cloned()
 }
 
-fn registry_error() -> Json<ShellClientsResponse> {
-    Json(ShellClientsResponse {
-        success: false,
-        clients: Vec::new(),
-        error: Some("Shell client registry not configured".to_string()),
-    })
+fn record_shell_clients_action(
+    audit: &ActionAudit,
+    success: bool,
+    http_status: StatusCode,
+    error: Option<String>,
+    client_count: usize,
+) {
+    audit.record(
+        ActionAuditRecord::new("list", success, http_status)
+            .error(error)
+            .summary(json!({"client_count": client_count})),
+    );
+}
+
+fn record_shell_run_action(
+    audit: &ActionAudit,
+    response: &ShellRunResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new("run", response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({"request_id": response.request_id}))
+            .summary(json!({
+                "client_id": response.client_id,
+                "cwd": response.cwd,
+                "command_preview": response.command_preview,
+                "exit_code": response.exit_code,
+                "duration_ms": response.duration_ms,
+            })),
+    );
+}
+
+fn record_shell_file_action(
+    audit: &ActionAudit,
+    response: &ShellFileOpResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new(response.op.clone(), response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({"request_id": response.request_id}))
+            .summary(json!({
+                "client_id": response.client_id,
+                "path": response.path,
+                "cwd": response.cwd,
+                "bytes": response.bytes,
+                "sha256": response.sha256,
+                "entries_count": response.entries.len(),
+            })),
+    );
+}
+
+fn record_shell_job_action(
+    audit: &ActionAudit,
+    response: &ShellJobOpResponse,
+    http_status: StatusCode,
+) {
+    let job_id = response.job.as_ref().map(|job| job.job_id.clone());
+    let job_ids = if response.jobs.is_empty() {
+        Vec::<String>::new()
+    } else {
+        response.jobs.iter().map(|job| job.job_id.clone()).collect()
+    };
+    audit.record(
+        ActionAuditRecord::new(response.op.clone(), response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({"job_id": job_id, "job_ids": job_ids}))
+            .summary(json!({
+                "job_status": response.job.as_ref().map(|job| job.status.clone()),
+                "client_id": response.job.as_ref().map(|job| job.client_id.clone()),
+                "jobs_count": response.jobs.len(),
+                "stdout_included": response.stdout.is_some(),
+                "stderr_included": response.stderr.is_some(),
+            })),
+    );
+}
+
+fn render_shell_run(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellRunResponse,
+) {
+    res.status_code(status);
+    record_shell_run_action(audit, &response, status);
+    res.render(Json(response));
+}
+
+fn render_shell_file(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellFileOpResponse,
+) {
+    res.status_code(status);
+    record_shell_file_action(audit, &response, status);
+    res.render(Json(response));
+}
+
+fn render_shell_job(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellJobOpResponse,
+) {
+    res.status_code(status);
+    record_shell_job_action(audit, &response, status);
+    res.render(Json(response));
 }
 
 #[handler]
-pub async fn shell_clients(depot: &mut Depot, res: &mut Response) {
+pub async fn shell_clients(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/shell/clients", "listShellClients");
     let Some(registry) = get_registry(depot) else {
+        let response = ShellClientsResponse {
+            success: false,
+            clients: Vec::new(),
+            error: Some("Shell client registry not configured".to_string()),
+        };
+        record_shell_clients_action(
+            &audit,
+            false,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            response.error.clone(),
+            0,
+        );
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(registry_error());
+        res.render(Json(response));
         return;
     };
-    res.render(Json(ShellClientsResponse {
+    let clients = registry.list_clients().await;
+    let response = ShellClientsResponse {
         success: true,
-        clients: registry.list_clients().await,
+        clients,
         error: None,
-    }));
+    };
+    record_shell_clients_action(&audit, true, StatusCode::OK, None, response.clients.len());
+    res.render(Json(response));
 }
 
 #[handler]
@@ -998,27 +1119,13 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
 
 #[handler]
 pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/shell/run", "runShell");
     let Some(registry) = get_registry(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(Json(ShellRunResponse {
-            success: false,
-            request_id: String::new(),
-            client_id: String::new(),
-            cwd: None,
-            command_preview: String::new(),
-            exit_code: None,
-            stdout: None,
-            stderr: None,
-            duration_ms: None,
-            error: Some("Shell client registry not configured".to_string()),
-        }));
-        return;
-    };
-    let body: ShellRunRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellRunResponse {
+        render_shell_run(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ShellRunResponse {
                 success: false,
                 request_id: String::new(),
                 client_id: String::new(),
@@ -1028,8 +1135,31 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stdout: None,
                 stderr: None,
                 duration_ms: None,
-                error: Some(format!("Invalid JSON: {}", e)),
-            }));
+                error: Some("Shell client registry not configured".to_string()),
+            },
+        );
+        return;
+    };
+    let body: ShellRunRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_run(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                ShellRunResponse {
+                    success: false,
+                    request_id: String::new(),
+                    client_id: String::new(),
+                    cwd: None,
+                    command_preview: String::new(),
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: None,
+                    error: Some(format!("Invalid JSON: {}", e)),
+                },
+            );
             return;
         }
     };
@@ -1043,27 +1173,33 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
     {
         Ok(result) => result,
         Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(Json(ShellRunResponse {
-                success: false,
-                request_id: String::new(),
-                client_id,
-                cwd,
-                command_preview: preview,
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                duration_ms: None,
-                error: Some(e),
-            }));
+            render_shell_run(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                ShellRunResponse {
+                    success: false,
+                    request_id: String::new(),
+                    client_id,
+                    cwd,
+                    command_preview: preview,
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: None,
+                    error: Some(e),
+                },
+            );
             return;
         }
     };
     match tokio::time::timeout(std::time::Duration::from_secs(wait_timeout_secs), rx).await {
-        Ok(Ok(response)) => res.render(Json(response)),
-        Ok(Err(_closed)) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(ShellRunResponse {
+        Ok(Ok(response)) => render_shell_run(res, &audit, StatusCode::OK, response),
+        Ok(Err(_closed)) => render_shell_run(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ShellRunResponse {
                 success: false,
                 request_id,
                 client_id,
@@ -1074,26 +1210,30 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 stderr: None,
                 duration_ms: None,
                 error: Some("shell request waiter was dropped".to_string()),
-            }));
-        }
+            },
+        ),
         Err(_elapsed) => {
             registry.cancel_request(&request_id).await;
-            res.status_code(StatusCode::REQUEST_TIMEOUT);
-            res.render(Json(ShellRunResponse {
-                success: false,
-                request_id,
-                client_id,
-                cwd,
-                command_preview: preview,
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                duration_ms: None,
-                error: Some(format!(
-                    "timed out waiting {} seconds for shell client result",
-                    wait_timeout_secs
-                )),
-            }));
+            render_shell_run(
+                res,
+                &audit,
+                StatusCode::REQUEST_TIMEOUT,
+                ShellRunResponse {
+                    success: false,
+                    request_id,
+                    client_id,
+                    cwd,
+                    command_preview: preview,
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: None,
+                    error: Some(format!(
+                        "timed out waiting {} seconds for shell client result",
+                        wait_timeout_secs
+                    )),
+                },
+            );
         }
     }
 }
@@ -1143,53 +1283,31 @@ fn shell_file_response_from_run(
     }
 }
 
-fn shell_file_error(
-    op: String,
-    client_id: String,
-    path: String,
-    cwd: Option<String>,
-    error: String,
-) -> Json<ShellFileOpResponse> {
-    Json(ShellFileOpResponse {
-        success: false,
-        op,
-        request_id: String::new(),
-        client_id,
-        path,
-        cwd,
-        content: None,
-        entries: Vec::new(),
-        bytes: None,
-        sha256: None,
-        stderr: None,
-        error: Some(error),
-    })
-}
-
 #[handler]
 pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/shell/file", "shellFileOp");
     let Some(registry) = get_registry(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(shell_file_error(
+        let response = shell_file_error_response(
             "unknown".to_string(),
             String::new(),
             String::new(),
             None,
             "Shell client registry not configured".to_string(),
-        ));
+        );
+        render_shell_file(res, &audit, StatusCode::INTERNAL_SERVER_ERROR, response);
         return;
     };
     let body: ShellFileOpRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(shell_file_error(
+            let response = shell_file_error_response(
                 "unknown".to_string(),
                 String::new(),
                 String::new(),
                 None,
                 format!("Invalid JSON: {}", e),
-            ));
+            );
+            render_shell_file(res, &audit, StatusCode::BAD_REQUEST, response);
             return;
         }
     };
@@ -1205,33 +1323,31 @@ pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Respo
     {
         Ok(result) => result,
         Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(shell_file_error(op, client_id, path, cwd, e));
+            let response = shell_file_error_response(op, client_id, path, cwd, e);
+            render_shell_file(res, &audit, StatusCode::BAD_REQUEST, response);
             return;
         }
     };
     match tokio::time::timeout(std::time::Duration::from_secs(wait_timeout_secs), rx).await {
-        Ok(Ok(response)) => res.render(Json(shell_file_response_from_run(
-            op,
-            path,
-            cwd,
-            request_content,
-            response,
-        ))),
+        Ok(Ok(response)) => render_shell_file(
+            res,
+            &audit,
+            StatusCode::OK,
+            shell_file_response_from_run(op, path, cwd, request_content, response),
+        ),
         Ok(Err(_closed)) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(shell_file_error(
+            let response = shell_file_error_response(
                 op,
                 client_id,
                 path,
                 cwd,
                 "shell file request waiter was dropped".to_string(),
-            ));
+            );
+            render_shell_file(res, &audit, StatusCode::INTERNAL_SERVER_ERROR, response);
         }
         Err(_elapsed) => {
             registry.cancel_request(&request_id).await;
-            res.status_code(StatusCode::REQUEST_TIMEOUT);
-            res.render(shell_file_error(
+            let response = shell_file_error_response(
                 op,
                 client_id,
                 path,
@@ -1240,13 +1356,37 @@ pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Respo
                     "timed out waiting {} seconds for shell file result",
                     wait_timeout_secs
                 ),
-            ));
+            );
+            render_shell_file(res, &audit, StatusCode::REQUEST_TIMEOUT, response);
         }
     }
 }
 
-fn shell_job_error(op: String, error: String) -> Json<ShellJobOpResponse> {
-    Json(ShellJobOpResponse {
+fn shell_file_error_response(
+    op: String,
+    client_id: String,
+    path: String,
+    cwd: Option<String>,
+    error: String,
+) -> ShellFileOpResponse {
+    ShellFileOpResponse {
+        success: false,
+        op,
+        request_id: String::new(),
+        client_id,
+        path,
+        cwd,
+        content: None,
+        entries: Vec::new(),
+        bytes: None,
+        sha256: None,
+        stderr: None,
+        error: Some(error),
+    }
+}
+
+fn shell_job_error_response(op: String, error: String) -> ShellJobOpResponse {
+    ShellJobOpResponse {
         success: false,
         op,
         job: None,
@@ -1256,27 +1396,33 @@ fn shell_job_error(op: String, error: String) -> Json<ShellJobOpResponse> {
         next_stdout_line: None,
         next_stderr_line: None,
         error: Some(error),
-    })
+    }
 }
 
 #[handler]
 pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/shell/job", "runShellJob");
     let Some(registry) = get_registry(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(shell_job_error(
-            "unknown".to_string(),
-            "Shell client registry not configured".to_string(),
-        ));
+        render_shell_job(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_job_error_response(
+                "unknown".to_string(),
+                "Shell client registry not configured".to_string(),
+            ),
+        );
         return;
     };
     let body: ShellJobOpRequest = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(shell_job_error(
-                "unknown".to_string(),
-                format!("Invalid JSON: {}", e),
-            ));
+            render_shell_job(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_job_error_response("unknown".to_string(), format!("Invalid JSON: {}", e)),
+            );
             return;
         }
     };
@@ -1286,33 +1432,11 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             .start_job(body, "gpt_action_or_web".to_string())
             .await
         {
-            Ok(job) => res.render(Json(ShellJobOpResponse {
-                success: true,
-                op,
-                job: Some(job),
-                jobs: Vec::new(),
-                stdout: None,
-                stderr: None,
-                next_stdout_line: None,
-                next_stderr_line: None,
-                error: None,
-            })),
-            Err(e) => {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(shell_job_error(op, e));
-            }
-        },
-        "status" => {
-            let Some(job_id) = body.job_id.as_deref() else {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(shell_job_error(
-                    op,
-                    "job_id is required for op=status".to_string(),
-                ));
-                return;
-            };
-            match registry.get_job(job_id).await {
-                Ok(job) => res.render(Json(ShellJobOpResponse {
+            Ok(job) => render_shell_job(
+                res,
+                &audit,
+                StatusCode::OK,
+                ShellJobOpResponse {
                     success: true,
                     op,
                     job: Some(job),
@@ -1322,34 +1446,77 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     next_stdout_line: None,
                     next_stderr_line: None,
                     error: None,
-                })),
-                Err(e) => {
-                    res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(shell_job_error(op, e));
-                }
+                },
+            ),
+            Err(e) => render_shell_job(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_job_error_response(op, e),
+            ),
+        },
+        "status" => {
+            let Some(job_id) = body.job_id.as_deref() else {
+                render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, "job_id is required for op=status".to_string()),
+                );
+                return;
+            };
+            match registry.get_job(job_id).await {
+                Ok(job) => render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::OK,
+                    ShellJobOpResponse {
+                        success: true,
+                        op,
+                        job: Some(job),
+                        jobs: Vec::new(),
+                        stdout: None,
+                        stderr: None,
+                        next_stdout_line: None,
+                        next_stderr_line: None,
+                        error: None,
+                    },
+                ),
+                Err(e) => render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, e),
+                ),
             }
         }
         "list" => {
             let jobs = registry.list_jobs(body.limit).await;
-            res.render(Json(ShellJobOpResponse {
-                success: true,
-                op,
-                job: None,
-                jobs,
-                stdout: None,
-                stderr: None,
-                next_stdout_line: None,
-                next_stderr_line: None,
-                error: None,
-            }));
+            render_shell_job(
+                res,
+                &audit,
+                StatusCode::OK,
+                ShellJobOpResponse {
+                    success: true,
+                    op,
+                    job: None,
+                    jobs,
+                    stdout: None,
+                    stderr: None,
+                    next_stdout_line: None,
+                    next_stderr_line: None,
+                    error: None,
+                },
+            );
         }
         "log" => {
             let Some(job_id) = body.job_id.as_deref() else {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(shell_job_error(
-                    op,
-                    "job_id is required for op=log".to_string(),
-                ));
+                render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, "job_id is required for op=log".to_string()),
+                );
                 return;
             };
             match registry
@@ -1361,8 +1528,11 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 )
                 .await
             {
-                Ok((job, stdout, stderr, next_stdout_line, next_stderr_line)) => {
-                    res.render(Json(ShellJobOpResponse {
+                Ok((job, stdout, stderr, next_stdout_line, next_stderr_line)) => render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::OK,
+                    ShellJobOpResponse {
                         success: true,
                         op,
                         job: Some(job),
@@ -1372,48 +1542,60 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         next_stdout_line: Some(next_stdout_line),
                         next_stderr_line: Some(next_stderr_line),
                         error: None,
-                    }))
-                }
-                Err(e) => {
-                    res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(shell_job_error(op, e));
-                }
+                    },
+                ),
+                Err(e) => render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, e),
+                ),
             }
         }
         "stop" => {
             let Some(job_id) = body.job_id.as_deref() else {
-                res.status_code(StatusCode::BAD_REQUEST);
-                res.render(shell_job_error(
-                    op,
-                    "job_id is required for op=stop".to_string(),
-                ));
+                render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, "job_id is required for op=stop".to_string()),
+                );
                 return;
             };
             match registry.stop_job(job_id).await {
-                Ok(job) => res.render(Json(ShellJobOpResponse {
-                    success: true,
-                    op,
-                    job: Some(job),
-                    jobs: Vec::new(),
-                    stdout: None,
-                    stderr: None,
-                    next_stdout_line: None,
-                    next_stderr_line: None,
-                    error: None,
-                })),
-                Err(e) => {
-                    res.status_code(StatusCode::BAD_REQUEST);
-                    res.render(shell_job_error(op, e));
-                }
+                Ok(job) => render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::OK,
+                    ShellJobOpResponse {
+                        success: true,
+                        op,
+                        job: Some(job),
+                        jobs: Vec::new(),
+                        stdout: None,
+                        stderr: None,
+                        next_stdout_line: None,
+                        next_stderr_line: None,
+                        error: None,
+                    },
+                ),
+                Err(e) => render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, e),
+                ),
             }
         }
-        _ => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(shell_job_error(
+        _ => render_shell_job(
+            res,
+            &audit,
+            StatusCode::BAD_REQUEST,
+            shell_job_error_response(
                 op,
                 "op must be one of start, status, log, stop, list".to_string(),
-            ));
-        }
+            ),
+        ),
     }
 }
 

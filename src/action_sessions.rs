@@ -25,6 +25,10 @@ pub const AUDITED_ACTION_ROUTES: &[&str] = &[
     "/api/codex/job",
     "/api/codex/check",
     "/api/codex/report",
+    "/api/shell/clients",
+    "/api/shell/run",
+    "/api/shell/file",
+    "/api/shell/job",
     "/api/desktop/task_op",
 ];
 
@@ -40,6 +44,7 @@ pub struct ActionSessionStats {
     pub report_count: i64,
     pub artifact_count: i64,
     pub git_count: i64,
+    pub shell_count: i64,
     pub desktop_count: i64,
     pub changed_files_distinct_count: usize,
     pub job_ids_distinct_count: usize,
@@ -446,6 +451,7 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
     let mut report_count = 0;
     let mut artifact_count = 0;
     let mut git_count = 0;
+    let mut shell_count = 0;
     let mut desktop_count = 0;
     for event in events {
         *by_endpoint.entry(event.endpoint.clone()).or_insert(0) += 1;
@@ -476,6 +482,9 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
             "/api/codex/report" => report_count += 1,
             "/api/codex/artifact" => artifact_count += 1,
             "/api/codex/git" => git_count += 1,
+            "/api/shell/clients" | "/api/shell/run" | "/api/shell/file" | "/api/shell/job" => {
+                shell_count += 1
+            }
             "/api/desktop/task_op" => desktop_count += 1,
             _ => {}
         }
@@ -491,6 +500,7 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
         report_count,
         artifact_count,
         git_count,
+        shell_count,
         desktop_count,
         changed_files_distinct_count: changed_files.len(),
         job_ids_distinct_count: job_ids.len(),
@@ -858,6 +868,10 @@ mod tests {
             "/api/codex/job",
             "/api/codex/check",
             "/api/codex/report",
+            "/api/shell/clients",
+            "/api/shell/run",
+            "/api/shell/file",
+            "/api/shell/job",
             "/api/desktop/task_op",
         ] {
             assert!(
@@ -902,6 +916,29 @@ mod tests {
             ActionAuditEventInput {
                 explicit_session_id: Some("session-smoke".to_string()),
                 session_title: None,
+                endpoint: "/api/shell/run".to_string(),
+                action_name: "runShell".to_string(),
+                operation: Some("run".to_string()),
+                project: None,
+                status: "success".to_string(),
+                http_status: Some(200),
+                started_at: 11,
+                ended_at: 12,
+                duration_ms: 25,
+                error_summary: None,
+                warning_summary: None,
+                changed_files: Vec::new(),
+                ids: json!({"request_id": "shell-1"}),
+                summary: json!({"client_id": "oe", "command_preview": "echo ok"}),
+                request_bytes: None,
+                response_bytes: None,
+            },
+        );
+        record_action_event(
+            &db,
+            ActionAuditEventInput {
+                explicit_session_id: Some("session-smoke".to_string()),
+                session_title: None,
                 endpoint: "/api/codex/command_request_op".to_string(),
                 action_name: "runCommandRequestOp".to_string(),
                 operation: Some("create_trusted_raw_and_approve".to_string()),
@@ -926,7 +963,7 @@ mod tests {
             },
         );
         let session = db.get_action_session("session-smoke").unwrap().unwrap();
-        assert_eq!(session.total_actions, 2);
+        assert_eq!(session.total_actions, 3);
         let mut events = db
             .list_action_events("session-smoke", 10)
             .unwrap()
@@ -939,6 +976,7 @@ mod tests {
         assert_eq!(stats.by_endpoint["/api/codex/command_request_op"], 1);
         assert_eq!(stats.context_count, 1);
         assert_eq!(stats.command_count, 1);
+        assert_eq!(stats.shell_count, 1);
         let command_event = events
             .iter()
             .find(|event| event.endpoint == "/api/codex/command_request_op")

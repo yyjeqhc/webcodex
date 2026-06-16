@@ -175,11 +175,12 @@ fn apply_action_session_openapi(spec: &mut serde_json::Value) {
             "report_count": {"type": "integer"},
             "artifact_count": {"type": "integer"},
             "git_count": {"type": "integer"},
+            "shell_count": {"type": "integer"},
             "desktop_count": {"type": "integer"},
             "changed_files_distinct_count": {"type": "integer"},
             "job_ids_distinct_count": {"type": "integer"}
         },
-        "required": ["by_endpoint", "by_project", "by_status", "edit_count", "context_count", "job_count", "command_count", "report_count", "artifact_count", "git_count", "desktop_count", "changed_files_distinct_count", "job_ids_distinct_count"]
+        "required": ["by_endpoint", "by_project", "by_status", "edit_count", "context_count", "job_count", "command_count", "report_count", "artifact_count", "git_count", "shell_count", "desktop_count", "changed_files_distinct_count", "job_ids_distinct_count"]
     });
     spec["components"]["schemas"]["ActionEventView"] = serde_json::json!({
         "type": "object",

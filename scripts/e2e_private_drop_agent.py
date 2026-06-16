@@ -75,6 +75,11 @@ def main() -> None:
         project_dir = tmp_path / "agent-project"
         project_dir.mkdir()
         (project_dir / "marker.txt").write_text("project-marker\n")
+        subprocess.run(["git", "init"], cwd=project_dir, check=True, stdout=subprocess.DEVNULL)
+        subprocess.run(["git", "config", "user.email", "e2e@example.invalid"], cwd=project_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "Private Drop E2E"], cwd=project_dir, check=True)
+        subprocess.run(["git", "add", "marker.txt"], cwd=project_dir, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=project_dir, check=True, stdout=subprocess.DEVNULL)
         projects_config = tmp_path / "projects.toml"
         projects_config.write_text(
             f'''
@@ -256,6 +261,44 @@ max_output_bytes = 262144
                     },
                 )
                 assert not dry_run_check["success"], dry_run_check
+                git_status = post(
+                    port,
+                    token,
+                    "/api/codex/git",
+                    {"project": "agent_demo", "operation": "status"},
+                )
+                assert git_status["success"], git_status
+                assert "created.txt" in git_status["stdout_tail"], git_status
+                git_diff = post(
+                    port,
+                    token,
+                    "/api/codex/git",
+                    {"project": "agent_demo", "operation": "diff", "paths": ["marker.txt"]},
+                )
+                assert git_diff["success"], git_diff
+                assert "project-marker-updated" in git_diff["stdout_tail"], git_diff
+                git_add = post(
+                    port,
+                    token,
+                    "/api/codex/git",
+                    {"project": "agent_demo", "operation": "add", "paths": ["marker.txt", "created.txt", "dir/written.txt"]},
+                )
+                assert git_add["success"], git_add
+                git_commit = post(
+                    port,
+                    token,
+                    "/api/codex/git",
+                    {"project": "agent_demo", "operation": "commit", "paths": ["marker.txt", "created.txt", "dir/written.txt"], "message": "agent git e2e"},
+                )
+                assert git_commit["success"], git_commit
+                git_log = post(
+                    port,
+                    token,
+                    "/api/codex/git",
+                    {"project": "agent_demo", "operation": "log"},
+                )
+                assert git_log["success"], git_log
+                assert "agent git e2e" in git_log["stdout_tail"], git_log
 
                 file_path = "/tmp/private-drop-agent-e2e-file.txt"
                 file_write = post(

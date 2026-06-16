@@ -743,6 +743,7 @@ mod tests {
             host: None,
             ssh_hosts: Vec::new(),
             user: None,
+            client_id: None,
             allow_patch: true,
             allow_command_requests: false,
             allow_raw_command_requests: false,

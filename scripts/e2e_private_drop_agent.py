@@ -14,6 +14,7 @@ import os
 import subprocess
 import tempfile
 import time
+import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
@@ -27,8 +28,16 @@ def post(port: int, token: str, path: str, body: dict[str, Any]) -> dict[str, An
         headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"},
         method="POST",
     )
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        return json.loads(resp.read().decode())
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        body_text = exc.read().decode(errors="replace")
+        try:
+            body = json.loads(body_text)
+        except Exception:
+            body = body_text
+        raise RuntimeError(f"POST {path} returned HTTP {exc.code}: {body}") from exc
 
 
 def wait_for_health(port: int, proc: subprocess.Popen[bytes], server_log: Path) -> None:
@@ -63,6 +72,26 @@ def main() -> None:
         server_log = tmp_path / "server.log"
         agent_log = tmp_path / "agent.log"
         agent_config = tmp_path / "agent.toml"
+        project_dir = tmp_path / "agent-project"
+        project_dir.mkdir()
+        (project_dir / "marker.txt").write_text("project-marker\n")
+        projects_config = tmp_path / "projects.toml"
+        projects_config.write_text(
+            f'''
+[projects.agent_demo]
+executor = "agent"
+client_id = "{client_id}"
+path = "{project_dir}"
+allowed_checks = ["test"]
+
+[projects.agent_demo.checks]
+test = "printf check-ok"
+
+[projects.agent_demo.commands]
+smoke = "printf command-ok && test -f marker.txt"
+'''.strip()
+            + "\n"
+        )
         agent_config.write_text(
             f'''
 server_url = "http://127.0.0.1:{port}"
@@ -87,7 +116,7 @@ max_output_bytes = 262144
                 "DROP_ADDR": f"127.0.0.1:{port}",
                 "DROP_TOKEN": token,
                 "DROP_DATA": str(tmp_path / "data"),
-                "PROJECTS_CONFIG": str(root / "projects.toml.example"),
+                "PROJECTS_CONFIG": str(projects_config),
             }
         )
         with server_log.open("wb") as slog, agent_log.open("wb") as alog:
@@ -126,6 +155,27 @@ max_output_bytes = 262144
                 assert result["success"], result
                 assert result["stdout"] == "agent-ok", result
                 assert result["exit_code"] == 0, result
+
+                projects = post(port, token, "/api/codex/projects", {})
+                assert projects["success"], projects
+                agent_info = next(p for p in projects["projects"] if p["name"] == "agent_demo")
+                assert agent_info["executor"] == "agent", agent_info
+                command_result = post(
+                    port,
+                    token,
+                    "/api/codex/command",
+                    {"project": "agent_demo", "command": "smoke"},
+                )
+                assert command_result["success"], command_result
+                assert command_result["stdout_tail"].strip() == "command-ok", command_result
+                check_result = post(
+                    port,
+                    token,
+                    "/api/codex/check",
+                    {"project": "agent_demo", "suite": "test"},
+                )
+                assert check_result["success"], check_result
+                assert check_result["stdout_tail"].strip() == "check-ok", check_result
 
                 file_path = "/tmp/private-drop-agent-e2e-file.txt"
                 file_write = post(

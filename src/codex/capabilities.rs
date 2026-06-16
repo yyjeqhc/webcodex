@@ -60,6 +60,7 @@ fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
         executor: match project.executor {
             Executor::Local => "local".to_string(),
             Executor::Ssh => "ssh".to_string(),
+            Executor::Agent => "agent".to_string(),
         },
         root: project.path.clone(),
         ssh_target,
@@ -171,6 +172,11 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
         .iter()
         .filter(|project| project.executor == "ssh")
         .count();
+    let agent_project_count = response
+        .projects
+        .iter()
+        .filter(|project| project.executor == "agent")
+        .count();
     res.render(Json(response));
     if let Some(db) = audit_db.as_ref() {
         let ended_at = chrono::Utc::now().timestamp();
@@ -196,6 +202,7 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
                     "project_count": project_count,
                     "project_names_count": project_names_count,
                     "ssh_project_count": ssh_project_count,
+                    "agent_project_count": agent_project_count,
                 }),
                 request_bytes: None,
                 response_bytes: None,

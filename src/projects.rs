@@ -13,6 +13,7 @@ pub enum Executor {
     #[default]
     Local,
     Ssh,
+    Agent,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -35,6 +36,8 @@ pub struct ProjectConfig {
     pub ssh_hosts: Vec<String>,
     #[serde(default)]
     pub user: Option<String>,
+    #[serde(default)]
+    pub client_id: Option<String>,
     #[serde(default = "default_true")]
     pub allow_patch: bool,
     #[serde(default)]
@@ -207,6 +210,18 @@ impl ProjectConfig {
         self.executor == Executor::Ssh
     }
 
+    pub fn is_agent(&self) -> bool {
+        self.executor == Executor::Agent
+    }
+
+    pub fn agent_client_id(&self) -> Result<&str, String> {
+        self.client_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|client_id| !client_id.is_empty())
+            .ok_or_else(|| "Agent executor requires client_id".to_string())
+    }
+
     /// Build ordered SSH endpoints, preserving legacy host compatibility.
     pub fn ssh_targets(&self) -> Vec<String> {
         let mut hosts = Vec::new();
@@ -288,5 +303,26 @@ mod tests {
         assert_eq!(project.effective_allowed_checks(), vec!["test".to_string()]);
         assert!(!project.is_check_allowed("fmt"));
         assert!(project.is_check_allowed("test"));
+    }
+
+    #[test]
+    fn agent_project_config_parses_client_id() {
+        let cfg: ProjectsConfig = toml::from_str(
+            r#"
+            [projects.demo]
+            executor = "agent"
+            client_id = "oe"
+            path = "/tmp/demo"
+
+            [projects.demo.commands]
+            status = "git status --short"
+            "#,
+        )
+        .unwrap();
+        let project = cfg.projects.get("demo").unwrap();
+        assert_eq!(project.executor, super::Executor::Agent);
+        assert_eq!(project.agent_client_id().unwrap(), "oe");
+        assert!(!project.is_ssh());
+        assert!(project.is_agent());
     }
 }

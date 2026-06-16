@@ -251,7 +251,7 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "tags": ["shell"],
             "requestBody": {
                 "required": true,
-                "content": { "application/json": { "schema": { "type": "object" } } }
+                "content": { "application/json": { "schema": { "type": "object", "properties": {} } } }
             },
             "responses": {
                 "200": {

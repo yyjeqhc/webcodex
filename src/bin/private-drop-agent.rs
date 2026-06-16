@@ -1,5 +1,6 @@
 use reqwest::blocking::Client;
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
@@ -261,6 +262,12 @@ fn cwd_allowed(policy: &AgentPolicy, cwd: &Path) -> Result<(), String> {
     ))
 }
 
+fn sha256_hex_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
 fn truncate_bytes(bytes: &[u8], max: usize) -> String {
     let text = String::from_utf8_lossy(bytes).to_string();
     if text.len() <= max {
@@ -438,7 +445,7 @@ fn resolve_requested_path(
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
         base.join(raw_path)
     };
-    let parent_for_policy = if resolved.exists() {
+    let mut parent_for_policy = if resolved.exists() {
         resolved.clone()
     } else {
         resolved
@@ -446,6 +453,12 @@ fn resolve_requested_path(
             .map(PathBuf::from)
             .unwrap_or_else(|| resolved.clone())
     };
+    while !parent_for_policy.exists() {
+        let Some(parent) = parent_for_policy.parent() else {
+            break;
+        };
+        parent_for_policy = parent.to_path_buf();
+    }
     cwd_allowed(policy, &parent_for_policy)?;
     Ok(resolved)
 }
@@ -526,6 +539,55 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
                         policy.max_output_bytes
                     )),
                 };
+            }
+            if let Some(expected) = request.expected_sha256.as_deref() {
+                match std::fs::read(&resolved) {
+                    Ok(existing) => {
+                        let actual = sha256_hex_bytes(&existing);
+                        if !actual.eq_ignore_ascii_case(expected) {
+                            return CommandResult {
+                                exit_code: None,
+                                stdout: None,
+                                stderr: None,
+                                duration_ms: Some(start.elapsed().as_millis() as u64),
+                                error: Some(format!(
+                                    "expected_sha256 mismatch: expected {}, actual {}",
+                                    expected, actual
+                                )),
+                            };
+                        }
+                    }
+                    Err(e) => {
+                        return CommandResult {
+                            exit_code: None,
+                            stdout: None,
+                            stderr: None,
+                            duration_ms: Some(start.elapsed().as_millis() as u64),
+                            error: Some(format!(
+                                "failed to read existing file for expected_sha256 {}: {}",
+                                resolved.display(),
+                                e
+                            )),
+                        };
+                    }
+                }
+            }
+            if request.create_dirs {
+                if let Some(parent) = resolved.parent() {
+                    if let Err(e) = std::fs::create_dir_all(parent) {
+                        return CommandResult {
+                            exit_code: None,
+                            stdout: None,
+                            stderr: None,
+                            duration_ms: Some(start.elapsed().as_millis() as u64),
+                            error: Some(format!(
+                                "failed to create parent directory {}: {}",
+                                parent.display(),
+                                e
+                            )),
+                        };
+                    }
+                }
             }
             match std::fs::write(&resolved, content.as_bytes()) {
                 Ok(()) => CommandResult {

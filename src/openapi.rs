@@ -413,6 +413,8 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "cwd": { "type": "string", "nullable": true },
             "content": { "type": "string", "nullable": true },
             "max_bytes": { "type": "integer", "nullable": true },
+            "expected_sha256": { "type": "string", "nullable": true },
+            "create_dirs": { "type": "boolean", "default": false },
             "wait_timeout_secs": { "type": "integer", "default": 30 }
         },
         "required": ["op", "client_id", "path"]
@@ -429,6 +431,7 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "content": { "type": "string", "nullable": true },
             "entries": { "type": "array", "items": { "type": "string" } },
             "bytes": { "type": "integer", "nullable": true },
+            "sha256": { "type": "string", "nullable": true },
             "stderr": { "type": "string", "nullable": true },
             "error": { "type": "string", "nullable": true }
         },

@@ -7,6 +7,7 @@ use crate::shell_protocol::{
     ShellRunResponse,
 };
 use salvo::prelude::*;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::{oneshot, Mutex};
@@ -137,6 +138,13 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
             return Err("cwd cannot contain NUL bytes".to_string());
         }
     }
+    validate_sha256(&body.expected_sha256)?;
+    if body.expected_sha256.is_some() && body.op != "write" {
+        return Err("expected_sha256 is only allowed for op=write".to_string());
+    }
+    if body.create_dirs && body.op != "write" {
+        return Err("create_dirs is only allowed for op=write".to_string());
+    }
     if let Some(content) = &body.content {
         if content.len() > MAX_FILE_CONTENT_BYTES {
             return Err(format!(
@@ -213,6 +221,22 @@ fn command_preview(command: &str) -> String {
         let preview = first_line.chars().take(MAX_PREVIEW).collect::<String>();
         format!("{}…", preview)
     }
+}
+
+fn sha256_hex(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn validate_sha256(value: &Option<String>) -> Result<(), String> {
+    let Some(value) = value else {
+        return Ok(());
+    };
+    if value.len() != 64 || !value.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("expected_sha256 must be 64 hex characters".to_string());
+    }
+    Ok(())
 }
 
 fn truncate_output(value: Option<String>) -> Option<String> {
@@ -385,6 +409,8 @@ impl ShellClientRegistry {
             path: Some(body.path.trim().to_string()),
             content: body.content.clone(),
             max_bytes: body.max_bytes,
+            expected_sha256: body.expected_sha256.clone(),
+            create_dirs: body.create_dirs,
             command: String::new(),
             timeout_secs: 30,
             requested_by,
@@ -427,6 +453,8 @@ impl ShellClientRegistry {
             path: None,
             content: None,
             max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
             command: body.command.clone(),
             timeout_secs: body.timeout_secs,
             requested_by,
@@ -591,6 +619,8 @@ impl ShellClientRegistry {
             path: None,
             content: None,
             max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
             command,
             timeout_secs: run.timeout_secs,
             requested_by,
@@ -719,6 +749,8 @@ impl ShellClientRegistry {
                     path: None,
                     content: None,
                     max_bytes: None,
+                    expected_sha256: None,
+                    create_dirs: false,
                     command: String::new(),
                     timeout_secs: 1,
                     requested_by: "gpt_action_or_web".to_string(),
@@ -1070,26 +1102,33 @@ fn shell_file_response_from_run(
     op: String,
     path: String,
     cwd: Option<String>,
+    request_content: Option<String>,
     response: ShellRunResponse,
 ) -> ShellFileOpResponse {
+    let success = response.error.is_none() && response.exit_code == Some(0);
     let stdout = response.stdout.unwrap_or_default();
-    let entries = if op == "list" && response.error.is_none() {
+    let entries = if op == "list" && success {
         stdout.lines().map(|line| line.to_string()).collect()
     } else {
         Vec::new()
     };
-    let content = if op == "read" && response.error.is_none() {
+    let content = if op == "read" && success {
         Some(stdout.clone())
     } else {
         None
     };
     let bytes = match op.as_str() {
         "read" => content.as_ref().map(|s| s.len()),
-        "write" => Some(stdout.trim().parse::<usize>().unwrap_or(0)),
+        "write" if success => Some(stdout.trim().parse::<usize>().unwrap_or(0)),
+        _ => None,
+    };
+    let sha256 = match op.as_str() {
+        "read" if success => content.as_ref().map(|s| sha256_hex(s)),
+        "write" if success => request_content.as_ref().map(|s| sha256_hex(s)),
         _ => None,
     };
     ShellFileOpResponse {
-        success: response.error.is_none() && response.exit_code == Some(0),
+        success,
         op,
         request_id: response.request_id,
         client_id: response.client_id,
@@ -1098,6 +1137,7 @@ fn shell_file_response_from_run(
         content,
         entries,
         bytes,
+        sha256,
         stderr: response.stderr,
         error: response.error,
     }
@@ -1120,6 +1160,7 @@ fn shell_file_error(
         content: None,
         entries: Vec::new(),
         bytes: None,
+        sha256: None,
         stderr: None,
         error: Some(error),
     })
@@ -1156,6 +1197,7 @@ pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Respo
     let client_id = body.client_id.clone();
     let path = body.path.clone();
     let cwd = body.cwd.clone();
+    let request_content = body.content.clone();
     let wait_timeout_secs = body.wait_timeout_secs;
     let (request_id, rx) = match registry
         .enqueue_file_op(body, "gpt_action_or_web".to_string())
@@ -1169,7 +1211,13 @@ pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Respo
         }
     };
     match tokio::time::timeout(std::time::Duration::from_secs(wait_timeout_secs), rx).await {
-        Ok(Ok(response)) => res.render(Json(shell_file_response_from_run(op, path, cwd, response))),
+        Ok(Ok(response)) => res.render(Json(shell_file_response_from_run(
+            op,
+            path,
+            cwd,
+            request_content,
+            response,
+        ))),
         Ok(Err(_closed)) => {
             res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
             res.render(shell_file_error(

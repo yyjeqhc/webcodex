@@ -138,6 +138,10 @@ pub struct ShellAgentShellRequest {
     pub content: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_bytes: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_sha256: Option<String>,
+    #[serde(default)]
+    pub create_dirs: bool,
     pub command: String,
     pub timeout_secs: u64,
     pub requested_by: String,
@@ -215,6 +219,10 @@ pub struct ShellFileOpRequest {
     pub content: Option<String>,
     #[serde(default)]
     pub max_bytes: Option<usize>,
+    #[serde(default)]
+    pub expected_sha256: Option<String>,
+    #[serde(default)]
+    pub create_dirs: bool,
     #[serde(default = "default_wait_timeout_secs")]
     pub wait_timeout_secs: u64,
 }
@@ -234,6 +242,8 @@ pub struct ShellFileOpResponse {
     pub entries: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stderr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

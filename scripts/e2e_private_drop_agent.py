@@ -9,6 +9,7 @@ stdout/stderr/exit_code.
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 import tempfile
@@ -141,6 +142,8 @@ max_output_bytes = 262144
                 )
                 assert file_write["success"], file_write
                 assert file_write["bytes"] == len("file-ok\n"), file_write
+                expected_hash = hashlib.sha256(b"file-ok\n").hexdigest()
+                assert file_write["sha256"] == expected_hash, file_write
                 file_read = post(
                     port,
                     token,
@@ -154,6 +157,49 @@ max_output_bytes = 262144
                 )
                 assert file_read["success"], file_read
                 assert file_read["content"] == "file-ok\n", file_read
+                assert file_read["sha256"] == expected_hash, file_read
+                stale_write = post(
+                    port,
+                    token,
+                    "/api/shell/file",
+                    {
+                        "op": "write",
+                        "client_id": client_id,
+                        "path": file_path,
+                        "content": "bad-write\n",
+                        "expected_sha256": "0" * 64,
+                        "wait_timeout_secs": 10,
+                    },
+                )
+                assert not stale_write["success"], stale_write
+                assert "expected_sha256 mismatch" in stale_write["error"], stale_write
+                nested_path = "/tmp/private-drop-agent-e2e-dir/nested/file.txt"
+                nested_write = post(
+                    port,
+                    token,
+                    "/api/shell/file",
+                    {
+                        "op": "write",
+                        "client_id": client_id,
+                        "path": nested_path,
+                        "content": "nested-ok\n",
+                        "create_dirs": True,
+                        "wait_timeout_secs": 10,
+                    },
+                )
+                assert nested_write["success"], nested_write
+                nested_read = post(
+                    port,
+                    token,
+                    "/api/shell/file",
+                    {
+                        "op": "read",
+                        "client_id": client_id,
+                        "path": nested_path,
+                        "wait_timeout_secs": 10,
+                    },
+                )
+                assert nested_read["content"] == "nested-ok\n", nested_read
                 file_list = post(
                     port,
                     token,

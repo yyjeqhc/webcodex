@@ -242,6 +242,118 @@ fn apply_action_session_openapi(spec: &mut serde_json::Value) {
     });
 }
 
+fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
+    spec["paths"]["/api/shell/clients"] = serde_json::json!({
+        "post": {
+            "operationId": "listShellClients",
+            "summary": "List shell clients",
+            "description": "List private-drop-agent shell clients and their online status.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": { "application/json": { "schema": { "type": "object" } } }
+            },
+            "responses": {
+                "200": {
+                    "description": "Shell clients response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientsResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["paths"]["/api/shell/run"] = serde_json::json!({
+        "post": {
+            "operationId": "runShell",
+            "summary": "Run shell on a client",
+            "description": "Run a shell command through a registered private-drop-agent client. Use short waits; use future job APIs for long tasks.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellRunRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Shell run response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellRunResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["components"]["schemas"]["ShellClientCapabilities"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "shell": { "type": "boolean" },
+            "file_read": { "type": "boolean" },
+            "file_write": { "type": "boolean" },
+            "git": { "type": "boolean" },
+            "jobs": { "type": "boolean" }
+        }
+    });
+    spec["components"]["schemas"]["ShellClientView"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" },
+            "display_name": { "type": "string", "nullable": true },
+            "owner": { "type": "string", "nullable": true },
+            "hostname": { "type": "string", "nullable": true },
+            "status": { "type": "string" },
+            "connected": { "type": "boolean" },
+            "last_seen": { "type": "integer" },
+            "capabilities": { "$ref": "#/components/schemas/ShellClientCapabilities" },
+            "pending_requests": { "type": "integer" }
+        },
+        "required": ["client_id", "status", "connected", "last_seen", "capabilities", "pending_requests"]
+    });
+    spec["components"]["schemas"]["ShellClientsResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "clients": { "type": "array", "items": { "$ref": "#/components/schemas/ShellClientView" } },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "clients"]
+    });
+    spec["components"]["schemas"]["ShellRunRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" },
+            "cwd": { "type": "string", "nullable": true },
+            "command": { "type": "string", "maxLength": 8000 },
+            "timeout_secs": { "type": "integer", "default": 120 },
+            "wait_timeout_secs": { "type": "integer", "default": 30 }
+        },
+        "required": ["client_id", "command"]
+    });
+    spec["components"]["schemas"]["ShellRunResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "request_id": { "type": "string" },
+            "client_id": { "type": "string" },
+            "cwd": { "type": "string", "nullable": true },
+            "command_preview": { "type": "string" },
+            "exit_code": { "type": "integer", "nullable": true },
+            "stdout": { "type": "string", "nullable": true },
+            "stderr": { "type": "string", "nullable": true },
+            "duration_ms": { "type": "integer", "nullable": true },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "request_id", "client_id", "command_preview"]
+    });
+}
+
 fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
     // Update command_request_op description to mention trusted raw mode
     let cr_op_desc = &mut spec["paths"]["/api/codex/command_request_op"]["post"]["description"];
@@ -461,6 +573,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
     apply_context_batch_guidance(&mut spec);
     apply_trusted_command_guidance(&mut spec);
     apply_action_session_openapi(&mut spec);
+    apply_shell_client_openapi(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -469,7 +582,8 @@ pub async fn codex_openapi_json(res: &mut Response) {
 #[cfg(test)]
 mod tests {
     use super::{
-        apply_action_session_openapi, apply_edit_timeout_guidance, apply_trusted_command_guidance,
+        apply_action_session_openapi, apply_edit_timeout_guidance, apply_shell_client_openapi,
+        apply_trusted_command_guidance,
     };
 
     fn assert_operation_descriptions_within_limit(spec: &serde_json::Value) {
@@ -538,7 +652,9 @@ mod tests {
             "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
             "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
             "/api/desktop/task_op": spec["paths"]["/api/desktop/task_op"].clone(),
-            "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
+            "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
+            "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
+            "/api/shell/run": spec["paths"]["/api/shell/run"].clone()
         })
     }
 
@@ -816,6 +932,7 @@ mod tests {
         let mut spec: serde_json::Value =
             serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
         apply_action_session_openapi(&mut spec);
+        apply_shell_client_openapi(&mut spec);
         let compact_paths = compact_paths_from_spec(&spec);
         assert!(
             !compact_paths["/api/codex/action_sessions"]["post"].is_null(),
@@ -828,6 +945,7 @@ mod tests {
         let mut spec: serde_json::Value =
             serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
         apply_action_session_openapi(&mut spec);
+        apply_shell_client_openapi(&mut spec);
         let compact_paths = compact_paths_from_spec(&spec);
         assert!(
             count_operations(&compact_paths) <= 15,
@@ -842,6 +960,7 @@ mod tests {
         apply_edit_timeout_guidance(&mut spec);
         apply_trusted_command_guidance(&mut spec);
         apply_action_session_openapi(&mut spec);
+        apply_shell_client_openapi(&mut spec);
         spec["paths"] = compact_paths_from_spec(&spec);
         spec["components"]["schemas"] = serde_json::json!({
             "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
@@ -893,7 +1012,12 @@ mod tests {
             "ActionEventView": spec["components"]["schemas"]["ActionEventView"].clone(),
             "ActionSessionListItem": spec["components"]["schemas"]["ActionSessionListItem"].clone(),
             "ActionSessionOpRequest": spec["components"]["schemas"]["ActionSessionOpRequest"].clone(),
-            "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone()
+            "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone(),
+            "ShellClientCapabilities": spec["components"]["schemas"]["ShellClientCapabilities"].clone(),
+            "ShellClientView": spec["components"]["schemas"]["ShellClientView"].clone(),
+            "ShellClientsResponse": spec["components"]["schemas"]["ShellClientsResponse"].clone(),
+            "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
+            "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone()
         });
         assert!(count_operations(&spec["paths"]) <= 15);
         assert_operation_descriptions_within_limit(&spec);
@@ -972,6 +1096,7 @@ mod tests {
         apply_edit_timeout_guidance(&mut spec);
         apply_trusted_command_guidance(&mut spec);
         apply_action_session_openapi(&mut spec);
+        apply_shell_client_openapi(&mut spec);
         assert_operation_descriptions_within_limit(&spec);
         assert_all_descriptions_within_limit(&spec);
     }
@@ -1079,6 +1204,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
     apply_context_batch_guidance(&mut spec);
     apply_trusted_command_guidance(&mut spec);
     apply_action_session_openapi(&mut spec);
+    apply_shell_client_openapi(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));

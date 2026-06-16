@@ -1,8 +1,9 @@
 use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentResultRequest,
-    ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellClientRegisterResponse, ShellClientView, ShellClientsResponse,
-    ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
+    ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
+    ShellAgentPollResponse, ShellAgentResultRequest, ShellAgentResultResponse,
+    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellClientRegisterResponse, ShellClientView, ShellClientsResponse, ShellJobInfo,
+    ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
 };
 use salvo::prelude::*;
 use std::collections::{HashMap, VecDeque};
@@ -225,6 +226,32 @@ fn select_lines(
     (Some(text), lines.len() + 1)
 }
 
+fn append_limited(target: &mut Option<String>, chunk: Option<String>) {
+    let Some(chunk) = chunk else {
+        return;
+    };
+    let target_value = target.get_or_insert_with(String::new);
+    target_value.push_str(&chunk);
+    if target_value.len() > MAX_OUTPUT_BYTES {
+        let mut start = target_value.len() - MAX_OUTPUT_BYTES;
+        while start < target_value.len() && !target_value.is_char_boundary(start) {
+            start += 1;
+        }
+        *target_value = format!(
+            "[output truncated to last {} bytes]\n{}",
+            MAX_OUTPUT_BYTES,
+            &target_value[start..]
+        );
+    }
+}
+
+fn is_final_job_status(status: &str) -> bool {
+    matches!(
+        status,
+        "completed" | "failed" | "stopped" | "timeout" | "lost"
+    )
+}
+
 impl ShellClientRegistry {
     pub async fn register(
         &self,
@@ -269,6 +296,8 @@ impl ShellClientRegistry {
         let request = ShellAgentShellRequest {
             request_id: request_id.clone(),
             client_id: body.client_id.clone(),
+            kind: "run_shell".to_string(),
+            job_id: None,
             cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
             command: body.command.clone(),
             timeout_secs: body.timeout_secs,
@@ -330,6 +359,10 @@ impl ShellClientRegistry {
             else {
                 continue;
             };
+            if request.kind == "stop_job" {
+                inner.pending_by_id.remove(&request_id);
+                return Ok(Some(request));
+            }
             if let Some(job_id) = job_id {
                 if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
                     if job.status == "queued" {
@@ -424,6 +457,8 @@ impl ShellClientRegistry {
         let request = ShellAgentShellRequest {
             request_id: request_id.clone(),
             client_id: client_id.clone(),
+            kind: "start_job".to_string(),
+            job_id: Some(job_id.clone()),
             cwd: run.cwd.clone().map(|cwd| cwd.trim().to_string()),
             command,
             timeout_secs: run.timeout_secs,
@@ -535,16 +570,90 @@ impl ShellClientRegistry {
                 job.error = Some("job stopped before agent picked it up".to_string());
                 Ok(job_view(job))
             }
-            "running" => {
+            "running" | "stop_requested" => {
+                let stop_request_id = Uuid::new_v4().to_string();
+                let client_id = job.client_id.clone();
+                let request = ShellAgentShellRequest {
+                    request_id: stop_request_id.clone(),
+                    client_id: client_id.clone(),
+                    kind: "stop_job".to_string(),
+                    job_id: Some(job_id.to_string()),
+                    cwd: None,
+                    command: String::new(),
+                    timeout_secs: 1,
+                    requested_by: "gpt_action_or_web".to_string(),
+                    created_at: now_ts(),
+                };
+                inner
+                    .queues_by_client
+                    .entry(client_id)
+                    .or_default()
+                    .push_back(stop_request_id.clone());
+                inner.pending_by_id.insert(
+                    stop_request_id,
+                    PendingShellRequest {
+                        request,
+                        waiter: None,
+                        job_id: Some(job_id.to_string()),
+                    },
+                );
                 let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
                 job.status = "stop_requested".to_string();
-                job.error = Some(
-                    "stop requested; current agent cannot kill running process yet".to_string(),
-                );
+                job.error = Some("stop requested".to_string());
                 Ok(job_view(job))
             }
             _ => Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists"))),
         }
+    }
+
+    pub async fn update_job(
+        &self,
+        body: ShellAgentJobUpdateRequest,
+    ) -> Result<ShellJobInfo, String> {
+        validate_id(&body.client_id, "client_id")?;
+        validate_id(&body.job_id, "job_id")?;
+        let mut inner = self.inner.lock().await;
+        if let Some(client) = inner.clients.get_mut(&body.client_id) {
+            client.last_seen = now_ts();
+        }
+        let mut request_id_to_remove = None;
+        let view = {
+            let Some(job) = inner.jobs_by_id.get_mut(&body.job_id) else {
+                return Err(format!("unknown shell job: {}", body.job_id));
+            };
+            if job.client_id != body.client_id {
+                return Err("job_id does not belong to client_id".to_string());
+            }
+            append_limited(&mut job.stdout, body.stdout_chunk);
+            append_limited(&mut job.stderr, body.stderr_chunk);
+            if job.started_at.is_none()
+                && matches!(
+                    body.status.as_str(),
+                    "running" | "completed" | "failed" | "stopped" | "timeout"
+                )
+            {
+                job.started_at = Some(now_ts());
+            }
+            if !body.status.trim().is_empty() && !is_final_job_status(&job.status) {
+                job.status = body.status.trim().to_string();
+            }
+            if is_final_job_status(&body.status) {
+                job.status = body.status;
+                job.ended_at = Some(now_ts());
+                job.exit_code = body.exit_code;
+                job.duration_ms = body.duration_ms;
+                job.error = body.error;
+                request_id_to_remove = job.request_id.clone();
+            } else if body.error.is_some() {
+                job.error = body.error;
+            }
+            job_view(job)
+        };
+        if let Some(request_id) = request_id_to_remove {
+            inner.pending_by_id.remove(&request_id);
+            inner.request_to_job.remove(&request_id);
+        }
+        Ok(view)
     }
 
     fn client_view_locked(
@@ -985,6 +1094,46 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 op,
                 "op must be one of start, status, log, stop, list".to_string(),
             ));
+        }
+    }
+}
+
+#[handler]
+pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(registry) = get_registry(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(ShellAgentJobUpdateResponse {
+            success: false,
+            job: None,
+            error: Some("Shell client registry not configured".to_string()),
+        }));
+        return;
+    };
+    let body: ShellAgentJobUpdateRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(ShellAgentJobUpdateResponse {
+                success: false,
+                job: None,
+                error: Some(format!("Invalid JSON: {}", e)),
+            }));
+            return;
+        }
+    };
+    match registry.update_job(body).await {
+        Ok(job) => res.render(Json(ShellAgentJobUpdateResponse {
+            success: true,
+            job: Some(job),
+            error: None,
+        })),
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(ShellAgentJobUpdateResponse {
+                success: false,
+                job: None,
+                error: Some(e),
+            }));
         }
     }
 }

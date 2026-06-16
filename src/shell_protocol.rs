@@ -12,6 +12,10 @@ fn default_wait_timeout_secs() -> u64 {
     30
 }
 
+fn default_agent_request_kind() -> String {
+    "run_shell".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
     #[serde(default = "default_shell_true")]
@@ -122,6 +126,10 @@ pub struct ShellAgentPollRequest {
 pub struct ShellAgentShellRequest {
     pub request_id: String,
     pub client_id: String,
+    #[serde(default = "default_agent_request_kind")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     pub command: String,
@@ -158,6 +166,34 @@ pub struct ShellAgentResultRequest {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShellAgentResultResponse {
     pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentJobUpdateRequest {
+    pub client_id: String,
+    pub job_id: String,
+    #[serde(default)]
+    pub request_id: Option<String>,
+    pub status: String,
+    #[serde(default)]
+    pub stdout_chunk: Option<String>,
+    #[serde(default)]
+    pub stderr_chunk: Option<String>,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShellAgentJobUpdateResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job: Option<ShellJobInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

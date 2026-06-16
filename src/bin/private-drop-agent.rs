@@ -1,8 +1,11 @@
 use reqwest::blocking::Client;
 use serde::Deserialize;
-use std::io::Read;
+use std::collections::HashMap;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Child, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
 #[allow(dead_code)]
@@ -10,8 +13,9 @@ use std::time::{Duration, Instant};
 mod shell_protocol;
 
 use shell_protocol::{
-    ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentResultRequest,
-    ShellAgentResultResponse, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
+    ShellAgentPollResponse, ShellAgentResultRequest, ShellAgentResultResponse,
+    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
     ShellClientRegisterResponse,
 };
 
@@ -19,8 +23,9 @@ const DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
+const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct AgentConfig {
     server_url: String,
     token: String,
@@ -39,7 +44,7 @@ struct AgentConfig {
     policy: AgentPolicy,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 struct AgentPolicy {
     #[serde(default = "default_true")]
     allow_raw_shell: bool,
@@ -88,6 +93,23 @@ struct CommandResult {
     stderr: Option<String>,
     duration_ms: Option<u64>,
     error: Option<String>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct JobManager {
+    jobs: Arc<Mutex<HashMap<String, RunningJob>>>,
+}
+
+#[derive(Debug, Clone)]
+struct RunningJob {
+    child: Arc<Mutex<Child>>,
+    stop_requested: Arc<AtomicBool>,
+}
+
+#[derive(Debug)]
+enum OutputChunk {
+    Stdout(String),
+    Stderr(String),
 }
 
 fn usage() -> &'static str {
@@ -195,12 +217,14 @@ where
 }
 
 fn register(client: &Client, cfg: &AgentConfig) -> Result<(), String> {
+    let mut capabilities = cfg.capabilities.clone().unwrap_or_default();
+    capabilities.jobs = true;
     let body = ShellClientRegisterRequest {
         client_id: cfg.client_id.clone(),
         display_name: cfg.display_name.clone(),
         owner: cfg.owner.clone(),
         hostname: cfg.hostname.clone().or_else(hostname),
-        capabilities: Some(cfg.capabilities.clone().unwrap_or_default()),
+        capabilities: Some(capabilities),
     };
     let response: ShellClientRegisterResponse =
         post_json(client, cfg, "/api/shell/agent/register", &body)?;
@@ -395,7 +419,286 @@ fn run_shell(
     }
 }
 
-fn handle_one_poll(client: &Client, cfg: &AgentConfig) -> Result<bool, String> {
+fn send_job_update(
+    client: &Client,
+    cfg: &AgentConfig,
+    body: &ShellAgentJobUpdateRequest,
+) -> Result<(), String> {
+    let response: ShellAgentJobUpdateResponse =
+        post_json(client, cfg, "/api/shell/agent/job_update", body)?;
+    if response.success {
+        Ok(())
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "job_update failed without error".to_string()))
+    }
+}
+
+fn spawn_reader<R: Read + Send + 'static>(
+    reader: R,
+    tx: mpsc::Sender<OutputChunk>,
+    stdout: bool,
+) -> std::thread::JoinHandle<()> {
+    std::thread::spawn(move || {
+        let mut reader = BufReader::new(reader);
+        loop {
+            let mut buf = Vec::new();
+            match reader.read_until(b'\n', &mut buf) {
+                Ok(0) => break,
+                Ok(_) => {
+                    let text = String::from_utf8_lossy(&buf).to_string();
+                    let _ = if stdout {
+                        tx.send(OutputChunk::Stdout(text))
+                    } else {
+                        tx.send(OutputChunk::Stderr(text))
+                    };
+                }
+                Err(_) => break,
+            }
+        }
+    })
+}
+
+fn send_start_failure(
+    client: &Client,
+    cfg: &AgentConfig,
+    request: ShellAgentShellRequest,
+    error: String,
+) {
+    if let Some(job_id) = request.job_id {
+        let _ = send_job_update(
+            client,
+            cfg,
+            &ShellAgentJobUpdateRequest {
+                client_id: cfg.client_id.clone(),
+                job_id,
+                request_id: Some(request.request_id),
+                status: "failed".to_string(),
+                stdout_chunk: None,
+                stderr_chunk: None,
+                exit_code: None,
+                duration_ms: Some(0),
+                error: Some(error),
+            },
+        );
+    }
+}
+
+fn kill_child_group(child: &Arc<Mutex<Child>>) -> Result<(), String> {
+    let pid = child
+        .lock()
+        .map_err(|_| "job child lock poisoned".to_string())?
+        .id();
+    let _ = std::process::Command::new("kill")
+        .arg("-TERM")
+        .arg(format!("-{}", pid))
+        .status();
+    std::thread::sleep(Duration::from_millis(50));
+    let _ = child
+        .lock()
+        .map_err(|_| "job child lock poisoned".to_string())?
+        .kill();
+    Ok(())
+}
+
+impl JobManager {
+    fn start(&self, client: Client, cfg: AgentConfig, request: ShellAgentShellRequest) {
+        let Some(job_id) = request.job_id.clone() else {
+            return;
+        };
+        if !cfg.policy.allow_raw_shell {
+            send_start_failure(
+                &client,
+                &cfg,
+                request,
+                "raw shell is disabled by local agent policy".to_string(),
+            );
+            return;
+        }
+        let cwd_path = request
+            .cwd
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        if let Err(e) = cwd_allowed(&cfg.policy, &cwd_path) {
+            send_start_failure(&client, &cfg, request, e);
+            return;
+        }
+        let start = Instant::now();
+        let spawn = std::process::Command::new("setsid")
+            .arg("sh")
+            .arg("-c")
+            .arg(&request.command)
+            .current_dir(&cwd_path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+        let mut child = match spawn {
+            Ok(c) => c,
+            Err(e) => {
+                send_start_failure(
+                    &client,
+                    &cfg,
+                    request,
+                    format!("failed to spawn command: {}", e),
+                );
+                return;
+            }
+        };
+        let stdout = child.stdout.take();
+        let stderr = child.stderr.take();
+        let child = Arc::new(Mutex::new(child));
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        self.jobs.lock().unwrap().insert(
+            job_id.clone(),
+            RunningJob {
+                child: child.clone(),
+                stop_requested: stop_requested.clone(),
+            },
+        );
+        let _ = send_job_update(
+            &client,
+            &cfg,
+            &ShellAgentJobUpdateRequest {
+                client_id: cfg.client_id.clone(),
+                job_id: job_id.clone(),
+                request_id: Some(request.request_id.clone()),
+                status: "running".to_string(),
+                stdout_chunk: None,
+                stderr_chunk: None,
+                exit_code: None,
+                duration_ms: None,
+                error: None,
+            },
+        );
+        let jobs = self.jobs.clone();
+        std::thread::spawn(move || {
+            let (tx, rx) = mpsc::channel::<OutputChunk>();
+            let mut readers = Vec::new();
+            if let Some(stdout) = stdout {
+                readers.push(spawn_reader(stdout, tx.clone(), true));
+            }
+            if let Some(stderr) = stderr {
+                readers.push(spawn_reader(stderr, tx.clone(), false));
+            }
+            drop(tx);
+            let timeout_secs = request.timeout_secs.min(cfg.policy.max_timeout_secs).max(1);
+            let final_status;
+            loop {
+                let mut out = String::new();
+                let mut err = String::new();
+                while let Ok(chunk) = rx.try_recv() {
+                    match chunk {
+                        OutputChunk::Stdout(t) => out.push_str(&t),
+                        OutputChunk::Stderr(t) => err.push_str(&t),
+                    }
+                }
+                if !out.is_empty() || !err.is_empty() {
+                    let _ = send_job_update(
+                        &client,
+                        &cfg,
+                        &ShellAgentJobUpdateRequest {
+                            client_id: cfg.client_id.clone(),
+                            job_id: job_id.clone(),
+                            request_id: Some(request.request_id.clone()),
+                            status: "running".to_string(),
+                            stdout_chunk: (!out.is_empty()).then_some(out),
+                            stderr_chunk: (!err.is_empty()).then_some(err),
+                            exit_code: None,
+                            duration_ms: None,
+                            error: None,
+                        },
+                    );
+                }
+                match child.lock().unwrap().try_wait() {
+                    Ok(Some(status)) => {
+                        let stopped = stop_requested.load(Ordering::SeqCst);
+                        final_status = (
+                            if stopped {
+                                "stopped"
+                            } else if status.success() {
+                                "completed"
+                            } else {
+                                "failed"
+                            }
+                            .to_string(),
+                            Some(status.code().unwrap_or(-1)),
+                            if stopped {
+                                Some("job stopped by request".to_string())
+                            } else {
+                                None
+                            },
+                        );
+                        break;
+                    }
+                    Ok(None) => {
+                        if start.elapsed() >= Duration::from_secs(timeout_secs) {
+                            stop_requested.store(true, Ordering::SeqCst);
+                            let _ = kill_child_group(&child);
+                            final_status = (
+                                "timeout".to_string(),
+                                Some(-1),
+                                Some(format!("job timed out after {} seconds", timeout_secs)),
+                            );
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        final_status = (
+                            "failed".to_string(),
+                            None,
+                            Some(format!("failed to wait job: {}", e)),
+                        );
+                        break;
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(JOB_UPDATE_INTERVAL_MS));
+            }
+            for reader in readers {
+                let _ = reader.join();
+            }
+            let mut out = String::new();
+            let mut err = String::new();
+            while let Ok(chunk) = rx.try_recv() {
+                match chunk {
+                    OutputChunk::Stdout(t) => out.push_str(&t),
+                    OutputChunk::Stderr(t) => err.push_str(&t),
+                }
+            }
+            let _ = send_job_update(
+                &client,
+                &cfg,
+                &ShellAgentJobUpdateRequest {
+                    client_id: cfg.client_id.clone(),
+                    job_id: job_id.clone(),
+                    request_id: Some(request.request_id),
+                    status: final_status.0,
+                    stdout_chunk: (!out.is_empty()).then_some(out),
+                    stderr_chunk: (!err.is_empty()).then_some(err),
+                    exit_code: final_status.1,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: final_status.2,
+                },
+            );
+            jobs.lock().unwrap().remove(&job_id);
+        });
+    }
+
+    fn stop(&self, job_id: &str) -> Result<(), String> {
+        let (child, stop_requested) = {
+            let jobs = self.jobs.lock().unwrap();
+            let Some(job) = jobs.get(job_id) else {
+                return Err(format!("unknown local job: {}", job_id));
+            };
+            (job.child.clone(), job.stop_requested.clone())
+        };
+        stop_requested.store(true, Ordering::SeqCst);
+        kill_child_group(&child).map_err(|e| format!("failed to kill job {}: {}", job_id, e))
+    }
+}
+
+fn handle_one_poll(client: &Client, cfg: &AgentConfig, jobs: &JobManager) -> Result<bool, String> {
     let poll = ShellAgentPollRequest {
         client_id: cfg.client_id.clone(),
     };
@@ -408,29 +711,45 @@ fn handle_one_poll(client: &Client, cfg: &AgentConfig) -> Result<bool, String> {
     let Some(request) = response.request else {
         return Ok(false);
     };
-    let result = run_shell(
-        &cfg.policy,
-        request.cwd.as_deref(),
-        &request.command,
-        request.timeout_secs,
-    );
-    let body = ShellAgentResultRequest {
-        client_id: cfg.client_id.clone(),
-        request_id: request.request_id,
-        exit_code: result.exit_code,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        duration_ms: result.duration_ms,
-        error: result.error,
-    };
-    let response: ShellAgentResultResponse =
-        post_json(client, cfg, "/api/shell/agent/result", &body)?;
-    if response.success {
-        Ok(true)
-    } else {
-        Err(response
-            .error
-            .unwrap_or_else(|| "result submission failed without error".to_string()))
+    match request.kind.as_str() {
+        "start_job" => {
+            jobs.start(client.clone(), cfg.clone(), request);
+            Ok(true)
+        }
+        "stop_job" => {
+            if let Some(job_id) = request.job_id.as_deref() {
+                if let Err(e) = jobs.stop(job_id) {
+                    eprintln!("private-drop-agent stop_job error: {}", e);
+                }
+            }
+            Ok(true)
+        }
+        _ => {
+            let result = run_shell(
+                &cfg.policy,
+                request.cwd.as_deref(),
+                &request.command,
+                request.timeout_secs,
+            );
+            let body = ShellAgentResultRequest {
+                client_id: cfg.client_id.clone(),
+                request_id: request.request_id,
+                exit_code: result.exit_code,
+                stdout: result.stdout,
+                stderr: result.stderr,
+                duration_ms: result.duration_ms,
+                error: result.error,
+            };
+            let response: ShellAgentResultResponse =
+                post_json(client, cfg, "/api/shell/agent/result", &body)?;
+            if response.success {
+                Ok(true)
+            } else {
+                Err(response
+                    .error
+                    .unwrap_or_else(|| "result submission failed without error".to_string()))
+            }
+        }
     }
 }
 
@@ -439,13 +758,14 @@ fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("failed to create http client: {}", e))?;
+    let jobs = JobManager::default();
     register(&client, &cfg)?;
     eprintln!(
         "private-drop-agent registered client_id={} server={}",
         cfg.client_id, cfg.server_url
     );
     loop {
-        match handle_one_poll(&client, &cfg) {
+        match handle_one_poll(&client, &cfg, &jobs) {
             Ok(ran_request) => {
                 if once {
                     return Ok(());

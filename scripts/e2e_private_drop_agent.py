@@ -162,7 +162,56 @@ max_output_bytes = 262144
                 )
                 assert job_log["success"], job_log
                 assert job_log["stdout"] == "job-ok\n", job_log
-                print("AGENT_E2E_OK", result["request_id"], result["client_id"], job_id)
+
+                stop_start = post(
+                    port,
+                    token,
+                    "/api/shell/job",
+                    {
+                        "op": "start",
+                        "client_id": client_id,
+                        "cwd": "/tmp",
+                        "command": "for i in 1 2 3 4 5; do echo tick-$i; sleep 1; done",
+                        "timeout_secs": 20,
+                    },
+                )
+                assert stop_start["success"], stop_start
+                stop_job_id = stop_start["job"]["job_id"]
+                for _ in range(50):
+                    stop_log = post(
+                        port,
+                        token,
+                        "/api/shell/job",
+                        {"op": "log", "job_id": stop_job_id, "since_stdout_line": 1},
+                    )
+                    assert stop_log["success"], stop_log
+                    if "tick-1" in (stop_log.get("stdout") or ""):
+                        break
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError(f"job produced no realtime log: {stop_job_id}")
+                stopped = post(
+                    port,
+                    token,
+                    "/api/shell/job",
+                    {"op": "stop", "job_id": stop_job_id},
+                )
+                assert stopped["success"], stopped
+                for _ in range(50):
+                    stop_status = post(
+                        port,
+                        token,
+                        "/api/shell/job",
+                        {"op": "status", "job_id": stop_job_id},
+                    )
+                    assert stop_status["success"], stop_status
+                    if stop_status["job"]["status"] in ("stopped", "failed", "timeout"):
+                        break
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError(f"job did not stop: {stop_job_id}")
+                assert stop_status["job"]["status"] == "stopped", stop_status
+                print("AGENT_E2E_OK", result["request_id"], result["client_id"], job_id, stop_job_id)
             finally:
                 if agent is not None:
                     agent.terminate()

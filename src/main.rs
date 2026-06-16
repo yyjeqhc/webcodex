@@ -20,6 +20,8 @@ mod drop_api;
 mod models;
 mod openapi;
 mod projects;
+mod shell_client;
+mod shell_protocol;
 mod web;
 
 pub(crate) use auth::{get_config, get_db, json_error, AuthMiddleware};
@@ -44,6 +46,10 @@ pub use models::{
 };
 pub(crate) use openapi::{
     codex_openapi_compact_json, codex_openapi_gpt_json, codex_openapi_json, openapi_json,
+};
+pub(crate) use shell_client::{
+    shell_agent_poll, shell_agent_register, shell_agent_result, shell_clients, shell_run,
+    ShellClientRegistry,
 };
 pub(crate) use web::{
     action_session_detail_page, action_sessions_page, agent_playground_page, channel_page,
@@ -115,6 +121,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Arc::new(config);
     let db = Arc::new(db);
     let projects_state = Arc::new(projects_state);
+    let shell_registry = Arc::new(ShellClientRegistry::default());
 
     let api_router = Router::with_path("api")
         .push(Router::with_path("health").get(health))
@@ -148,6 +155,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("desktop/tasks/{id}").get(get_desktop_task_detail))
                 .push(Router::with_path("desktop/tasks/{id}/claim").post(claim_desktop_task))
                 .push(Router::with_path("desktop/tasks/{id}/event").post(append_desktop_task_event))
+                .push(Router::with_path("shell/clients").post(shell_clients))
+                .push(Router::with_path("shell/run").post(shell_run))
+                .push(Router::with_path("shell/agent/register").post(shell_agent_register))
+                .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
+                .push(Router::with_path("shell/agent/result").post(shell_agent_result))
                 .push(Router::with_path("agent/run").post(agent::run_agent))
                 .push(
                     Router::with_path("agent/specs")
@@ -189,6 +201,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .hoop(affix_state::inject(config.clone()))
         .hoop(affix_state::inject(db.clone()))
         .hoop(affix_state::inject(projects_state.clone()))
+        .hoop(affix_state::inject(shell_registry.clone()))
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)

@@ -18,6 +18,7 @@ const MAX_CWD_LEN: usize = 1_024;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
+const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
 
 #[derive(Debug, Clone)]
 struct ShellClientRecord {
@@ -250,6 +251,34 @@ fn is_final_job_status(status: &str) -> bool {
         status,
         "completed" | "failed" | "stopped" | "timeout" | "lost"
     )
+}
+
+fn client_is_connected_locked(inner: &ShellClientRegistryInner, client_id: &str) -> bool {
+    inner
+        .clients
+        .get(client_id)
+        .map(|client| now_ts().saturating_sub(client.last_seen) <= CLIENT_ONLINE_WINDOW_SECS)
+        .unwrap_or(false)
+}
+
+fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, job_id: &str) {
+    let Some(job) = inner.jobs_by_id.get(job_id) else {
+        return;
+    };
+    if is_final_job_status(&job.status)
+        || !matches!(job.status.as_str(), "running" | "stop_requested")
+    {
+        return;
+    }
+    let client_id = job.client_id.clone();
+    if client_is_connected_locked(inner, &client_id) {
+        return;
+    }
+    if let Some(job) = inner.jobs_by_id.get_mut(job_id) {
+        job.status = "lost".to_string();
+        job.ended_at = Some(now_ts());
+        job.error = Some("shell client went stale while job was running".to_string());
+    }
 }
 
 impl ShellClientRegistry {
@@ -507,7 +536,8 @@ impl ShellClientRegistry {
 
     pub async fn get_job(&self, job_id: &str) -> Result<ShellJobInfo, String> {
         validate_id(job_id, "job_id")?;
-        let inner = self.inner.lock().await;
+        let mut inner = self.inner.lock().await;
+        refresh_job_status_locked(&mut inner, job_id);
         let Some(job) = inner.jobs_by_id.get(job_id) else {
             return Err(format!("unknown shell job: {}", job_id));
         };
@@ -515,7 +545,11 @@ impl ShellClientRegistry {
     }
 
     pub async fn list_jobs(&self, limit: Option<usize>) -> Vec<ShellJobInfo> {
-        let inner = self.inner.lock().await;
+        let mut inner = self.inner.lock().await;
+        let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
+        for job_id in job_ids {
+            refresh_job_status_locked(&mut inner, &job_id);
+        }
         let mut jobs = inner.jobs_by_id.values().cloned().collect::<Vec<_>>();
         jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         jobs.into_iter()
@@ -532,7 +566,8 @@ impl ShellClientRegistry {
         tail_lines: Option<usize>,
     ) -> Result<(ShellJobInfo, Option<String>, Option<String>, usize, usize), String> {
         validate_id(job_id, "job_id")?;
-        let inner = self.inner.lock().await;
+        let mut inner = self.inner.lock().await;
+        refresh_job_status_locked(&mut inner, job_id);
         let Some(job) = inner.jobs_by_id.get(job_id) else {
             return Err(format!("unknown shell job: {}", job_id));
         };
@@ -667,7 +702,7 @@ impl ShellClientRegistry {
             .map(VecDeque::len)
             .unwrap_or(0);
         let age = now_ts().saturating_sub(client.last_seen);
-        let connected = age <= 60;
+        let connected = age <= CLIENT_ONLINE_WINDOW_SECS;
         Some(ShellClientView {
             client_id: client.client_id.clone(),
             display_name: client.display_name.clone(),
@@ -1340,5 +1375,53 @@ mod tests {
             .await
             .unwrap();
         assert!(polled.is_none());
+    }
+
+    #[tokio::test]
+    async fn registry_marks_running_job_lost_when_client_stale() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("oe".to_string()),
+                    cwd: None,
+                    command: Some("sleep 10".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                },
+                "test".to_string(),
+            )
+            .await
+            .unwrap();
+        let _ = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        {
+            let mut inner = registry.inner.lock().await;
+            let client = inner.clients.get_mut("oe").unwrap();
+            client.last_seen = now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1;
+        }
+        let lost = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(lost.status, "lost");
+        assert!(lost.error.unwrap().contains("stale"));
     }
 }

@@ -125,7 +125,44 @@ max_output_bytes = 262144
                 assert result["success"], result
                 assert result["stdout"] == "agent-ok", result
                 assert result["exit_code"] == 0, result
-                print("AGENT_E2E_OK", result["request_id"], result["client_id"])
+
+                job_start = post(
+                    port,
+                    token,
+                    "/api/shell/job",
+                    {
+                        "op": "start",
+                        "client_id": client_id,
+                        "cwd": "/tmp",
+                        "command": "printf job-ok",
+                        "timeout_secs": 5,
+                    },
+                )
+                assert job_start["success"], job_start
+                job_id = job_start["job"]["job_id"]
+                for _ in range(50):
+                    job_status = post(
+                        port,
+                        token,
+                        "/api/shell/job",
+                        {"op": "status", "job_id": job_id},
+                    )
+                    assert job_status["success"], job_status
+                    if job_status["job"]["status"] in ("completed", "failed"):
+                        break
+                    time.sleep(0.1)
+                else:
+                    raise RuntimeError(f"job did not finish: {job_id}")
+                assert job_status["job"]["status"] == "completed", job_status
+                job_log = post(
+                    port,
+                    token,
+                    "/api/shell/job",
+                    {"op": "log", "job_id": job_id, "since_stdout_line": 1},
+                )
+                assert job_log["success"], job_log
+                assert job_log["stdout"] == "job-ok\n", job_log
+                print("AGENT_E2E_OK", result["request_id"], result["client_id"], job_id)
             finally:
                 if agent is not None:
                     agent.terminate()

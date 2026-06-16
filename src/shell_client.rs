@@ -2,7 +2,7 @@ use crate::shell_protocol::{
     ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentResultRequest,
     ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
     ShellClientRegisterRequest, ShellClientRegisterResponse, ShellClientView, ShellClientsResponse,
-    ShellRunRequest, ShellRunResponse,
+    ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
 };
 use salvo::prelude::*;
 use std::collections::{HashMap, VecDeque};
@@ -32,6 +32,25 @@ struct ShellClientRecord {
 struct PendingShellRequest {
     request: ShellAgentShellRequest,
     waiter: Option<oneshot::Sender<ShellRunResponse>>,
+    job_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ShellJobRecord {
+    job_id: String,
+    request_id: Option<String>,
+    client_id: String,
+    cwd: Option<String>,
+    command_preview: String,
+    status: String,
+    created_at: i64,
+    started_at: Option<i64>,
+    ended_at: Option<i64>,
+    exit_code: Option<i32>,
+    duration_ms: Option<u64>,
+    stdout: Option<String>,
+    stderr: Option<String>,
+    error: Option<String>,
 }
 
 #[derive(Debug, Default)]
@@ -39,6 +58,8 @@ struct ShellClientRegistryInner {
     clients: HashMap<String, ShellClientRecord>,
     pending_by_id: HashMap<String, PendingShellRequest>,
     queues_by_client: HashMap<String, VecDeque<String>>,
+    jobs_by_id: HashMap<String, ShellJobRecord>,
+    request_to_job: HashMap<String, String>,
 }
 
 #[derive(Debug, Default)]
@@ -157,6 +178,53 @@ fn truncate_output(value: Option<String>) -> Option<String> {
     })
 }
 
+fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
+    ShellJobInfo {
+        job_id: job.job_id.clone(),
+        request_id: job.request_id.clone(),
+        client_id: job.client_id.clone(),
+        cwd: job.cwd.clone(),
+        command_preview: job.command_preview.clone(),
+        status: job.status.clone(),
+        created_at: job.created_at,
+        started_at: job.started_at,
+        ended_at: job.ended_at,
+        exit_code: job.exit_code,
+        duration_ms: job.duration_ms,
+        error: job.error.clone(),
+    }
+}
+
+fn select_lines(
+    value: Option<&String>,
+    since_line: Option<usize>,
+    tail_lines: Option<usize>,
+) -> (Option<String>, usize) {
+    let Some(value) = value else {
+        return (Some(String::new()), since_line.unwrap_or(1));
+    };
+    let lines = value.lines().collect::<Vec<_>>();
+    if let Some(tail) = tail_lines.filter(|n| *n > 0) {
+        let start = lines.len().saturating_sub(tail);
+        let selected = lines[start..].join("\n");
+        let text = if selected.is_empty() {
+            selected
+        } else {
+            format!("{}\n", selected)
+        };
+        return (Some(text), lines.len() + 1);
+    }
+    let start_line = since_line.unwrap_or(1).max(1);
+    let start_idx = start_line.saturating_sub(1).min(lines.len());
+    let selected = lines[start_idx..].join("\n");
+    let text = if selected.is_empty() {
+        selected
+    } else {
+        format!("{}\n", selected)
+    };
+    (Some(text), lines.len() + 1)
+}
+
 impl ShellClientRegistry {
     pub async fn register(
         &self,
@@ -221,6 +289,7 @@ impl ShellClientRegistry {
             PendingShellRequest {
                 request,
                 waiter: Some(tx),
+                job_id: None,
             },
         );
         Ok((request_id, rx))
@@ -254,9 +323,22 @@ impl ShellClientRegistry {
             let Some(request_id) = request_id else {
                 return Ok(None);
             };
-            if let Some(pending) = inner.pending_by_id.get(&request_id) {
-                return Ok(Some(pending.request.clone()));
+            let Some((request, job_id)) = inner
+                .pending_by_id
+                .get(&request_id)
+                .map(|pending| (pending.request.clone(), pending.job_id.clone()))
+            else {
+                continue;
+            };
+            if let Some(job_id) = job_id {
+                if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
+                    if job.status == "queued" {
+                        job.status = "running".to_string();
+                        job.started_at = Some(now_ts());
+                    }
+                }
             }
+            return Ok(Some(request));
         }
     }
 
@@ -276,16 +358,36 @@ impl ShellClientRegistry {
         if pending.request.client_id != body.client_id {
             return Err("request_id does not belong to client_id".to_string());
         }
+        let request_id = body.request_id.clone();
+        let client_id = body.client_id.clone();
         let error = body.error.clone();
+        let stdout = truncate_output(body.stdout);
+        let stderr = truncate_output(body.stderr);
+        if let Some(job_id) = pending.job_id.clone() {
+            inner.request_to_job.remove(&request_id);
+            if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
+                job.status = if error.is_none() && body.exit_code == Some(0) {
+                    "completed".to_string()
+                } else {
+                    "failed".to_string()
+                };
+                job.ended_at = Some(now_ts());
+                job.exit_code = body.exit_code;
+                job.duration_ms = body.duration_ms;
+                job.stdout = stdout.clone();
+                job.stderr = stderr.clone();
+                job.error = error.clone();
+            }
+        }
         let response = ShellRunResponse {
             success: error.is_none() && body.exit_code == Some(0),
-            request_id: body.request_id,
-            client_id: body.client_id,
+            request_id,
+            client_id,
             cwd: pending.request.cwd,
             command_preview: command_preview(&pending.request.command),
             exit_code: body.exit_code,
-            stdout: truncate_output(body.stdout),
-            stderr: truncate_output(body.stderr),
+            stdout,
+            stderr,
             duration_ms: body.duration_ms,
             error,
         };
@@ -293,6 +395,156 @@ impl ShellClientRegistry {
             let _ = waiter.send(response);
         }
         Ok(())
+    }
+
+    pub async fn start_job(
+        &self,
+        body: ShellJobOpRequest,
+        requested_by: String,
+    ) -> Result<ShellJobInfo, String> {
+        let client_id = body
+            .client_id
+            .clone()
+            .ok_or_else(|| "client_id is required for op=start".to_string())?;
+        let command = body
+            .command
+            .clone()
+            .ok_or_else(|| "command is required for op=start".to_string())?;
+        let run = ShellRunRequest {
+            client_id: client_id.clone(),
+            cwd: body.cwd.clone(),
+            command: command.clone(),
+            timeout_secs: body.timeout_secs.unwrap_or(120),
+            wait_timeout_secs: 0,
+        };
+        validate_run_request(&run)?;
+        let request_id = Uuid::new_v4().to_string();
+        let job_id = Uuid::new_v4().to_string();
+        let created_at = now_ts();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.clone(),
+            cwd: run.cwd.clone().map(|cwd| cwd.trim().to_string()),
+            command,
+            timeout_secs: run.timeout_secs,
+            requested_by,
+            created_at,
+        };
+        let mut inner = self.inner.lock().await;
+        if !inner.clients.contains_key(&client_id) {
+            return Err(format!("unknown shell client: {}", client_id));
+        }
+        inner
+            .queues_by_client
+            .entry(client_id.clone())
+            .or_default()
+            .push_back(request_id.clone());
+        let job = ShellJobRecord {
+            job_id: job_id.clone(),
+            request_id: Some(request_id.clone()),
+            client_id: client_id.clone(),
+            cwd: run.cwd.clone(),
+            command_preview: command_preview(&run.command),
+            status: "queued".to_string(),
+            created_at,
+            started_at: None,
+            ended_at: None,
+            exit_code: None,
+            duration_ms: None,
+            stdout: None,
+            stderr: None,
+            error: None,
+        };
+        inner.pending_by_id.insert(
+            request_id.clone(),
+            PendingShellRequest {
+                request,
+                waiter: None,
+                job_id: Some(job_id.clone()),
+            },
+        );
+        inner.request_to_job.insert(request_id, job_id.clone());
+        inner.jobs_by_id.insert(job_id.clone(), job);
+        Ok(job_view(
+            inner.jobs_by_id.get(&job_id).expect("job just inserted"),
+        ))
+    }
+
+    pub async fn get_job(&self, job_id: &str) -> Result<ShellJobInfo, String> {
+        validate_id(job_id, "job_id")?;
+        let inner = self.inner.lock().await;
+        let Some(job) = inner.jobs_by_id.get(job_id) else {
+            return Err(format!("unknown shell job: {}", job_id));
+        };
+        Ok(job_view(job))
+    }
+
+    pub async fn list_jobs(&self, limit: Option<usize>) -> Vec<ShellJobInfo> {
+        let inner = self.inner.lock().await;
+        let mut jobs = inner.jobs_by_id.values().cloned().collect::<Vec<_>>();
+        jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        jobs.into_iter()
+            .take(limit.unwrap_or(20).clamp(1, 100))
+            .map(|job| job_view(&job))
+            .collect()
+    }
+
+    pub async fn job_log(
+        &self,
+        job_id: &str,
+        since_stdout_line: Option<usize>,
+        since_stderr_line: Option<usize>,
+        tail_lines: Option<usize>,
+    ) -> Result<(ShellJobInfo, Option<String>, Option<String>, usize, usize), String> {
+        validate_id(job_id, "job_id")?;
+        let inner = self.inner.lock().await;
+        let Some(job) = inner.jobs_by_id.get(job_id) else {
+            return Err(format!("unknown shell job: {}", job_id));
+        };
+        let (stdout, next_stdout_line) =
+            select_lines(job.stdout.as_ref(), since_stdout_line, tail_lines);
+        let (stderr, next_stderr_line) =
+            select_lines(job.stderr.as_ref(), since_stderr_line, tail_lines);
+        Ok((
+            job_view(job),
+            stdout,
+            stderr,
+            next_stdout_line,
+            next_stderr_line,
+        ))
+    }
+
+    pub async fn stop_job(&self, job_id: &str) -> Result<ShellJobInfo, String> {
+        validate_id(job_id, "job_id")?;
+        let mut inner = self.inner.lock().await;
+        let Some(job) = inner.jobs_by_id.get(job_id).cloned() else {
+            return Err(format!("unknown shell job: {}", job_id));
+        };
+        match job.status.as_str() {
+            "queued" => {
+                if let Some(request_id) = &job.request_id {
+                    inner.pending_by_id.remove(request_id);
+                    inner.request_to_job.remove(request_id);
+                    for queue in inner.queues_by_client.values_mut() {
+                        queue.retain(|id| id != request_id);
+                    }
+                }
+                let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
+                job.status = "stopped".to_string();
+                job.ended_at = Some(now_ts());
+                job.error = Some("job stopped before agent picked it up".to_string());
+                Ok(job_view(job))
+            }
+            "running" => {
+                let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
+                job.status = "stop_requested".to_string();
+                job.error = Some(
+                    "stop requested; current agent cannot kill running process yet".to_string(),
+                );
+                Ok(job_view(job))
+            }
+            _ => Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists"))),
+        }
     }
 
     fn client_view_locked(
@@ -565,6 +817,178 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
     }
 }
 
+fn shell_job_error(op: String, error: String) -> Json<ShellJobOpResponse> {
+    Json(ShellJobOpResponse {
+        success: false,
+        op,
+        job: None,
+        jobs: Vec::new(),
+        stdout: None,
+        stderr: None,
+        next_stdout_line: None,
+        next_stderr_line: None,
+        error: Some(error),
+    })
+}
+
+#[handler]
+pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(registry) = get_registry(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(shell_job_error(
+            "unknown".to_string(),
+            "Shell client registry not configured".to_string(),
+        ));
+        return;
+    };
+    let body: ShellJobOpRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(shell_job_error(
+                "unknown".to_string(),
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let op = body.op.clone();
+    match op.as_str() {
+        "start" => match registry
+            .start_job(body, "gpt_action_or_web".to_string())
+            .await
+        {
+            Ok(job) => res.render(Json(ShellJobOpResponse {
+                success: true,
+                op,
+                job: Some(job),
+                jobs: Vec::new(),
+                stdout: None,
+                stderr: None,
+                next_stdout_line: None,
+                next_stderr_line: None,
+                error: None,
+            })),
+            Err(e) => {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(shell_job_error(op, e));
+            }
+        },
+        "status" => {
+            let Some(job_id) = body.job_id.as_deref() else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(shell_job_error(
+                    op,
+                    "job_id is required for op=status".to_string(),
+                ));
+                return;
+            };
+            match registry.get_job(job_id).await {
+                Ok(job) => res.render(Json(ShellJobOpResponse {
+                    success: true,
+                    op,
+                    job: Some(job),
+                    jobs: Vec::new(),
+                    stdout: None,
+                    stderr: None,
+                    next_stdout_line: None,
+                    next_stderr_line: None,
+                    error: None,
+                })),
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(shell_job_error(op, e));
+                }
+            }
+        }
+        "list" => {
+            let jobs = registry.list_jobs(body.limit).await;
+            res.render(Json(ShellJobOpResponse {
+                success: true,
+                op,
+                job: None,
+                jobs,
+                stdout: None,
+                stderr: None,
+                next_stdout_line: None,
+                next_stderr_line: None,
+                error: None,
+            }));
+        }
+        "log" => {
+            let Some(job_id) = body.job_id.as_deref() else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(shell_job_error(
+                    op,
+                    "job_id is required for op=log".to_string(),
+                ));
+                return;
+            };
+            match registry
+                .job_log(
+                    job_id,
+                    body.since_stdout_line,
+                    body.since_stderr_line,
+                    body.tail_lines,
+                )
+                .await
+            {
+                Ok((job, stdout, stderr, next_stdout_line, next_stderr_line)) => {
+                    res.render(Json(ShellJobOpResponse {
+                        success: true,
+                        op,
+                        job: Some(job),
+                        jobs: Vec::new(),
+                        stdout,
+                        stderr,
+                        next_stdout_line: Some(next_stdout_line),
+                        next_stderr_line: Some(next_stderr_line),
+                        error: None,
+                    }))
+                }
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(shell_job_error(op, e));
+                }
+            }
+        }
+        "stop" => {
+            let Some(job_id) = body.job_id.as_deref() else {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(shell_job_error(
+                    op,
+                    "job_id is required for op=stop".to_string(),
+                ));
+                return;
+            };
+            match registry.stop_job(job_id).await {
+                Ok(job) => res.render(Json(ShellJobOpResponse {
+                    success: true,
+                    op,
+                    job: Some(job),
+                    jobs: Vec::new(),
+                    stdout: None,
+                    stderr: None,
+                    next_stdout_line: None,
+                    next_stderr_line: None,
+                    error: None,
+                })),
+                Err(e) => {
+                    res.status_code(StatusCode::BAD_REQUEST);
+                    res.render(shell_job_error(op, e));
+                }
+            }
+        }
+        _ => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(shell_job_error(
+                op,
+                "op must be one of start, status, log, stop, list".to_string(),
+            ));
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -658,5 +1082,114 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("unknown shell client"));
+    }
+
+    #[tokio::test]
+    async fn registry_shell_job_start_poll_complete_and_log() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("oe".to_string()),
+                    cwd: Some("/tmp".to_string()),
+                    command: Some("printf hello".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                },
+                "test".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(job.status, "queued");
+        let polled = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(polled.command, "printf hello");
+        let running = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(running.status, "running");
+        registry
+            .complete(ShellAgentResultRequest {
+                client_id: "oe".to_string(),
+                request_id: polled.request_id,
+                exit_code: Some(0),
+                stdout: Some("hello\n".to_string()),
+                stderr: Some(String::new()),
+                duration_ms: Some(20),
+                error: None,
+            })
+            .await
+            .unwrap();
+        let done = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(done.status, "completed");
+        assert_eq!(done.exit_code, Some(0));
+        let (_info, stdout, stderr, next_stdout, next_stderr) = registry
+            .job_log(&job.job_id, Some(1), Some(1), None)
+            .await
+            .unwrap();
+        assert_eq!(stdout.as_deref(), Some("hello\n"));
+        assert_eq!(stderr.as_deref(), Some(""));
+        assert_eq!(next_stdout, 2);
+        assert_eq!(next_stderr, 1);
+    }
+
+    #[tokio::test]
+    async fn registry_shell_job_stop_cancels_queued_job() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("oe".to_string()),
+                    cwd: None,
+                    command: Some("sleep 10".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                },
+                "test".to_string(),
+            )
+            .await
+            .unwrap();
+        let stopped = registry.stop_job(&job.job_id).await.unwrap();
+        assert_eq!(stopped.status, "stopped");
+        let polled = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+            })
+            .await
+            .unwrap();
+        assert!(polled.is_none());
     }
 }

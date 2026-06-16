@@ -48,8 +48,8 @@ pub(crate) use openapi::{
     codex_openapi_compact_json, codex_openapi_gpt_json, codex_openapi_json, openapi_json,
 };
 pub(crate) use shell_client::{
-    shell_agent_poll, shell_agent_register, shell_agent_result, shell_clients, shell_run,
-    ShellClientRegistry,
+    shell_agent_poll, shell_agent_register, shell_agent_result, shell_clients, shell_job,
+    shell_run, ShellClientRegistry,
 };
 pub(crate) use web::{
     action_session_detail_page, action_sessions_page, agent_playground_page, channel_page,
@@ -157,6 +157,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("desktop/tasks/{id}/event").post(append_desktop_task_event))
                 .push(Router::with_path("shell/clients").post(shell_clients))
                 .push(Router::with_path("shell/run").post(shell_run))
+                .push(Router::with_path("shell/job").post(shell_job))
                 .push(Router::with_path("shell/agent/register").post(shell_agent_register))
                 .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
                 .push(Router::with_path("shell/agent/result").post(shell_agent_result))

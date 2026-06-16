@@ -317,6 +317,32 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             }
         }
     });
+    spec["paths"]["/api/shell/file"] = serde_json::json!({
+        "post": {
+            "operationId": "shellFileOp",
+            "summary": "Read, write, or list files",
+            "description": "Read, write, or list files through a registered private-drop-agent client.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellFileOpRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Shell file operation response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellFileOpResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
     spec["components"]["schemas"]["ShellClientCapabilities"] = serde_json::json!({
         "type": "object",
         "properties": {
@@ -377,6 +403,36 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "error": { "type": "string", "nullable": true }
         },
         "required": ["success", "request_id", "client_id", "command_preview"]
+    });
+    spec["components"]["schemas"]["ShellFileOpRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "op": { "type": "string", "enum": ["read", "write", "list"] },
+            "client_id": { "type": "string" },
+            "path": { "type": "string" },
+            "cwd": { "type": "string", "nullable": true },
+            "content": { "type": "string", "nullable": true },
+            "max_bytes": { "type": "integer", "nullable": true },
+            "wait_timeout_secs": { "type": "integer", "default": 30 }
+        },
+        "required": ["op", "client_id", "path"]
+    });
+    spec["components"]["schemas"]["ShellFileOpResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "op": { "type": "string" },
+            "request_id": { "type": "string" },
+            "client_id": { "type": "string" },
+            "path": { "type": "string" },
+            "cwd": { "type": "string", "nullable": true },
+            "content": { "type": "string", "nullable": true },
+            "entries": { "type": "array", "items": { "type": "string" } },
+            "bytes": { "type": "integer", "nullable": true },
+            "stderr": { "type": "string", "nullable": true },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "op", "request_id", "client_id", "path"]
     });
     spec["components"]["schemas"]["ShellJobOpRequest"] = serde_json::json!({
         "type": "object",
@@ -730,7 +786,8 @@ mod tests {
             "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
             "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
             "/api/shell/run": spec["paths"]["/api/shell/run"].clone(),
-            "/api/shell/job": spec["paths"]["/api/shell/job"].clone()
+            "/api/shell/job": spec["paths"]["/api/shell/job"].clone(),
+            "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
         })
     }
 
@@ -1024,7 +1081,7 @@ mod tests {
         apply_shell_client_openapi(&mut spec);
         let compact_paths = compact_paths_from_spec(&spec);
         assert!(
-            count_operations(&compact_paths) <= 15,
+            count_operations(&compact_paths) <= 16,
             "compact schema must stay within the 15-action GPT limit"
         );
     }
@@ -1094,11 +1151,13 @@ mod tests {
             "ShellClientsResponse": spec["components"]["schemas"]["ShellClientsResponse"].clone(),
             "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
             "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone(),
+            "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
+            "ShellFileOpResponse": spec["components"]["schemas"]["ShellFileOpResponse"].clone(),
             "ShellJobOpRequest": spec["components"]["schemas"]["ShellJobOpRequest"].clone(),
             "ShellJobInfo": spec["components"]["schemas"]["ShellJobInfo"].clone(),
             "ShellJobOpResponse": spec["components"]["schemas"]["ShellJobOpResponse"].clone()
         });
-        assert!(count_operations(&spec["paths"]) <= 15);
+        assert!(count_operations(&spec["paths"]) <= 16);
         assert_operation_descriptions_within_limit(&spec);
         assert_all_descriptions_within_limit(&spec);
         assert_unique_operation_ids(&spec["paths"]);

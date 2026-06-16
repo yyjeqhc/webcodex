@@ -132,6 +132,12 @@ pub struct ShellAgentShellRequest {
     pub job_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_bytes: Option<usize>,
     pub command: String,
     pub timeout_secs: u64,
     pub requested_by: String,
@@ -194,6 +200,42 @@ pub struct ShellAgentJobUpdateResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub job: Option<ShellJobInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellFileOpRequest {
+    pub op: String,
+    pub client_id: String,
+    pub path: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    #[serde(default)]
+    pub content: Option<String>,
+    #[serde(default)]
+    pub max_bytes: Option<usize>,
+    #[serde(default = "default_wait_timeout_secs")]
+    pub wait_timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellFileOpResponse {
+    pub success: bool,
+    pub op: String,
+    pub request_id: String,
+    pub client_id: String,
+    pub path: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cwd: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub content: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub entries: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

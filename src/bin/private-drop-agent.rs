@@ -219,6 +219,8 @@ where
 fn register(client: &Client, cfg: &AgentConfig) -> Result<(), String> {
     let mut capabilities = cfg.capabilities.clone().unwrap_or_default();
     capabilities.jobs = true;
+    capabilities.file_read = true;
+    capabilities.file_write = true;
     let body = ShellClientRegisterRequest {
         client_id: cfg.client_id.clone(),
         display_name: cfg.display_name.clone(),
@@ -416,6 +418,195 @@ fn run_shell(
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some(e),
         },
+    }
+}
+
+fn resolve_requested_path(
+    policy: &AgentPolicy,
+    cwd: Option<&str>,
+    path: &str,
+) -> Result<PathBuf, String> {
+    if path.trim().is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    let raw_path = PathBuf::from(path);
+    let resolved = if raw_path.is_absolute() {
+        raw_path
+    } else {
+        let base = cwd
+            .map(PathBuf::from)
+            .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+        base.join(raw_path)
+    };
+    let parent_for_policy = if resolved.exists() {
+        resolved.clone()
+    } else {
+        resolved
+            .parent()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| resolved.clone())
+    };
+    cwd_allowed(policy, &parent_for_policy)?;
+    Ok(resolved)
+}
+
+fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -> CommandResult {
+    let Some(path) = request.path.as_deref() else {
+        return CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some("file request missing path".to_string()),
+        };
+    };
+    let start = Instant::now();
+    let resolved = match resolve_requested_path(policy, request.cwd.as_deref(), path) {
+        Ok(path) => path,
+        Err(e) => {
+            return CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(e),
+            }
+        }
+    };
+    match request.kind.as_str() {
+        "file_read" => {
+            let max = request
+                .max_bytes
+                .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES)
+                .min(policy.max_output_bytes);
+            match std::fs::read(&resolved) {
+                Ok(bytes) => {
+                    if bytes.len() > max {
+                        CommandResult {
+                            exit_code: None,
+                            stdout: None,
+                            stderr: None,
+                            duration_ms: Some(start.elapsed().as_millis() as u64),
+                            error: Some(format!(
+                                "file too large: {} bytes exceeds max_bytes {}",
+                                bytes.len(),
+                                max
+                            )),
+                        }
+                    } else {
+                        CommandResult {
+                            exit_code: Some(0),
+                            stdout: Some(String::from_utf8_lossy(&bytes).to_string()),
+                            stderr: Some(String::new()),
+                            duration_ms: Some(start.elapsed().as_millis() as u64),
+                            error: None,
+                        }
+                    }
+                }
+                Err(e) => CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!("failed to read {}: {}", resolved.display(), e)),
+                },
+            }
+        }
+        "file_write" => {
+            let content = request.content.clone().unwrap_or_default();
+            if content.len() > policy.max_output_bytes {
+                return CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!(
+                        "content too large: {} bytes exceeds max_output_bytes {}",
+                        content.len(),
+                        policy.max_output_bytes
+                    )),
+                };
+            }
+            match std::fs::write(&resolved, content.as_bytes()) {
+                Ok(()) => CommandResult {
+                    exit_code: Some(0),
+                    stdout: Some(content.len().to_string()),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: None,
+                },
+                Err(e) => CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!("failed to write {}: {}", resolved.display(), e)),
+                },
+            }
+        }
+        "file_list" => match std::fs::read_dir(&resolved) {
+            Ok(entries) => {
+                let mut names = Vec::new();
+                for entry in entries.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let suffix = entry
+                        .file_type()
+                        .ok()
+                        .filter(|t| t.is_dir())
+                        .map(|_| "/")
+                        .unwrap_or("");
+                    names.push(format!("{}{}", name, suffix));
+                }
+                names.sort();
+                CommandResult {
+                    exit_code: Some(0),
+                    stdout: Some(format!("{}\n", names.join("\n"))),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: None,
+                }
+            }
+            Err(e) => CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(format!("failed to list {}: {}", resolved.display(), e)),
+            },
+        },
+        _ => CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(format!("unknown file request kind: {}", request.kind)),
+        },
+    }
+}
+
+fn submit_result(
+    client: &Client,
+    cfg: &AgentConfig,
+    request_id: String,
+    result: CommandResult,
+) -> Result<bool, String> {
+    let body = ShellAgentResultRequest {
+        client_id: cfg.client_id.clone(),
+        request_id,
+        exit_code: result.exit_code,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        duration_ms: result.duration_ms,
+        error: result.error,
+    };
+    let response: ShellAgentResultResponse =
+        post_json(client, cfg, "/api/shell/agent/result", &body)?;
+    if response.success {
+        Ok(true)
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "result submission failed without error".to_string()))
     }
 }
 
@@ -724,6 +915,11 @@ fn handle_one_poll(client: &Client, cfg: &AgentConfig, jobs: &JobManager) -> Res
             }
             Ok(true)
         }
+        "file_read" | "file_write" | "file_list" => {
+            let request_id = request.request_id.clone();
+            let result = handle_file_request(&cfg.policy, &request);
+            submit_result(client, cfg, request_id, result)
+        }
         _ => {
             let result = run_shell(
                 &cfg.policy,
@@ -731,24 +927,7 @@ fn handle_one_poll(client: &Client, cfg: &AgentConfig, jobs: &JobManager) -> Res
                 &request.command,
                 request.timeout_secs,
             );
-            let body = ShellAgentResultRequest {
-                client_id: cfg.client_id.clone(),
-                request_id: request.request_id,
-                exit_code: result.exit_code,
-                stdout: result.stdout,
-                stderr: result.stderr,
-                duration_ms: result.duration_ms,
-                error: result.error,
-            };
-            let response: ShellAgentResultResponse =
-                post_json(client, cfg, "/api/shell/agent/result", &body)?;
-            if response.success {
-                Ok(true)
-            } else {
-                Err(response
-                    .error
-                    .unwrap_or_else(|| "result submission failed without error".to_string()))
-            }
+            submit_result(client, cfg, request.request_id, result)
         }
     }
 }

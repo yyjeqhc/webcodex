@@ -126,6 +126,48 @@ max_output_bytes = 262144
                 assert result["stdout"] == "agent-ok", result
                 assert result["exit_code"] == 0, result
 
+                file_path = "/tmp/private-drop-agent-e2e-file.txt"
+                file_write = post(
+                    port,
+                    token,
+                    "/api/shell/file",
+                    {
+                        "op": "write",
+                        "client_id": client_id,
+                        "path": file_path,
+                        "content": "file-ok\n",
+                        "wait_timeout_secs": 10,
+                    },
+                )
+                assert file_write["success"], file_write
+                assert file_write["bytes"] == len("file-ok\n"), file_write
+                file_read = post(
+                    port,
+                    token,
+                    "/api/shell/file",
+                    {
+                        "op": "read",
+                        "client_id": client_id,
+                        "path": file_path,
+                        "wait_timeout_secs": 10,
+                    },
+                )
+                assert file_read["success"], file_read
+                assert file_read["content"] == "file-ok\n", file_read
+                file_list = post(
+                    port,
+                    token,
+                    "/api/shell/file",
+                    {
+                        "op": "list",
+                        "client_id": client_id,
+                        "path": "/tmp",
+                        "wait_timeout_secs": 10,
+                    },
+                )
+                assert file_list["success"], file_list
+                assert "private-drop-agent-e2e-file.txt" in file_list["entries"], file_list
+
                 job_start = post(
                     port,
                     token,

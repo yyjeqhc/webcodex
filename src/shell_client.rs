@@ -2,8 +2,9 @@ use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
     ShellAgentPollResponse, ShellAgentResultRequest, ShellAgentResultResponse,
     ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellClientRegisterResponse, ShellClientView, ShellClientsResponse, ShellJobInfo,
-    ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
+    ShellClientRegisterResponse, ShellClientView, ShellClientsResponse, ShellFileOpRequest,
+    ShellFileOpResponse, ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest,
+    ShellRunResponse,
 };
 use salvo::prelude::*;
 use std::collections::{HashMap, VecDeque};
@@ -15,6 +16,8 @@ const MAX_CLIENT_ID_LEN: usize = 80;
 const MAX_CLIENT_FIELD_LEN: usize = 200;
 const MAX_COMMAND_LEN: usize = 8_000;
 const MAX_CWD_LEN: usize = 1_024;
+const MAX_FILE_PATH_LEN: usize = 2_048;
+const MAX_FILE_CONTENT_BYTES: usize = 512 * 1024;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
@@ -103,6 +106,56 @@ fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), St
         if value.contains('\0') {
             return Err(format!("{} cannot contain NUL bytes", field));
         }
+    }
+    Ok(())
+}
+
+fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
+    validate_id(&body.client_id, "client_id")?;
+    match body.op.as_str() {
+        "read" | "write" | "list" => {}
+        _ => return Err("op must be one of read, write, list".to_string()),
+    }
+    let path = body.path.trim();
+    if path.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    if body.path.len() > MAX_FILE_PATH_LEN {
+        return Err(format!(
+            "path is too long; maximum is {} bytes",
+            MAX_FILE_PATH_LEN
+        ));
+    }
+    if body.path.contains('\0') {
+        return Err("path cannot contain NUL bytes".to_string());
+    }
+    if let Some(cwd) = &body.cwd {
+        if cwd.len() > MAX_CWD_LEN {
+            return Err(format!("cwd is too long; maximum is {} bytes", MAX_CWD_LEN));
+        }
+        if cwd.contains('\0') {
+            return Err("cwd cannot contain NUL bytes".to_string());
+        }
+    }
+    if let Some(content) = &body.content {
+        if content.len() > MAX_FILE_CONTENT_BYTES {
+            return Err(format!(
+                "content is too large; maximum is {} bytes",
+                MAX_FILE_CONTENT_BYTES
+            ));
+        }
+        if body.op != "write" {
+            return Err("content is only allowed for op=write".to_string());
+        }
+    }
+    if body.op == "write" && body.content.is_none() {
+        return Err("content is required for op=write".to_string());
+    }
+    if body.wait_timeout_secs > MAX_SYNC_WAIT_SECS {
+        return Err(format!(
+            "wait_timeout_secs must be <= {} for shellFileOp",
+            MAX_SYNC_WAIT_SECS
+        ));
     }
     Ok(())
 }
@@ -314,6 +367,49 @@ impl ShellClientRegistry {
             .collect()
     }
 
+    pub async fn enqueue_file_op(
+        &self,
+        body: ShellFileOpRequest,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        validate_file_request(&body)?;
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        let kind = format!("file_{}", body.op);
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: body.client_id.clone(),
+            kind,
+            job_id: None,
+            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
+            path: Some(body.path.trim().to_string()),
+            content: body.content.clone(),
+            max_bytes: body.max_bytes,
+            command: String::new(),
+            timeout_secs: 30,
+            requested_by,
+            created_at: now_ts(),
+        };
+        let mut inner = self.inner.lock().await;
+        if !inner.clients.contains_key(&body.client_id) {
+            return Err(format!("unknown shell client: {}", body.client_id));
+        }
+        inner
+            .queues_by_client
+            .entry(body.client_id.clone())
+            .or_default()
+            .push_back(request_id.clone());
+        inner.pending_by_id.insert(
+            request_id.clone(),
+            PendingShellRequest {
+                request,
+                waiter: Some(tx),
+                job_id: None,
+            },
+        );
+        Ok((request_id, rx))
+    }
+
     pub async fn enqueue_run(
         &self,
         body: ShellRunRequest,
@@ -328,6 +424,9 @@ impl ShellClientRegistry {
             kind: "run_shell".to_string(),
             job_id: None,
             cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
+            path: None,
+            content: None,
+            max_bytes: None,
             command: body.command.clone(),
             timeout_secs: body.timeout_secs,
             requested_by,
@@ -489,6 +588,9 @@ impl ShellClientRegistry {
             kind: "start_job".to_string(),
             job_id: Some(job_id.clone()),
             cwd: run.cwd.clone().map(|cwd| cwd.trim().to_string()),
+            path: None,
+            content: None,
+            max_bytes: None,
             command,
             timeout_secs: run.timeout_secs,
             requested_by,
@@ -614,6 +716,9 @@ impl ShellClientRegistry {
                     kind: "stop_job".to_string(),
                     job_id: Some(job_id.to_string()),
                     cwd: None,
+                    path: None,
+                    content: None,
+                    max_bytes: None,
                     command: String::new(),
                     timeout_secs: 1,
                     requested_by: "gpt_action_or_web".to_string(),
@@ -957,6 +1062,137 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     wait_timeout_secs
                 )),
             }));
+        }
+    }
+}
+
+fn shell_file_response_from_run(
+    op: String,
+    path: String,
+    cwd: Option<String>,
+    response: ShellRunResponse,
+) -> ShellFileOpResponse {
+    let stdout = response.stdout.unwrap_or_default();
+    let entries = if op == "list" && response.error.is_none() {
+        stdout.lines().map(|line| line.to_string()).collect()
+    } else {
+        Vec::new()
+    };
+    let content = if op == "read" && response.error.is_none() {
+        Some(stdout.clone())
+    } else {
+        None
+    };
+    let bytes = match op.as_str() {
+        "read" => content.as_ref().map(|s| s.len()),
+        "write" => Some(stdout.trim().parse::<usize>().unwrap_or(0)),
+        _ => None,
+    };
+    ShellFileOpResponse {
+        success: response.error.is_none() && response.exit_code == Some(0),
+        op,
+        request_id: response.request_id,
+        client_id: response.client_id,
+        path,
+        cwd,
+        content,
+        entries,
+        bytes,
+        stderr: response.stderr,
+        error: response.error,
+    }
+}
+
+fn shell_file_error(
+    op: String,
+    client_id: String,
+    path: String,
+    cwd: Option<String>,
+    error: String,
+) -> Json<ShellFileOpResponse> {
+    Json(ShellFileOpResponse {
+        success: false,
+        op,
+        request_id: String::new(),
+        client_id,
+        path,
+        cwd,
+        content: None,
+        entries: Vec::new(),
+        bytes: None,
+        stderr: None,
+        error: Some(error),
+    })
+}
+
+#[handler]
+pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(registry) = get_registry(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(shell_file_error(
+            "unknown".to_string(),
+            String::new(),
+            String::new(),
+            None,
+            "Shell client registry not configured".to_string(),
+        ));
+        return;
+    };
+    let body: ShellFileOpRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(shell_file_error(
+                "unknown".to_string(),
+                String::new(),
+                String::new(),
+                None,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let op = body.op.clone();
+    let client_id = body.client_id.clone();
+    let path = body.path.clone();
+    let cwd = body.cwd.clone();
+    let wait_timeout_secs = body.wait_timeout_secs;
+    let (request_id, rx) = match registry
+        .enqueue_file_op(body, "gpt_action_or_web".to_string())
+        .await
+    {
+        Ok(result) => result,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(shell_file_error(op, client_id, path, cwd, e));
+            return;
+        }
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(wait_timeout_secs), rx).await {
+        Ok(Ok(response)) => res.render(Json(shell_file_response_from_run(op, path, cwd, response))),
+        Ok(Err(_closed)) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(shell_file_error(
+                op,
+                client_id,
+                path,
+                cwd,
+                "shell file request waiter was dropped".to_string(),
+            ));
+        }
+        Err(_elapsed) => {
+            registry.cancel_request(&request_id).await;
+            res.status_code(StatusCode::REQUEST_TIMEOUT);
+            res.render(shell_file_error(
+                op,
+                client_id,
+                path,
+                cwd,
+                format!(
+                    "timed out waiting {} seconds for shell file result",
+                    wait_timeout_secs
+                ),
+            ));
         }
     }
 }

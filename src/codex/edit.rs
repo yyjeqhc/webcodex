@@ -10,11 +10,15 @@ use crate::action_sessions::{
 };
 use crate::get_db;
 use crate::projects::{canonicalize_and_verify, ProjectConfig};
+use crate::shell_protocol::{ShellFileOpRequest, ShellRunResponse};
+use crate::ShellClientRegistry;
 use base64::Engine;
 use salvo::prelude::*;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
@@ -689,6 +693,345 @@ pub(super) fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest)
     )
 }
 
+fn sha256_hex_text(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn is_missing_agent_file_error(error: &str) -> bool {
+    let lower = error.to_ascii_lowercase();
+    lower.contains("no such file") || lower.contains("not found") || lower.contains("os error 2")
+}
+
+async fn agent_file_request(
+    registry: &Arc<ShellClientRegistry>,
+    client_id: &str,
+    cwd: &str,
+    op: &str,
+    path: &str,
+    content: Option<String>,
+    max_bytes: Option<usize>,
+    expected_sha256: Option<String>,
+    create_dirs: bool,
+) -> Result<ShellRunResponse, String> {
+    let wait_timeout_secs = 30;
+    let (request_id, rx) = registry
+        .enqueue_file_op(
+            ShellFileOpRequest {
+                op: op.to_string(),
+                client_id: client_id.to_string(),
+                path: path.to_string(),
+                cwd: Some(cwd.to_string()),
+                content,
+                max_bytes,
+                expected_sha256,
+                create_dirs,
+                wait_timeout_secs,
+            },
+            "codex_edit_agent_executor".to_string(),
+        )
+        .await?;
+    match tokio::time::timeout(std::time::Duration::from_secs(wait_timeout_secs), rx).await {
+        Ok(Ok(response)) => Ok(response),
+        Ok(Err(_)) => Err("agent file request waiter was dropped".to_string()),
+        Err(_) => {
+            registry.cancel_request(&request_id).await;
+            Err(format!(
+                "timed out waiting {} seconds for agent file request",
+                wait_timeout_secs
+            ))
+        }
+    }
+}
+
+async fn agent_read_text_file(
+    registry: &Arc<ShellClientRegistry>,
+    client_id: &str,
+    cwd: &str,
+    rel_path: &str,
+) -> Result<String, String> {
+    let response = agent_file_request(
+        registry,
+        client_id,
+        cwd,
+        "read",
+        rel_path,
+        None,
+        Some(MAX_EDIT_FILE_SIZE as usize),
+        None,
+        false,
+    )
+    .await?;
+    if response.success && response.exit_code == Some(0) && response.error.is_none() {
+        return Ok(response.stdout.unwrap_or_default());
+    }
+    Err(response
+        .error
+        .or(response.stderr)
+        .unwrap_or_else(|| format!("failed to read {}", rel_path)))
+}
+
+async fn agent_read_text_file_optional(
+    registry: &Arc<ShellClientRegistry>,
+    client_id: &str,
+    cwd: &str,
+    rel_path: &str,
+) -> Result<Option<String>, String> {
+    match agent_read_text_file(registry, client_id, cwd, rel_path).await {
+        Ok(content) => Ok(Some(content)),
+        Err(e) if is_missing_agent_file_error(&e) => Ok(None),
+        Err(e) => Err(e),
+    }
+}
+
+async fn agent_write_text_file(
+    registry: &Arc<ShellClientRegistry>,
+    client_id: &str,
+    cwd: &str,
+    rel_path: &str,
+    content: String,
+    expected_sha256: Option<String>,
+) -> Result<(), String> {
+    let response = agent_file_request(
+        registry,
+        client_id,
+        cwd,
+        "write",
+        rel_path,
+        Some(content),
+        None,
+        expected_sha256,
+        true,
+    )
+    .await?;
+    if response.success && response.exit_code == Some(0) && response.error.is_none() {
+        return Ok(());
+    }
+    Err(response
+        .error
+        .or(response.stderr)
+        .unwrap_or_else(|| format!("failed to write {}", rel_path)))
+}
+
+async fn load_agent_edit_content(
+    registry: &Arc<ShellClientRegistry>,
+    client_id: &str,
+    cwd: &str,
+    rel_path: &str,
+    originals: &mut HashMap<String, Option<String>>,
+    current: &mut HashMap<String, Option<String>>,
+) -> Result<String, String> {
+    if let Some(Some(content)) = current.get(rel_path) {
+        return Ok(content.clone());
+    }
+    let content = agent_read_text_file(registry, client_id, cwd, rel_path).await?;
+    originals
+        .entry(rel_path.to_string())
+        .or_insert_with(|| Some(content.clone()));
+    current.insert(rel_path.to_string(), Some(content.clone()));
+    Ok(content)
+}
+
+fn edit_is_text_only(edit: &EditOperation) -> bool {
+    matches!(
+        edit,
+        EditOperation::ReplaceText { .. }
+            | EditOperation::ReplaceRange { .. }
+            | EditOperation::AppendFile { .. }
+            | EditOperation::CreateFile { .. }
+            | EditOperation::WriteFile { .. }
+    )
+}
+
+pub(super) async fn agent_apply_project_edit(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    body: &EditRequest,
+) -> EditResponse {
+    if !body.expected_fingerprints.is_empty() {
+        return edit_error(
+            "expected_fingerprints is not supported for agent executor yet; use expected_sha256 through shellFileOp or retry without stale fingerprint guards"
+                .to_string(),
+        );
+    }
+    if body.edits.iter().any(|edit| !edit_is_text_only(edit)) {
+        return edit_error(
+            "binary edit operations are not supported for agent executor yet".to_string(),
+        );
+    }
+    let client_id = match proj.agent_client_id() {
+        Ok(client_id) => client_id.to_string(),
+        Err(e) => return edit_error(e),
+    };
+    let registry = match depot.obtain::<Arc<ShellClientRegistry>>() {
+        Ok(registry) => registry.clone(),
+        Err(_) => return edit_error("Shell client registry not configured".to_string()),
+    };
+    let cwd = proj.path.clone();
+    let mut originals: HashMap<String, Option<String>> = HashMap::new();
+    let mut current: HashMap<String, Option<String>> = HashMap::new();
+    let mut changed = BTreeSet::new();
+    for edit in &body.edits {
+        let rel_path = edit_path(edit).to_string();
+        if let Err(e) = validate_edit_path(&rel_path) {
+            return edit_error(e);
+        }
+        if edit_text_len(edit) > MAX_EDIT_TEXT_SIZE {
+            return edit_error(format!(
+                "edit text for {} exceeds {} bytes",
+                rel_path, MAX_EDIT_TEXT_SIZE
+            ));
+        }
+        match edit {
+            EditOperation::ReplaceText {
+                old_text,
+                new_text,
+                occurrence,
+                ..
+            } => {
+                let before = match load_agent_edit_content(
+                    &registry,
+                    &client_id,
+                    &cwd,
+                    &rel_path,
+                    &mut originals,
+                    &mut current,
+                )
+                .await
+                {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                let after = match replace_nth(&before, old_text, new_text, *occurrence) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                current.insert(rel_path.clone(), Some(after));
+            }
+            EditOperation::ReplaceRange {
+                start_line,
+                end_line,
+                new_text,
+                ..
+            } => {
+                let before = match load_agent_edit_content(
+                    &registry,
+                    &client_id,
+                    &cwd,
+                    &rel_path,
+                    &mut originals,
+                    &mut current,
+                )
+                .await
+                {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                let after = match replace_line_range(&before, *start_line, *end_line, new_text) {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                current.insert(rel_path.clone(), Some(after));
+            }
+            EditOperation::AppendFile { text, .. } => {
+                let mut before = match load_agent_edit_content(
+                    &registry,
+                    &client_id,
+                    &cwd,
+                    &rel_path,
+                    &mut originals,
+                    &mut current,
+                )
+                .await
+                {
+                    Ok(c) => c,
+                    Err(e) => return edit_error(e),
+                };
+                before.push_str(text);
+                current.insert(rel_path.clone(), Some(before));
+            }
+            EditOperation::CreateFile { content, .. } => {
+                match agent_read_text_file_optional(&registry, &client_id, &cwd, &rel_path).await {
+                    Ok(Some(_)) => return edit_error(format!("File already exists: {}", rel_path)),
+                    Ok(None) => {}
+                    Err(e) => return edit_error(e),
+                }
+                originals.entry(rel_path.clone()).or_insert(None);
+                current.insert(rel_path.clone(), Some(content.clone()));
+            }
+            EditOperation::WriteFile {
+                content,
+                allow_overwrite,
+                ..
+            } => {
+                let old =
+                    match agent_read_text_file_optional(&registry, &client_id, &cwd, &rel_path)
+                        .await
+                    {
+                        Ok(old) => old,
+                        Err(e) => return edit_error(e),
+                    };
+                if old.is_some() && !allow_overwrite {
+                    return edit_error(format!(
+                        "File exists and allow_overwrite is false: {}",
+                        rel_path
+                    ));
+                }
+                originals.entry(rel_path.clone()).or_insert(old);
+                current.insert(rel_path.clone(), Some(content.clone()));
+            }
+            _ => return edit_error("unsupported agent edit operation".to_string()),
+        }
+        changed.insert(rel_path);
+    }
+    let changed_files: Vec<String> = changed.into_iter().collect();
+    let mut diff = String::new();
+    for path in &changed_files {
+        if let Some(Some(new_content)) = current.get(path) {
+            diff.push_str(&simple_file_diff(
+                path,
+                originals.get(path).and_then(|v| v.as_deref()),
+                new_content,
+            ));
+        }
+    }
+    if !body.dry_run {
+        for path in &changed_files {
+            let Some(Some(new_content)) = current.get(path) else {
+                continue;
+            };
+            let expected_sha256 = originals
+                .get(path)
+                .and_then(|old| old.as_ref())
+                .map(|old| sha256_hex_text(old));
+            if let Err(e) = agent_write_text_file(
+                &registry,
+                &client_id,
+                &cwd,
+                path,
+                new_content.clone(),
+                expected_sha256,
+            )
+            .await
+            {
+                return edit_error(format!("Failed to write {}: {}", path, e));
+            }
+        }
+    }
+    finalize_edit_response(
+        EditResponse {
+            success: true,
+            changed_files,
+            diff,
+            diff_truncated: false,
+            warnings: Vec::new(),
+            error: None,
+        },
+        body,
+    )
+}
+
 pub(super) fn decode_binary_artifact(
     base64_content: &str,
     rel_path: &str,
@@ -989,7 +1332,27 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     }
-    let response = apply_edit_request_with_metrics(&projects, proj, &body, "applyProjectEdit");
+    let response = if proj.is_agent() {
+        let edit_start = std::time::Instant::now();
+        let response = agent_apply_project_edit(depot, proj, &body).await;
+        tracing::info!(
+            target: "codex.metrics",
+            operation = "applyProjectEdit",
+            project = %body.project,
+            executor = "agent",
+            success = response.success,
+            dry_run = body.dry_run,
+            edit_count = body.edits.len(),
+            changed_files = response.changed_files.len(),
+            duration_ms = edit_start.elapsed().as_millis() as u64,
+            ssh_calls = 0,
+            control_master = false,
+            "codex_edit_completed"
+        );
+        response
+    } else {
+        apply_edit_request_with_metrics(&projects, proj, &body, "applyProjectEdit")
+    };
     if let Some(db) = audit_db.as_ref() {
         let ended_at = chrono::Utc::now().timestamp();
         let changed_files = response.changed_files.clone();

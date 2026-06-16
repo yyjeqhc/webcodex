@@ -198,6 +198,64 @@ max_output_bytes = 262144
                 assert "marker.txt" in context_result["results"][1]["items"], context_result
                 assert "project-marker" in context_result["results"][2]["content"], context_result
                 assert "marker.txt" in context_result["results"][3]["content"], context_result
+                edit_result = post(
+                    port,
+                    token,
+                    "/api/codex/edit",
+                    {
+                        "project": "agent_demo",
+                        "edits": [
+                            {"type": "replace_text", "path": "marker.txt", "old_text": "project-marker", "new_text": "project-marker-updated"},
+                            {"type": "append_file", "path": "marker.txt", "text": "append-ok\n"},
+                            {"type": "create_file", "path": "created.txt", "content": "created-ok\n"},
+                            {"type": "write_file", "path": "dir/written.txt", "content": "written-ok\n", "allow_overwrite": True},
+                        ],
+                        "response_mode": "summary",
+                    },
+                )
+                assert edit_result["success"], edit_result
+                assert sorted(edit_result["changed_files"]) == ["created.txt", "dir/written.txt", "marker.txt"], edit_result
+                edited_read = post(
+                    port,
+                    token,
+                    "/api/codex/context_batch",
+                    {
+                        "project": "agent_demo",
+                        "requests": [
+                            {"mode": "read_file", "path": "marker.txt", "limit": 10},
+                            {"mode": "read_file", "path": "created.txt", "limit": 10},
+                            {"mode": "read_file", "path": "dir/written.txt", "limit": 10},
+                        ],
+                    },
+                )
+                assert edited_read["success"], edited_read
+                assert "project-marker-updated" in edited_read["results"][0]["content"], edited_read
+                assert "append-ok" in edited_read["results"][0]["content"], edited_read
+                assert "created-ok" in edited_read["results"][1]["content"], edited_read
+                assert "written-ok" in edited_read["results"][2]["content"], edited_read
+                dry_run_edit = post(
+                    port,
+                    token,
+                    "/api/codex/edit",
+                    {
+                        "project": "agent_demo",
+                        "dry_run": True,
+                        "edits": [
+                            {"type": "write_file", "path": "dry-run.txt", "content": "no-write\n", "allow_overwrite": True}
+                        ],
+                    },
+                )
+                assert dry_run_edit["success"], dry_run_edit
+                dry_run_check = post(
+                    port,
+                    token,
+                    "/api/codex/context_batch",
+                    {
+                        "project": "agent_demo",
+                        "requests": [{"mode": "read_file", "path": "dry-run.txt", "limit": 10}],
+                    },
+                )
+                assert not dry_run_check["success"], dry_run_check
 
                 file_path = "/tmp/private-drop-agent-e2e-file.txt"
                 file_write = post(

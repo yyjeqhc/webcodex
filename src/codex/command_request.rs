@@ -21,12 +21,9 @@ use crate::action_sessions::{
 };
 use crate::get_db;
 use crate::projects::ProjectConfig;
-use crate::shell_protocol::ShellJobOpRequest;
-use crate::ShellClientRegistry;
 use crate::{CodexGoalRecord, CommandAuditRecord};
 use salvo::prelude::*;
 use serde_json::json;
-use std::sync::Arc;
 
 pub(super) const MAX_COMMAND_REASON_LEN: usize = 2_000;
 pub(super) const MAX_RAW_COMMAND_LEN: usize = 2_000;
@@ -2495,115 +2492,15 @@ async fn run_project_cmd_for_handler(
     if !proj.is_agent() {
         return run_project_cmd(proj, cmd, timeout_secs, ssh_config);
     }
-    let started = std::time::Instant::now();
-    let client_id = match proj.agent_client_id() {
-        Ok(client_id) => client_id.to_string(),
-        Err(e) => return (-1, String::new(), e, 0),
-    };
-    let registry = match depot.obtain::<Arc<ShellClientRegistry>>() {
-        Ok(registry) => registry.clone(),
-        Err(_) => {
-            return (
-                -1,
-                String::new(),
-                "Shell client registry not configured".to_string(),
-                0,
-            )
-        }
-    };
-    let job = match registry
-        .start_job(
-            ShellJobOpRequest {
-                op: "start".to_string(),
-                client_id: Some(client_id),
-                cwd: Some(proj.path.clone()),
-                command: Some(cmd.to_string()),
-                timeout_secs: Some(timeout_secs),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-            },
-            "codex_project_agent_executor".to_string(),
-        )
-        .await
-    {
-        Ok(job) => job,
-        Err(e) => return (-1, String::new(), e, started.elapsed().as_millis() as u64),
-    };
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs.max(1));
-    loop {
-        if std::time::Instant::now() >= deadline {
-            let _ = registry.stop_job(&job.job_id).await;
-            let (_, stdout, stderr, _, _) = registry
-                .job_log(&job.job_id, Some(1), Some(1), None)
-                .await
-                .unwrap_or_else(|_| (job.clone(), Some(String::new()), Some(String::new()), 1, 1));
-            return (
-                -1,
-                stdout.unwrap_or_default(),
-                if stderr.as_deref().unwrap_or_default().is_empty() {
-                    format!(
-                        "agent project command timed out after {} seconds",
-                        timeout_secs
-                    )
-                } else {
-                    format!(
-                        "{}\nagent project command timed out after {} seconds",
-                        stderr.unwrap_or_default(),
-                        timeout_secs
-                    )
-                },
-                started.elapsed().as_millis() as u64,
-            );
-        }
-        let sleep_ms = match registry.get_job(&job.job_id).await {
-            Ok(info) => {
-                if matches!(
-                    info.status.as_str(),
-                    "completed" | "failed" | "stopped" | "timeout" | "lost"
-                ) {
-                    let (_, stdout, stderr, _, _) = registry
-                        .job_log(&job.job_id, Some(1), Some(1), None)
-                        .await
-                        .unwrap_or_else(|_| {
-                            (info.clone(), Some(String::new()), Some(String::new()), 1, 1)
-                        });
-                    let code = info.exit_code.unwrap_or_else(|| {
-                        if info.status == "completed" {
-                            0
-                        } else {
-                            -1
-                        }
-                    });
-                    let mut stderr = stderr.unwrap_or_default();
-                    if let Some(error) = info.error {
-                        if !error.trim().is_empty() {
-                            if !stderr.trim().is_empty() {
-                                stderr.push('\n');
-                            }
-                            stderr.push_str(&error);
-                        }
-                    }
-                    return (
-                        code,
-                        stdout.unwrap_or_default(),
-                        stderr,
-                        info.duration_ms
-                            .unwrap_or_else(|| started.elapsed().as_millis() as u64),
-                    );
-                }
-                if info.status == "queued" {
-                    100
-                } else {
-                    250
-                }
-            }
-            Err(e) => return (-1, String::new(), e, started.elapsed().as_millis() as u64),
-        };
-        tokio::time::sleep(std::time::Duration::from_millis(sleep_ms)).await;
-    }
+    super::agent_exec::run_agent_project_command(
+        depot,
+        proj,
+        cmd,
+        timeout_secs,
+        "codex_project_agent_executor",
+        "agent project command",
+    )
+    .await
 }
 
 #[handler]

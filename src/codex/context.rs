@@ -13,13 +13,10 @@ use crate::action_sessions::{
 };
 use crate::get_db;
 use crate::projects::{canonicalize_and_verify, ProjectConfig, SshConfig};
-use crate::shell_protocol::ShellJobOpRequest;
-use crate::ShellClientRegistry;
 use salvo::prelude::*;
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::path::{Component, Path};
-use std::sync::Arc;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 pub(super) const IGNORED_DIRS: &[&str] = &[
@@ -978,114 +975,6 @@ fn validate_agent_context_rel_path(path: &str) -> Result<(), String> {
     Ok(())
 }
 
-async fn run_agent_context_command(
-    depot: &Depot,
-    proj: &ProjectConfig,
-    cmd: &str,
-    timeout_secs: u64,
-) -> (i32, String, String, u64) {
-    let started = Instant::now();
-    let client_id = match proj.agent_client_id() {
-        Ok(client_id) => client_id.to_string(),
-        Err(e) => return (-1, String::new(), e, 0),
-    };
-    let registry = match depot.obtain::<Arc<ShellClientRegistry>>() {
-        Ok(registry) => registry.clone(),
-        Err(_) => {
-            return (
-                -1,
-                String::new(),
-                "Shell client registry not configured".to_string(),
-                0,
-            )
-        }
-    };
-    let job = match registry
-        .start_job(
-            ShellJobOpRequest {
-                op: "start".to_string(),
-                client_id: Some(client_id),
-                cwd: Some(proj.path.clone()),
-                command: Some(cmd.to_string()),
-                timeout_secs: Some(timeout_secs),
-                job_id: None,
-                since_stdout_line: None,
-                since_stderr_line: None,
-                tail_lines: None,
-                limit: None,
-            },
-            "codex_context_agent_executor".to_string(),
-        )
-        .await
-    {
-        Ok(job) => job,
-        Err(e) => return (-1, String::new(), e, started.elapsed().as_millis() as u64),
-    };
-    let deadline = Instant::now() + std::time::Duration::from_secs(timeout_secs.max(1) + 2);
-    loop {
-        if Instant::now() >= deadline {
-            let _ = registry.stop_job(&job.job_id).await;
-            let (_, stdout, stderr, _, _) = registry
-                .job_log(&job.job_id, Some(1), Some(1), None)
-                .await
-                .unwrap_or_else(|_| (job.clone(), Some(String::new()), Some(String::new()), 1, 1));
-            return (
-                -1,
-                stdout.unwrap_or_default(),
-                format!(
-                    "{}\nagent context command timed out after {} seconds",
-                    stderr.unwrap_or_default(),
-                    timeout_secs
-                ),
-                started.elapsed().as_millis() as u64,
-            );
-        }
-        match registry.get_job(&job.job_id).await {
-            Ok(info) => {
-                if matches!(
-                    info.status.as_str(),
-                    "completed" | "failed" | "stopped" | "timeout" | "lost"
-                ) {
-                    let (_, stdout, stderr, _, _) = registry
-                        .job_log(&job.job_id, Some(1), Some(1), None)
-                        .await
-                        .unwrap_or_else(|_| {
-                            (info.clone(), Some(String::new()), Some(String::new()), 1, 1)
-                        });
-                    let code = info.exit_code.unwrap_or_else(|| {
-                        if info.status == "completed" {
-                            0
-                        } else {
-                            -1
-                        }
-                    });
-                    let mut stderr = stderr.unwrap_or_default();
-                    if let Some(error) = info.error {
-                        if !error.trim().is_empty() {
-                            if !stderr.trim().is_empty() {
-                                stderr.push('\n');
-                            }
-                            stderr.push_str(&error);
-                        }
-                    }
-                    return (
-                        code,
-                        stdout.unwrap_or_default(),
-                        stderr,
-                        info.duration_ms
-                            .unwrap_or_else(|| started.elapsed().as_millis() as u64),
-                    );
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(
-                    if info.status == "queued" { 100 } else { 250 },
-                ))
-                .await;
-            }
-            Err(e) => return (-1, String::new(), e, started.elapsed().as_millis() as u64),
-        }
-    }
-}
-
 fn agent_find_prune_expr() -> &'static str {
     "-path './.git' -o -path './target' -o -path './node_modules' -o -path './dist' -o -path './build' -o -path './.cache' -o -path './__pycache__'"
 }
@@ -1251,8 +1140,15 @@ async fn execute_agent_context_item(
             "unsupported context mode".to_string(),
         );
     };
-    let (code, stdout, stderr, _) =
-        run_agent_context_command(depot, proj, &cmd, timeout_secs).await;
+    let (code, stdout, stderr, _) = super::agent_exec::run_agent_project_command(
+        depot,
+        proj,
+        &cmd,
+        timeout_secs,
+        "codex_context_agent_executor",
+        "agent context command",
+    )
+    .await;
     if code != 0 {
         return context_error(
             project_name,

@@ -1,5 +1,6 @@
 use crate::projects::{ProjectConfig, ProjectsConfig, ProjectsState, SshConfig};
 use salvo::prelude::*;
+mod agent_exec;
 mod artifact;
 mod capabilities;
 mod command_request;

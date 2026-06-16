@@ -1,5 +1,5 @@
 use crate::projects::{ProjectConfig, SshConfig};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 const SSH_START_MARKER: &str = "__PRIVATE_DROP_SSH_COMMAND_STARTED__";
 
@@ -127,14 +127,80 @@ fn combine_fallback_errors(errors: &[String]) -> String {
 fn run_ssh_single(
     ssh_target: &str,
     remote_cmd: &str,
-    _timeout_secs: u64,
+    timeout_secs: u64,
     ssh_config: Option<&SshConfig>,
 ) -> (i32, String, String, u64, bool) {
     let start = Instant::now();
-    let result =
-        build_ssh_command(ssh_target, &with_started_marker(remote_cmd), ssh_config).output();
+    let spawn_result = build_ssh_command(ssh_target, &with_started_marker(remote_cmd), ssh_config)
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn();
 
-    match result {
+    let mut child = match spawn_result {
+        Ok(child) => child,
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            return (
+                -1,
+                String::new(),
+                format!("Failed to execute SSH command: {}", e),
+                elapsed,
+                false,
+            );
+        }
+    };
+
+    let timeout = (timeout_secs > 0).then(|| Duration::from_secs(timeout_secs));
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => break,
+            Ok(None) => {
+                if timeout.is_some_and(|limit| start.elapsed() >= limit) {
+                    let _ = child.kill();
+                    let output = child.wait_with_output();
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    return match output {
+                        Ok(output) => {
+                            let raw_stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                            let (started, stdout) = strip_started_marker(raw_stdout);
+                            let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                            if !stderr.is_empty() && !stderr.ends_with('\n') {
+                                stderr.push('\n');
+                            }
+                            stderr.push_str(&format!(
+                                "SSH command timed out after {} seconds",
+                                timeout_secs
+                            ));
+                            (-1, stdout, stderr, elapsed, started)
+                        }
+                        Err(e) => (
+                            -1,
+                            String::new(),
+                            format!(
+                                "SSH command timed out after {} seconds; failed to collect output: {}",
+                                timeout_secs, e
+                            ),
+                            elapsed,
+                            false,
+                        ),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                let elapsed = start.elapsed().as_millis() as u64;
+                return (
+                    -1,
+                    String::new(),
+                    format!("Failed to wait for SSH command: {}", e),
+                    elapsed,
+                    false,
+                );
+            }
+        }
+    }
+
+    match child.wait_with_output() {
         Ok(output) => {
             let elapsed = start.elapsed().as_millis() as u64;
             let raw_stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -148,7 +214,7 @@ fn run_ssh_single(
             (
                 -1,
                 String::new(),
-                format!("Failed to execute SSH command: {}", e),
+                format!("Failed to collect SSH command output: {}", e),
                 elapsed,
                 false,
             )

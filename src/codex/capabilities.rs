@@ -1,5 +1,5 @@
-use super::get_projects;
 use super::types::{InstanceInfo, ProjectCapabilities, ProjectCapabilityInfo, ProjectsResponse};
+use super::{get_projects, get_projects_config_path, get_projects_load_error};
 use crate::action_sessions::{
     record_action_event, request_action_session_id, ActionAuditEventInput,
 };
@@ -34,8 +34,9 @@ fn instance_info(depot: &Depot) -> InstanceInfo {
         pid: std::process::id(),
         hostname: hostname(),
         data_dir,
-        projects_config_path: std::env::var("PROJECTS_CONFIG")
-            .unwrap_or_else(|_| "./projects.toml".to_string()),
+        projects_config_path: get_projects_config_path(depot).unwrap_or_else(|| {
+            std::env::var("PROJECTS_CONFIG").unwrap_or_else(|_| "./projects.toml".to_string())
+        }),
         public_url: std::env::var("PUBLIC_URL")
             .ok()
             .filter(|s| !s.trim().is_empty()),
@@ -91,14 +92,16 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
     let audit_db = get_db(depot);
     let explicit_session_id = request_action_session_id(req);
     let Some(projects) = get_projects(depot) else {
+        let load_error = get_projects_load_error(depot)
+            .unwrap_or_else(|| "Projects config not loaded".to_string());
         let response = ProjectsResponse {
             success: false,
             projects: Vec::new(),
             project_names: Vec::new(),
             instance: Some(instance_info(depot)),
-            error: Some("Projects config not loaded".to_string()),
+            error: Some(load_error),
             recommended_next_action: Some(
-                "Create projects.toml or set PROJECTS_CONFIG, restart, then call getCodexProjects."
+                "Fix projects.toml or PROJECTS_CONFIG, restart or reload the service, then call getCodexProjects."
                     .to_string(),
             ),
             action_budget_hint: Some(

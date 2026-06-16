@@ -1,4 +1,4 @@
-use crate::projects::{ProjectConfig, ProjectsConfig, SshConfig};
+use crate::projects::{ProjectConfig, ProjectsConfig, ProjectsState, SshConfig};
 use salvo::prelude::*;
 mod artifact;
 mod capabilities;
@@ -63,7 +63,24 @@ pub(super) const CHECK_TIMEOUT_SECS: u64 = 300;
 // =============================================================================
 
 pub(super) fn get_projects(depot: &Depot) -> Option<Arc<ProjectsConfig>> {
-    depot.obtain::<Arc<ProjectsConfig>>().ok().cloned()
+    depot
+        .obtain::<Arc<ProjectsState>>()
+        .ok()
+        .and_then(|state| state.config.clone())
+}
+
+pub(super) fn get_projects_load_error(depot: &Depot) -> Option<String> {
+    depot
+        .obtain::<Arc<ProjectsState>>()
+        .ok()
+        .and_then(|state| state.load_error.clone())
+}
+
+pub(super) fn get_projects_config_path(depot: &Depot) -> Option<String> {
+    depot
+        .obtain::<Arc<ProjectsState>>()
+        .ok()
+        .map(|state| state.config_path.clone())
 }
 
 pub(super) fn truncate_string(s: String, max_len: usize) -> (String, bool) {

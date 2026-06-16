@@ -88,27 +88,33 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Set max payload size to 2MB for text messages
     salvo::http::request::set_global_secure_max_size(config.max_text_size);
 
-    // Load projects config for Codex API
-    let projects_config = match projects::ProjectsConfig::load() {
+    // Load projects config for Codex API. Keep Codex routes mounted even when
+    // the config is invalid so callers get a structured JSON error instead of
+    // a confusing router-level 404.
+    let projects_config_path = projects::ProjectsConfig::config_path_from_env();
+    let projects_state = match projects::ProjectsConfig::load() {
         Ok(cfg) => {
             tracing::info!(
-                "Loaded projects config with {} projects",
+                "Loaded projects config {} with {} projects",
+                projects_config_path,
                 cfg.projects.len()
             );
-            Some(Arc::new(cfg))
+            projects::ProjectsState::loaded(cfg, projects_config_path)
         }
         Err(e) => {
             tracing::warn!(
-                "Projects config not loaded: {}. Codex API will be disabled.",
+                "Projects config not loaded from {}: {}. Codex API will return config errors.",
+                projects_config_path,
                 e
             );
-            None
+            projects::ProjectsState::failed(e, projects_config_path)
         }
     };
 
     let cors = Cors::permissive();
     let config = Arc::new(config);
     let db = Arc::new(db);
+    let projects_state = Arc::new(projects_state);
 
     let api_router = Router::with_path("api")
         .push(Router::with_path("health").get(health))
@@ -182,6 +188,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
         .hoop(affix_state::inject(db.clone()))
+        .hoop(affix_state::inject(projects_state.clone()))
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)
@@ -191,37 +198,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(assets_router)
         .push(web_router);
 
-    // Add Codex API routes if projects config is loaded
-    if let Some(projects_cfg) = projects_config {
-        router = router.hoop(affix_state::inject(projects_cfg)).push(
-            Router::with_path("api/codex")
-                .hoop(AuthMiddleware)
-                .push(Router::with_path("context").post(codex::codex_context))
-                .push(Router::with_path("projects").post(codex::codex_projects))
-                .push(Router::with_path("context_batch").post(codex::codex_context_batch))
-                .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
-                .push(Router::with_path("edit").post(codex::codex_edit))
-                .push(Router::with_path("artifact").post(codex::codex_artifact))
-                .push(Router::with_path("git").post(codex::codex_git))
-                .push(Router::with_path("command").post(codex::codex_command))
-                .push(Router::with_path("command_request").post(codex::codex_command_request))
-                .push(Router::with_path("command_request_op").post(codex::codex_command_request_op))
-                .push(Router::with_path("job").post(codex::codex_job))
-                .push(
-                    Router::with_path("command_request_raw").post(codex::codex_command_request_raw),
-                )
-                .push(Router::with_path("command_requests").post(codex::codex_command_requests))
-                .push(
-                    Router::with_path("command_request_batch")
-                        .post(codex::codex_command_request_batch),
-                )
-                .push(Router::with_path("command_approve").post(codex::codex_command_approve))
-                .push(Router::with_path("command_reject").post(codex::codex_command_reject))
-                .push(Router::with_path("check").post(codex::codex_check))
-                .push(Router::with_path("report").post(codex::codex_report)),
-        );
-    }
-
+    // Codex API routes are always mounted. If projects.toml failed to load,
+    // handlers return structured errors instead of disappearing with 404.
+    router = router.push(
+        Router::with_path("api/codex")
+            .hoop(AuthMiddleware)
+            .push(Router::with_path("context").post(codex::codex_context))
+            .push(Router::with_path("projects").post(codex::codex_projects))
+            .push(Router::with_path("context_batch").post(codex::codex_context_batch))
+            .push(Router::with_path("apply_patch").post(codex::codex_apply_patch))
+            .push(Router::with_path("edit").post(codex::codex_edit))
+            .push(Router::with_path("artifact").post(codex::codex_artifact))
+            .push(Router::with_path("git").post(codex::codex_git))
+            .push(Router::with_path("command").post(codex::codex_command))
+            .push(Router::with_path("command_request").post(codex::codex_command_request))
+            .push(Router::with_path("command_request_op").post(codex::codex_command_request_op))
+            .push(Router::with_path("job").post(codex::codex_job))
+            .push(Router::with_path("command_request_raw").post(codex::codex_command_request_raw))
+            .push(Router::with_path("command_requests").post(codex::codex_command_requests))
+            .push(
+                Router::with_path("command_request_batch").post(codex::codex_command_request_batch),
+            )
+            .push(Router::with_path("command_approve").post(codex::codex_command_approve))
+            .push(Router::with_path("command_reject").post(codex::codex_command_reject))
+            .push(Router::with_path("check").post(codex::codex_check))
+            .push(Router::with_path("report").post(codex::codex_report)),
+    );
     let acceptor = TcpListener::new(addr.clone()).bind().await;
     tracing::info!("Server started successfully!");
     let port = addr.split(':').last().unwrap_or("8080");

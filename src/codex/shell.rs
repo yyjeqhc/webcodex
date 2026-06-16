@@ -1,5 +1,6 @@
 use std::path::Path;
-use std::time::Instant;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 
 pub(super) fn sanitize_tail(s: &str, max_len: usize) -> (String, bool) {
     let bytes = s.as_bytes();
@@ -14,16 +15,77 @@ pub(super) fn sanitize_tail(s: &str, max_len: usize) -> (String, bool) {
         (s[end..].to_string(), true)
     }
 }
-
-pub(super) fn run_command(cmd: &str, cwd: &Path, _timeout_secs: u64) -> (i32, String, String, u64) {
+pub(super) fn run_command(cmd: &str, cwd: &Path, timeout_secs: u64) -> (i32, String, String, u64) {
     let start = Instant::now();
-    let result = std::process::Command::new("sh")
+    let spawn_result = std::process::Command::new("sh")
         .arg("-c")
         .arg(cmd)
         .current_dir(cwd)
-        .output();
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
 
-    match result {
+    let mut child = match spawn_result {
+        Ok(child) => child,
+        Err(e) => {
+            let elapsed = start.elapsed().as_millis() as u64;
+            return (
+                -1,
+                String::new(),
+                format!("Failed to execute command: {}", e),
+                elapsed,
+            );
+        }
+    };
+
+    let timeout = (timeout_secs > 0).then(|| Duration::from_secs(timeout_secs));
+    loop {
+        match child.try_wait() {
+            Ok(Some(_status)) => break,
+            Ok(None) => {
+                if timeout.is_some_and(|limit| start.elapsed() >= limit) {
+                    let _ = child.kill();
+                    let output = child.wait_with_output();
+                    let elapsed = start.elapsed().as_millis() as u64;
+                    return match output {
+                        Ok(output) => {
+                            let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+                            let mut stderr = String::from_utf8_lossy(&output.stderr).to_string();
+                            if !stderr.is_empty() && !stderr.ends_with('\n') {
+                                stderr.push('\n');
+                            }
+                            stderr.push_str(&format!(
+                                "Command timed out after {} seconds",
+                                timeout_secs
+                            ));
+                            (-1, stdout, stderr, elapsed)
+                        }
+                        Err(e) => (
+                            -1,
+                            String::new(),
+                            format!(
+                                "Command timed out after {} seconds; failed to collect output: {}",
+                                timeout_secs, e
+                            ),
+                            elapsed,
+                        ),
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                let elapsed = start.elapsed().as_millis() as u64;
+                return (
+                    -1,
+                    String::new(),
+                    format!("Failed to wait for command: {}", e),
+                    elapsed,
+                );
+            }
+        }
+    }
+
+    match child.wait_with_output() {
         Ok(output) => {
             let elapsed = start.elapsed().as_millis() as u64;
             let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -36,7 +98,7 @@ pub(super) fn run_command(cmd: &str, cwd: &Path, _timeout_secs: u64) -> (i32, St
             (
                 -1,
                 String::new(),
-                format!("Failed to execute command: {}", e),
+                format!("Failed to collect command output: {}", e),
                 elapsed,
             )
         }

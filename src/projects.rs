@@ -1,6 +1,7 @@
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 fn default_true() -> bool {
     true
@@ -74,10 +75,38 @@ pub struct ProjectsConfig {
     pub projects: HashMap<String, ProjectConfig>,
 }
 
+#[derive(Debug, Clone)]
+pub struct ProjectsState {
+    pub config: Option<Arc<ProjectsConfig>>,
+    pub load_error: Option<String>,
+    pub config_path: String,
+}
+
+impl ProjectsState {
+    pub fn loaded(config: ProjectsConfig, config_path: String) -> Self {
+        Self {
+            config: Some(Arc::new(config)),
+            load_error: None,
+            config_path,
+        }
+    }
+
+    pub fn failed(error: String, config_path: String) -> Self {
+        Self {
+            config: None,
+            load_error: Some(error),
+            config_path,
+        }
+    }
+}
+
 impl ProjectsConfig {
+    pub fn config_path_from_env() -> String {
+        std::env::var("PROJECTS_CONFIG").unwrap_or_else(|_| "./projects.toml".to_string())
+    }
+
     pub fn load() -> Result<Self, String> {
-        let config_path =
-            std::env::var("PROJECTS_CONFIG").unwrap_or_else(|_| "./projects.toml".to_string());
+        let config_path = Self::config_path_from_env();
         let path = Path::new(&config_path);
         if !path.exists() {
             return Err(format!(

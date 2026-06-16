@@ -1,0 +1,27 @@
+# Example config for private-drop-agent.
+# Copy to /etc/private-drop-agent/agent.toml and edit token/client_id.
+
+server_url = "https://v4.yyjeqhc.cn"
+token = "REPLACE_WITH_DROP_TOKEN_OR_AGENT_TOKEN"
+client_id = "xrh"
+display_name = "XRH"
+owner = "yyjeqhc"
+poll_interval_ms = 1000
+
+[capabilities]
+shell = true
+file_read = false
+file_write = false
+git = false
+jobs = false
+
+[policy]
+# First MVP is a shell executor. Keep this true only on trusted machines.
+allow_raw_shell = true
+
+# If false, cwd must be under one of allowed_roots.
+allow_cwd_anywhere = true
+allowed_roots = []
+
+max_timeout_secs = 3600
+max_output_bytes = 262144

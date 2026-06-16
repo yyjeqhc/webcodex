@@ -38,7 +38,7 @@ impl Default for ShellClientCapabilities {
     }
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientRegisterRequest {
     pub client_id: String,
     #[serde(default)]
@@ -51,7 +51,7 @@ pub struct ShellClientRegisterRequest {
     pub capabilities: Option<ShellClientCapabilities>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientView {
     pub client_id: String,
     pub display_name: Option<String>,
@@ -64,7 +64,7 @@ pub struct ShellClientView {
     pub pending_requests: usize,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShellClientsResponse {
     pub success: bool,
     pub clients: Vec<ShellClientView>,
@@ -72,7 +72,7 @@ pub struct ShellClientsResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShellClientRegisterResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -81,7 +81,7 @@ pub struct ShellClientRegisterResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellRunRequest {
     pub client_id: String,
     #[serde(default)]
@@ -93,7 +93,7 @@ pub struct ShellRunRequest {
     pub wait_timeout_secs: u64,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellRunResponse {
     pub success: bool,
     pub request_id: String,
@@ -113,12 +113,12 @@ pub struct ShellRunResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentPollRequest {
     pub client_id: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentShellRequest {
     pub request_id: String,
     pub client_id: String,
@@ -130,7 +130,7 @@ pub struct ShellAgentShellRequest {
     pub created_at: i64,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShellAgentPollResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -139,7 +139,7 @@ pub struct ShellAgentPollResponse {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentResultRequest {
     pub client_id: String,
     pub request_id: String,
@@ -155,7 +155,7 @@ pub struct ShellAgentResultRequest {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct ShellAgentResultResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]

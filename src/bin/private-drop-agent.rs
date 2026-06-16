@@ -1,0 +1,488 @@
+use reqwest::blocking::Client;
+use serde::Deserialize;
+use std::io::Read;
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::time::{Duration, Instant};
+
+#[allow(dead_code)]
+#[path = "../shell_protocol.rs"]
+mod shell_protocol;
+
+use shell_protocol::{
+    ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentResultRequest,
+    ShellAgentResultResponse, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellClientRegisterResponse,
+};
+
+const DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
+const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
+const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
+const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
+
+#[derive(Debug, Deserialize)]
+struct AgentConfig {
+    server_url: String,
+    token: String,
+    client_id: String,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    hostname: Option<String>,
+    #[serde(default = "default_poll_interval_ms")]
+    poll_interval_ms: u64,
+    #[serde(default)]
+    capabilities: Option<ShellClientCapabilities>,
+    #[serde(default)]
+    policy: AgentPolicy,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentPolicy {
+    #[serde(default = "default_true")]
+    allow_raw_shell: bool,
+    #[serde(default = "default_true")]
+    allow_cwd_anywhere: bool,
+    #[serde(default)]
+    allowed_roots: Vec<PathBuf>,
+    #[serde(default = "default_max_timeout_secs")]
+    max_timeout_secs: u64,
+    #[serde(default = "default_max_output_bytes")]
+    max_output_bytes: usize,
+}
+
+impl Default for AgentPolicy {
+    fn default() -> Self {
+        Self {
+            allow_raw_shell: true,
+            allow_cwd_anywhere: true,
+            allowed_roots: Vec::new(),
+            max_timeout_secs: DEFAULT_MAX_TIMEOUT_SECS,
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+        }
+    }
+}
+
+fn default_true() -> bool {
+    true
+}
+
+fn default_poll_interval_ms() -> u64 {
+    DEFAULT_POLL_INTERVAL_MS
+}
+
+fn default_max_timeout_secs() -> u64 {
+    DEFAULT_MAX_TIMEOUT_SECS
+}
+
+fn default_max_output_bytes() -> usize {
+    DEFAULT_MAX_OUTPUT_BYTES
+}
+
+#[derive(Debug)]
+struct CommandResult {
+    exit_code: Option<i32>,
+    stdout: Option<String>,
+    stderr: Option<String>,
+    duration_ms: Option<u64>,
+    error: Option<String>,
+}
+
+fn usage() -> &'static str {
+    "Usage: private-drop-agent [--config PATH] [--once]\n\n\
+     Environment:\n\
+       PRIVATE_DROP_AGENT_CONFIG  default config path override\n\n\
+     Example agent.toml:\n\
+       server_url = \"https://v4.yyjeqhc.cn\"\n\
+       token = \"...\"\n\
+       client_id = \"xrh\"\n\
+       display_name = \"XRH\"\n\
+       owner = \"yyjeqhc\"\n\
+       poll_interval_ms = 1000\n\
+\n\
+       [policy]\n\
+       allow_raw_shell = true\n\
+       allow_cwd_anywhere = true\n\
+       max_timeout_secs = 3600\n\
+       max_output_bytes = 262144\n"
+}
+
+fn parse_args() -> Result<(PathBuf, bool), String> {
+    let mut config_path = std::env::var("PRIVATE_DROP_AGENT_CONFIG")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from(DEFAULT_CONFIG_PATH));
+    let mut once = false;
+    let mut args = std::env::args().skip(1);
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--help" | "-h" => {
+                println!("{}", usage());
+                std::process::exit(0);
+            }
+            "--once" => once = true,
+            "--config" | "-c" => {
+                let Some(path) = args.next() else {
+                    return Err("--config requires a path".to_string());
+                };
+                config_path = PathBuf::from(path);
+            }
+            _ => return Err(format!("unknown argument: {}\n{}", arg, usage())),
+        }
+    }
+    Ok((config_path, once))
+}
+
+fn load_config(path: &Path) -> Result<AgentConfig, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read config {}: {}", path.display(), e))?;
+    let cfg: AgentConfig = toml::from_str(&content)
+        .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
+    if cfg.server_url.trim().is_empty() {
+        return Err("server_url cannot be empty".to_string());
+    }
+    if cfg.token.trim().is_empty() {
+        return Err("token cannot be empty".to_string());
+    }
+    if cfg.client_id.trim().is_empty() {
+        return Err("client_id cannot be empty".to_string());
+    }
+    if cfg.poll_interval_ms == 0 {
+        return Err("poll_interval_ms must be > 0".to_string());
+    }
+    if !cfg.policy.allow_cwd_anywhere && cfg.policy.allowed_roots.is_empty() {
+        return Err("policy.allowed_roots must be set when allow_cwd_anywhere=false".to_string());
+    }
+    Ok(cfg)
+}
+
+fn hostname() -> Option<String> {
+    std::env::var("HOSTNAME")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .or_else(|| {
+            std::fs::read_to_string("/etc/hostname")
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+}
+
+fn endpoint(cfg: &AgentConfig, path: &str) -> String {
+    format!("{}{}", cfg.server_url.trim_end_matches('/'), path)
+}
+
+fn post_json<T, R>(client: &Client, cfg: &AgentConfig, path: &str, body: &T) -> Result<R, String>
+where
+    T: serde::Serialize + ?Sized,
+    R: serde::de::DeserializeOwned,
+{
+    let resp = client
+        .post(endpoint(cfg, path))
+        .bearer_auth(&cfg.token)
+        .json(body)
+        .send()
+        .map_err(|e| format!("request {} failed: {}", path, e))?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .map_err(|e| format!("failed to read response {}: {}", path, e))?;
+    if !status.is_success() {
+        return Err(format!("{} returned {}: {}", path, status, text));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("failed to parse response {}: {}", path, e))
+}
+
+fn register(client: &Client, cfg: &AgentConfig) -> Result<(), String> {
+    let body = ShellClientRegisterRequest {
+        client_id: cfg.client_id.clone(),
+        display_name: cfg.display_name.clone(),
+        owner: cfg.owner.clone(),
+        hostname: cfg.hostname.clone().or_else(hostname),
+        capabilities: Some(cfg.capabilities.clone().unwrap_or_default()),
+    };
+    let response: ShellClientRegisterResponse =
+        post_json(client, cfg, "/api/shell/agent/register", &body)?;
+    if response.success {
+        Ok(())
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "register failed without error".to_string()))
+    }
+}
+
+fn canonicalize_existing(path: &Path) -> Result<PathBuf, String> {
+    path.canonicalize()
+        .map_err(|e| format!("failed to access {}: {}", path.display(), e))
+}
+
+fn cwd_allowed(policy: &AgentPolicy, cwd: &Path) -> Result<(), String> {
+    if policy.allow_cwd_anywhere {
+        return Ok(());
+    }
+    let cwd = canonicalize_existing(cwd)?;
+    for root in &policy.allowed_roots {
+        let root = canonicalize_existing(root)?;
+        if cwd == root || cwd.starts_with(&root) {
+            return Ok(());
+        }
+    }
+    Err(format!(
+        "cwd {} is outside allowed_roots",
+        cwd.to_string_lossy()
+    ))
+}
+
+fn truncate_bytes(bytes: &[u8], max: usize) -> String {
+    let text = String::from_utf8_lossy(bytes).to_string();
+    if text.len() <= max {
+        return text;
+    }
+    let mut start = text.len() - max;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    format!(
+        "[output truncated to last {} bytes]\n{}",
+        max,
+        &text[start..]
+    )
+}
+
+fn read_pipes(
+    mut child: std::process::Child,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "stdout pipe missing".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "stderr pipe missing".to_string())?;
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let result = stdout.read_to_end(&mut buf).map(|_| buf);
+        result.map_err(|e| format!("failed to read stdout: {}", e))
+    });
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let result = stderr.read_to_end(&mut buf).map(|_| buf);
+        result.map_err(|e| format!("failed to read stderr: {}", e))
+    });
+    let status = child
+        .wait()
+        .map_err(|e| format!("failed to wait command: {}", e))?;
+    let stdout = stdout_handle
+        .join()
+        .map_err(|_| "stdout reader panicked".to_string())??;
+    let stderr = stderr_handle
+        .join()
+        .map_err(|_| "stderr reader panicked".to_string())??;
+    Ok((status, stdout, stderr))
+}
+
+fn run_shell(
+    policy: &AgentPolicy,
+    cwd: Option<&str>,
+    command: &str,
+    timeout_secs: u64,
+) -> CommandResult {
+    if !policy.allow_raw_shell {
+        return CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some("raw shell is disabled by local agent policy".to_string()),
+        };
+    }
+    let cwd_path = cwd
+        .map(PathBuf::from)
+        .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
+    if let Err(e) = cwd_allowed(policy, &cwd_path) {
+        return CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(0),
+            error: Some(e),
+        };
+    }
+    let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
+    let start = Instant::now();
+    let spawn = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(command)
+        .current_dir(&cwd_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn();
+    let mut child = match spawn {
+        Ok(child) => child,
+        Err(e) => {
+            return CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(format!("failed to spawn command: {}", e)),
+            };
+        }
+    };
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => break,
+            Ok(None) => {
+                if start.elapsed() >= Duration::from_secs(timeout_secs) {
+                    let _ = child.kill();
+                    let duration_ms = start.elapsed().as_millis() as u64;
+                    return match read_pipes(child) {
+                        Ok((_status, stdout, stderr)) => CommandResult {
+                            exit_code: Some(-1),
+                            stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
+                            stderr: Some(format!(
+                                "{}{}command timed out after {} seconds",
+                                truncate_bytes(&stderr, policy.max_output_bytes),
+                                if stderr.is_empty() { "" } else { "\n" },
+                                timeout_secs
+                            )),
+                            duration_ms: Some(duration_ms),
+                            error: Some("command timed out".to_string()),
+                        },
+                        Err(e) => CommandResult {
+                            exit_code: Some(-1),
+                            stdout: None,
+                            stderr: None,
+                            duration_ms: Some(duration_ms),
+                            error: Some(format!(
+                                "command timed out; failed to collect output: {}",
+                                e
+                            )),
+                        },
+                    };
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!("failed to wait command: {}", e)),
+                };
+            }
+        }
+    }
+    match read_pipes(child) {
+        Ok((status, stdout, stderr)) => CommandResult {
+            exit_code: Some(status.code().unwrap_or(-1)),
+            stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
+            stderr: Some(truncate_bytes(&stderr, policy.max_output_bytes)),
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: None,
+        },
+        Err(e) => CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(e),
+        },
+    }
+}
+
+fn handle_one_poll(client: &Client, cfg: &AgentConfig) -> Result<bool, String> {
+    let poll = ShellAgentPollRequest {
+        client_id: cfg.client_id.clone(),
+    };
+    let response: ShellAgentPollResponse = post_json(client, cfg, "/api/shell/agent/poll", &poll)?;
+    if !response.success {
+        return Err(response
+            .error
+            .unwrap_or_else(|| "poll failed without error".to_string()));
+    }
+    let Some(request) = response.request else {
+        return Ok(false);
+    };
+    let result = run_shell(
+        &cfg.policy,
+        request.cwd.as_deref(),
+        &request.command,
+        request.timeout_secs,
+    );
+    let body = ShellAgentResultRequest {
+        client_id: cfg.client_id.clone(),
+        request_id: request.request_id,
+        exit_code: result.exit_code,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        duration_ms: result.duration_ms,
+        error: result.error,
+    };
+    let response: ShellAgentResultResponse =
+        post_json(client, cfg, "/api/shell/agent/result", &body)?;
+    if response.success {
+        Ok(true)
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "result submission failed without error".to_string()))
+    }
+}
+
+fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
+    let client = Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| format!("failed to create http client: {}", e))?;
+    register(&client, &cfg)?;
+    eprintln!(
+        "private-drop-agent registered client_id={} server={}",
+        cfg.client_id, cfg.server_url
+    );
+    loop {
+        match handle_one_poll(&client, &cfg) {
+            Ok(ran_request) => {
+                if once {
+                    return Ok(());
+                }
+                if !ran_request {
+                    std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
+                }
+            }
+            Err(e) => {
+                eprintln!("private-drop-agent poll error: {}", e);
+                if once {
+                    return Err(e);
+                }
+                std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
+                let _ = register(&client, &cfg);
+            }
+        }
+    }
+}
+
+fn main() {
+    let (config_path, once) = match parse_args() {
+        Ok(v) => v,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(2);
+        }
+    };
+    let cfg = match load_config(&config_path) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("{}", e);
+            std::process::exit(2);
+        }
+    };
+    if let Err(e) = run_agent(cfg, once) {
+        eprintln!("private-drop-agent failed: {}", e);
+        std::process::exit(1);
+    }
+}

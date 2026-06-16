@@ -6,8 +6,12 @@ use crate::action_sessions::{
 use crate::auth::get_config;
 use crate::get_db;
 use crate::projects::{Executor, ProjectConfig};
+use crate::shell_protocol::ShellClientView;
+use crate::ShellClientRegistry;
 use salvo::prelude::*;
 use serde_json::json;
+use std::collections::HashMap;
+use std::sync::Arc;
 
 fn hostname() -> Option<String> {
     std::env::var("HOSTNAME")
@@ -43,7 +47,11 @@ fn instance_info(depot: &Depot) -> InstanceInfo {
     }
 }
 
-fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
+fn project_info(
+    name: &str,
+    project: &ProjectConfig,
+    shell_clients: &HashMap<String, ShellClientView>,
+) -> ProjectCapabilityInfo {
     let mut commands = project.commands.keys().cloned().collect::<Vec<_>>();
     commands.sort();
     let allowed_checks = project.effective_allowed_checks();
@@ -55,6 +63,14 @@ fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
         Vec::new()
     };
     let ssh_target = ssh_endpoints.first().cloned();
+    let agent_client_id = if project.executor == Executor::Agent {
+        project.client_id.clone()
+    } else {
+        None
+    };
+    let agent = agent_client_id
+        .as_deref()
+        .and_then(|client_id| shell_clients.get(client_id));
     ProjectCapabilityInfo {
         name: name.to_string(),
         executor: match project.executor {
@@ -65,6 +81,17 @@ fn project_info(name: &str, project: &ProjectConfig) -> ProjectCapabilityInfo {
         root: project.path.clone(),
         ssh_target,
         ssh_endpoints,
+        agent_client_id,
+        agent_status: agent.map(|client| client.status.clone()).or_else(|| {
+            if project.executor == Executor::Agent {
+                Some("missing".to_string())
+            } else {
+                None
+            }
+        }),
+        agent_connected: agent
+            .map(|client| client.connected)
+            .or_else(|| (project.executor == Executor::Agent).then_some(false)),
         allowed_checks,
         configured_checks: configured_checks.clone(),
         commands: commands.clone(),
@@ -145,9 +172,23 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
     };
     let mut project_names = projects.available_project_names();
     project_names.sort();
+    let shell_clients = match depot.obtain::<Arc<ShellClientRegistry>>() {
+        Ok(registry) => registry
+            .list_clients()
+            .await
+            .into_iter()
+            .map(|client| (client.client_id.clone(), client))
+            .collect::<HashMap<_, _>>(),
+        Err(_) => HashMap::new(),
+    };
     let mut infos = project_names
         .iter()
-        .filter_map(|name| projects.projects.get(name).map(|p| project_info(name, p)))
+        .filter_map(|name| {
+            projects
+                .projects
+                .get(name)
+                .map(|p| project_info(name, p, &shell_clients))
+        })
         .collect::<Vec<_>>();
     infos.sort_by(|a, b| a.name.cmp(&b.name));
     let response = ProjectsResponse {
@@ -177,6 +218,11 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
         .iter()
         .filter(|project| project.executor == "agent")
         .count();
+    let connected_agent_project_count = response
+        .projects
+        .iter()
+        .filter(|project| project.executor == "agent" && project.agent_connected == Some(true))
+        .count();
     res.render(Json(response));
     if let Some(db) = audit_db.as_ref() {
         let ended_at = chrono::Utc::now().timestamp();
@@ -203,6 +249,7 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
                     "project_names_count": project_names_count,
                     "ssh_project_count": ssh_project_count,
                     "agent_project_count": agent_project_count,
+                    "connected_agent_project_count": connected_agent_project_count,
                 }),
                 request_bytes: None,
                 response_bytes: None,

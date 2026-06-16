@@ -1822,7 +1822,11 @@
           "response_mode": {
             "type": "string",
             "nullable": true,
-            "enum": ["summary", "full", "minimal"],
+            "enum": [
+              "summary",
+              "full",
+              "minimal"
+            ],
             "description": "For create_trusted_raw: summary (default, tail only), full (more output, still truncated), minimal (success/exit_code/cwd only)."
           },
           "reason": {
@@ -1946,15 +1950,36 @@
             "nullable": true,
             "description": "For create_trusted_raw / create_trusted_raw_and_approve: structured execution result",
             "properties": {
-              "exit_code": { "type": "integer" },
-              "duration_ms": { "type": "integer" },
-              "cwd": { "type": "string" },
-              "stdout_tail": { "type": "string", "nullable": true },
-              "stderr_tail": { "type": "string", "nullable": true },
-              "stdout_truncated": { "type": "boolean" },
-              "stderr_truncated": { "type": "boolean" },
-              "audit_log_path": { "type": "string", "nullable": true },
-              "blocked_by_denylist": { "type": "boolean" }
+              "exit_code": {
+                "type": "integer"
+              },
+              "duration_ms": {
+                "type": "integer"
+              },
+              "cwd": {
+                "type": "string"
+              },
+              "stdout_tail": {
+                "type": "string",
+                "nullable": true
+              },
+              "stderr_tail": {
+                "type": "string",
+                "nullable": true
+              },
+              "stdout_truncated": {
+                "type": "boolean"
+              },
+              "stderr_truncated": {
+                "type": "boolean"
+              },
+              "audit_log_path": {
+                "type": "string",
+                "nullable": true
+              },
+              "blocked_by_denylist": {
+                "type": "boolean"
+              }
             }
           }
         },
@@ -2091,7 +2116,10 @@
           },
           "detail": {
             "type": "string",
-            "enum": ["basic", "logs"],
+            "enum": [
+              "basic",
+              "logs"
+            ],
             "description": "For op=status: response detail level. basic (default, lightweight, no logs) or logs (include stdout/stderr tails). tail_lines only affects detail=logs or op=log."
           }
         },
@@ -2454,7 +2482,8 @@
             "type": "string",
             "enum": [
               "local",
-              "ssh"
+              "ssh",
+              "agent"
             ]
           },
           "root": {
@@ -2499,6 +2528,21 @@
           },
           "capabilities": {
             "$ref": "#/components/schemas/ProjectCapabilities"
+          },
+          "agent_client_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "private-drop-agent client_id for agent executor projects."
+          },
+          "agent_status": {
+            "type": "string",
+            "nullable": true,
+            "description": "Current agent client status for agent executor projects: online, offline, or missing."
+          },
+          "agent_connected": {
+            "type": "boolean",
+            "nullable": true,
+            "description": "True when the configured agent client is currently connected."
           }
         },
         "required": [

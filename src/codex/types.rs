@@ -822,6 +822,12 @@ pub struct ProjectCapabilityInfo {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssh_target: Option<String>,
     pub ssh_endpoints: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent_connected: Option<bool>,
     pub allowed_checks: Vec<String>,
     pub configured_checks: Vec<String>,
     pub commands: Vec<String>,

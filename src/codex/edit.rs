@@ -1436,6 +1436,7 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
                 changed_files,
                 ids: json!({}),
                 summary: json!({
+                    "executor": if proj.is_agent() { "agent" } else if proj.is_ssh() { "ssh" } else { "local" },
                     "edit_types": edit_types,
                     "paths": body.edits.iter().map(|edit| edit_path(edit).to_string()).collect::<Vec<_>>(),
                     "response_mode": body.response_mode,

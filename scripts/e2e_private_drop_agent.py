@@ -165,6 +165,9 @@ max_output_bytes = 262144
                 assert projects["success"], projects
                 agent_info = next(p for p in projects["projects"] if p["name"] == "agent_demo")
                 assert agent_info["executor"] == "agent", agent_info
+                assert agent_info["agent_client_id"] == client_id, agent_info
+                assert agent_info["agent_connected"] is True, agent_info
+                assert agent_info["agent_status"] == "online", agent_info
                 command_result = post(
                     port,
                     token,

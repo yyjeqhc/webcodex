@@ -64,3 +64,29 @@ doc = "cargo doc --no-deps"
 # [projects.private-drop.commands]
 # clippy = "cargo clippy --all-targets -- -D warnings"
 # doc = "cargo doc --no-deps"
+
+
+# Agent executor: commands and project APIs run through a registered private-drop-agent.
+# Use this when private-drop runs on a server/gateway but the project lives on an agent machine.
+# First verify the agent is online:
+#   listShellClients -> client_id should be connected and jobs/file_read/file_write should be true
+#
+# [projects.private-drop-agent]
+# executor = "agent"
+# client_id = "oe"
+# path = "/root/git/private-drop"
+# allow_patch = true
+# allow_command_requests = true
+# allow_raw_command_requests = false
+# allowed_checks = ["fmt", "test", "build", "full"]
+#
+# [projects.private-drop-agent.checks]
+# fmt = ". /root/.cargo/env && cargo fmt --check"
+# test = ". /root/.cargo/env && cargo test"
+# build = ". /root/.cargo/env && cargo build --release"
+# full = ". /root/.cargo/env && cargo fmt --check && cargo test && cargo build --release"
+#
+# [projects.private-drop-agent.commands]
+# status = "git status --short && git branch --show-current && git log --oneline -5"
+# diffstat = "git diff --stat"
+# lastlog = "git log --oneline -20"

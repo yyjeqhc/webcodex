@@ -112,6 +112,8 @@ pub enum GitOperation {
     Add,
     Commit,
     CommitAmendNoEdit,
+    Checkpoint,
+    RollbackToCheckpoint,
 }
 
 #[derive(Debug, Deserialize)]
@@ -122,6 +124,8 @@ pub struct GitRequest {
     pub paths: Vec<String>,
     #[serde(default)]
     pub message: Option<String>,
+    #[serde(default)]
+    pub checkpoint_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Clone)]
@@ -630,6 +634,10 @@ pub struct TrustedRawCommandResult {
     pub blocked_by_denylist: bool,
 }
 
+fn default_edit_rollback_on_check_failure() -> bool {
+    true
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct EditRequest {
     pub project: String,
@@ -641,6 +649,12 @@ pub struct EditRequest {
     pub response_mode: Option<EditResponseMode>,
     #[serde(default)]
     pub expected_fingerprints: BTreeMap<String, String>,
+    /// Optional configured project check suite to run after applying edits.
+    #[serde(default)]
+    pub post_check: Option<String>,
+    /// When post_check fails, restore files touched by this edit to their pre-edit content.
+    #[serde(default = "default_edit_rollback_on_check_failure")]
+    pub rollback_on_check_failure: bool,
     pub edits: Vec<EditOperation>,
 }
 
@@ -724,6 +738,22 @@ pub enum EditOperation {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
+pub struct EditPostCheckResult {
+    pub suite: String,
+    pub command: String,
+    pub exit_code: i32,
+    pub duration_ms: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_tail: Option<String>,
+    #[serde(default)]
+    pub stdout_truncated: bool,
+    #[serde(default)]
+    pub stderr_truncated: bool,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
 pub struct EditResponse {
     pub success: bool,
     pub changed_files: Vec<String>,
@@ -731,6 +761,10 @@ pub struct EditResponse {
     #[serde(default)]
     pub diff_truncated: bool,
     pub warnings: Vec<String>,
+    #[serde(default)]
+    pub rolled_back: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub post_check: Option<EditPostCheckResult>,
     pub error: Option<String>,
 }
 
@@ -885,6 +919,8 @@ mod tests {
         )
         .unwrap();
         assert!(!response.diff_truncated);
+        assert!(!response.rolled_back);
+        assert!(response.post_check.is_none());
         assert_eq!(response.changed_files, vec!["a.txt"]);
     }
 

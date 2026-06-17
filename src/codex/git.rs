@@ -50,6 +50,32 @@ fn validate_git_commit_message(message: &str) -> Result<(), String> {
     Ok(())
 }
 
+fn validate_checkpoint_id(value: &str) -> Result<(), String> {
+    if value.is_empty() || value.len() > 80 {
+        return Err("checkpoint_id must be 1..=80 characters".to_string());
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err(
+            "checkpoint_id may only contain ASCII letters, digits, '-', '_', and '.'".to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn resolved_checkpoint_id(body: &GitRequest) -> Result<String, String> {
+    match body.checkpoint_id.as_deref().map(str::trim) {
+        Some(id) if !id.is_empty() => {
+            validate_checkpoint_id(id)?;
+            Ok(id.to_string())
+        }
+        Some(_) => Err("checkpoint_id cannot be empty".to_string()),
+        None => Ok(format!("cp-{}", uuid::Uuid::new_v4())),
+    }
+}
+
 pub(super) fn git_command_for_request(body: &GitRequest) -> Result<String, String> {
     match body.operation {
         GitOperation::Status => Ok("git status --short".to_string()),
@@ -84,6 +110,28 @@ pub(super) fn git_command_for_request(body: &GitRequest) -> Result<String, Strin
             let paths = shell_join_paths(&body.paths);
             Ok(format!(
                 "git add -- {paths} && if git diff --cached --quiet -- {paths}; then echo 'No staged changes to amend' >&2; exit 1; fi; git commit --amend --no-edit --no-verify"
+            ))
+        }
+        GitOperation::Checkpoint => {
+            let checkpoint_id = resolved_checkpoint_id(body)?;
+            let patch_path = format!(".codex/checkpoints/{}.patch", checkpoint_id);
+            Ok(format!(
+                "set -e; mkdir -p .codex/checkpoints; git diff --binary > {patch}; git status --short > {status}; printf 'checkpoint_id=%s\\npatch=%s\\n' {id} {patch}; printf 'status:\\n'; cat {status}",
+                id = shell_escape(&checkpoint_id),
+                patch = shell_escape(&patch_path),
+                status = shell_escape(&format!(".codex/checkpoints/{}.status", checkpoint_id)),
+            ))
+        }
+        GitOperation::RollbackToCheckpoint => {
+            let Some(checkpoint_id) = body.checkpoint_id.as_deref().map(str::trim) else {
+                return Err("checkpoint_id is required for rollback_to_checkpoint".to_string());
+            };
+            validate_checkpoint_id(checkpoint_id)?;
+            let patch_path = format!(".codex/checkpoints/{}.patch", checkpoint_id);
+            Ok(format!(
+                "set -e; patch={patch}; test -f \"$patch\" || {{ echo \"checkpoint not found: {id}\" >&2; exit 1; }}; current=$(mktemp); git diff --binary > \"$current\"; if [ -s \"$current\" ]; then git apply -R --whitespace=nowarn \"$current\"; fi; if [ -s \"$patch\" ]; then git apply --whitespace=nowarn \"$patch\"; fi; rm -f \"$current\"; printf 'rolled_back_to_checkpoint=%s\\n' {id}; git status --short",
+                id = shell_escape(checkpoint_id),
+                patch = shell_escape(&patch_path),
             ))
         }
     }
@@ -136,7 +184,10 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
     };
     if matches!(
         body.operation,
-        GitOperation::Add | GitOperation::Commit | GitOperation::CommitAmendNoEdit
+        GitOperation::Add
+            | GitOperation::Commit
+            | GitOperation::CommitAmendNoEdit
+            | GitOperation::RollbackToCheckpoint
     ) && !proj.allow_patch()
     {
         res.status_code(StatusCode::FORBIDDEN);
@@ -234,6 +285,7 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     "executor": if proj.is_agent() { "agent" } else if proj.is_ssh() { "ssh" } else { "local" },
                     "path_count": body.paths.len(),
                     "paths": body.paths,
+                    "checkpoint_id": body.checkpoint_id,
                     "truncated": truncated,
                 }),
                 request_bytes: None,
@@ -251,6 +303,8 @@ pub(super) fn git_operation_name(operation: &GitOperation) -> &'static str {
         GitOperation::Add => "add",
         GitOperation::Commit => "commit",
         GitOperation::CommitAmendNoEdit => "commit_amend_no_edit",
+        GitOperation::Checkpoint => "checkpoint",
+        GitOperation::RollbackToCheckpoint => "rollback_to_checkpoint",
     }
 }
 

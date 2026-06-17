@@ -2,9 +2,13 @@ use super::apply_edit_request_with_metrics;
 use super::context::{content_sha256_fingerprint, file_fingerprint, system_time_unix_ms};
 use super::get_projects;
 use super::security::is_sensitive_path;
+use super::shell::shell_escape;
 use super::source::read_binary_from_url;
 use super::truncate_string;
-use super::types::{EditOperation, EditRequest, EditResponse, EditResponseMode};
+use super::types::{
+    EditOperation, EditPostCheckResult, EditRequest, EditResponse, EditResponseMode,
+};
+use super::{run_project_cmd, CHECK_TIMEOUT_SECS};
 use crate::action_sessions::{
     record_action_event, request_action_session_id, ActionAuditEventInput,
 };
@@ -24,6 +28,7 @@ const MAX_EDIT_FILE_SIZE: u64 = 2 * 1024 * 1024;
 const MAX_EDIT_TEXT_SIZE: usize = 200 * 1024;
 const MAX_BINARY_ARTIFACT_SIZE: usize = 5 * 1024 * 1024;
 const MAX_EDIT_DIFF_LEN: usize = 40_000;
+const MAX_EDIT_CHECK_OUTPUT_LEN: usize = 12_000;
 
 pub(super) fn edit_error(error: String) -> EditResponse {
     EditResponse {
@@ -32,12 +37,68 @@ pub(super) fn edit_error(error: String) -> EditResponse {
         diff: String::new(),
         diff_truncated: false,
         warnings: Vec::new(),
+        rolled_back: false,
+        post_check: None,
         error: Some(error),
     }
 }
 
 fn effective_response_mode(body: &EditRequest) -> EditResponseMode {
     body.response_mode.unwrap_or(EditResponseMode::Full)
+}
+
+fn resolve_edit_post_check(
+    proj: &ProjectConfig,
+    body: &EditRequest,
+) -> Result<Option<(String, String)>, String> {
+    let Some(suite) = body.post_check.as_deref() else {
+        return Ok(None);
+    };
+    let suite = suite.trim();
+    if suite.is_empty() {
+        return Err("post_check cannot be empty".to_string());
+    }
+    if !proj.is_check_allowed(suite) {
+        return Err(format!(
+            "post_check '{}' is not allowed. Allowed checks: {}",
+            suite,
+            proj.effective_allowed_checks().join(", ")
+        ));
+    }
+    let command = proj.get_check_command(suite)?;
+    Ok(Some((suite.to_string(), command)))
+}
+
+fn edit_post_check_result(
+    suite: &str,
+    command: &str,
+    exit_code: i32,
+    stdout: String,
+    stderr: String,
+    duration_ms: u64,
+) -> EditPostCheckResult {
+    let (stdout_tail, stdout_truncated) = truncate_string(stdout, MAX_EDIT_CHECK_OUTPUT_LEN);
+    let (stderr_tail, stderr_truncated) = truncate_string(stderr, MAX_EDIT_CHECK_OUTPUT_LEN);
+    EditPostCheckResult {
+        suite: suite.to_string(),
+        command: command.to_string(),
+        exit_code,
+        duration_ms,
+        stdout_tail: Some(stdout_tail),
+        stderr_tail: Some(stderr_tail),
+        stdout_truncated,
+        stderr_truncated,
+    }
+}
+
+fn run_local_edit_post_check(
+    proj: &ProjectConfig,
+    suite: &str,
+    command: &str,
+) -> EditPostCheckResult {
+    let (code, stdout, stderr, duration_ms) =
+        run_project_cmd(proj, command, CHECK_TIMEOUT_SECS, None);
+    edit_post_check_result(suite, command, code, stdout, stderr, duration_ms)
 }
 
 pub(super) fn finalize_edit_response(
@@ -365,11 +426,69 @@ pub(super) fn load_edit_content(
     Ok(content)
 }
 
+fn restore_local_edit_originals(
+    paths: &HashMap<String, PathBuf>,
+    originals: &HashMap<String, Option<String>>,
+    binary_originals: &HashMap<String, Option<Vec<u8>>>,
+    changed_files: &[String],
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for path in changed_files {
+        let Some(full_path) = paths.get(path) else {
+            warnings.push(format!("rollback skipped {}; path was not resolved", path));
+            continue;
+        };
+        if let Some(original) = originals.get(path) {
+            match original {
+                Some(content) => {
+                    if let Err(e) = ensure_parent_dir(full_path).and_then(|_| {
+                        std::fs::write(full_path, content)
+                            .map_err(|e| format!("Failed to restore {}: {}", path, e))
+                    }) {
+                        warnings.push(e);
+                    }
+                }
+                None => {
+                    if full_path.exists() {
+                        if let Err(e) = std::fs::remove_file(full_path) {
+                            warnings.push(format!("Failed to remove new file {}: {}", path, e));
+                        }
+                    }
+                }
+            }
+        } else if let Some(original) = binary_originals.get(path) {
+            match original {
+                Some(bytes) => {
+                    if let Err(e) = ensure_parent_dir(full_path).and_then(|_| {
+                        std::fs::write(full_path, bytes)
+                            .map_err(|e| format!("Failed to restore binary {}: {}", path, e))
+                    }) {
+                        warnings.push(e);
+                    }
+                }
+                None => {
+                    if full_path.exists() {
+                        if let Err(e) = std::fs::remove_file(full_path) {
+                            warnings
+                                .push(format!("Failed to remove new binary file {}: {}", path, e));
+                        }
+                    }
+                }
+            }
+        }
+    }
+    warnings
+}
+
 pub(super) fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest) -> EditResponse {
     let root = proj.root();
     if !root.exists() {
         return edit_error("Project root does not exist".to_string());
     }
+    let post_check = match resolve_edit_post_check(proj, body) {
+        Ok(post_check) => post_check,
+        Err(e) => return edit_error(e),
+    };
     if let Err(e) = validate_expected_fingerprints_local(&root, body) {
         return edit_error(e);
     }
@@ -680,17 +799,50 @@ pub(super) fn local_apply_project_edit(proj: &ProjectConfig, body: &EditRequest)
             }
         }
     }
-    finalize_edit_response(
-        EditResponse {
-            success: true,
-            changed_files,
-            diff,
-            diff_truncated: false,
-            warnings: Vec::new(),
-            error: None,
-        },
-        body,
-    )
+    let mut response = EditResponse {
+        success: true,
+        changed_files: changed_files.clone(),
+        diff,
+        diff_truncated: false,
+        warnings: Vec::new(),
+        rolled_back: false,
+        post_check: None,
+        error: None,
+    };
+    if body.dry_run {
+        if post_check.is_some() {
+            response
+                .warnings
+                .push("post_check skipped because dry_run=true".to_string());
+        }
+    } else if let Some((suite, command)) = post_check {
+        let check = run_local_edit_post_check(proj, &suite, &command);
+        let check_failed = check.exit_code != 0;
+        response.post_check = Some(check);
+        if check_failed {
+            response.success = false;
+            if body.rollback_on_check_failure {
+                let rollback_warnings = restore_local_edit_originals(
+                    &paths,
+                    &originals,
+                    &binary_originals,
+                    &changed_files,
+                );
+                response.rolled_back = rollback_warnings.is_empty();
+                response.warnings.extend(rollback_warnings);
+                response.error = Some(format!(
+                    "post_check '{}' failed; edits were rolled back",
+                    suite
+                ));
+            } else {
+                response.error = Some(format!(
+                    "post_check '{}' failed; edits were retained because rollback_on_check_failure=false",
+                    suite
+                ));
+            }
+        }
+    }
+    finalize_edit_response(response, body)
 }
 
 fn sha256_hex_text(value: &str) -> String {
@@ -814,6 +966,84 @@ async fn agent_write_text_file(
         .unwrap_or_else(|| format!("failed to write {}", rel_path)))
 }
 
+async fn run_agent_edit_post_check(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    suite: &str,
+    command: &str,
+) -> EditPostCheckResult {
+    let (code, stdout, stderr, duration_ms) = super::agent_exec::run_agent_project_command(
+        depot,
+        proj,
+        command,
+        CHECK_TIMEOUT_SECS,
+        "codex_edit_post_check_agent_executor",
+        "agent edit post_check",
+    )
+    .await;
+    edit_post_check_result(suite, command, code, stdout, stderr, duration_ms)
+}
+
+async fn remove_agent_text_file(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    rel_path: &str,
+) -> Result<(), String> {
+    let command = format!("rm -f -- {}", shell_escape(rel_path));
+    let (code, _stdout, stderr, _duration_ms) = super::agent_exec::run_agent_project_command(
+        depot,
+        proj,
+        &command,
+        30,
+        "codex_edit_rollback_agent_executor",
+        "agent edit rollback",
+    )
+    .await;
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(if stderr.trim().is_empty() {
+            format!("remove command failed for {}", rel_path)
+        } else {
+            stderr
+        })
+    }
+}
+
+async fn restore_agent_edit_originals(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    registry: &Arc<ShellClientRegistry>,
+    client_id: &str,
+    cwd: &str,
+    originals: &HashMap<String, Option<String>>,
+    changed_files: &[String],
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    for path in changed_files {
+        match originals.get(path) {
+            Some(Some(content)) => {
+                if let Err(e) =
+                    agent_write_text_file(registry, client_id, cwd, path, content.clone(), None)
+                        .await
+                {
+                    warnings.push(format!("Failed to restore {}: {}", path, e));
+                }
+            }
+            Some(None) => {
+                if let Err(e) = remove_agent_text_file(depot, proj, path).await {
+                    warnings.push(format!("Failed to remove new file {}: {}", path, e));
+                }
+            }
+            None => warnings.push(format!(
+                "rollback skipped {}; original was not recorded",
+                path
+            )),
+        }
+    }
+    warnings
+}
+
 async fn load_agent_edit_content(
     registry: &Arc<ShellClientRegistry>,
     client_id: &str,
@@ -849,6 +1079,10 @@ pub(super) async fn agent_apply_project_edit(
     proj: &ProjectConfig,
     body: &EditRequest,
 ) -> EditResponse {
+    let post_check = match resolve_edit_post_check(proj, body) {
+        Ok(post_check) => post_check,
+        Err(e) => return edit_error(e),
+    };
     if body.edits.iter().any(|edit| !edit_is_text_only(edit)) {
         return edit_error(
             "binary edit operations are not supported for agent executor yet".to_string(),
@@ -1051,17 +1285,54 @@ pub(super) async fn agent_apply_project_edit(
             }
         }
     }
-    finalize_edit_response(
-        EditResponse {
-            success: true,
-            changed_files,
-            diff,
-            diff_truncated: false,
-            warnings: Vec::new(),
-            error: None,
-        },
-        body,
-    )
+    let mut response = EditResponse {
+        success: true,
+        changed_files: changed_files.clone(),
+        diff,
+        diff_truncated: false,
+        warnings: Vec::new(),
+        rolled_back: false,
+        post_check: None,
+        error: None,
+    };
+    if body.dry_run {
+        if post_check.is_some() {
+            response
+                .warnings
+                .push("post_check skipped because dry_run=true".to_string());
+        }
+    } else if let Some((suite, command)) = post_check {
+        let check = run_agent_edit_post_check(depot, proj, &suite, &command).await;
+        let check_failed = check.exit_code != 0;
+        response.post_check = Some(check);
+        if check_failed {
+            response.success = false;
+            if body.rollback_on_check_failure {
+                let rollback_warnings = restore_agent_edit_originals(
+                    depot,
+                    proj,
+                    &registry,
+                    &client_id,
+                    &cwd,
+                    &originals,
+                    &changed_files,
+                )
+                .await;
+                response.rolled_back = rollback_warnings.is_empty();
+                response.warnings.extend(rollback_warnings);
+                response.error = Some(format!(
+                    "post_check '{}' failed; edits were rolled back",
+                    suite
+                ));
+            } else {
+                response.error = Some(format!(
+                    "post_check '{}' failed; edits were retained because rollback_on_check_failure=false",
+                    suite
+                ));
+            }
+        }
+    }
+    finalize_edit_response(response, body)
 }
 
 pub(super) fn decode_binary_artifact(
@@ -1107,6 +1378,8 @@ mod tests {
             dry_run: false,
             response_mode: mode,
             expected_fingerprints: Default::default(),
+            post_check: None,
+            rollback_on_check_failure: true,
             edits: Vec::new(),
         }
     }
@@ -1129,6 +1402,19 @@ mod tests {
         }
     }
 
+    fn local_test_project_with_build_check(root: &Path, command: &str) -> ProjectConfig {
+        let mut project = local_test_project(root);
+        project.allowed_checks = vec!["build".to_string()];
+        project.checks = Some(crate::projects::ProjectChecks {
+            fmt: None,
+            test: None,
+            build: Some(command.to_string()),
+            e2e: None,
+            full: None,
+        });
+        project
+    }
+
     #[test]
     fn finalize_edit_response_summary_omits_diff() {
         let resp = finalize_edit_response(
@@ -1138,6 +1424,8 @@ mod tests {
                 diff: "hello".to_string(),
                 diff_truncated: false,
                 warnings: vec!["note".to_string()],
+                rolled_back: false,
+                post_check: None,
                 error: None,
             },
             &empty_request(Some(EditResponseMode::Summary)),
@@ -1155,6 +1443,8 @@ mod tests {
                 diff: "hello".to_string(),
                 diff_truncated: false,
                 warnings: vec!["note".to_string()],
+                rolled_back: false,
+                post_check: None,
                 error: None,
             },
             &empty_request(Some(EditResponseMode::Minimal)),
@@ -1172,6 +1462,8 @@ mod tests {
                 diff: "x".repeat(MAX_EDIT_DIFF_LEN + 100),
                 diff_truncated: false,
                 warnings: Vec::new(),
+                rolled_back: false,
+                post_check: None,
                 error: None,
             },
             &empty_request(Some(EditResponseMode::Full)),
@@ -1205,6 +1497,8 @@ mod tests {
                 dry_run: false,
                 response_mode: Some(EditResponseMode::Minimal),
                 expected_fingerprints: stale,
+                post_check: None,
+                rollback_on_check_failure: true,
                 edits: vec![EditOperation::ReplaceText {
                     path: "a.txt".to_string(),
                     old_text: "hello".to_string(),
@@ -1227,6 +1521,8 @@ mod tests {
                 dry_run: false,
                 response_mode: Some(EditResponseMode::Minimal),
                 expected_fingerprints: expected,
+                post_check: None,
+                rollback_on_check_failure: true,
                 edits: vec![EditOperation::ReplaceText {
                     path: "a.txt".to_string(),
                     old_text: "hello".to_string(),
@@ -1237,6 +1533,81 @@ mod tests {
         );
         assert!(accepted.success);
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "goodbye\n");
+    }
+
+    #[test]
+    fn local_edit_post_check_success_keeps_changes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.txt");
+        std::fs::write(&file, "hello\n").unwrap();
+        let proj = local_test_project_with_build_check(tmp.path(), "grep -q goodbye a.txt");
+
+        let response = local_apply_project_edit(
+            &proj,
+            &EditRequest {
+                project: "demo".to_string(),
+                reason: None,
+                dry_run: false,
+                response_mode: Some(EditResponseMode::Minimal),
+                expected_fingerprints: Default::default(),
+                post_check: Some("build".to_string()),
+                rollback_on_check_failure: true,
+                edits: vec![EditOperation::ReplaceText {
+                    path: "a.txt".to_string(),
+                    old_text: "hello".to_string(),
+                    new_text: "goodbye".to_string(),
+                    occurrence: None,
+                }],
+            },
+        );
+
+        assert!(response.success);
+        assert!(!response.rolled_back);
+        assert_eq!(
+            response.post_check.as_ref().map(|check| check.exit_code),
+            Some(0)
+        );
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "goodbye\n");
+    }
+
+    #[test]
+    fn local_edit_post_check_failure_rolls_back() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("a.txt");
+        std::fs::write(&file, "hello\n").unwrap();
+        let proj = local_test_project_with_build_check(tmp.path(), "grep -q still-hello a.txt");
+
+        let response = local_apply_project_edit(
+            &proj,
+            &EditRequest {
+                project: "demo".to_string(),
+                reason: None,
+                dry_run: false,
+                response_mode: Some(EditResponseMode::Minimal),
+                expected_fingerprints: Default::default(),
+                post_check: Some("build".to_string()),
+                rollback_on_check_failure: true,
+                edits: vec![EditOperation::ReplaceText {
+                    path: "a.txt".to_string(),
+                    old_text: "hello".to_string(),
+                    new_text: "goodbye".to_string(),
+                    occurrence: None,
+                }],
+            },
+        );
+
+        assert!(!response.success);
+        assert!(response.rolled_back);
+        assert_eq!(
+            response.post_check.as_ref().map(|check| check.exit_code),
+            Some(1)
+        );
+        assert!(response
+            .error
+            .as_deref()
+            .unwrap_or("")
+            .contains("rolled back"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "hello\n");
     }
 }
 
@@ -1442,6 +1813,9 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
                     "response_mode": body.response_mode,
                     "dry_run": body.dry_run,
                     "diff_truncated": response.diff_truncated,
+                    "post_check": body.post_check.as_deref(),
+                    "post_check_exit_code": response.post_check.as_ref().map(|check| check.exit_code),
+                    "rolled_back": response.rolled_back,
                 }),
                 request_bytes: None,
                 response_bytes: None,

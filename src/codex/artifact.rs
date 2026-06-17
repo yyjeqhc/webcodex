@@ -334,6 +334,8 @@ pub(super) fn plan_artifact_request(
             dry_run: false,
             response_mode: None,
             expected_fingerprints: Default::default(),
+            post_check: None,
+            rollback_on_check_failure: true,
             edits,
         },
         saved_path: body.path.clone(),

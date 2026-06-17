@@ -1254,6 +1254,16 @@
             },
             "description": "Optional path->fingerprint guard from context_batch result_metadata. Rejects stale edits."
           },
+          "post_check": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional configured project check suite to run after applying edits, such as build or test. Rejects unknown or disallowed suites."
+          },
+          "rollback_on_check_failure": {
+            "type": "boolean",
+            "default": true,
+            "description": "When post_check fails, restore files touched by this edit to their pre-edit content. Supported for local and agent executors."
+          },
           "edits": {
             "type": "array",
             "items": {
@@ -1349,6 +1359,15 @@
               "type": "string"
             }
           },
+          "rolled_back": {
+            "type": "boolean",
+            "default": false,
+            "description": "True when post_check failed and touched files were restored."
+          },
+          "post_check": {
+            "$ref": "#/components/schemas/EditPostCheckResult",
+            "nullable": true
+          },
           "error": {
             "type": "string",
             "nullable": true
@@ -1360,6 +1379,45 @@
           "diff",
           "diff_truncated",
           "warnings"
+        ]
+      },
+      "EditPostCheckResult": {
+        "type": "object",
+        "properties": {
+          "suite": {
+            "type": "string"
+          },
+          "command": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "duration_ms": {
+            "type": "integer"
+          },
+          "stdout_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "stdout_truncated": {
+            "type": "boolean"
+          },
+          "stderr_truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "suite",
+          "command",
+          "exit_code",
+          "duration_ms",
+          "stdout_truncated",
+          "stderr_truncated"
         ]
       },
       "ArtifactRequest": {
@@ -1523,7 +1581,9 @@
               "log",
               "add",
               "commit",
-              "commit_amend_no_edit"
+              "commit_amend_no_edit",
+              "checkpoint",
+              "rollback_to_checkpoint"
             ],
             "description": "Controlled git operation to run"
           },
@@ -1539,6 +1599,12 @@
             "nullable": true,
             "maxLength": 200,
             "description": "Commit message. Required for operation=commit."
+          },
+          "checkpoint_id": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 80,
+            "description": "Checkpoint id for operation=checkpoint or rollback_to_checkpoint. If omitted for checkpoint, the server generates one and prints it in stdout_tail."
           }
         },
         "required": [
@@ -3464,7 +3530,7 @@
       "post": {
         "operationId": "applyProjectEdit",
         "summary": "Apply safe structured file edits",
-        "description": "Apply project edits. Use response_mode=summary for larger edits. If timeout occurs, check the result before retrying.",
+        "description": "Apply edits. Use post_check to run a configured check and auto-rollback touched files on failure.",
         "tags": [
           "codex"
         ],
@@ -3546,7 +3612,7 @@
       "post": {
         "operationId": "runProjectGit",
         "summary": "Run a controlled git operation",
-        "description": "Run fixed git operations such as status, diff, log, add, commit, or amend. No push.",
+        "description": "Run fixed git operations: status, diff, log, add, commit, amend, checkpoint, rollback. No push.",
         "tags": [
           "codex"
         ],

@@ -50,7 +50,7 @@ fn apply_project_description_to_schema(spec: &mut serde_json::Value, schema_name
 
 fn apply_edit_timeout_guidance(spec: &mut serde_json::Value) {
     spec["paths"]["/api/codex/edit"]["post"]["description"] = serde_json::json!(
-        "Apply edits. Use response_mode=summary for larger edits. If timeout occurs, check git_status or the result before retrying."
+        "Apply edits. Use post_check to run a configured check and auto-rollback touched files on failure."
     );
     spec["components"]["schemas"]["EditRequest"]["properties"]["response_mode"]["description"] = serde_json::json!(
         "Response detail. For larger or multi-file edits, use summary to reduce timeout risk."
@@ -667,6 +667,7 @@ pub async fn codex_openapi_json(res: &mut Response) {
         "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
         "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
         "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+        "EditPostCheckResult": spec["components"]["schemas"]["EditPostCheckResult"].clone(),
         "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
         "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
         "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
@@ -901,7 +902,7 @@ mod tests {
     }
 
     #[test]
-    fn compact_schema_prefers_summary_for_large_edits() {
+    fn compact_schema_mentions_post_check_for_edits() {
         let mut spec: serde_json::Value =
             serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
         apply_edit_timeout_guidance(&mut spec);
@@ -913,8 +914,8 @@ mod tests {
             .as_str()
             .unwrap();
         assert!(description.len() <= 300, "{}", description.len());
-        assert!(description.contains("response_mode=summary"));
-        assert!(description.contains("check git_status"));
+        assert!(description.contains("post_check"));
+        assert!(description.contains("auto-rollback"));
         assert!(response_mode_description.contains("multi-file edits"));
         assert!(response_mode_description.contains("use summary"));
     }
@@ -1136,6 +1137,7 @@ mod tests {
             "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
             "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
             "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+            "EditPostCheckResult": spec["components"]["schemas"]["EditPostCheckResult"].clone(),
             "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
             "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
             "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
@@ -1214,6 +1216,7 @@ mod tests {
             "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
             "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
             "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+            "EditPostCheckResult": spec["components"]["schemas"]["EditPostCheckResult"].clone(),
             "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
             "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
             "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
@@ -1313,6 +1316,7 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
         "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
         "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+        "EditPostCheckResult": spec["components"]["schemas"]["EditPostCheckResult"].clone(),
         "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
         "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
         "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
@@ -1419,6 +1423,7 @@ pub async fn codex_openapi_gpt_json(res: &mut Response) {
         "WriteBinaryFileFromUrlEdit": spec["components"]["schemas"]["WriteBinaryFileFromUrlEdit"].clone(),
         "EditRequest": spec["components"]["schemas"]["EditRequest"].clone(),
         "EditResponse": spec["components"]["schemas"]["EditResponse"].clone(),
+        "EditPostCheckResult": spec["components"]["schemas"]["EditPostCheckResult"].clone(),
         "ArtifactRequest": spec["components"]["schemas"]["ArtifactRequest"].clone(),
         "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
         "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),

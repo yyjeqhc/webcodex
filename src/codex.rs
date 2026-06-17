@@ -983,6 +983,7 @@ mod tests {
             operation: GitOperation::Status,
             paths: vec![],
             message: None,
+            checkpoint_id: None,
         };
         assert_eq!(
             git_command_for_request(&status).unwrap(),
@@ -993,11 +994,49 @@ mod tests {
             operation: GitOperation::Diff,
             paths: vec!["src/main.rs".to_string()],
             message: None,
+            checkpoint_id: None,
         };
         assert_eq!(
             git_command_for_request(&diff).unwrap(),
             "git diff -- 'src/main.rs'"
         );
+    }
+
+    #[test]
+    fn test_git_checkpoint_commands_are_fixed() {
+        let checkpoint = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::Checkpoint,
+            paths: vec![],
+            message: None,
+            checkpoint_id: Some("before-edit".to_string()),
+        };
+        let cmd = git_command_for_request(&checkpoint).unwrap();
+        assert!(cmd.contains("mkdir -p .codex/checkpoints"));
+        assert!(cmd.contains("git diff --binary"));
+        assert!(cmd.contains(".codex/checkpoints/before-edit.patch"));
+        assert!(cmd.contains("checkpoint_id"));
+
+        let rollback = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::RollbackToCheckpoint,
+            paths: vec![],
+            message: None,
+            checkpoint_id: Some("before-edit".to_string()),
+        };
+        let cmd = git_command_for_request(&rollback).unwrap();
+        assert!(cmd.contains("git apply -R"));
+        assert!(cmd.contains("git apply --whitespace=nowarn"));
+        assert!(cmd.contains("rolled_back_to_checkpoint"));
+
+        let missing_id = GitRequest {
+            project: "p".to_string(),
+            operation: GitOperation::RollbackToCheckpoint,
+            paths: vec![],
+            message: None,
+            checkpoint_id: None,
+        };
+        assert!(git_command_for_request(&missing_id).is_err());
     }
 
     #[test]
@@ -1007,6 +1046,7 @@ mod tests {
             operation: GitOperation::Commit,
             paths: vec!["src/main.rs".to_string()],
             message: Some("Add feature".to_string()),
+            checkpoint_id: None,
         };
         let cmd = git_command_for_request(&request).unwrap();
         assert!(cmd.contains("git add -- 'src/main.rs'"));
@@ -1022,6 +1062,7 @@ mod tests {
             operation: GitOperation::Commit,
             paths: vec!["src/main.rs".to_string()],
             message: Some("bad\nmessage".to_string()),
+            checkpoint_id: None,
         };
         assert!(git_command_for_request(&request).is_err());
     }
@@ -1043,6 +1084,7 @@ mod tests {
             operation: GitOperation::CommitAmendNoEdit,
             paths: vec!["src/codex.rs".to_string()],
             message: None,
+            checkpoint_id: None,
         };
         let cmd = git_command_for_request(&request).unwrap();
         assert!(cmd.contains("git add -- 'src/codex.rs'"));
@@ -1076,6 +1118,7 @@ mod tests {
             operation: GitOperation::Add,
             paths: vec![".env".to_string()],
             message: None,
+            checkpoint_id: None,
         };
         assert!(git_command_for_request(&request).is_err());
     }
@@ -1087,6 +1130,7 @@ mod tests {
             operation: GitOperation::CommitAmendNoEdit,
             paths: vec![],
             message: None,
+            checkpoint_id: None,
         };
         assert!(git_command_for_request(&request).is_err());
     }
@@ -1495,6 +1539,8 @@ mod tests {
             dry_run: false,
             response_mode: None,
             expected_fingerprints: Default::default(),
+            post_check: None,
+            rollback_on_check_failure: true,
             edits: vec![EditOperation::ReplaceText {
                 path: "src/main.rs".to_string(),
                 old_text: user_input.to_string(),
@@ -1662,6 +1708,12 @@ pub(super) fn apply_edit_request_with_metrics(
 ) -> EditResponse {
     let edit_start = Instant::now();
     if proj.is_ssh() {
+        if body.post_check.is_some() {
+            return edit_error(
+                "post_check auto-rollback is currently supported for local and agent executors; use runProjectGit checkpoint before SSH edits"
+                    .to_string(),
+            );
+        }
         let response = ssh_apply_project_edit(proj, body, projects.ssh.as_ref());
         tracing::info!(
             target: "codex.metrics",

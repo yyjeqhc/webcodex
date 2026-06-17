@@ -1,4 +1,5 @@
 use crate::projects::ProjectConfig;
+use crate::shell_client::{assert_shell_client_owner, requested_by_from_auth};
 use crate::shell_protocol::ShellJobOpRequest;
 use crate::ShellClientRegistry;
 use salvo::prelude::*;
@@ -15,29 +16,15 @@ pub(super) async fn resolve_agent_project_client(
         .map_err(|_| "Shell client registry not configured".to_string())?
         .clone();
 
-    let clients = registry.list_clients().await;
-    let client = clients.into_iter().find(|c| c.client_id == client_id);
+    let client = registry.get_client_view(&client_id).await;
     let client = match client {
         Some(c) if c.connected => c,
         Some(_) => return Err(format!("agent client {} is not connected", client_id)),
         None => return Err(format!("agent client {} not found", client_id)),
     };
 
-    // Enforce shell-client ownership only when the request has a real user identity.
-    if let Some(auth) = depot.obtain::<crate::auth::AuthContext>().ok() {
-        if !auth.is_bootstrap {
-            if let (Some(username), Some(owner)) =
-                (auth.username.as_deref(), client.owner.as_deref())
-            {
-                if username != owner {
-                    return Err(format!(
-                        "agent client {} is owned by {}; current api key belongs to {}",
-                        client_id, owner, username
-                    ));
-                }
-            }
-        }
-    }
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok();
+    assert_shell_client_owner(auth, &client_id, client.owner.as_deref())?;
 
     Ok((client_id, registry))
 }
@@ -47,10 +34,12 @@ pub(super) async fn run_agent_project_command(
     proj: &ProjectConfig,
     cmd: &str,
     timeout_secs: u64,
-    requested_by: &'static str,
+    _requested_by: &'static str,
     timeout_label: &'static str,
 ) -> (i32, String, String, u64) {
     let started = Instant::now();
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let requested_by = requested_by_from_auth(auth.as_ref());
 
     let (client_id, registry) = match resolve_agent_project_client(depot, proj).await {
         Ok(v) => v,
@@ -71,7 +60,7 @@ pub(super) async fn run_agent_project_command(
                 limit: None,
                 codex: None,
             },
-            requested_by.to_string(),
+            requested_by.clone(),
         )
         .await
     {
@@ -81,7 +70,7 @@ pub(super) async fn run_agent_project_command(
     let deadline = Instant::now() + Duration::from_secs(timeout_secs.max(1) + 2);
     loop {
         if Instant::now() >= deadline {
-            let _ = registry.stop_job(&job.job_id).await;
+            let _ = registry.stop_job(&job.job_id, requested_by.clone()).await;
             let (_, stdout, stderr, _, _) = registry
                 .job_log(&job.job_id, Some(1), Some(1), None)
                 .await

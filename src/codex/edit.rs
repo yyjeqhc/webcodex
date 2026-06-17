@@ -866,6 +866,7 @@ async fn agent_file_request(
     max_bytes: Option<usize>,
     expected_sha256: Option<String>,
     create_dirs: bool,
+    requested_by: &str,
 ) -> Result<ShellRunResponse, String> {
     let wait_timeout_secs = 30;
     let (request_id, rx) = registry
@@ -881,7 +882,7 @@ async fn agent_file_request(
                 create_dirs,
                 wait_timeout_secs,
             },
-            "codex_edit_agent_executor".to_string(),
+            requested_by.to_string(),
         )
         .await?;
     match tokio::time::timeout(std::time::Duration::from_secs(wait_timeout_secs), rx).await {
@@ -902,6 +903,7 @@ async fn agent_read_text_file(
     client_id: &str,
     cwd: &str,
     rel_path: &str,
+    requested_by: &str,
 ) -> Result<String, String> {
     let response = agent_file_request(
         registry,
@@ -913,6 +915,7 @@ async fn agent_read_text_file(
         Some(MAX_EDIT_FILE_SIZE as usize),
         None,
         false,
+        requested_by,
     )
     .await?;
     if response.success && response.exit_code == Some(0) && response.error.is_none() {
@@ -929,8 +932,9 @@ async fn agent_read_text_file_optional(
     client_id: &str,
     cwd: &str,
     rel_path: &str,
+    requested_by: &str,
 ) -> Result<Option<String>, String> {
-    match agent_read_text_file(registry, client_id, cwd, rel_path).await {
+    match agent_read_text_file(registry, client_id, cwd, rel_path, requested_by).await {
         Ok(content) => Ok(Some(content)),
         Err(e) if is_missing_agent_file_error(&e) => Ok(None),
         Err(e) => Err(e),
@@ -944,6 +948,7 @@ async fn agent_write_text_file(
     rel_path: &str,
     content: String,
     expected_sha256: Option<String>,
+    requested_by: &str,
 ) -> Result<(), String> {
     let response = agent_file_request(
         registry,
@@ -955,6 +960,7 @@ async fn agent_write_text_file(
         None,
         expected_sha256,
         true,
+        requested_by,
     )
     .await?;
     if response.success && response.exit_code == Some(0) && response.error.is_none() {
@@ -1018,14 +1024,22 @@ async fn restore_agent_edit_originals(
     cwd: &str,
     originals: &HashMap<String, Option<String>>,
     changed_files: &[String],
+    requested_by: &str,
 ) -> Vec<String> {
     let mut warnings = Vec::new();
     for path in changed_files {
         match originals.get(path) {
             Some(Some(content)) => {
-                if let Err(e) =
-                    agent_write_text_file(registry, client_id, cwd, path, content.clone(), None)
-                        .await
+                if let Err(e) = agent_write_text_file(
+                    registry,
+                    client_id,
+                    cwd,
+                    path,
+                    content.clone(),
+                    None,
+                    requested_by,
+                )
+                .await
                 {
                     warnings.push(format!("Failed to restore {}: {}", path, e));
                 }
@@ -1051,11 +1065,12 @@ async fn load_agent_edit_content(
     rel_path: &str,
     originals: &mut HashMap<String, Option<String>>,
     current: &mut HashMap<String, Option<String>>,
+    requested_by: &str,
 ) -> Result<String, String> {
     if let Some(Some(content)) = current.get(rel_path) {
         return Ok(content.clone());
     }
-    let content = agent_read_text_file(registry, client_id, cwd, rel_path).await?;
+    let content = agent_read_text_file(registry, client_id, cwd, rel_path, requested_by).await?;
     originals
         .entry(rel_path.to_string())
         .or_insert_with(|| Some(content.clone()));
@@ -1106,14 +1121,14 @@ pub(super) async fn agent_apply_project_edit(
             }
         }
     }
-    let client_id = match proj.agent_client_id() {
-        Ok(client_id) => client_id.to_string(),
-        Err(e) => return edit_error(e),
-    };
-    let registry = match depot.obtain::<Arc<ShellClientRegistry>>() {
-        Ok(registry) => registry.clone(),
-        Err(_) => return edit_error("Shell client registry not configured".to_string()),
-    };
+    let requested_by = crate::shell_client::requested_by_from_auth(
+        depot.obtain::<crate::auth::AuthContext>().ok(),
+    );
+    let (client_id, registry) =
+        match super::agent_exec::resolve_agent_project_client(depot, proj).await {
+            Ok(v) => v,
+            Err(e) => return edit_error(e),
+        };
     let cwd = proj.path.clone();
     let mut originals: HashMap<String, Option<String>> = HashMap::new();
     let mut current: HashMap<String, Option<String>> = HashMap::new();
@@ -1143,6 +1158,7 @@ pub(super) async fn agent_apply_project_edit(
                     &rel_path,
                     &mut originals,
                     &mut current,
+                    &requested_by,
                 )
                 .await
                 {
@@ -1168,6 +1184,7 @@ pub(super) async fn agent_apply_project_edit(
                     &rel_path,
                     &mut originals,
                     &mut current,
+                    &requested_by,
                 )
                 .await
                 {
@@ -1188,6 +1205,7 @@ pub(super) async fn agent_apply_project_edit(
                     &rel_path,
                     &mut originals,
                     &mut current,
+                    &requested_by,
                 )
                 .await
                 {
@@ -1198,7 +1216,15 @@ pub(super) async fn agent_apply_project_edit(
                 current.insert(rel_path.clone(), Some(before));
             }
             EditOperation::CreateFile { content, .. } => {
-                match agent_read_text_file_optional(&registry, &client_id, &cwd, &rel_path).await {
+                match agent_read_text_file_optional(
+                    &registry,
+                    &client_id,
+                    &cwd,
+                    &rel_path,
+                    &requested_by,
+                )
+                .await
+                {
                     Ok(Some(_)) => return edit_error(format!("File already exists: {}", rel_path)),
                     Ok(None) => {}
                     Err(e) => return edit_error(e),
@@ -1211,13 +1237,18 @@ pub(super) async fn agent_apply_project_edit(
                 allow_overwrite,
                 ..
             } => {
-                let old =
-                    match agent_read_text_file_optional(&registry, &client_id, &cwd, &rel_path)
-                        .await
-                    {
-                        Ok(old) => old,
-                        Err(e) => return edit_error(e),
-                    };
+                let old = match agent_read_text_file_optional(
+                    &registry,
+                    &client_id,
+                    &cwd,
+                    &rel_path,
+                    &requested_by,
+                )
+                .await
+                {
+                    Ok(old) => old,
+                    Err(e) => return edit_error(e),
+                };
                 if old.is_some() && !allow_overwrite {
                     return edit_error(format!(
                         "File exists and allow_overwrite is false: {}",
@@ -1278,6 +1309,7 @@ pub(super) async fn agent_apply_project_edit(
                 path,
                 new_content.clone(),
                 expected_sha256,
+                &requested_by,
             )
             .await
             {
@@ -1316,6 +1348,7 @@ pub(super) async fn agent_apply_project_edit(
                     &cwd,
                     &originals,
                     &changed_files,
+                    &requested_by,
                 )
                 .await;
                 response.rolled_back = rollback_warnings.is_empty();

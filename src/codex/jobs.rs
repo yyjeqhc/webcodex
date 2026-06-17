@@ -16,6 +16,7 @@ use serde_json::json;
 use super::run_project_cmd;
 use super::security::is_sensitive_path;
 use super::types::{JobInfo, JobMetadata};
+use crate::shell_client::requested_by_from_auth;
 use crate::shell_protocol::{
     ShellJobCodexMetadata, ShellJobInfo as AgentShellJobInfo, ShellJobOpRequest,
 };
@@ -1469,6 +1470,8 @@ async fn create_agent_job(
         .try_into()
         .map_err(|_| "max_runtime_secs is invalid".to_string())?;
     let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok();
+    let requested_by = requested_by_from_auth(auth);
     let shell_job = registry
         .start_job(
             ShellJobOpRequest {
@@ -1494,7 +1497,7 @@ async fn create_agent_job(
                     max_runtime_secs: Some(max_runtime_secs),
                 }),
             },
-            "codex_run_job_agent_executor".to_string(),
+            requested_by,
         )
         .await?;
     agent_shell_job_to_job_info(shell_job, Some(&client_id), Some(project), None)
@@ -1530,6 +1533,9 @@ async fn agent_job_info_basic(
     validate_job_id(job_id)?;
     let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
     let info = registry.get_job(job_id).await?;
+    if info.client_id != client_id {
+        return Err("agent shell job is not a Codex job for this project".to_string());
+    }
     agent_shell_job_to_job_info(info, Some(&client_id), Some(project), None)
         .ok_or_else(|| "agent shell job is not a Codex job for this project".to_string())
 }
@@ -1544,6 +1550,10 @@ async fn agent_job_log_with_count(
 ) -> Result<(String, String, usize), String> {
     validate_job_id(job_id)?;
     let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
+    let info = registry.get_job(job_id).await?;
+    if agent_shell_job_to_job_info(info, Some(&client_id), Some(project), None).is_none() {
+        return Err("agent shell job is not a Codex job for this project".to_string());
+    }
     let (info, stdout, stderr, next_stdout_line, _next_stderr_line) = registry
         .job_log(
             job_id,
@@ -1556,12 +1566,10 @@ async fn agent_job_log_with_count(
             },
         )
         .await?;
-    let stderr_tail = stderr.unwrap_or_default();
-    if agent_shell_job_to_job_info(info, Some(&client_id), Some(project), Some(&stderr_tail))
-        .is_none()
-    {
+    if info.client_id != client_id {
         return Err("agent shell job is not a Codex job for this project".to_string());
     }
+    let stderr_tail = stderr.unwrap_or_default();
     let total_lines = next_stdout_line.saturating_sub(1);
     Ok((stdout.unwrap_or_default(), stderr_tail, total_lines))
 }
@@ -1574,7 +1582,13 @@ async fn stop_agent_job(
 ) -> Result<JobInfo, String> {
     validate_job_id(job_id)?;
     let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
-    let info = registry.stop_job(job_id).await?;
+    let info = registry.get_job(job_id).await?;
+    if agent_shell_job_to_job_info(info, Some(&client_id), Some(project), None).is_none() {
+        return Err("agent shell job is not a Codex job for this project".to_string());
+    }
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok();
+    let requested_by = requested_by_from_auth(auth);
+    let info = registry.stop_job(job_id, requested_by).await?;
     agent_shell_job_to_job_info(info, Some(&client_id), Some(project), None)
         .ok_or_else(|| "agent shell job is not a Codex job for this project".to_string())
 }
@@ -2925,6 +2939,16 @@ mod tests {
         (tmp, db)
     }
 
+    fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
+        crate::auth::AuthContext {
+            user_id: username.map(|username| format!("user-{}", username)),
+            username: username.map(str::to_string),
+            api_key_id: username.map(|username| format!("key-{}", username)),
+            api_key_name: username.map(|username| format!("{} key", username)),
+            is_bootstrap,
+        }
+    }
+
     fn test_agent_project(root: &str) -> ProjectConfig {
         ProjectConfig {
             path: root.to_string(),
@@ -2958,6 +2982,7 @@ mod tests {
             .unwrap();
         let mut depot = Depot::new();
         depot.inject(registry.clone());
+        depot.inject(auth_context(None, true));
         let proj = test_agent_project("/tmp/private-drop-agent-job");
 
         let job = create_agent_job(
@@ -3041,6 +3066,91 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(recovered.status, "completed");
+    }
+
+    #[tokio::test]
+    async fn agent_job_helpers_reject_job_id_from_other_client() {
+        let registry = Arc::new(crate::ShellClientRegistry::default());
+        registry
+            .register(crate::shell_protocol::ShellClientRegisterRequest {
+                client_id: "alice-client".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+            })
+            .await
+            .unwrap();
+        registry
+            .register(crate::shell_protocol::ShellClientRegisterRequest {
+                client_id: "bob-client".to_string(),
+                display_name: None,
+                owner: Some("bob".to_string()),
+                hostname: None,
+                capabilities: None,
+            })
+            .await
+            .unwrap();
+
+        let bob_job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("bob-client".to_string()),
+                    cwd: Some("/tmp/private-drop-bob".to_string()),
+                    command: Some("printf secret".to_string()),
+                    timeout_secs: Some(60),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: Some(ShellJobCodexMetadata {
+                        project: Some("agent-project".to_string()),
+                        goal_id: Some("goal-bob".to_string()),
+                        client_request_id: Some("crid-bob".to_string()),
+                        command: Some("printf secret".to_string()),
+                        kind: Some("command".to_string()),
+                        suite: None,
+                        script_path: None,
+                        reason: Some("bob job".to_string()),
+                        max_runtime_secs: Some(60),
+                    }),
+                },
+                "bob".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let mut depot = Depot::new();
+        depot.inject(registry.clone());
+        depot.inject(auth_context(Some("alice"), false));
+        let mut proj = test_agent_project("/tmp/private-drop-alice");
+        proj.client_id = Some("alice-client".to_string());
+
+        let err = agent_job_info_basic(&depot, &proj, "agent-project", &bob_job.job_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err, "agent shell job is not a Codex job for this project");
+
+        let err =
+            agent_job_log_with_count(&depot, &proj, "agent-project", &bob_job.job_id, 10, None)
+                .await
+                .unwrap_err();
+        assert_eq!(err, "agent shell job is not a Codex job for this project");
+
+        let err = stop_agent_job(&depot, &proj, "agent-project", &bob_job.job_id)
+            .await
+            .unwrap_err();
+        assert_eq!(err, "agent shell job is not a Codex job for this project");
+
+        let listed = list_agent_jobs(&depot, &proj, "agent-project", 10, None)
+            .await
+            .unwrap();
+        assert!(listed.is_empty());
+
+        let still_queued = registry.get_job(&bob_job.job_id).await.unwrap();
+        assert_eq!(still_queued.status, "queued");
     }
 
     #[test]

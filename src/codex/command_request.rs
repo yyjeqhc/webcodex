@@ -1644,6 +1644,13 @@ mod tests {
             .unwrap();
         let mut depot = Depot::new();
         depot.inject(registry.clone());
+        depot.inject(crate::auth::AuthContext {
+            user_id: None,
+            username: None,
+            api_key_id: None,
+            api_key_name: None,
+            is_bootstrap: true,
+        });
         let proj = ProjectConfig {
             path: "/tmp/private-drop".to_string(),
             executor: crate::projects::Executor::Agent,
@@ -1681,7 +1688,7 @@ mod tests {
             assert_eq!(request.kind, "start_job");
             assert_eq!(request.cwd.as_deref(), Some("/tmp/private-drop"));
             assert_eq!(request.command, "cargo check");
-            assert_eq!(request.requested_by, "codex_project_check_agent_executor");
+            assert_eq!(request.requested_by, "bootstrap");
             agent_registry
                 .complete(crate::shell_protocol::ShellAgentResultRequest {
                     client_id: "oe".to_string(),

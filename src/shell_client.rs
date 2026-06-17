@@ -99,6 +99,40 @@ fn validate_id(value: &str, field: &str) -> Result<(), String> {
     Ok(())
 }
 
+pub(crate) fn requested_by_from_auth(auth: Option<&crate::auth::AuthContext>) -> String {
+    if auth.map(|auth| auth.is_bootstrap).unwrap_or(false) {
+        return "bootstrap".to_string();
+    }
+    auth.and_then(|auth| auth.username.as_deref())
+        .filter(|username| !username.trim().is_empty())
+        .unwrap_or("anonymous")
+        .to_string()
+}
+
+pub(crate) fn assert_shell_client_owner(
+    auth: Option<&crate::auth::AuthContext>,
+    client_id: &str,
+    owner: Option<&str>,
+) -> Result<(), String> {
+    if auth.map(|auth| auth.is_bootstrap).unwrap_or(false) {
+        return Ok(());
+    }
+    let owner = owner
+        .filter(|owner| !owner.trim().is_empty())
+        .ok_or_else(|| format!("agent client {} has no owner", client_id))?;
+    let username = auth
+        .and_then(|auth| auth.username.as_deref())
+        .filter(|username| !username.trim().is_empty());
+    if username == Some(owner) {
+        return Ok(());
+    }
+    let username = username.unwrap_or("anonymous");
+    Err(format!(
+        "agent client {} is owned by {}; current api key belongs to {}",
+        client_id, owner, username
+    ))
+}
+
 fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), String> {
     if let Some(value) = value {
         if value.chars().count() > MAX_CLIENT_FIELD_LEN {
@@ -393,6 +427,11 @@ impl ShellClientRegistry {
         ids.into_iter()
             .filter_map(|id| Self::client_view_locked(&inner, &id))
             .collect()
+    }
+
+    pub async fn get_client_view(&self, client_id: &str) -> Option<ShellClientView> {
+        let inner = self.inner.lock().await;
+        Self::client_view_locked(&inner, client_id)
     }
 
     pub async fn enqueue_file_op(
@@ -721,7 +760,11 @@ impl ShellClientRegistry {
         ))
     }
 
-    pub async fn stop_job(&self, job_id: &str) -> Result<ShellJobInfo, String> {
+    pub async fn stop_job(
+        &self,
+        job_id: &str,
+        requested_by: String,
+    ) -> Result<ShellJobInfo, String> {
         validate_id(job_id, "job_id")?;
         let mut inner = self.inner.lock().await;
         let Some(job) = inner.jobs_by_id.get(job_id).cloned() else {
@@ -758,7 +801,7 @@ impl ShellClientRegistry {
                     create_dirs: false,
                     command: String::new(),
                     timeout_secs: 1,
-                    requested_by: "gpt_action_or_web".to_string(),
+                    requested_by,
                     created_at: now_ts(),
                 };
                 inner
@@ -861,6 +904,21 @@ impl ShellClientRegistry {
 
 fn get_registry(depot: &Depot) -> Option<Arc<ShellClientRegistry>> {
     depot.obtain::<Arc<ShellClientRegistry>>().ok().cloned()
+}
+
+async fn assert_registry_client_owner(
+    registry: &ShellClientRegistry,
+    auth: Option<&crate::auth::AuthContext>,
+    client_id: &str,
+) -> Result<(), (StatusCode, String)> {
+    let Some(client) = registry.get_client_view(client_id).await else {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("unknown shell client: {}", client_id),
+        ));
+    };
+    assert_shell_client_owner(auth, client_id, client.owner.as_deref())
+        .map_err(|e| (StatusCode::FORBIDDEN, e))
 }
 
 fn record_shell_clients_action(
@@ -1123,6 +1181,7 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
 #[handler]
 pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/shell/run", "runShell");
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let Some(registry) = get_registry(depot) else {
         render_shell_run(
             res,
@@ -1170,10 +1229,30 @@ pub async fn shell_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
     let client_id = body.client_id.clone();
     let cwd = body.cwd.clone();
     let preview = command_preview(&body.command);
-    let (request_id, rx) = match registry
-        .enqueue_run(body, "gpt_action_or_web".to_string())
-        .await
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
     {
+        render_shell_run(
+            res,
+            &audit,
+            status,
+            ShellRunResponse {
+                success: false,
+                request_id: String::new(),
+                client_id,
+                cwd,
+                command_preview: preview,
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: None,
+                error: Some(e),
+            },
+        );
+        return;
+    }
+    let requested_by = requested_by_from_auth(auth.as_ref());
+    let (request_id, rx) = match registry.enqueue_run(body, requested_by).await {
         Ok(result) => result,
         Err(e) => {
             render_shell_run(
@@ -1289,6 +1368,7 @@ fn shell_file_response_from_run(
 #[handler]
 pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/shell/file", "shellFileOp");
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let Some(registry) = get_registry(depot) else {
         let response = shell_file_error_response(
             "unknown".to_string(),
@@ -1320,10 +1400,15 @@ pub async fn shell_file_op(req: &mut Request, depot: &mut Depot, res: &mut Respo
     let cwd = body.cwd.clone();
     let request_content = body.content.clone();
     let wait_timeout_secs = body.wait_timeout_secs;
-    let (request_id, rx) = match registry
-        .enqueue_file_op(body, "gpt_action_or_web".to_string())
-        .await
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
     {
+        let response = shell_file_error_response(op, client_id, path, cwd, e);
+        render_shell_file(res, &audit, status, response);
+        return;
+    }
+    let requested_by = requested_by_from_auth(auth.as_ref());
+    let (request_id, rx) = match registry.enqueue_file_op(body, requested_by).await {
         Ok(result) => result,
         Err(e) => {
             let response = shell_file_error_response(op, client_id, path, cwd, e);
@@ -1405,6 +1490,7 @@ fn shell_job_error_response(op: String, error: String) -> ShellJobOpResponse {
 #[handler]
 pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/shell/job", "runShellJob");
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let Some(registry) = get_registry(depot) else {
         render_shell_job(
             res,
@@ -1431,44 +1517,24 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
     };
     let op = body.op.clone();
     match op.as_str() {
-        "start" => match registry
-            .start_job(body, "gpt_action_or_web".to_string())
-            .await
-        {
-            Ok(job) => render_shell_job(
-                res,
-                &audit,
-                StatusCode::OK,
-                ShellJobOpResponse {
-                    success: true,
-                    op,
-                    job: Some(job),
-                    jobs: Vec::new(),
-                    stdout: None,
-                    stderr: None,
-                    next_stdout_line: None,
-                    next_stderr_line: None,
-                    error: None,
-                },
-            ),
-            Err(e) => render_shell_job(
-                res,
-                &audit,
-                StatusCode::BAD_REQUEST,
-                shell_job_error_response(op, e),
-            ),
-        },
-        "status" => {
-            let Some(job_id) = body.job_id.as_deref() else {
+        "start" => {
+            let Some(client_id) = body.client_id.as_deref() else {
                 render_shell_job(
                     res,
                     &audit,
                     StatusCode::BAD_REQUEST,
-                    shell_job_error_response(op, "job_id is required for op=status".to_string()),
+                    shell_job_error_response(op, "client_id is required for op=start".to_string()),
                 );
                 return;
             };
-            match registry.get_job(job_id).await {
+            if let Err((status, e)) =
+                assert_registry_client_owner(&registry, auth.as_ref(), client_id).await
+            {
+                render_shell_job(res, &audit, status, shell_job_error_response(op, e));
+                return;
+            }
+            let requested_by = requested_by_from_auth(auth.as_ref());
+            match registry.start_job(body, requested_by).await {
                 Ok(job) => render_shell_job(
                     res,
                     &audit,
@@ -1493,8 +1559,67 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 ),
             }
         }
+        "status" => {
+            let Some(job_id) = body.job_id.as_deref() else {
+                render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, "job_id is required for op=status".to_string()),
+                );
+                return;
+            };
+            match registry.get_job(job_id).await {
+                Ok(job) => {
+                    if let Err((status, e)) =
+                        assert_registry_client_owner(&registry, auth.as_ref(), &job.client_id).await
+                    {
+                        render_shell_job(res, &audit, status, shell_job_error_response(op, e));
+                        return;
+                    }
+                    render_shell_job(
+                        res,
+                        &audit,
+                        StatusCode::OK,
+                        ShellJobOpResponse {
+                            success: true,
+                            op,
+                            job: Some(job),
+                            jobs: Vec::new(),
+                            stdout: None,
+                            stderr: None,
+                            next_stdout_line: None,
+                            next_stderr_line: None,
+                            error: None,
+                        },
+                    )
+                }
+                Err(e) => render_shell_job(
+                    res,
+                    &audit,
+                    StatusCode::BAD_REQUEST,
+                    shell_job_error_response(op, e),
+                ),
+            }
+        }
         "list" => {
-            let jobs = registry.list_jobs(body.limit).await;
+            let limit = body.limit.unwrap_or(20).clamp(1, 100);
+            let mut jobs = Vec::new();
+            for job in registry.list_jobs(Some(100)).await {
+                if auth.as_ref().map(|auth| auth.is_bootstrap).unwrap_or(false) {
+                    jobs.push(job);
+                    continue;
+                }
+                let Some(client) = registry.get_client_view(&job.client_id).await else {
+                    continue;
+                };
+                if assert_shell_client_owner(auth.as_ref(), &job.client_id, client.owner.as_deref())
+                    .is_ok()
+                {
+                    jobs.push(job);
+                }
+            }
+            jobs.truncate(limit);
             render_shell_job(
                 res,
                 &audit,
@@ -1522,6 +1647,24 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 );
                 return;
             };
+            let job = match registry.get_job(job_id).await {
+                Ok(job) => job,
+                Err(e) => {
+                    render_shell_job(
+                        res,
+                        &audit,
+                        StatusCode::BAD_REQUEST,
+                        shell_job_error_response(op, e),
+                    );
+                    return;
+                }
+            };
+            if let Err((status, e)) =
+                assert_registry_client_owner(&registry, auth.as_ref(), &job.client_id).await
+            {
+                render_shell_job(res, &audit, status, shell_job_error_response(op, e));
+                return;
+            }
             match registry
                 .job_log(
                     job_id,
@@ -1565,7 +1708,26 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 );
                 return;
             };
-            match registry.stop_job(job_id).await {
+            let job = match registry.get_job(job_id).await {
+                Ok(job) => job,
+                Err(e) => {
+                    render_shell_job(
+                        res,
+                        &audit,
+                        StatusCode::BAD_REQUEST,
+                        shell_job_error_response(op, e),
+                    );
+                    return;
+                }
+            };
+            if let Err((status, e)) =
+                assert_registry_client_owner(&registry, auth.as_ref(), &job.client_id).await
+            {
+                render_shell_job(res, &audit, status, shell_job_error_response(op, e));
+                return;
+            }
+            let requested_by = requested_by_from_auth(auth.as_ref());
+            match registry.stop_job(job_id, requested_by).await {
                 Ok(job) => render_shell_job(
                     res,
                     &audit,
@@ -1645,6 +1807,47 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
+        crate::auth::AuthContext {
+            user_id: username.map(|username| format!("user-{}", username)),
+            username: username.map(str::to_string),
+            api_key_id: username.map(|username| format!("key-{}", username)),
+            api_key_name: username.map(|username| format!("{} key", username)),
+            is_bootstrap,
+        }
+    }
+
+    #[test]
+    fn requested_by_from_auth_uses_bootstrap_username_or_anonymous() {
+        let bootstrap = auth_context(None, true);
+        assert_eq!(requested_by_from_auth(Some(&bootstrap)), "bootstrap");
+
+        let alice = auth_context(Some("alice"), false);
+        assert_eq!(requested_by_from_auth(Some(&alice)), "alice");
+
+        assert_eq!(requested_by_from_auth(None), "anonymous");
+    }
+
+    #[test]
+    fn assert_shell_client_owner_enforces_owner_boundary() {
+        let bootstrap = auth_context(None, true);
+        assert!(assert_shell_client_owner(Some(&bootstrap), "client-1", None).is_ok());
+
+        let alice = auth_context(Some("alice"), false);
+        assert!(assert_shell_client_owner(Some(&alice), "client-1", Some("alice")).is_ok());
+
+        let mismatch =
+            assert_shell_client_owner(Some(&alice), "client-1", Some("bob")).unwrap_err();
+        assert!(mismatch.contains("owned by bob"));
+        assert!(mismatch.contains("belongs to alice"));
+
+        let missing = assert_shell_client_owner(Some(&alice), "client-1", None).unwrap_err();
+        assert_eq!(missing, "agent client client-1 has no owner");
+
+        let anonymous = assert_shell_client_owner(None, "client-1", Some("anonymous")).unwrap_err();
+        assert!(anonymous.contains("belongs to anonymous"));
+    }
 
     #[tokio::test]
     async fn registry_registers_and_lists_client() {
@@ -1868,7 +2071,10 @@ mod tests {
             )
             .await
             .unwrap();
-        let stopped = registry.stop_job(&job.job_id).await.unwrap();
+        let stopped = registry
+            .stop_job(&job.job_id, "test".to_string())
+            .await
+            .unwrap();
         assert_eq!(stopped.status, "stopped");
         let polled = registry
             .poll(ShellAgentPollRequest {

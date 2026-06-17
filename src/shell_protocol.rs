@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 fn default_shell_true() -> bool {
     true
@@ -16,6 +17,14 @@ fn default_agent_request_kind() -> String {
     "run_shell".to_string()
 }
 
+fn default_project_template() -> String {
+    "empty".to_string()
+}
+
+fn default_git_init_true() -> bool {
+    true
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
     #[serde(default = "default_shell_true")]
@@ -28,6 +37,8 @@ pub struct ShellClientCapabilities {
     pub git: bool,
     #[serde(default)]
     pub jobs: bool,
+    #[serde(default)]
+    pub project_create: bool,
 }
 
 impl Default for ShellClientCapabilities {
@@ -38,6 +49,7 @@ impl Default for ShellClientCapabilities {
             file_write: false,
             git: false,
             jobs: false,
+            project_create: false,
         }
     }
 }
@@ -166,6 +178,83 @@ pub struct ShellClientProjectsResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentProjectCreatePayload {
+    pub project_id: String,
+    pub path: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_project_template")]
+    pub template: String,
+    #[serde(default = "default_git_init_true")]
+    pub git_init: bool,
+    #[serde(default)]
+    pub allow_existing: bool,
+    #[serde(default)]
+    pub hooks: Option<HashMap<String, Vec<String>>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentProjectCreateResult {
+    pub success: bool,
+    #[serde(default)]
+    pub project: Option<ShellAgentProjectSummary>,
+    #[serde(default)]
+    pub created_paths: Vec<String>,
+    #[serde(default)]
+    pub registry_file: Option<String>,
+    #[serde(default)]
+    pub git_initialized: bool,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientProjectCreateRequest {
+    pub client_id: String,
+    pub project_id: String,
+    pub path: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default = "default_project_template")]
+    pub template: String,
+    #[serde(default = "default_git_init_true")]
+    pub git_init: bool,
+    #[serde(default)]
+    pub allow_existing: bool,
+    #[serde(default)]
+    pub hooks: Option<HashMap<String, Vec<String>>>,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_wait_timeout_secs")]
+    pub wait_timeout_secs: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShellClientProjectCreateResponse {
+    pub success: bool,
+    pub client_id: String,
+    #[serde(default)]
+    pub project: Option<ShellAgentProjectSummary>,
+    pub created_paths: Vec<String>,
+    #[serde(default)]
+    pub registry_file: Option<String>,
+    pub git_initialized: bool,
+    pub warnings: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentShellRequest {
     pub request_id: String,
     pub client_id: String,
@@ -185,6 +274,8 @@ pub struct ShellAgentShellRequest {
     pub expected_sha256: Option<String>,
     #[serde(default)]
     pub create_dirs: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_create: Option<ShellAgentProjectCreatePayload>,
     pub command: String,
     pub timeout_secs: u64,
     pub requested_by: String,
@@ -214,6 +305,8 @@ pub struct ShellAgentResultRequest {
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_create: Option<ShellAgentProjectCreateResult>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -2936,6 +2936,9 @@
           },
           "jobs": {
             "type": "boolean"
+          },
+          "project_create": {
+            "type": "boolean"
           }
         }
       },
@@ -3046,6 +3049,118 @@
           "success",
           "client_id",
           "projects"
+        ]
+      },
+      "ShellClientProjectCreateRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true
+          },
+          "description": {
+            "type": "string",
+            "nullable": true
+          },
+          "template": {
+            "type": "string",
+            "enum": [
+              "empty",
+              "rust",
+              "python",
+              "docs"
+            ],
+            "default": "empty"
+          },
+          "git_init": {
+            "type": "boolean",
+            "default": true
+          },
+          "allow_existing": {
+            "type": "boolean",
+            "default": false
+          },
+          "hooks": {
+            "type": "object",
+            "nullable": true,
+            "additionalProperties": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 120
+          },
+          "wait_timeout_secs": {
+            "type": "integer",
+            "default": 30
+          }
+        },
+        "required": [
+          "client_id",
+          "project_id",
+          "path"
+        ]
+      },
+      "ShellClientProjectCreateResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "project": {
+            "$ref": "#/components/schemas/ShellAgentProjectSummary",
+            "nullable": true
+          },
+          "created_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "registry_file": {
+            "type": "string",
+            "nullable": true
+          },
+          "git_initialized": {
+            "type": "boolean"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "client_id",
+          "created_paths",
+          "git_initialized",
+          "warnings"
         ]
       },
       "ProjectHookRequest": {
@@ -3952,6 +4067,41 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ShellClientProjectsResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Client owner mismatch"
+          }
+        }
+      }
+    },
+    "/api/shell/projects/create": {
+      "post": {
+        "operationId": "createShellClientProject",
+        "summary": "Create an agent-owned project",
+        "description": "Ask a private-drop-agent client to create a local project and write its projects.d registry file.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellClientProjectCreateRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Project create response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellClientProjectCreateResponse"
                 }
               }
             }

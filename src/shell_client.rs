@@ -1,12 +1,13 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
-    ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellClientProjectsRequest, ShellClientProjectsResponse, ShellClientRegisterRequest,
-    ShellClientRegisterResponse, ShellClientView, ShellClientsResponse, ShellFileOpRequest,
-    ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo, ShellJobOpRequest,
-    ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
+    ShellAgentPollResponse, ShellAgentProjectCreatePayload, ShellAgentProjectCreateResult,
+    ShellAgentProjectSummary, ShellAgentResultRequest, ShellAgentResultResponse,
+    ShellAgentShellRequest, ShellClientCapabilities, ShellClientProjectCreateRequest,
+    ShellClientProjectCreateResponse, ShellClientProjectsRequest, ShellClientProjectsResponse,
+    ShellClientRegisterRequest, ShellClientRegisterResponse, ShellClientView, ShellClientsResponse,
+    ShellFileOpRequest, ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo,
+    ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
 };
 use salvo::prelude::*;
 use serde_json::json;
@@ -42,6 +43,7 @@ struct ShellClientRecord {
 struct PendingShellRequest {
     request: ShellAgentShellRequest,
     waiter: Option<oneshot::Sender<ShellRunResponse>>,
+    project_create_waiter: Option<oneshot::Sender<ShellAgentProjectCreateResult>>,
     job_id: Option<String>,
 }
 
@@ -258,6 +260,80 @@ fn normalize_project_summaries(
     projects.sort_by(|a, b| a.id.cmp(&b.id));
     projects.dedup_by(|a, b| a.id == b.id);
     projects
+}
+
+fn merge_project_summary(
+    projects: &mut Vec<ShellAgentProjectSummary>,
+    project: ShellAgentProjectSummary,
+) {
+    projects.retain(|existing| existing.id != project.id);
+    projects.push(project);
+    projects.sort_by(|a, b| a.id.cmp(&b.id));
+}
+
+fn validate_project_create_request(body: &ShellClientProjectCreateRequest) -> Result<(), String> {
+    validate_id(&body.client_id, "client_id")?;
+    validate_id(&body.project_id, "project_id")?;
+    if body.project_id == "." || body.project_id == ".." {
+        return Err("project_id cannot be '.' or '..'".to_string());
+    }
+    if body.project_id.contains('/') || body.project_id.contains('\\') {
+        return Err("project_id cannot contain path separators".to_string());
+    }
+    if body.path.trim().is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    if body.path.contains('\0') {
+        return Err("path cannot contain NUL bytes".to_string());
+    }
+    match body.template.as_str() {
+        "empty" | "rust" | "python" | "docs" => {}
+        _ => return Err("template must be one of empty, rust, python, docs".to_string()),
+    }
+    if body.timeout_secs == 0 || body.timeout_secs > MAX_COMMAND_TIMEOUT_SECS {
+        return Err(format!(
+            "timeout_secs must be between 1 and {}",
+            MAX_COMMAND_TIMEOUT_SECS
+        ));
+    }
+    if body.wait_timeout_secs > MAX_SYNC_WAIT_SECS {
+        return Err(format!(
+            "wait_timeout_secs must be <= {} for createShellClientProject",
+            MAX_SYNC_WAIT_SECS
+        ));
+    }
+    if let Some(hooks) = &body.hooks {
+        for (name, commands) in hooks {
+            if name.trim().is_empty() {
+                return Err("hook name cannot be empty".to_string());
+            }
+            if name.contains('\0') {
+                return Err("hook name cannot contain NUL bytes".to_string());
+            }
+            for command in commands {
+                if command.contains('\0') {
+                    return Err("hook command cannot contain NUL bytes".to_string());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn project_create_payload(
+    body: &ShellClientProjectCreateRequest,
+) -> ShellAgentProjectCreatePayload {
+    ShellAgentProjectCreatePayload {
+        project_id: body.project_id.clone(),
+        path: body.path.clone(),
+        name: trim_string(body.name.clone()),
+        kind: trim_string(body.kind.clone()),
+        description: trim_string(body.description.clone()),
+        template: body.template.clone(),
+        git_init: body.git_init,
+        allow_existing: body.allow_existing,
+        hooks: body.hooks.clone(),
+    }
 }
 
 fn command_preview(command: &str) -> String {
@@ -478,6 +554,7 @@ impl ShellClientRegistry {
             max_bytes: body.max_bytes,
             expected_sha256: body.expected_sha256.clone(),
             create_dirs: body.create_dirs,
+            project_create: None,
             command: String::new(),
             timeout_secs: 30,
             requested_by,
@@ -497,6 +574,7 @@ impl ShellClientRegistry {
             PendingShellRequest {
                 request,
                 waiter: Some(tx),
+                project_create_waiter: None,
                 job_id: None,
             },
         );
@@ -522,6 +600,7 @@ impl ShellClientRegistry {
             max_bytes: None,
             expected_sha256: None,
             create_dirs: false,
+            project_create: None,
             command: body.command.clone(),
             timeout_secs: body.timeout_secs,
             requested_by,
@@ -541,6 +620,59 @@ impl ShellClientRegistry {
             PendingShellRequest {
                 request,
                 waiter: Some(tx),
+                project_create_waiter: None,
+                job_id: None,
+            },
+        );
+        Ok((request_id, rx))
+    }
+
+    pub async fn enqueue_project_create(
+        &self,
+        body: ShellClientProjectCreateRequest,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellAgentProjectCreateResult>), String> {
+        validate_project_create_request(&body)?;
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: body.client_id.clone(),
+            kind: "create_project".to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            project_create: Some(project_create_payload(&body)),
+            command: String::new(),
+            timeout_secs: body.timeout_secs,
+            requested_by,
+            created_at: now_ts(),
+        };
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get(&body.client_id) else {
+            return Err(format!("unknown shell client: {}", body.client_id));
+        };
+        if !client.capabilities.project_create {
+            return Err(format!(
+                "agent client {} does not support create_project",
+                body.client_id
+            ));
+        }
+        inner
+            .queues_by_client
+            .entry(body.client_id.clone())
+            .or_default()
+            .push_back(request_id.clone());
+        inner.pending_by_id.insert(
+            request_id.clone(),
+            PendingShellRequest {
+                request,
+                waiter: None,
+                project_create_waiter: Some(tx),
                 job_id: None,
             },
         );
@@ -622,6 +754,7 @@ impl ShellClientRegistry {
         let error = body.error.clone();
         let stdout = truncate_output(body.stdout);
         let stderr = truncate_output(body.stderr);
+        let project_create_result = body.project_create.clone();
         if let Some(job_id) = pending.job_id.clone() {
             inner.request_to_job.remove(&request_id);
             if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
@@ -637,6 +770,35 @@ impl ShellClientRegistry {
                 job.stderr = stderr.clone();
                 job.error = error.clone();
             }
+        }
+        if let Some(waiter) = pending.project_create_waiter.take() {
+            let mut result =
+                project_create_result.unwrap_or_else(|| ShellAgentProjectCreateResult {
+                    success: error.is_none() && body.exit_code == Some(0),
+                    project: None,
+                    created_paths: Vec::new(),
+                    registry_file: None,
+                    git_initialized: false,
+                    warnings: Vec::new(),
+                    error: error.clone().or_else(|| {
+                        if body.exit_code == Some(0) {
+                            Some("agent did not return project_create result".to_string())
+                        } else {
+                            Some("create_project failed without structured result".to_string())
+                        }
+                    }),
+                });
+            if result.error.is_some() {
+                result.success = false;
+            }
+            if result.success {
+                if let Some(project) = result.project.clone() {
+                    if let Some(client) = inner.clients.get_mut(&client_id) {
+                        merge_project_summary(&mut client.projects, project);
+                    }
+                }
+            }
+            let _ = waiter.send(result);
         }
         let response = ShellRunResponse {
             success: error.is_none() && body.exit_code == Some(0),
@@ -691,6 +853,7 @@ impl ShellClientRegistry {
             max_bytes: None,
             expected_sha256: None,
             create_dirs: false,
+            project_create: None,
             command,
             timeout_secs: run.timeout_secs,
             requested_by,
@@ -727,6 +890,7 @@ impl ShellClientRegistry {
             PendingShellRequest {
                 request,
                 waiter: None,
+                project_create_waiter: None,
                 job_id: Some(job_id.clone()),
             },
         );
@@ -826,6 +990,7 @@ impl ShellClientRegistry {
                     max_bytes: None,
                     expected_sha256: None,
                     create_dirs: false,
+                    project_create: None,
                     command: String::new(),
                     timeout_secs: 1,
                     requested_by,
@@ -841,6 +1006,7 @@ impl ShellClientRegistry {
                     PendingShellRequest {
                         request,
                         waiter: None,
+                        project_create_waiter: None,
                         job_id: Some(job_id.to_string()),
                     },
                 );
@@ -976,6 +1142,28 @@ fn record_shell_projects_action(
     );
 }
 
+fn record_shell_project_create_action(
+    audit: &ActionAudit,
+    response: &ShellClientProjectCreateResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new("create_project", response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({
+                "client_id": response.client_id,
+                "project_id": response.project.as_ref().map(|project| project.id.clone()),
+            }))
+            .summary(json!({
+                "path": response.project.as_ref().map(|project| project.path.clone()),
+                "created_paths_count": response.created_paths.len(),
+                "registry_file": response.registry_file,
+                "git_initialized": response.git_initialized,
+                "warning_count": response.warnings.len(),
+            })),
+    );
+}
+
 fn record_shell_run_action(
     audit: &ActionAudit,
     response: &ShellRunResponse,
@@ -1082,6 +1270,52 @@ fn render_shell_projects(
     res.status_code(status);
     record_shell_projects_action(audit, &response, status);
     res.render(Json(response));
+}
+
+fn render_shell_project_create(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellClientProjectCreateResponse,
+) {
+    res.status_code(status);
+    record_shell_project_create_action(audit, &response, status);
+    res.render(Json(response));
+}
+
+fn shell_project_create_error_response(
+    client_id: String,
+    error: String,
+) -> ShellClientProjectCreateResponse {
+    ShellClientProjectCreateResponse {
+        success: false,
+        client_id,
+        project: None,
+        created_paths: Vec::new(),
+        registry_file: None,
+        git_initialized: false,
+        warnings: Vec::new(),
+        error: Some(error),
+    }
+}
+
+fn shell_project_create_response_from_result(
+    client_id: String,
+    mut result: ShellAgentProjectCreateResult,
+) -> ShellClientProjectCreateResponse {
+    if result.error.is_some() {
+        result.success = false;
+    }
+    ShellClientProjectCreateResponse {
+        success: result.success,
+        client_id,
+        project: result.project,
+        created_paths: result.created_paths,
+        registry_file: result.registry_file,
+        git_initialized: result.git_initialized,
+        warnings: result.warnings,
+        error: result.error,
+    }
 }
 
 #[handler]
@@ -1199,6 +1433,102 @@ pub async fn shell_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
                 error: Some(e),
             },
         ),
+    }
+}
+
+#[handler]
+pub async fn shell_project_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/shell/projects/create",
+        "createShellClientProject",
+    );
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_project_create(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_project_create_error_response(
+                String::new(),
+                "Shell client registry not configured".to_string(),
+            ),
+        );
+        return;
+    };
+    let body: ShellClientProjectCreateRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_project_create(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_project_create_error_response(String::new(), format!("Invalid JSON: {}", e)),
+            );
+            return;
+        }
+    };
+    let client_id = body.client_id.clone();
+    let wait_timeout_secs = body.wait_timeout_secs;
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+    {
+        render_shell_project_create(
+            res,
+            &audit,
+            status,
+            shell_project_create_error_response(client_id, e),
+        );
+        return;
+    }
+    let requested_by = requested_by_from_auth(auth.as_ref());
+    let (request_id, rx) = match registry.enqueue_project_create(body, requested_by).await {
+        Ok(result) => result,
+        Err(e) => {
+            render_shell_project_create(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_project_create_error_response(client_id, e),
+            );
+            return;
+        }
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(wait_timeout_secs), rx).await {
+        Ok(Ok(result)) => {
+            let response = shell_project_create_response_from_result(client_id, result);
+            let status = if response.success {
+                StatusCode::OK
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            render_shell_project_create(res, &audit, status, response);
+        }
+        Ok(Err(_closed)) => render_shell_project_create(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_project_create_error_response(
+                client_id,
+                "shell project create waiter was dropped".to_string(),
+            ),
+        ),
+        Err(_elapsed) => {
+            registry.cancel_request(&request_id).await;
+            render_shell_project_create(
+                res,
+                &audit,
+                StatusCode::REQUEST_TIMEOUT,
+                shell_project_create_error_response(
+                    client_id,
+                    format!(
+                        "timed out waiting {} seconds for shell client project creation",
+                        wait_timeout_secs
+                    ),
+                ),
+            );
+        }
     }
 }
 
@@ -1974,6 +2304,32 @@ mod tests {
         }
     }
 
+    fn project_create_capabilities() -> ShellClientCapabilities {
+        let mut capabilities = ShellClientCapabilities::default();
+        capabilities.project_create = true;
+        capabilities
+    }
+
+    fn project_create_request(
+        client_id: &str,
+        project_id: &str,
+    ) -> ShellClientProjectCreateRequest {
+        ShellClientProjectCreateRequest {
+            client_id: client_id.to_string(),
+            project_id: project_id.to_string(),
+            path: format!("/tmp/{}", project_id),
+            name: None,
+            kind: Some("rust".to_string()),
+            description: Some("test create".to_string()),
+            template: "rust".to_string(),
+            git_init: false,
+            allow_existing: false,
+            hooks: None,
+            timeout_secs: 120,
+            wait_timeout_secs: 30,
+        }
+    }
+
     #[test]
     fn requested_by_from_auth_uses_bootstrap_username_or_anonymous() {
         let bootstrap = auth_context(None, true);
@@ -2130,6 +2486,150 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn registry_create_project_owner_check_and_enqueue() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "alice-client".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(project_create_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "bob-client".to_string(),
+                display_name: None,
+                owner: Some("bob".to_string()),
+                hostname: None,
+                capabilities: Some(project_create_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+
+        let alice = auth_context(Some("alice"), false);
+        assert!(
+            assert_registry_client_owner(&registry, Some(&alice), "alice-client")
+                .await
+                .is_ok()
+        );
+        let (_request_id, _rx) = registry
+            .enqueue_project_create(
+                project_create_request("alice-client", "foo"),
+                "alice".to_string(),
+            )
+            .await
+            .unwrap();
+        let request = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "alice-client".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.kind, "create_project");
+        assert_eq!(
+            request
+                .project_create
+                .as_ref()
+                .map(|payload| payload.project_id.as_str()),
+            Some("foo")
+        );
+
+        let mismatch = assert_registry_client_owner(&registry, Some(&alice), "bob-client")
+            .await
+            .unwrap_err();
+        assert_eq!(mismatch.0, StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn registry_create_project_result_updates_project_cache() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(project_create_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let (_request_id, rx) = registry
+            .enqueue_project_create(project_create_request("oe", "foo"), "alice".to_string())
+            .await
+            .unwrap();
+        let request = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        registry
+            .complete(ShellAgentResultRequest {
+                client_id: "oe".to_string(),
+                request_id: request.request_id,
+                exit_code: Some(0),
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(12),
+                error: None,
+                project_create: Some(ShellAgentProjectCreateResult {
+                    success: true,
+                    project: Some(project_summary("foo", "/tmp/foo")),
+                    created_paths: vec!["/tmp/foo".to_string()],
+                    registry_file: Some("/tmp/projects.d/foo.toml".to_string()),
+                    git_initialized: false,
+                    warnings: Vec::new(),
+                    error: None,
+                }),
+            })
+            .await
+            .unwrap();
+        let result = rx.await.unwrap();
+        assert!(result.success);
+
+        let projects = registry.list_client_projects("oe").await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, "foo");
+    }
+
+    #[test]
+    fn protocol_serde_keeps_old_register_compatible() {
+        let request: ShellClientRegisterRequest = serde_json::from_str(
+            r#"{
+                "client_id": "oe",
+                "capabilities": {"shell": true, "file_read": true}
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(request.client_id, "oe");
+        assert!(!request.capabilities.as_ref().unwrap().project_create);
+        assert!(request.projects.is_none());
+    }
+
+    #[test]
+    fn protocol_serde_round_trips_create_request() {
+        let request = project_create_request("oe", "foo");
+        let value = serde_json::to_value(&request).unwrap();
+        assert_eq!(value["client_id"], "oe");
+        assert_eq!(value["project_id"], "foo");
+        assert_eq!(value["template"], "rust");
+        let parsed: ShellClientProjectCreateRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.project_id, "foo");
+        assert_eq!(parsed.template, "rust");
+        assert!(!parsed.git_init);
+    }
+
+    #[tokio::test]
     async fn registry_enqueues_polls_and_completes_shell_request() {
         let registry = ShellClientRegistry::default();
         registry
@@ -2175,6 +2675,7 @@ mod tests {
                 stderr: Some(String::new()),
                 duration_ms: Some(12),
                 error: None,
+                project_create: None,
             })
             .await
             .unwrap();
@@ -2272,6 +2773,7 @@ mod tests {
                 stderr: Some(String::new()),
                 duration_ms: Some(20),
                 error: None,
+                project_create: None,
             })
             .await
             .unwrap();

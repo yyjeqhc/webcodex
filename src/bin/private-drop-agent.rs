@@ -1,5 +1,5 @@
 use reqwest::blocking::Client;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read};
@@ -15,9 +15,10 @@ mod shell_protocol;
 
 use shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
-    ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellClientRegisterResponse,
+    ShellAgentPollResponse, ShellAgentProjectCreatePayload, ShellAgentProjectCreateResult,
+    ShellAgentProjectSummary, ShellAgentResultRequest, ShellAgentResultResponse,
+    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellClientRegisterResponse,
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
@@ -110,15 +111,15 @@ struct RunningJob {
     stop_requested: Arc<AtomicBool>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AgentProjectFile {
     id: String,
     path: String,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     name: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     kind: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     description: Option<String>,
     #[serde(default)]
     disabled: bool,
@@ -234,6 +235,9 @@ fn projects_dir(cfg: &AgentConfig) -> PathBuf {
 fn validate_project_id(id: &str) -> Result<(), String> {
     if id.is_empty() {
         return Err("id cannot be empty".to_string());
+    }
+    if id == "." || id == ".." {
+        return Err("id cannot be '.' or '..'".to_string());
     }
     if !id
         .chars()
@@ -415,6 +419,614 @@ impl AgentProjectCache {
         self.refreshed_at = Some(Instant::now());
         self.projects.clone()
     }
+
+    fn refresh(&mut self, cfg: &AgentConfig) -> Vec<ShellAgentProjectSummary> {
+        self.projects = load_agent_project_summaries(cfg);
+        self.refreshed_at = Some(Instant::now());
+        self.projects.clone()
+    }
+}
+
+fn expand_tilde_path(value: &str) -> PathBuf {
+    if value == "~" {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("~"));
+    }
+    if let Some(rest) = value.strip_prefix("~/") {
+        return std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("~"))
+            .join(rest);
+    }
+    PathBuf::from(value)
+}
+
+fn absolute_path(path: PathBuf) -> Result<PathBuf, String> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        std::env::current_dir()
+            .map(|cwd| cwd.join(path))
+            .map_err(|e| format!("failed to resolve current directory: {}", e))
+    }
+}
+
+fn existing_ancestor(path: &Path) -> Option<PathBuf> {
+    let mut current = path.to_path_buf();
+    loop {
+        if current.exists() {
+            return Some(current);
+        }
+        let parent = current.parent()?;
+        current = parent.to_path_buf();
+    }
+}
+
+fn ensure_project_path_allowed(policy: &AgentPolicy, path: &Path) -> Result<(), String> {
+    if policy.allow_cwd_anywhere {
+        return Ok(());
+    }
+    let Some(existing) = existing_ancestor(path) else {
+        return Err(format!(
+            "path {} has no existing ancestor for policy check",
+            path.display()
+        ));
+    };
+    cwd_allowed(policy, &existing)
+}
+
+fn is_empty_dir(path: &Path) -> Result<bool, String> {
+    let mut entries = std::fs::read_dir(path)
+        .map_err(|e| format!("failed to read directory {}: {}", path.display(), e))?;
+    Ok(entries.next().is_none())
+}
+
+fn ensure_dir(path: &Path, created_paths: &mut Vec<String>) -> Result<(), String> {
+    if path.exists() {
+        if path.is_dir() {
+            return Ok(());
+        }
+        return Err(format!("{} exists but is not a directory", path.display()));
+    }
+    std::fs::create_dir_all(path)
+        .map_err(|e| format!("failed to create directory {}: {}", path.display(), e))?;
+    created_paths.push(path.to_string_lossy().to_string());
+    Ok(())
+}
+
+fn write_file_if_absent(
+    path: &Path,
+    content: &str,
+    created_paths: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) -> Result<(), String> {
+    if path.exists() {
+        warnings.push(format!("{} already exists; left unchanged", path.display()));
+        return Ok(());
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create directory {}: {}", parent.display(), e))?;
+    }
+    std::fs::write(path, content)
+        .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+    created_paths.push(path.to_string_lossy().to_string());
+    Ok(())
+}
+
+fn default_hooks(template: &str) -> HashMap<String, Vec<String>> {
+    let mut hooks = HashMap::new();
+    match template {
+        "rust" => {
+            hooks.insert(
+                "doctor".to_string(),
+                vec![
+                    "git status --short".to_string(),
+                    "git log --oneline -5".to_string(),
+                ],
+            );
+            hooks.insert(
+                "precommit".to_string(),
+                vec![
+                    ". /root/.cargo/env && cargo fmt --check".to_string(),
+                    ". /root/.cargo/env && cargo test".to_string(),
+                ],
+            );
+        }
+        "python" => {
+            hooks.insert(
+                "doctor".to_string(),
+                vec![
+                    "git status --short".to_string(),
+                    "python3 --version".to_string(),
+                ],
+            );
+            hooks.insert(
+                "precommit".to_string(),
+                vec!["python3 -m compileall .".to_string()],
+            );
+        }
+        _ => {
+            hooks.insert(
+                "doctor".to_string(),
+                vec![
+                    "git status --short".to_string(),
+                    "git log --oneline -5".to_string(),
+                ],
+            );
+        }
+    }
+    hooks
+}
+
+fn validate_hooks(hooks: &HashMap<String, Vec<String>>) -> Result<Vec<String>, String> {
+    let mut warnings = Vec::new();
+    for (hook, commands) in hooks {
+        if hook.trim().is_empty() {
+            return Err("hook name cannot be empty".to_string());
+        }
+        for (idx, command) in commands.iter().enumerate() {
+            if command.trim().is_empty() {
+                warnings.push(format!("hook {} command {} is empty", hook, idx));
+            }
+        }
+    }
+    Ok(warnings)
+}
+
+fn safe_rust_package_name(project_id: &str) -> String {
+    let mut value = project_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    if value.is_empty() {
+        value = "project".to_string();
+    }
+    if value
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_digit())
+    {
+        value = format!("project_{}", value);
+    }
+    value
+}
+
+fn safe_python_module_name(project_id: &str) -> String {
+    let mut value = project_id
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '_' {
+                c.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
+        .collect::<String>();
+    while value.contains("__") {
+        value = value.replace("__", "_");
+    }
+    value = value.trim_matches('_').to_string();
+    if value.is_empty() {
+        value = "project".to_string();
+    }
+    if value
+        .chars()
+        .next()
+        .is_some_and(|first| first.is_ascii_digit())
+    {
+        value = format!("project_{}", value);
+    }
+    value
+}
+
+fn write_template_files(
+    project_id: &str,
+    name: &str,
+    template: &str,
+    project_path: &Path,
+    created_paths: &mut Vec<String>,
+    warnings: &mut Vec<String>,
+) -> Result<(), String> {
+    let readme = format!("# {}\n", name);
+    match template {
+        "empty" => {
+            write_file_if_absent(
+                &project_path.join("README.md"),
+                &readme,
+                created_paths,
+                warnings,
+            )?;
+        }
+        "rust" => {
+            let crate_name = safe_rust_package_name(project_id);
+            write_file_if_absent(
+                &project_path.join("README.md"),
+                &readme,
+                created_paths,
+                warnings,
+            )?;
+            write_file_if_absent(
+                &project_path.join("Cargo.toml"),
+                &format!(
+                    "[package]\nname = \"{}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[dependencies]\n",
+                    crate_name
+                ),
+                created_paths,
+                warnings,
+            )?;
+            let src_dir = project_path.join("src");
+            ensure_dir(&src_dir, created_paths)?;
+            write_file_if_absent(
+                &src_dir.join("main.rs"),
+                "fn main() {\n    println!(\"Hello, world!\");\n}\n",
+                created_paths,
+                warnings,
+            )?;
+        }
+        "python" => {
+            let module_name = safe_python_module_name(project_id);
+            write_file_if_absent(
+                &project_path.join("README.md"),
+                &readme,
+                created_paths,
+                warnings,
+            )?;
+            write_file_if_absent(
+                &project_path.join("pyproject.toml"),
+                &format!(
+                    "[project]\nname = \"{}\"\nversion = \"0.1.0\"\ndescription = \"{}\"\nrequires-python = \">=3.9\"\ndependencies = []\n",
+                    safe_rust_package_name(project_id),
+                    name.replace('"', "\\\"")
+                ),
+                created_paths,
+                warnings,
+            )?;
+            let module_dir = project_path.join("src").join(module_name);
+            ensure_dir(&module_dir, created_paths)?;
+            write_file_if_absent(&module_dir.join("__init__.py"), "", created_paths, warnings)?;
+        }
+        "docs" => {
+            write_file_if_absent(
+                &project_path.join("README.md"),
+                &readme,
+                created_paths,
+                warnings,
+            )?;
+            let docs_dir = project_path.join("docs");
+            ensure_dir(&docs_dir, created_paths)?;
+            write_file_if_absent(&docs_dir.join("index.md"), &readme, created_paths, warnings)?;
+        }
+        _ => return Err("template must be one of empty, rust, python, docs".to_string()),
+    }
+    Ok(())
+}
+
+fn run_git_init(project_path: &Path, warnings: &mut Vec<String>) -> Result<bool, String> {
+    if project_path.join(".git").exists() {
+        warnings.push(".git already exists; skipped git init".to_string());
+        return Ok(false);
+    }
+    let output = std::process::Command::new("git")
+        .arg("init")
+        .current_dir(project_path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run git init: {}", e))?;
+    if output.status.success() {
+        Ok(true)
+    } else {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if stderr.is_empty() {
+            "git init failed".to_string()
+        } else {
+            format!("git init failed: {}", stderr)
+        })
+    }
+}
+
+fn write_registry_file_atomic(
+    registry_file: &Path,
+    project: &AgentProjectFile,
+) -> Result<(), String> {
+    if let Some(parent) = registry_file.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create projects_dir {}: {}", parent.display(), e))?;
+    }
+    let content = toml::to_string_pretty(project)
+        .map_err(|e| format!("failed to serialize project registry toml: {}", e))?;
+    let tmp = registry_file.with_file_name(format!(
+        ".{}.tmp.{}",
+        registry_file
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("project.toml"),
+        std::process::id()
+    ));
+    std::fs::write(&tmp, content).map_err(|e| {
+        format!(
+            "failed to write temp registry file {}: {}",
+            tmp.display(),
+            e
+        )
+    })?;
+    std::fs::rename(&tmp, registry_file).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!(
+            "failed to move registry file {} into place: {}",
+            registry_file.display(),
+            e
+        )
+    })
+}
+
+fn project_create_error(
+    error: String,
+    created_paths: Vec<String>,
+    registry_file: Option<String>,
+    git_initialized: bool,
+    warnings: Vec<String>,
+) -> ShellAgentProjectCreateResult {
+    ShellAgentProjectCreateResult {
+        success: false,
+        project: None,
+        created_paths,
+        registry_file,
+        git_initialized,
+        warnings,
+        error: Some(error),
+    }
+}
+
+fn create_agent_project(
+    cfg: &AgentConfig,
+    project_cache: &mut AgentProjectCache,
+    payload: ShellAgentProjectCreatePayload,
+) -> ShellAgentProjectCreateResult {
+    let mut created_paths = Vec::new();
+    let mut warnings = Vec::new();
+    let mut git_initialized = false;
+
+    let project_id = payload.project_id.trim().to_string();
+    if let Err(e) = validate_project_id(&project_id) {
+        return project_create_error(e, created_paths, None, false, warnings);
+    }
+    if payload.path.trim().is_empty() {
+        return project_create_error(
+            "path cannot be empty".to_string(),
+            created_paths,
+            None,
+            false,
+            warnings,
+        );
+    }
+    let template = payload.template.trim();
+    if !matches!(template, "empty" | "rust" | "python" | "docs") {
+        return project_create_error(
+            "template must be one of empty, rust, python, docs".to_string(),
+            created_paths,
+            None,
+            false,
+            warnings,
+        );
+    }
+    let project_path = match absolute_path(expand_tilde_path(payload.path.trim())) {
+        Ok(path) => path,
+        Err(e) => return project_create_error(e, created_paths, None, false, warnings),
+    };
+    if project_path == Path::new("/") {
+        return project_create_error(
+            "path cannot be filesystem root".to_string(),
+            created_paths,
+            None,
+            false,
+            warnings,
+        );
+    }
+    let projects_dir = match absolute_path(projects_dir(cfg)) {
+        Ok(path) => path,
+        Err(e) => return project_create_error(e, created_paths, None, false, warnings),
+    };
+    if project_path == projects_dir {
+        return project_create_error(
+            "path cannot be the agent projects_dir".to_string(),
+            created_paths,
+            None,
+            false,
+            warnings,
+        );
+    }
+    if let Err(e) = ensure_project_path_allowed(&cfg.policy, &project_path) {
+        return project_create_error(e, created_paths, None, false, warnings);
+    }
+
+    let registry_file = projects_dir.join(format!("{}.toml", project_id));
+    let registry_file_text = registry_file.to_string_lossy().to_string();
+    if registry_file.exists() && !payload.allow_existing {
+        return project_create_error(
+            format!("registry file already exists: {}", registry_file.display()),
+            created_paths,
+            Some(registry_file_text),
+            false,
+            warnings,
+        );
+    }
+
+    let existing_project = if registry_file.exists() {
+        match std::fs::read_to_string(&registry_file)
+            .map_err(|e| format!("failed to read {}: {}", registry_file.display(), e))
+            .and_then(|content| parse_agent_project_toml(&content))
+        {
+            Ok(project) => Some(project),
+            Err(e) => {
+                return project_create_error(
+                    e,
+                    created_paths,
+                    Some(registry_file_text),
+                    false,
+                    warnings,
+                )
+            }
+        }
+    } else {
+        None
+    };
+
+    if project_path.exists() {
+        if !project_path.is_dir() {
+            return project_create_error(
+                format!(
+                    "path exists but is not a directory: {}",
+                    project_path.display()
+                ),
+                created_paths,
+                Some(registry_file_text),
+                false,
+                warnings,
+            );
+        }
+        match is_empty_dir(&project_path) {
+            Ok(true) => {}
+            Ok(false) if !payload.allow_existing => {
+                return project_create_error(
+                    format!("path is not empty: {}", project_path.display()),
+                    created_paths,
+                    Some(registry_file_text),
+                    false,
+                    warnings,
+                )
+            }
+            Ok(false) => warnings.push(format!(
+                "{} is not empty; existing files will not be overwritten",
+                project_path.display()
+            )),
+            Err(e) => {
+                return project_create_error(
+                    e,
+                    created_paths,
+                    Some(registry_file_text),
+                    false,
+                    warnings,
+                )
+            }
+        }
+    } else if let Err(e) = ensure_dir(&project_path, &mut created_paths) {
+        return project_create_error(e, created_paths, Some(registry_file_text), false, warnings);
+    }
+
+    let name = trim_optional(payload.name)
+        .or_else(|| {
+            existing_project
+                .as_ref()
+                .and_then(|project| project.name.clone())
+        })
+        .unwrap_or_else(|| project_id.clone());
+    let kind = trim_optional(payload.kind)
+        .or_else(|| {
+            existing_project
+                .as_ref()
+                .and_then(|project| project.kind.clone())
+        })
+        .or_else(|| (template != "empty").then(|| template.to_string()));
+    let description = trim_optional(payload.description).or_else(|| {
+        existing_project
+            .as_ref()
+            .and_then(|project| project.description.clone())
+    });
+    let hooks = if let Some(hooks) = payload.hooks {
+        hooks
+    } else if let Some(project) = existing_project {
+        project.hooks
+    } else {
+        default_hooks(template)
+    };
+    match validate_hooks(&hooks) {
+        Ok(mut hook_warnings) => warnings.append(&mut hook_warnings),
+        Err(e) => {
+            return project_create_error(
+                e,
+                created_paths,
+                Some(registry_file_text),
+                false,
+                warnings,
+            )
+        }
+    }
+
+    if let Err(e) = write_template_files(
+        &project_id,
+        &name,
+        template,
+        &project_path,
+        &mut created_paths,
+        &mut warnings,
+    ) {
+        return project_create_error(e, created_paths, Some(registry_file_text), false, warnings);
+    }
+
+    if payload.git_init {
+        match run_git_init(&project_path, &mut warnings) {
+            Ok(initialized) => git_initialized = initialized,
+            Err(e) => {
+                return project_create_error(
+                    e,
+                    created_paths,
+                    Some(registry_file_text),
+                    false,
+                    warnings,
+                )
+            }
+        }
+    }
+
+    let project_file = AgentProjectFile {
+        id: project_id.clone(),
+        path: project_path.to_string_lossy().to_string(),
+        name: Some(name),
+        kind,
+        description,
+        disabled: false,
+        hooks,
+    };
+    if let Err(e) = write_registry_file_atomic(&registry_file, &project_file) {
+        return project_create_error(
+            e,
+            created_paths,
+            Some(registry_file_text),
+            git_initialized,
+            warnings,
+        );
+    }
+    created_paths.push(registry_file_text.clone());
+
+    let projects = project_cache.refresh(cfg);
+    let project = projects
+        .into_iter()
+        .find(|project| project.id == project_id)
+        .or_else(|| {
+            Some(agent_project_summary(
+                &project_file,
+                chrono::Utc::now().timestamp(),
+                true,
+            ))
+        });
+    ShellAgentProjectCreateResult {
+        success: true,
+        project,
+        created_paths,
+        registry_file: Some(registry_file_text),
+        git_initialized,
+        warnings,
+        error: None,
+    }
 }
 
 fn endpoint(cfg: &AgentConfig, path: &str) -> String {
@@ -451,6 +1063,7 @@ fn register(
     capabilities.jobs = true;
     capabilities.file_read = true;
     capabilities.file_write = true;
+    capabilities.project_create = true;
     let body = ShellClientRegisterRequest {
         client_id: cfg.client_id.clone(),
         display_name: cfg.display_name.clone(),
@@ -890,6 +1503,7 @@ fn submit_result(
         stderr: result.stderr,
         duration_ms: result.duration_ms,
         error: result.error,
+        project_create: None,
     };
     let response: ShellAgentResultResponse =
         post_json(client, cfg, "/api/shell/agent/result", &body)?;
@@ -899,6 +1513,35 @@ fn submit_result(
         Err(response
             .error
             .unwrap_or_else(|| "result submission failed without error".to_string()))
+    }
+}
+
+fn submit_project_create_result(
+    client: &Client,
+    cfg: &AgentConfig,
+    request_id: String,
+    result: ShellAgentProjectCreateResult,
+) -> Result<bool, String> {
+    let success = result.success && result.error.is_none();
+    let error = result.error.clone();
+    let body = ShellAgentResultRequest {
+        client_id: cfg.client_id.clone(),
+        request_id,
+        exit_code: Some(if success { 0 } else { 1 }),
+        stdout: None,
+        stderr: None,
+        duration_ms: None,
+        error,
+        project_create: Some(result),
+    };
+    let response: ShellAgentResultResponse =
+        post_json(client, cfg, "/api/shell/agent/result", &body)?;
+    if response.success {
+        Ok(true)
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "project create submission failed without error".to_string()))
     }
 }
 
@@ -1218,6 +1861,24 @@ fn handle_one_poll(
             let result = handle_file_request(&cfg.policy, &request);
             submit_result(client, cfg, request_id, result)
         }
+        "create_project" => {
+            let request_id = request.request_id.clone();
+            let result = match request.project_create {
+                Some(payload) => create_agent_project(cfg, project_cache, payload),
+                None => ShellAgentProjectCreateResult {
+                    success: false,
+                    project: None,
+                    created_paths: Vec::new(),
+                    registry_file: None,
+                    git_initialized: false,
+                    warnings: Vec::new(),
+                    error: Some(
+                        "create_project request missing project_create payload".to_string(),
+                    ),
+                },
+            };
+            submit_project_create_result(client, cfg, request_id, result)
+        }
         _ => {
             let result = run_shell(
                 &cfg.policy,
@@ -1289,6 +1950,39 @@ fn main() {
 mod tests {
     use super::*;
 
+    fn test_config(projects_dir: PathBuf) -> AgentConfig {
+        AgentConfig {
+            server_url: "http://127.0.0.1:8000".to_string(),
+            token: "test-token".to_string(),
+            client_id: "oe".to_string(),
+            display_name: None,
+            owner: Some("alice".to_string()),
+            hostname: None,
+            projects_dir: Some(projects_dir),
+            poll_interval_ms: 1000,
+            capabilities: None,
+            policy: AgentPolicy::default(),
+        }
+    }
+
+    fn create_payload(
+        project_id: &str,
+        path: &Path,
+        template: &str,
+    ) -> ShellAgentProjectCreatePayload {
+        ShellAgentProjectCreatePayload {
+            project_id: project_id.to_string(),
+            path: path.to_string_lossy().to_string(),
+            name: None,
+            kind: None,
+            description: None,
+            template: template.to_string(),
+            git_init: false,
+            allow_existing: false,
+            hooks: None,
+        }
+    }
+
     #[test]
     fn agent_project_toml_parse_sorts_hook_names() {
         let project = parse_agent_project_toml(
@@ -1331,5 +2025,142 @@ path = "/tmp/private-drop"
         let missing = tmp.path().join("missing-projects.d");
         let projects = load_agent_project_summaries_from_dir(&missing);
         assert!(projects.is_empty());
+    }
+
+    #[test]
+    fn create_rust_project_writes_template_and_registry() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/foo");
+        let cfg = test_config(projects_dir.clone());
+        let mut cache = AgentProjectCache::default();
+
+        let result = create_agent_project(
+            &cfg,
+            &mut cache,
+            create_payload("foo", &project_path, "rust"),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        assert!(project_path.join("Cargo.toml").exists());
+        assert!(project_path.join("src/main.rs").exists());
+        assert!(project_path.join("README.md").exists());
+        assert!(projects_dir.join("foo.toml").exists());
+        let projects = load_agent_project_summaries_from_dir(&projects_dir);
+        let foo = projects.iter().find(|project| project.id == "foo").unwrap();
+        assert_eq!(foo.kind.as_deref(), Some("rust"));
+        assert_eq!(foo.hooks, vec!["doctor", "precommit"]);
+    }
+
+    #[test]
+    fn create_python_project_writes_module_template() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/py-demo");
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+
+        let result = create_agent_project(
+            &cfg,
+            &mut cache,
+            create_payload("py-demo", &project_path, "python"),
+        );
+
+        assert!(result.success, "{:?}", result.error);
+        assert!(project_path.join("pyproject.toml").exists());
+        assert!(project_path.join("src/py_demo/__init__.py").exists());
+        let project = result.project.unwrap();
+        assert_eq!(project.kind.as_deref(), Some("python"));
+        assert_eq!(project.hooks, vec!["doctor", "precommit"]);
+    }
+
+    #[test]
+    fn create_project_rejects_invalid_project_ids() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        for id in ["", "../x", "a/b"] {
+            let mut cache = AgentProjectCache::default();
+            let result = create_agent_project(
+                &cfg,
+                &mut cache,
+                create_payload(id, &tmp.path().join("work/project"), "empty"),
+            );
+            assert!(!result.success, "id {id:?} should fail");
+            assert!(result.error.is_some());
+        }
+    }
+
+    #[test]
+    fn create_project_rejects_non_empty_existing_dir_without_allow_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let project_path = tmp.path().join("work/foo");
+        std::fs::create_dir_all(&project_path).unwrap();
+        std::fs::write(project_path.join("README.md"), "keep me").unwrap();
+        let mut cache = AgentProjectCache::default();
+
+        let result = create_agent_project(
+            &cfg,
+            &mut cache,
+            create_payload("foo", &project_path, "docs"),
+        );
+
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("not empty"));
+        assert_eq!(
+            std::fs::read_to_string(project_path.join("README.md")).unwrap(),
+            "keep me"
+        );
+    }
+
+    #[test]
+    fn create_project_rejects_existing_registry_file_without_allow_existing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        std::fs::create_dir_all(&projects_dir).unwrap();
+        std::fs::write(
+            projects_dir.join("foo.toml"),
+            "id = \"foo\"\npath = \"/tmp/foo\"\n",
+        )
+        .unwrap();
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+
+        let result = create_agent_project(
+            &cfg,
+            &mut cache,
+            create_payload("foo", &tmp.path().join("work/foo"), "empty"),
+        );
+
+        assert!(!result.success);
+        assert!(result
+            .error
+            .unwrap()
+            .contains("registry file already exists"));
+    }
+
+    #[test]
+    fn create_project_allow_existing_does_not_overwrite_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let project_path = tmp.path().join("work/notes");
+        std::fs::create_dir_all(&project_path).unwrap();
+        std::fs::write(project_path.join("README.md"), "existing").unwrap();
+        let mut payload = create_payload("notes", &project_path, "docs");
+        payload.allow_existing = true;
+        let mut cache = AgentProjectCache::default();
+
+        let result = create_agent_project(&cfg, &mut cache, payload);
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(
+            std::fs::read_to_string(project_path.join("README.md")).unwrap(),
+            "existing"
+        );
+        assert!(result
+            .warnings
+            .iter()
+            .any(|warning| warning.contains("left unchanged")));
+        assert!(project_path.join("docs/index.md").exists());
     }
 }

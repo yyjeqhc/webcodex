@@ -9,10 +9,13 @@ APIs.
 
 Workflow does not stage, commit, push, deploy, or delete files.
 
-Agent-local projects should now be registered on the agent under
-`~/.config/private-drop-agent/projects.d/`. The server caches the summaries
-reported by each agent but does not own hook commands. See
-`docs/AGENT_PROJECTS.md` for the registry format and temporary creation flow.
+Agent-owned projects are registered on the agent under
+`~/.config/private-drop-agent/projects.d/` and can be created with
+`python3 scripts/pdctl.py new ...`. The server caches the summaries reported by
+each agent but does not own hook commands. The workflow APIs in this document
+still run server-configured projects from `projects.toml`; `runAgentProjectWorkflow`
+is a later phase. See `docs/AGENT_PROJECTS.md` for the registry format and
+agent project creation flow.
 
 ## Environment
 

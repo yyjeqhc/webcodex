@@ -1,0 +1,23 @@
+{
+  "client_id": "oe",
+  "project_id": "foo",
+  "path": "/root/work/foo",
+  "name": "foo",
+  "kind": "rust",
+  "description": "Example Rust project",
+  "template": "rust",
+  "git_init": true,
+  "allow_existing": false,
+  "hooks": {
+    "doctor": [
+      "git status --short",
+      "git log --oneline -5"
+    ],
+    "precommit": [
+      ". /root/.cargo/env && cargo fmt --check",
+      ". /root/.cargo/env && cargo test"
+    ]
+  },
+  "timeout_secs": 120,
+  "wait_timeout_secs": 30
+}

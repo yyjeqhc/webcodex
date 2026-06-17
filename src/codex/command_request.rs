@@ -1804,6 +1804,7 @@ mod tests {
                     stderr: Some(String::new()),
                     duration_ms: Some(17),
                     error: None,
+                    project_create: None,
                 })
                 .await
                 .unwrap();

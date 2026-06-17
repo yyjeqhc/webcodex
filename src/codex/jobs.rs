@@ -3057,6 +3057,7 @@ mod tests {
                 stderr: Some("warn\n".to_string()),
                 duration_ms: Some(1500),
                 error: None,
+                project_create: None,
             })
             .await
             .unwrap();

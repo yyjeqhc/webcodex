@@ -222,6 +222,30 @@ def print_projects(payload):
         print("error: {}".format(payload.get("error")))
 
 
+def print_project_create(payload):
+    print("success: {}".format(payload.get("success")))
+    print("client_id: {}".format(payload.get("client_id", "")))
+    project = payload.get("project") or {}
+    print("project_id: {}".format(project.get("id", "-")))
+    print("path: {}".format(project.get("path", "-")))
+    print("kind: {}".format(compact_text(project.get("kind")) or "-"))
+    print("registry_file: {}".format(compact_text(payload.get("registry_file")) or "-"))
+    print("git_initialized: {}".format(payload.get("git_initialized")))
+    created_paths = payload.get("created_paths") or []
+    print("created_paths: {}".format(len(created_paths)))
+    for path in created_paths:
+        print("  " + str(path))
+    warnings = payload.get("warnings") or []
+    if warnings:
+        print("warnings:")
+        for warning in warnings:
+            print("  - " + str(warning))
+    else:
+        print("warnings: none")
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
 def print_summary(payload):
     print("success: {}".format(payload.get("success")))
     print("project: {}".format(payload.get("project", "")))
@@ -277,6 +301,23 @@ def build_request(args):
     if args.command == "projects":
         return "/api/shell/projects", {"client_id": args.client_id}
 
+    if args.command == "new":
+        body = {
+            "client_id": args.client_id,
+            "project_id": args.project_id,
+            "path": args.path,
+            "template": args.template,
+            "allow_existing": bool(args.allow_existing),
+        }
+        add_if_present(
+            body,
+            args,
+            ["name", "kind", "description", "timeout_secs", "wait_timeout_secs"],
+        )
+        if args.git_init is not None:
+            body["git_init"] = args.git_init
+        return "/api/shell/projects/create", body
+
     if args.command == "doctor":
         body = {
             "project": args.project,
@@ -330,6 +371,7 @@ def build_parser():
             Examples:
               python3 scripts/pdctl.py clients
               python3 scripts/pdctl.py projects oe
+              python3 scripts/pdctl.py new oe foo /root/work/foo --template rust --git-init
               python3 scripts/pdctl.py doctor private-drop
               python3 scripts/pdctl.py workflow private-drop --mode snapshot --json
               python3 scripts/pdctl.py precommit private-drop
@@ -345,6 +387,22 @@ def build_parser():
     projects = subcommands.add_parser("projects", help="List projects reported by one agent client.")
     projects.add_argument("client_id")
     add_common_options(projects)
+
+    new = subcommands.add_parser("new", help="Create a new project on an agent client.")
+    new.add_argument("client_id")
+    new.add_argument("project_id")
+    new.add_argument("path")
+    new.add_argument("--template", choices=["empty", "rust", "python", "docs"], default="empty")
+    new.add_argument("--name")
+    new.add_argument("--kind")
+    new.add_argument("--description")
+    git_init = new.add_mutually_exclusive_group()
+    git_init.add_argument("--git-init", dest="git_init", action="store_true", default=None)
+    git_init.add_argument("--no-git-init", dest="git_init", action="store_false")
+    new.add_argument("--allow-existing", action="store_true")
+    new.add_argument("--timeout-secs", type=int)
+    new.add_argument("--wait-timeout-secs", type=int)
+    add_common_options(new)
 
     doctor = subcommands.add_parser("doctor", help="Run project doctor without running hooks by default.")
     doctor.add_argument("project")
@@ -392,6 +450,8 @@ def main(argv):
             print_clients(payload)
         elif args.command == "projects":
             print_projects(payload)
+        elif args.command == "new":
+            print_project_create(payload)
         else:
             print_summary(payload)
         if payload.get("success") is True:

@@ -293,6 +293,33 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             }
         }
     });
+    spec["paths"]["/api/shell/projects/create"] = serde_json::json!({
+        "post": {
+            "operationId": "createShellClientProject",
+            "summary": "Create an agent-owned project",
+            "description": "Ask a private-drop-agent client to create a local project and write its projects.d registry file.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientProjectCreateRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Project create response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientProjectCreateResponse" }
+                        }
+                    }
+                },
+                "403": { "description": "Client owner mismatch" }
+            }
+        }
+    });
     spec["paths"]["/api/shell/run"] = serde_json::json!({
         "post": {
             "operationId": "runShell",
@@ -395,7 +422,8 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "file_read": { "type": "boolean" },
             "file_write": { "type": "boolean" },
             "git": { "type": "boolean" },
-            "jobs": { "type": "boolean" }
+            "jobs": { "type": "boolean" },
+            "project_create": { "type": "boolean" }
         }
     });
     spec["components"]["schemas"]["ShellClientView"] = serde_json::json!({
@@ -439,6 +467,42 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "error": { "type": "string", "nullable": true }
         },
         "required": ["success", "client_id", "projects"]
+    });
+    spec["components"]["schemas"]["ShellClientProjectCreateRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" },
+            "project_id": { "type": "string" },
+            "path": { "type": "string" },
+            "name": { "type": "string", "nullable": true },
+            "kind": { "type": "string", "nullable": true },
+            "description": { "type": "string", "nullable": true },
+            "template": { "type": "string", "enum": ["empty", "rust", "python", "docs"], "default": "empty" },
+            "git_init": { "type": "boolean", "default": true },
+            "allow_existing": { "type": "boolean", "default": false },
+            "hooks": {
+                "type": "object",
+                "nullable": true,
+                "additionalProperties": { "type": "array", "items": { "type": "string" } }
+            },
+            "timeout_secs": { "type": "integer", "default": 120 },
+            "wait_timeout_secs": { "type": "integer", "default": 30 }
+        },
+        "required": ["client_id", "project_id", "path"]
+    });
+    spec["components"]["schemas"]["ShellClientProjectCreateResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "client_id": { "type": "string" },
+            "project": { "$ref": "#/components/schemas/ShellAgentProjectSummary", "nullable": true },
+            "created_paths": { "type": "array", "items": { "type": "string" } },
+            "registry_file": { "type": "string", "nullable": true },
+            "git_initialized": { "type": "boolean" },
+            "warnings": { "type": "array", "items": { "type": "string" } },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "client_id", "created_paths", "git_initialized", "warnings"]
     });
     spec["components"]["schemas"]["ShellRunRequest"] = serde_json::json!({
         "type": "object",
@@ -806,7 +870,6 @@ pub async fn codex_openapi_json(res: &mut Response) {
     apply_context_batch_guidance(&mut spec);
     apply_trusted_command_guidance(&mut spec);
     apply_action_session_openapi(&mut spec);
-    apply_shell_client_openapi(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -884,11 +947,11 @@ mod tests {
             "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
             "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
             "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
-            "/api/desktop/task_op": spec["paths"]["/api/desktop/task_op"].clone(),
             "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
             "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
+            "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
+            "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
             "/api/shell/run": spec["paths"]["/api/shell/run"].clone(),
-            "/api/shell/job": spec["paths"]["/api/shell/job"].clone(),
             "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
         })
     }
@@ -904,7 +967,11 @@ mod tests {
             "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
             "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
             "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
-            "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
+            "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
+            "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
+            "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
+            "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
+            "/api/shell/run": spec["paths"]["/api/shell/run"].clone()
         })
     }
 
@@ -1173,6 +1240,30 @@ mod tests {
             !compact_paths["/api/codex/action_sessions"]["post"].is_null(),
             "compact schema should include action_sessions"
         );
+        assert!(
+            !compact_paths["/api/shell/clients"]["post"].is_null(),
+            "compact schema should include shell clients"
+        );
+        assert!(
+            !compact_paths["/api/shell/projects"]["post"].is_null(),
+            "compact schema should include shell projects"
+        );
+        assert!(
+            !compact_paths["/api/shell/projects/create"]["post"].is_null(),
+            "compact schema should include shell project creation"
+        );
+        assert!(
+            !compact_paths["/api/shell/run"]["post"].is_null(),
+            "compact schema should include a basic shell operation"
+        );
+        assert!(
+            compact_paths["/api/shell/job"].is_null(),
+            "compact schema should omit shell job to stay within the action budget"
+        );
+        assert!(
+            compact_paths["/api/desktop/task_op"].is_null(),
+            "compact schema should omit desktop task to stay within the action budget"
+        );
     }
 
     #[test]
@@ -1255,6 +1346,8 @@ mod tests {
             "ShellClientsResponse": spec["components"]["schemas"]["ShellClientsResponse"].clone(),
             "ShellClientProjectsRequest": spec["components"]["schemas"]["ShellClientProjectsRequest"].clone(),
             "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
+            "ShellClientProjectCreateRequest": spec["components"]["schemas"]["ShellClientProjectCreateRequest"].clone(),
+            "ShellClientProjectCreateResponse": spec["components"]["schemas"]["ShellClientProjectCreateResponse"].clone(),
             "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
             "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone(),
             "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
@@ -1278,6 +1371,7 @@ mod tests {
         apply_edit_timeout_guidance(&mut spec);
         apply_trusted_command_guidance(&mut spec);
         apply_action_session_openapi(&mut spec);
+        apply_shell_client_openapi(&mut spec);
         spec["paths"] = gpt_paths_from_spec(&spec);
         spec["components"]["schemas"] = serde_json::json!({
             "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
@@ -1324,11 +1418,25 @@ mod tests {
             "ActionEventView": spec["components"]["schemas"]["ActionEventView"].clone(),
             "ActionSessionListItem": spec["components"]["schemas"]["ActionSessionListItem"].clone(),
             "ActionSessionOpRequest": spec["components"]["schemas"]["ActionSessionOpRequest"].clone(),
-            "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone()
+            "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone(),
+            "ShellAgentProjectSummary": spec["components"]["schemas"]["ShellAgentProjectSummary"].clone(),
+            "ShellClientCapabilities": spec["components"]["schemas"]["ShellClientCapabilities"].clone(),
+            "ShellClientView": spec["components"]["schemas"]["ShellClientView"].clone(),
+            "ShellClientsResponse": spec["components"]["schemas"]["ShellClientsResponse"].clone(),
+            "ShellClientProjectsRequest": spec["components"]["schemas"]["ShellClientProjectsRequest"].clone(),
+            "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
+            "ShellClientProjectCreateRequest": spec["components"]["schemas"]["ShellClientProjectCreateRequest"].clone(),
+            "ShellClientProjectCreateResponse": spec["components"]["schemas"]["ShellClientProjectCreateResponse"].clone(),
+            "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
+            "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone()
         });
-        assert!(count_operations(&spec["paths"]) <= 10);
+        assert!(count_operations(&spec["paths"]) <= 16);
         assert!(spec["paths"]["/api/codex/command"].is_null());
         assert!(spec["paths"]["/api/desktop/task_op"].is_null());
+        assert!(!spec["paths"]["/api/shell/clients"]["post"].is_null());
+        assert!(!spec["paths"]["/api/shell/projects"]["post"].is_null());
+        assert!(!spec["paths"]["/api/shell/projects/create"]["post"].is_null());
+        assert!(!spec["paths"]["/api/shell/run"]["post"].is_null());
         assert_operation_descriptions_within_limit(&spec);
         assert_all_descriptions_within_limit(&spec);
         assert_unique_operation_ids(&spec["paths"]);
@@ -1469,9 +1577,24 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
     apply_trusted_command_guidance(&mut spec);
     apply_action_session_openapi(&mut spec);
     apply_shell_client_openapi(&mut spec);
-    if let Some(paths) = spec["paths"].as_object_mut() {
-        paths.remove("/api/shell/projects");
-    }
+    spec["paths"] = serde_json::json!({
+        "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
+        "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
+        "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
+        "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
+        "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
+        "/api/codex/command": spec["paths"]["/api/codex/command"].clone(),
+        "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
+        "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
+        "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
+        "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
+        "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
+        "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
+        "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
+        "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
+        "/api/shell/run": spec["paths"]["/api/shell/run"].clone(),
+        "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
+    });
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));
@@ -1493,21 +1616,25 @@ pub async fn codex_openapi_gpt_json(res: &mut Response) {
         };
     spec["openapi"] = serde_json::json!("3.1.0");
     spec["servers"] = serde_json::json!([{ "url": public_url(), "description": "Public server" }]);
-    spec["info"] = serde_json::json!({"title":"Private Drop GPT Codex API","version":env!("CARGO_PKG_VERSION"),"description":"Slim Codex API for online GPT Actions. Keeps only core project workflow operations."});
+    spec["info"] = serde_json::json!({"title":"Private Drop GPT Codex API","version":env!("CARGO_PKG_VERSION"),"description":"Slim Codex API for online GPT Actions. Keeps core project workflow and shell project bootstrap operations."});
+    apply_shell_client_openapi(&mut spec);
     spec["paths"] = serde_json::json!({
         "/api/codex/projects": spec["paths"]["/api/codex/projects"].clone(),
         "/api/codex/context_batch": spec["paths"]["/api/codex/context_batch"].clone(),
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
         "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
         "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
-        "/api/codex/project_hook": spec["paths"]["/api/codex/project_hook"].clone(),
         "/api/codex/project_doctor": spec["paths"]["/api/codex/project_doctor"].clone(),
         "/api/codex/project_workflow": spec["paths"]["/api/codex/project_workflow"].clone(),
         "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
         "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
         "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
-        "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone()
+        "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
+        "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
+        "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
+        "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
+        "/api/shell/run": spec["paths"]["/api/shell/run"].clone()
     });
     spec["components"]["schemas"] = serde_json::json!({
         "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
@@ -1567,7 +1694,17 @@ pub async fn codex_openapi_gpt_json(res: &mut Response) {
         "ActionEventView": spec["components"]["schemas"]["ActionEventView"].clone(),
         "ActionSessionListItem": spec["components"]["schemas"]["ActionSessionListItem"].clone(),
         "ActionSessionOpRequest": spec["components"]["schemas"]["ActionSessionOpRequest"].clone(),
-        "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone()
+        "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone(),
+        "ShellAgentProjectSummary": spec["components"]["schemas"]["ShellAgentProjectSummary"].clone(),
+        "ShellClientCapabilities": spec["components"]["schemas"]["ShellClientCapabilities"].clone(),
+        "ShellClientView": spec["components"]["schemas"]["ShellClientView"].clone(),
+        "ShellClientsResponse": spec["components"]["schemas"]["ShellClientsResponse"].clone(),
+        "ShellClientProjectsRequest": spec["components"]["schemas"]["ShellClientProjectsRequest"].clone(),
+        "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
+        "ShellClientProjectCreateRequest": spec["components"]["schemas"]["ShellClientProjectCreateRequest"].clone(),
+        "ShellClientProjectCreateResponse": spec["components"]["schemas"]["ShellClientProjectCreateResponse"].clone(),
+        "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
+        "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone()
     });
     apply_project_description_to_schema(
         &mut spec,
@@ -1588,6 +1725,7 @@ pub async fn codex_openapi_gpt_json(res: &mut Response) {
     apply_context_batch_guidance(&mut spec);
     apply_trusted_command_guidance(&mut spec);
     apply_action_session_openapi(&mut spec);
+    apply_shell_client_openapi(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));

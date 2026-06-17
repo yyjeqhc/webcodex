@@ -1,3 +1,4 @@
+use crate::models::{ApiKeyRecord, UserRecord};
 use crate::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
     CodexGoalRecord, CommandAuditRecord, DesktopTask, DesktopTaskEvent, Message, MessageKind,
@@ -220,6 +221,27 @@ impl Database {
                 updated_at INTEGER NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_agent_specs_updated_at ON agent_specs(updated_at DESC);
+
+            CREATE TABLE IF NOT EXISTS users (
+                id TEXT PRIMARY KEY,
+                username TEXT NOT NULL UNIQUE,
+                created_at INTEGER NOT NULL,
+                disabled INTEGER NOT NULL DEFAULT 0
+            );
+
+            CREATE TABLE IF NOT EXISTS api_keys (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                name TEXT NOT NULL,
+                key_hash TEXT NOT NULL UNIQUE,
+                key_prefix TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                last_used_at INTEGER,
+                revoked_at INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
+            CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 
             CREATE TABLE IF NOT EXISTS agent_model_profiles (
                 id TEXT PRIMARY KEY,
@@ -1287,5 +1309,186 @@ impl Database {
             }
         }
         Ok(channels)
+    }
+}
+
+impl Database {
+    pub fn get_user_by_username(&self, username: &str) -> anyhow::Result<Option<UserRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn
+            .prepare("SELECT id, username, created_at, disabled FROM users WHERE username = ?1")?;
+        let mut rows = stmt.query_map(params![username], |row| {
+            Ok(UserRecord {
+                id: row.get(0)?,
+                username: row.get(1)?,
+                created_at: row.get(2)?,
+                disabled: row.get(3)?,
+            })
+        })?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn create_user(&self, user: &UserRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO users (id, username, created_at, disabled)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![user.id, user.username, user.created_at, user.disabled],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_api_key_by_hash(&self, hash: &str) -> anyhow::Result<Option<ApiKeyRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
+             FROM api_keys
+             WHERE key_hash = ?1 AND revoked_at IS NULL",
+        )?;
+        let mut rows = stmt.query_map(params![hash], |row| {
+            Ok(ApiKeyRecord {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                name: row.get(2)?,
+                key_prefix: row.get(3)?,
+                created_at: row.get(4)?,
+                last_used_at: row.get(5)?,
+                revoked_at: row.get(6)?,
+            })
+        })?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn insert_api_key(&self, key: &ApiKeyRecord, key_hash: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, created_at, last_used_at, revoked_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                key.id,
+                key.user_id,
+                key.name,
+                key_hash,
+                key.key_prefix,
+                key.created_at,
+                key.last_used_at,
+                key.revoked_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn list_api_keys_by_user(&self, user_id: &str) -> anyhow::Result<Vec<ApiKeyRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
+             FROM api_keys WHERE user_id = ?1",
+        )?;
+        let rows = stmt.query_map(params![user_id], |row| {
+            Ok(ApiKeyRecord {
+                id: row.get(0)?,
+                user_id: row.get(1)?,
+                name: row.get(2)?,
+                key_prefix: row.get(3)?,
+                created_at: row.get(4)?,
+                last_used_at: row.get(5)?,
+                revoked_at: row.get(6)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    pub fn get_user_by_id(&self, id: &str) -> anyhow::Result<Option<UserRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt =
+            conn.prepare("SELECT id, username, created_at, disabled FROM users WHERE id = ?1")?;
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(UserRecord {
+                id: row.get(0)?,
+                username: row.get(1)?,
+                created_at: row.get(2)?,
+                disabled: row.get(3)?,
+            })
+        })?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_api_key_last_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE api_keys SET last_used_at = ?2 WHERE id = ?1",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn api_key_records_round_trip_and_revoked_keys_are_ignored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("drop.db")).unwrap();
+        let user = UserRecord {
+            id: "user-1".to_string(),
+            username: "alice".to_string(),
+            created_at: 10,
+            disabled: 0,
+        };
+        db.create_user(&user).unwrap();
+
+        assert_eq!(
+            db.get_user_by_username("alice").unwrap().unwrap().id,
+            "user-1"
+        );
+        assert_eq!(
+            db.get_user_by_id("user-1").unwrap().unwrap().username,
+            "alice"
+        );
+
+        let key = ApiKeyRecord {
+            id: "key-1".to_string(),
+            user_id: "user-1".to_string(),
+            name: "main".to_string(),
+            key_prefix: "pk_live".to_string(),
+            created_at: 11,
+            last_used_at: None,
+            revoked_at: None,
+        };
+        db.insert_api_key(&key, "hash-1").unwrap();
+        assert_eq!(
+            db.get_api_key_by_hash("hash-1").unwrap().unwrap().name,
+            "main"
+        );
+
+        db.update_api_key_last_used("key-1", 12).unwrap();
+        assert_eq!(
+            db.get_api_key_by_hash("hash-1")
+                .unwrap()
+                .unwrap()
+                .last_used_at,
+            Some(12)
+        );
+
+        let revoked_key = ApiKeyRecord {
+            id: "key-2".to_string(),
+            name: "revoked".to_string(),
+            revoked_at: Some(13),
+            ..key
+        };
+        db.insert_api_key(&revoked_key, "hash-2").unwrap();
+        assert!(db.get_api_key_by_hash("hash-2").unwrap().is_none());
+        assert_eq!(db.list_api_keys_by_user("user-1").unwrap().len(), 2);
     }
 }

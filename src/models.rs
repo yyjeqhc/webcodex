@@ -203,3 +203,22 @@ pub struct ActionEventRecord {
     pub request_bytes: Option<i64>,
     pub response_bytes: Option<i64>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserRecord {
+    pub id: String,
+    pub username: String,
+    pub created_at: i64,
+    pub disabled: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ApiKeyRecord {
+    pub id: String,
+    pub user_id: String,
+    pub name: String,
+    pub key_prefix: String,
+    pub created_at: i64,
+    pub last_used_at: Option<i64>,
+    pub revoked_at: Option<i64>,
+}

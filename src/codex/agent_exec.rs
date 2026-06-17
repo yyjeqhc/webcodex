@@ -14,12 +14,15 @@ pub(super) async fn run_agent_project_command(
     timeout_label: &'static str,
 ) -> (i32, String, String, u64) {
     let started = Instant::now();
+
+    // ---- agent readiness check ----
     let client_id = match proj.agent_client_id() {
-        Ok(client_id) => client_id.to_string(),
+        Ok(c) => c.to_string(),
         Err(e) => return (-1, String::new(), e, 0),
     };
+
     let registry = match depot.obtain::<Arc<ShellClientRegistry>>() {
-        Ok(registry) => registry.clone(),
+        Ok(r) => r.clone(),
         Err(_) => {
             return (
                 -1,
@@ -29,6 +32,51 @@ pub(super) async fn run_agent_project_command(
             )
         }
     };
+
+    let clients = registry.list_clients().await;
+    let client = clients.into_iter().find(|c| c.client_id == client_id);
+    let client = match client {
+        Some(c) => {
+            if !c.connected {
+                return (
+                    -1,
+                    String::new(),
+                    format!("agent client {} is not connected", client_id),
+                    0,
+                );
+            }
+            c
+        }
+        None => {
+            return (
+                -1,
+                String::new(),
+                format!("agent client {} not found", client_id),
+                0,
+            );
+        }
+    };
+
+    // Enforce shell-client ownership only when the request has a real user identity.
+    if let Some(auth) = depot.obtain::<crate::auth::AuthContext>().ok() {
+        if !auth.is_bootstrap {
+            if let (Some(username), Some(owner)) =
+                (auth.username.as_deref(), client.owner.as_deref())
+            {
+                if username != owner {
+                    return (
+                        -1,
+                        String::new(),
+                        format!(
+                            "agent client {} is owned by {}, current user is not allowed",
+                            client_id, owner
+                        ),
+                        0,
+                    );
+                }
+            }
+        }
+    }
     let job = match registry
         .start_job(
             ShellJobOpRequest {

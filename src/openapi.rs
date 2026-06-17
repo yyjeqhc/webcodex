@@ -450,9 +450,24 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "since_stdout_line": { "type": "integer", "nullable": true },
             "since_stderr_line": { "type": "integer", "nullable": true },
             "tail_lines": { "type": "integer", "nullable": true },
-            "limit": { "type": "integer", "nullable": true }
+            "limit": { "type": "integer", "nullable": true },
+            "codex": { "$ref": "#/components/schemas/ShellJobCodexMetadata", "nullable": true }
         },
         "required": ["op"]
+    });
+    spec["components"]["schemas"]["ShellJobCodexMetadata"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "project": { "type": "string", "nullable": true },
+            "goal_id": { "type": "string", "nullable": true },
+            "client_request_id": { "type": "string", "nullable": true },
+            "command": { "type": "string", "nullable": true },
+            "kind": { "type": "string", "nullable": true },
+            "suite": { "type": "string", "nullable": true },
+            "script_path": { "type": "string", "nullable": true },
+            "reason": { "type": "string", "nullable": true },
+            "max_runtime_secs": { "type": "integer", "nullable": true }
+        }
     });
     spec["components"]["schemas"]["ShellJobInfo"] = serde_json::json!({
         "type": "object",
@@ -468,7 +483,8 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "ended_at": { "type": "integer", "nullable": true },
             "exit_code": { "type": "integer", "nullable": true },
             "duration_ms": { "type": "integer", "nullable": true },
-            "error": { "type": "string", "nullable": true }
+            "error": { "type": "string", "nullable": true },
+            "codex": { "$ref": "#/components/schemas/ShellJobCodexMetadata", "nullable": true }
         },
         "required": ["job_id", "client_id", "command_preview", "status", "created_at"]
     });
@@ -555,13 +571,13 @@ fn apply_trusted_command_guidance(spec: &mut serde_json::Value) {
         if job_props["script_text"].is_null() {
             job_props["script_text"] = serde_json::json!({
                 "type": "string",
-                "description": "For trusted job creation: multi-line script content. Requires trusted=true. Script is written to .codex/jobs/<job_id>/script.sh. Local executor only; SSH not yet supported for script_text."
+                "description": "For trusted job creation: multi-line script content. Requires trusted=true. Local writes script.sh; agent runs via agent shell; SSH is not yet supported."
             });
         }
         if job_props["trusted"].is_null() {
             job_props["trusted"] = serde_json::json!({
                 "type": "boolean",
-                "description": "For trusted job creation: must be true when script_text is provided. SSH executor does not yet support trusted script_text."
+                "description": "For trusted job creation: must be true when script_text is provided. Local and agent executors are supported; SSH is not yet supported."
             });
         }
     }
@@ -1158,6 +1174,7 @@ mod tests {
             "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
             "ShellFileOpResponse": spec["components"]["schemas"]["ShellFileOpResponse"].clone(),
             "ShellJobOpRequest": spec["components"]["schemas"]["ShellJobOpRequest"].clone(),
+            "ShellJobCodexMetadata": spec["components"]["schemas"]["ShellJobCodexMetadata"].clone(),
             "ShellJobInfo": spec["components"]["schemas"]["ShellJobInfo"].clone(),
             "ShellJobOpResponse": spec["components"]["schemas"]["ShellJobOpResponse"].clone()
         });

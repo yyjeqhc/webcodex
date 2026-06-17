@@ -251,6 +251,28 @@ pub struct ShellFileOpResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellJobCodexMetadata {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub goal_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub client_request_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suite: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub script_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_runtime_secs: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellJobOpRequest {
     pub op: String,
     #[serde(default)]
@@ -271,6 +293,8 @@ pub struct ShellJobOpRequest {
     pub tail_lines: Option<usize>,
     #[serde(default)]
     pub limit: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<ShellJobCodexMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -294,6 +318,8 @@ pub struct ShellJobInfo {
     pub duration_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex: Option<ShellJobCodexMetadata>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -5,6 +5,43 @@ use salvo::prelude::*;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+pub(super) async fn resolve_agent_project_client(
+    depot: &Depot,
+    proj: &ProjectConfig,
+) -> Result<(String, Arc<ShellClientRegistry>), String> {
+    let client_id = proj.agent_client_id()?.to_string();
+    let registry = depot
+        .obtain::<Arc<ShellClientRegistry>>()
+        .map_err(|_| "Shell client registry not configured".to_string())?
+        .clone();
+
+    let clients = registry.list_clients().await;
+    let client = clients.into_iter().find(|c| c.client_id == client_id);
+    let client = match client {
+        Some(c) if c.connected => c,
+        Some(_) => return Err(format!("agent client {} is not connected", client_id)),
+        None => return Err(format!("agent client {} not found", client_id)),
+    };
+
+    // Enforce shell-client ownership only when the request has a real user identity.
+    if let Some(auth) = depot.obtain::<crate::auth::AuthContext>().ok() {
+        if !auth.is_bootstrap {
+            if let (Some(username), Some(owner)) =
+                (auth.username.as_deref(), client.owner.as_deref())
+            {
+                if username != owner {
+                    return Err(format!(
+                        "agent client {} is owned by {}; current api key belongs to {}",
+                        client_id, owner, username
+                    ));
+                }
+            }
+        }
+    }
+
+    Ok((client_id, registry))
+}
+
 pub(super) async fn run_agent_project_command(
     depot: &Depot,
     proj: &ProjectConfig,
@@ -15,68 +52,10 @@ pub(super) async fn run_agent_project_command(
 ) -> (i32, String, String, u64) {
     let started = Instant::now();
 
-    // ---- agent readiness check ----
-    let client_id = match proj.agent_client_id() {
-        Ok(c) => c.to_string(),
+    let (client_id, registry) = match resolve_agent_project_client(depot, proj).await {
+        Ok(v) => v,
         Err(e) => return (-1, String::new(), e, 0),
     };
-
-    let registry = match depot.obtain::<Arc<ShellClientRegistry>>() {
-        Ok(r) => r.clone(),
-        Err(_) => {
-            return (
-                -1,
-                String::new(),
-                "Shell client registry not configured".to_string(),
-                0,
-            )
-        }
-    };
-
-    let clients = registry.list_clients().await;
-    let client = clients.into_iter().find(|c| c.client_id == client_id);
-    let client = match client {
-        Some(c) => {
-            if !c.connected {
-                return (
-                    -1,
-                    String::new(),
-                    format!("agent client {} is not connected", client_id),
-                    0,
-                );
-            }
-            c
-        }
-        None => {
-            return (
-                -1,
-                String::new(),
-                format!("agent client {} not found", client_id),
-                0,
-            );
-        }
-    };
-
-    // Enforce shell-client ownership only when the request has a real user identity.
-    if let Some(auth) = depot.obtain::<crate::auth::AuthContext>().ok() {
-        if !auth.is_bootstrap {
-            if let (Some(username), Some(owner)) =
-                (auth.username.as_deref(), client.owner.as_deref())
-            {
-                if username != owner {
-                    return (
-                        -1,
-                        String::new(),
-                        format!(
-                            "agent client {} is owned by {}; current api key belongs to {}",
-                            client_id, owner, username
-                        ),
-                        0,
-                    );
-                }
-            }
-        }
-    }
     let job = match registry
         .start_job(
             ShellJobOpRequest {
@@ -90,6 +69,7 @@ pub(super) async fn run_agent_project_command(
                 since_stderr_line: None,
                 tail_lines: None,
                 limit: None,
+                codex: None,
             },
             requested_by.to_string(),
         )

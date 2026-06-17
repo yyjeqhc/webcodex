@@ -16,8 +16,13 @@ use serde_json::json;
 use super::run_project_cmd;
 use super::security::is_sensitive_path;
 use super::types::{JobInfo, JobMetadata};
+use crate::shell_protocol::{
+    ShellJobCodexMetadata, ShellJobInfo as AgentShellJobInfo, ShellJobOpRequest,
+};
+use crate::ShellClientRegistry;
 use base64::Engine;
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 const DEFAULT_JOB_MAX_RUNTIME_SECS: i64 = 3600;
 const MAX_JOB_MAX_RUNTIME_SECS: i64 = 604800;
@@ -747,7 +752,7 @@ pub(super) fn create_ssh_job(
 ) -> Result<JobInfo, String> {
     if trusted_script_text.is_some() {
         return Err(
-            "trusted script_text jobs are currently supported only for local executor; use script_path or create a script file in project for SSH jobs".to_string()
+            "trusted script_text jobs are currently supported only for local or agent executors; use script_path or create a script file in project for SSH jobs".to_string()
         );
     }
     validate_job_command(command)?;
@@ -1387,6 +1392,218 @@ fn ssh_job_info_basic(
     Ok(update_job_status_ssh_basic(proj, &meta, ssh_config))
 }
 
+fn agent_shell_job_to_job_info(
+    info: AgentShellJobInfo,
+    expected_client_id: Option<&str>,
+    expected_project: Option<&str>,
+    stderr_tail: Option<&str>,
+) -> Option<JobInfo> {
+    if let Some(expected_client_id) = expected_client_id {
+        if info.client_id != expected_client_id {
+            return None;
+        }
+    }
+    let codex = info.codex?;
+    let project = codex.project?;
+    if let Some(expected_project) = expected_project {
+        if project != expected_project {
+            return None;
+        }
+    }
+    let goal_id = codex.goal_id?;
+    let now = chrono::Utc::now().timestamp();
+    let finished_at = info.ended_at;
+    let elapsed_secs = if let Some(duration_ms) = info.duration_ms {
+        Some((duration_ms / 1000) as i64)
+    } else {
+        info.started_at
+            .map(|started_at| finished_at.unwrap_or(now).saturating_sub(started_at))
+    };
+    Some(JobInfo {
+        job_id: info.job_id,
+        client_request_id: codex.client_request_id,
+        project,
+        goal_id,
+        command: codex.command.unwrap_or(info.command_preview),
+        kind: codex.kind,
+        suite: codex.suite,
+        script_path: codex.script_path,
+        reason: codex.reason,
+        status: info.status,
+        created_at: info.created_at,
+        started_at: info.started_at,
+        finished_at,
+        max_runtime_secs: codex
+            .max_runtime_secs
+            .unwrap_or(DEFAULT_JOB_MAX_RUNTIME_SECS),
+        executor: "agent".to_string(),
+        pid: None,
+        exit_code: info.exit_code,
+        elapsed_secs,
+        oom_hint: stderr_tail.and_then(detect_oom_hint),
+    })
+}
+
+async fn resolve_agent_registry(
+    depot: &Depot,
+    proj: &ProjectConfig,
+) -> Result<(String, Arc<ShellClientRegistry>), String> {
+    super::agent_exec::resolve_agent_project_client(depot, proj).await
+}
+
+async fn create_agent_job(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project: &str,
+    goal_id: &str,
+    command: &str,
+    client_request_id: Option<String>,
+    kind: Option<String>,
+    suite: Option<String>,
+    script_path: Option<String>,
+    reason: Option<String>,
+    max_runtime_secs: i64,
+) -> Result<JobInfo, String> {
+    validate_job_command(command)?;
+    let timeout_secs = max_runtime_secs
+        .try_into()
+        .map_err(|_| "max_runtime_secs is invalid".to_string())?;
+    let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
+    let shell_job = registry
+        .start_job(
+            ShellJobOpRequest {
+                op: "start".to_string(),
+                client_id: Some(client_id.clone()),
+                cwd: Some(proj.path.clone()),
+                command: Some(command.to_string()),
+                timeout_secs: Some(timeout_secs),
+                job_id: None,
+                since_stdout_line: None,
+                since_stderr_line: None,
+                tail_lines: None,
+                limit: None,
+                codex: Some(ShellJobCodexMetadata {
+                    project: Some(project.to_string()),
+                    goal_id: Some(goal_id.to_string()),
+                    client_request_id,
+                    command: Some(command.to_string()),
+                    kind,
+                    suite,
+                    script_path,
+                    reason,
+                    max_runtime_secs: Some(max_runtime_secs),
+                }),
+            },
+            "codex_run_job_agent_executor".to_string(),
+        )
+        .await?;
+    agent_shell_job_to_job_info(shell_job, Some(&client_id), Some(project), None)
+        .ok_or_else(|| "agent job metadata was not recorded".to_string())
+}
+
+async fn list_agent_jobs(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project: &str,
+    limit: usize,
+    status_filter: Option<&str>,
+) -> Result<Vec<JobInfo>, String> {
+    let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
+    let mut jobs = registry
+        .list_jobs(Some(limit.max(100).clamp(1, 100)))
+        .await
+        .into_iter()
+        .filter_map(|info| agent_shell_job_to_job_info(info, Some(&client_id), Some(project), None))
+        .filter(|info| status_filter.map(|s| s == info.status).unwrap_or(true))
+        .collect::<Vec<_>>();
+    jobs.sort_by_key(|j| -j.created_at);
+    jobs.truncate(limit);
+    Ok(jobs)
+}
+
+async fn agent_job_info_basic(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project: &str,
+    job_id: &str,
+) -> Result<JobInfo, String> {
+    validate_job_id(job_id)?;
+    let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
+    let info = registry.get_job(job_id).await?;
+    agent_shell_job_to_job_info(info, Some(&client_id), Some(project), None)
+        .ok_or_else(|| "agent shell job is not a Codex job for this project".to_string())
+}
+
+async fn agent_job_log_with_count(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project: &str,
+    job_id: &str,
+    tail_lines: usize,
+    since_line: Option<usize>,
+) -> Result<(String, String, usize), String> {
+    validate_job_id(job_id)?;
+    let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
+    let (info, stdout, stderr, next_stdout_line, _next_stderr_line) = registry
+        .job_log(
+            job_id,
+            since_line.filter(|line| *line > 0),
+            None,
+            if since_line.filter(|line| *line > 0).is_some() {
+                None
+            } else {
+                Some(tail_lines.clamp(1, 1000))
+            },
+        )
+        .await?;
+    let stderr_tail = stderr.unwrap_or_default();
+    if agent_shell_job_to_job_info(info, Some(&client_id), Some(project), Some(&stderr_tail))
+        .is_none()
+    {
+        return Err("agent shell job is not a Codex job for this project".to_string());
+    }
+    let total_lines = next_stdout_line.saturating_sub(1);
+    Ok((stdout.unwrap_or_default(), stderr_tail, total_lines))
+}
+
+async fn stop_agent_job(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project: &str,
+    job_id: &str,
+) -> Result<JobInfo, String> {
+    validate_job_id(job_id)?;
+    let (client_id, registry) = resolve_agent_registry(depot, proj).await?;
+    let info = registry.stop_job(job_id).await?;
+    agent_shell_job_to_job_info(info, Some(&client_id), Some(project), None)
+        .ok_or_else(|| "agent shell job is not a Codex job for this project".to_string())
+}
+
+async fn find_agent_job_id_by_client_request_id(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project: &str,
+    client_request_id: &str,
+    goal_id: Option<&str>,
+) -> Result<Option<String>, String> {
+    let mut jobs = list_agent_jobs(depot, proj, project, 100, None).await?;
+    jobs.retain(|job| job.client_request_id.as_deref() == Some(client_request_id));
+    if let Some(goal_id) = goal_id {
+        jobs.retain(|job| job.goal_id == goal_id);
+    }
+    jobs.sort_by_key(|j| -j.created_at);
+    Ok(jobs.first().map(|job| job.job_id.clone()))
+}
+
+async fn recover_agent_job_info(
+    depot: &Depot,
+    proj: &ProjectConfig,
+    project: &str,
+    job_id: &str,
+) -> Result<JobInfo, String> {
+    agent_job_info_basic(depot, proj, project, job_id).await
+}
+
 #[handler]
 pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let started_at = chrono::Utc::now().timestamp();
@@ -1525,7 +1742,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 }
             };
             if let Some(client_request_id) = client_request_id {
-                let mut existing = if proj.is_ssh() {
+                let mut existing = if proj.is_agent() {
+                    match list_agent_jobs(depot, proj, &project, 100, None).await {
+                        Ok(jobs) => jobs,
+                        Err(e) => {
+                            render_job!(Json(job_response(&op, false, Some(e))));
+                            return;
+                        }
+                    }
+                } else if proj.is_ssh() {
                     list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
@@ -1560,7 +1785,22 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 .reason
                 .clone()
                 .or_else(|| Some(format!("run check {}", suite)));
-            let result = if proj.is_ssh() {
+            let result = if proj.is_agent() {
+                create_agent_job(
+                    depot,
+                    proj,
+                    &project,
+                    goal_id,
+                    &command,
+                    body.client_request_id.clone(),
+                    Some("check".to_string()),
+                    Some(suite.to_string()),
+                    None,
+                    reason,
+                    max_runtime_secs,
+                )
+                .await
+            } else if proj.is_ssh() {
                 create_ssh_job(
                     proj,
                     &project,
@@ -1659,23 +1899,27 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         render_job!(Json(job_response(&op, false, Some(err))));
                         return;
                     }
-                    // Reject SSH for now
                     if proj.is_ssh() {
                         res.status_code(StatusCode::BAD_REQUEST);
                         render_job!(Json(job_response(
                             &op,
                             false,
-                            Some("trusted script_text jobs are currently supported only for local executor; use script_path or create a script file in project for SSH jobs".to_string()),
+                            Some("trusted script_text jobs are currently supported only for local or agent executors; use script_path or create a script file in project for SSH jobs".to_string()),
                         )));
                         return;
                     }
-                    // We need a job_id to build the script path command, but we don't
-                    // have it yet. Use a placeholder: we'll generate the job_id inside
-                    // create_local_job and write script.sh before spawning.
-                    // For now, pass the raw script_text through and let create_local_job
-                    // handle the script.sh writing and command construction.
+                    let command = if proj.is_agent() {
+                        format!(
+                            "bash -lc {}",
+                            shell_escape(&build_trusted_script_content(script_text))
+                        )
+                    } else {
+                        // We need a job_id to build the script path command, but we don't
+                        // have it yet. create_local_job writes script.sh before spawning.
+                        String::new()
+                    };
                     (
-                        String::new(), // placeholder; will be replaced inside create_local_job
+                        command,
                         "trusted_script".to_string(),
                         None,
                         Some(script_text.to_string()),
@@ -1754,7 +1998,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 }
             };
             if let Some(client_request_id) = client_request_id {
-                let mut existing = if proj.is_ssh() {
+                let mut existing = if proj.is_agent() {
+                    match list_agent_jobs(depot, proj, &project, 100, None).await {
+                        Ok(jobs) => jobs,
+                        Err(e) => {
+                            render_job!(Json(job_response(&op, false, Some(e))));
+                            return;
+                        }
+                    }
+                } else if proj.is_ssh() {
                     list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
@@ -1785,7 +2037,22 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     return;
                 }
             }
-            let result = if proj.is_ssh() {
+            let result = if proj.is_agent() {
+                create_agent_job(
+                    depot,
+                    proj,
+                    &project,
+                    goal_id,
+                    &command,
+                    body.client_request_id.clone(),
+                    Some(job_kind.clone()),
+                    None,
+                    job_script_path.clone(),
+                    body.reason.clone(),
+                    max_runtime_secs,
+                )
+                .await
+            } else if proj.is_ssh() {
                 create_ssh_job(
                     proj,
                     &project,
@@ -1882,7 +2149,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 }
             }
             if let Some(client_request_id) = client_request_id {
-                let mut existing = if proj.is_ssh() {
+                let mut existing = if proj.is_agent() {
+                    match list_agent_jobs(depot, proj, &project, 100, None).await {
+                        Ok(jobs) => jobs,
+                        Err(e) => {
+                            render_job!(Json(job_response(&op, false, Some(e))));
+                            return;
+                        }
+                    }
+                } else if proj.is_ssh() {
                     list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
@@ -1927,15 +2202,32 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             }
             let mut jobs = Vec::new();
             for (idx, command) in body.commands.iter().enumerate() {
-                let result = if proj.is_ssh() {
+                let batch_client_request_id = body
+                    .client_request_id
+                    .as_ref()
+                    .map(|id| format!("{}.{}", id, idx + 1));
+                let result = if proj.is_agent() {
+                    create_agent_job(
+                        depot,
+                        proj,
+                        &project,
+                        goal_id,
+                        command,
+                        batch_client_request_id,
+                        Some("command".to_string()),
+                        None,
+                        None,
+                        body.reason.clone(),
+                        max_runtime_secs,
+                    )
+                    .await
+                } else if proj.is_ssh() {
                     create_ssh_job(
                         proj,
                         &project,
                         goal_id,
                         command,
-                        body.client_request_id
-                            .as_ref()
-                            .map(|id| format!("{}.{}", id, idx + 1)),
+                        batch_client_request_id,
                         Some("command".to_string()),
                         None,
                         None,
@@ -1950,9 +2242,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         &project,
                         goal_id,
                         command,
-                        body.client_request_id
-                            .as_ref()
-                            .map(|id| format!("{}.{}", id, idx + 1)),
+                        batch_client_request_id,
                         Some("command".to_string()),
                         None,
                         None,
@@ -1993,7 +2283,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         "list" => {
             let limit = body.limit.clamp(1, 100);
             let status_filter = body.status.as_deref();
-            let mut jobs = if proj.is_ssh() {
+            let mut jobs = if proj.is_agent() {
+                match list_agent_jobs(depot, proj, &project, limit, status_filter).await {
+                    Ok(jobs) => jobs,
+                    Err(e) => {
+                        render_job!(Json(job_response(&op, false, Some(e))));
+                        return;
+                    }
+                }
+            } else if proj.is_ssh() {
                 list_ssh_jobs(proj, limit, status_filter, ssh_config)
             } else {
                 list_local_jobs(&proj.root(), limit, status_filter)
@@ -2038,7 +2336,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             let job_id = if let Some(job_id) = body.job_id.as_deref() {
                 job_id
             } else if let Some(client_request_id) = client_request_id {
-                let mut jobs = if proj.is_ssh() {
+                let mut jobs = if proj.is_agent() {
+                    match list_agent_jobs(depot, proj, &project, 100, None).await {
+                        Ok(jobs) => jobs,
+                        Err(e) => {
+                            render_job!(Json(job_response(&op, false, Some(e))));
+                            return;
+                        }
+                    }
+                } else if proj.is_ssh() {
                     list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
@@ -2076,7 +2382,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             // tail_lines does NOT implicitly trigger logs; only explicit detail=logs reads logs.
             let effective_detail = effective_status_detail(body.detail.as_deref());
 
-            let job_result = if proj.is_ssh() {
+            let job_result = if proj.is_agent() {
+                agent_job_info_basic(depot, proj, &project, job_id).await
+            } else if proj.is_ssh() {
                 if effective_detail == "basic" {
                     ssh_job_info_basic(proj, job_id, ssh_config)
                 } else {
@@ -2095,7 +2403,21 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     if effective_detail == "logs" {
                         // Read log tails
                         let tail_lines = body.tail_lines.clamp(1, 1000);
-                        let (stdout_tail, stderr_tail, log_total_lines) = if proj.is_ssh() {
+                        let (stdout_tail, stderr_tail, log_total_lines) = if proj.is_agent() {
+                            match agent_job_log_with_count(
+                                depot,
+                                proj,
+                                &project,
+                                job_id,
+                                tail_lines,
+                                body.since_line,
+                            )
+                            .await
+                            {
+                                Ok((out, err, total)) => (Some(out), Some(err), Some(total)),
+                                Err(_) => (None, None, None),
+                            }
+                        } else if proj.is_ssh() {
                             match ssh_job_log_with_count(
                                 proj,
                                 job_id,
@@ -2164,7 +2486,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             let job_id = if let Some(job_id) = body.job_id.as_deref() {
                 job_id
             } else if let Some(client_request_id) = client_request_id {
-                let mut jobs = if proj.is_ssh() {
+                let mut jobs = if proj.is_agent() {
+                    match list_agent_jobs(depot, proj, &project, 100, None).await {
+                        Ok(jobs) => jobs,
+                        Err(e) => {
+                            render_job!(Json(job_response(&op, false, Some(e))));
+                            return;
+                        }
+                    }
+                } else if proj.is_ssh() {
                     list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
@@ -2196,7 +2526,10 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             };
             let tail_lines = body.tail_lines.clamp(1, 1000);
             let since_line = body.since_line;
-            let result: Result<(String, String, usize), String> = if proj.is_ssh() {
+            let result: Result<(String, String, usize), String> = if proj.is_agent() {
+                agent_job_log_with_count(depot, proj, &project, job_id, tail_lines, since_line)
+                    .await
+            } else if proj.is_ssh() {
                 ssh_job_log_with_count(proj, job_id, tail_lines, since_line, ssh_config)
             } else {
                 local_job_log(&proj.root(), job_id, tail_lines, since_line)
@@ -2237,7 +2570,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             let job_id = if let Some(job_id) = body.job_id.as_deref() {
                 job_id
             } else if let Some(client_request_id) = client_request_id {
-                let mut jobs = if proj.is_ssh() {
+                let mut jobs = if proj.is_agent() {
+                    match list_agent_jobs(depot, proj, &project, 100, None).await {
+                        Ok(jobs) => jobs,
+                        Err(e) => {
+                            render_job!(Json(job_response(&op, false, Some(e))));
+                            return;
+                        }
+                    }
+                } else if proj.is_ssh() {
                     list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
@@ -2267,7 +2608,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 )));
                 return;
             };
-            let result = if proj.is_ssh() {
+            let result = if proj.is_agent() {
+                stop_agent_job(depot, proj, &project, job_id).await
+            } else if proj.is_ssh() {
                 stop_ssh_job(proj, job_id, ssh_config)
             } else {
                 stop_local_job(&proj.root(), job_id)
@@ -2297,7 +2640,15 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         }
         "summarize" => {
             let limit = body.limit.clamp(1, 100);
-            let mut jobs = if proj.is_ssh() {
+            let mut jobs = if proj.is_agent() {
+                match list_agent_jobs(depot, proj, &project, limit, body.status.as_deref()).await {
+                    Ok(jobs) => jobs,
+                    Err(e) => {
+                        render_job!(Json(job_response(&op, false, Some(e))));
+                        return;
+                    }
+                }
+            } else if proj.is_ssh() {
                 list_ssh_jobs(proj, limit, body.status.as_deref(), ssh_config)
             } else {
                 list_local_jobs(&proj.root(), limit, body.status.as_deref())
@@ -2318,7 +2669,19 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             }
             let mut tails = Vec::new();
             for job in &jobs {
-                let pair: (String, String) = if proj.is_ssh() {
+                let pair: (String, String) = if proj.is_agent() {
+                    agent_job_log_with_count(
+                        depot,
+                        proj,
+                        &project,
+                        &job.job_id,
+                        body.tail_lines.clamp(1, 1000),
+                        None,
+                    )
+                    .await
+                    .map(|(out, err, _)| (out, err))
+                    .unwrap_or_default()
+                } else if proj.is_ssh() {
                     ssh_job_log(
                         proj,
                         &job.job_id,
@@ -2367,7 +2730,23 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             let resolved_job_id = if let Some(jid) = body.job_id.as_deref() {
                 jid
             } else if let Some(crid) = client_request_id {
-                let found = if proj.is_ssh() {
+                let found = if proj.is_agent() {
+                    match find_agent_job_id_by_client_request_id(
+                        depot,
+                        proj,
+                        &project,
+                        crid,
+                        body.goal_id.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok(found) => found,
+                        Err(e) => {
+                            render_job!(Json(job_response(&op, false, Some(e))));
+                            return;
+                        }
+                    }
+                } else if proj.is_ssh() {
                     find_ssh_job_id_by_client_request_id(
                         proj,
                         crid,
@@ -2433,7 +2812,9 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 }));
                 return;
             };
-            let result = if proj.is_ssh() {
+            let result = if proj.is_agent() {
+                recover_agent_job_info(depot, proj, &project, resolved_job_id).await
+            } else if proj.is_ssh() {
                 recover_ssh_job_info(proj, resolved_job_id, ssh_config)
             } else {
                 recover_local_job_info(&proj.root(), resolved_job_id)
@@ -2542,6 +2923,124 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = Arc::new(Database::open(&tmp.path().join("drop.db")).unwrap());
         (tmp, db)
+    }
+
+    fn test_agent_project(root: &str) -> ProjectConfig {
+        ProjectConfig {
+            path: root.to_string(),
+            executor: crate::projects::Executor::Agent,
+            host: None,
+            ssh_hosts: Vec::new(),
+            user: None,
+            client_id: Some("oe".to_string()),
+            allow_patch: true,
+            allow_command_requests: true,
+            allow_raw_command_requests: true,
+            default_apply_patch_backend: None,
+            allowed_checks: vec![],
+            checks: None,
+            commands: HashMap::new(),
+        }
+    }
+
+    #[tokio::test]
+    async fn agent_job_helpers_create_complete_log_and_recover() {
+        let registry = Arc::new(crate::ShellClientRegistry::default());
+        registry
+            .register(crate::shell_protocol::ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+            })
+            .await
+            .unwrap();
+        let mut depot = Depot::new();
+        depot.inject(registry.clone());
+        let proj = test_agent_project("/tmp/private-drop-agent-job");
+
+        let job = create_agent_job(
+            &depot,
+            &proj,
+            "agent-project",
+            "goal-agent",
+            "printf hello",
+            Some("crid-agent".to_string()),
+            Some("command".to_string()),
+            None,
+            None,
+            Some("run agent job".to_string()),
+            60,
+        )
+        .await
+        .unwrap();
+        assert_eq!(job.executor, "agent");
+        assert_eq!(job.status, "queued");
+        assert_eq!(job.project, "agent-project");
+        assert_eq!(job.goal_id, "goal-agent");
+        assert_eq!(job.client_request_id.as_deref(), Some("crid-agent"));
+
+        let request = registry
+            .poll(crate::shell_protocol::ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.kind, "start_job");
+        assert_eq!(request.cwd.as_deref(), Some("/tmp/private-drop-agent-job"));
+        assert_eq!(request.command, "printf hello");
+
+        registry
+            .complete(crate::shell_protocol::ShellAgentResultRequest {
+                client_id: "oe".to_string(),
+                request_id: request.request_id,
+                exit_code: Some(0),
+                stdout: Some("hello\n".to_string()),
+                stderr: Some("warn\n".to_string()),
+                duration_ms: Some(1500),
+                error: None,
+            })
+            .await
+            .unwrap();
+
+        let done = agent_job_info_basic(&depot, &proj, "agent-project", &job.job_id)
+            .await
+            .unwrap();
+        assert_eq!(done.status, "completed");
+        assert_eq!(done.exit_code, Some(0));
+        assert_eq!(done.elapsed_secs, Some(1));
+
+        let listed = list_agent_jobs(&depot, &proj, "agent-project", 10, Some("completed"))
+            .await
+            .unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].job_id, job.job_id);
+
+        let (stdout, stderr, total_lines) =
+            agent_job_log_with_count(&depot, &proj, "agent-project", &job.job_id, 10, Some(1))
+                .await
+                .unwrap();
+        assert_eq!(stdout, "hello\n");
+        assert_eq!(stderr, "warn\n");
+        assert_eq!(total_lines, 1);
+
+        let found = find_agent_job_id_by_client_request_id(
+            &depot,
+            &proj,
+            "agent-project",
+            "crid-agent",
+            Some("goal-agent"),
+        )
+        .await
+        .unwrap();
+        assert_eq!(found.as_deref(), Some(job.job_id.as_str()));
+
+        let recovered = recover_agent_job_info(&depot, &proj, "agent-project", &job.job_id)
+            .await
+            .unwrap();
+        assert_eq!(recovered.status, "completed");
     }
 
     #[test]

@@ -2058,12 +2058,12 @@
           "script_text": {
             "type": "string",
             "nullable": true,
-            "description": "For trusted job creation: multi-line script content. Requires trusted=true. Script is written to .codex/jobs/<job_id>/script.sh with shebang and set -euo pipefail. Local executor only; SSH not yet supported for script_text."
+            "description": "For trusted job creation: multi-line script content. Requires trusted=true. Local writes script.sh; agent runs via agent shell; SSH is not yet supported."
           },
           "trusted": {
             "type": "boolean",
             "nullable": true,
-            "description": "For trusted job creation: must be true when script_text is provided. SSH executor does not yet support trusted script_text."
+            "description": "For trusted job creation: must be true when script_text is provided. Local and agent executors are supported; SSH is not yet supported."
           },
           "commands": {
             "type": "array",

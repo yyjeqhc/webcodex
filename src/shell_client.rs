@@ -4,8 +4,8 @@ use crate::shell_protocol::{
     ShellAgentPollResponse, ShellAgentResultRequest, ShellAgentResultResponse,
     ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
     ShellClientRegisterResponse, ShellClientView, ShellClientsResponse, ShellFileOpRequest,
-    ShellFileOpResponse, ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest,
-    ShellRunResponse,
+    ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo, ShellJobOpRequest,
+    ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
 };
 use salvo::prelude::*;
 use serde_json::json;
@@ -59,6 +59,7 @@ struct ShellJobRecord {
     stdout: Option<String>,
     stderr: Option<String>,
     error: Option<String>,
+    codex: Option<ShellJobCodexMetadata>,
 }
 
 #[derive(Debug, Default)]
@@ -273,6 +274,7 @@ fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         exit_code: job.exit_code,
         duration_ms: job.duration_ms,
         error: job.error.clone(),
+        codex: job.codex.clone(),
     }
 }
 
@@ -652,6 +654,7 @@ impl ShellClientRegistry {
             stdout: None,
             stderr: None,
             error: None,
+            codex: body.codex.clone(),
         };
         inner.pending_by_id.insert(
             request_id.clone(),
@@ -1760,12 +1763,29 @@ mod tests {
                     since_stderr_line: None,
                     tail_lines: None,
                     limit: None,
+                    codex: Some(ShellJobCodexMetadata {
+                        project: Some("demo".to_string()),
+                        goal_id: Some("goal-1".to_string()),
+                        client_request_id: Some("crid-1".to_string()),
+                        command: Some("printf hello".to_string()),
+                        kind: Some("command".to_string()),
+                        suite: None,
+                        script_path: None,
+                        reason: Some("test job".to_string()),
+                        max_runtime_secs: Some(10),
+                    }),
                 },
                 "test".to_string(),
             )
             .await
             .unwrap();
         assert_eq!(job.status, "queued");
+        assert_eq!(
+            job.codex
+                .as_ref()
+                .and_then(|codex| codex.client_request_id.as_deref()),
+            Some("crid-1")
+        );
         let polled = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
@@ -1791,6 +1811,21 @@ mod tests {
         let done = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(done.status, "completed");
         assert_eq!(done.exit_code, Some(0));
+        assert_eq!(
+            done.codex
+                .as_ref()
+                .and_then(|codex| codex.project.as_deref()),
+            Some("demo")
+        );
+        let listed = registry.list_jobs(Some(10)).await;
+        assert_eq!(
+            listed
+                .iter()
+                .find(|listed| listed.job_id == job.job_id)
+                .and_then(|listed| listed.codex.as_ref())
+                .and_then(|codex| codex.goal_id.as_deref()),
+            Some("goal-1")
+        );
         let (_info, stdout, stderr, next_stdout, next_stderr) = registry
             .job_log(&job.job_id, Some(1), Some(1), None)
             .await
@@ -1827,6 +1862,7 @@ mod tests {
                     since_stderr_line: None,
                     tail_lines: None,
                     limit: None,
+                    codex: None,
                 },
                 "test".to_string(),
             )
@@ -1869,6 +1905,7 @@ mod tests {
                     since_stderr_line: None,
                     tail_lines: None,
                     limit: None,
+                    codex: None,
                 },
                 "test".to_string(),
             )

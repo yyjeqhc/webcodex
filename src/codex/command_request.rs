@@ -1629,6 +1629,91 @@ mod tests {
         (tmp, db)
     }
 
+    #[tokio::test]
+    async fn run_project_check_uses_agent_executor_for_agent_projects() {
+        let registry = Arc::new(crate::ShellClientRegistry::default());
+        registry
+            .register(crate::shell_protocol::ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+            })
+            .await
+            .unwrap();
+        let mut depot = Depot::new();
+        depot.inject(registry.clone());
+        let proj = ProjectConfig {
+            path: "/tmp/private-drop".to_string(),
+            executor: crate::projects::Executor::Agent,
+            host: None,
+            ssh_hosts: Vec::new(),
+            user: None,
+            client_id: Some("oe".to_string()),
+            allow_patch: true,
+            allow_command_requests: false,
+            allow_raw_command_requests: false,
+            default_apply_patch_backend: None,
+            allowed_checks: Vec::new(),
+            checks: None,
+            commands: std::collections::HashMap::new(),
+        };
+
+        let agent_registry = registry.clone();
+        let agent = tokio::spawn(async move {
+            let request = tokio::time::timeout(std::time::Duration::from_secs(2), async {
+                loop {
+                    if let Some(request) = agent_registry
+                        .poll(crate::shell_protocol::ShellAgentPollRequest {
+                            client_id: "oe".to_string(),
+                        })
+                        .await
+                        .unwrap()
+                    {
+                        break request;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+                }
+            })
+            .await
+            .unwrap();
+            assert_eq!(request.kind, "start_job");
+            assert_eq!(request.cwd.as_deref(), Some("/tmp/private-drop"));
+            assert_eq!(request.command, "cargo check");
+            assert_eq!(request.requested_by, "codex_project_check_agent_executor");
+            agent_registry
+                .complete(crate::shell_protocol::ShellAgentResultRequest {
+                    client_id: "oe".to_string(),
+                    request_id: request.request_id,
+                    exit_code: Some(0),
+                    stdout: Some("checked\n".to_string()),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(17),
+                    error: None,
+                })
+                .await
+                .unwrap();
+        });
+
+        let (code, stdout, stderr, duration_ms) = run_project_cmd_for_handler(
+            &depot,
+            &proj,
+            "cargo check",
+            30,
+            None,
+            "codex_project_check_agent_executor",
+            "agent project check",
+        )
+        .await;
+        agent.await.unwrap();
+
+        assert_eq!(code, 0);
+        assert_eq!(stdout, "checked\n");
+        assert_eq!(stderr, "");
+        assert_eq!(duration_ms, 17);
+    }
+
     #[test]
     fn create_trusted_raw_is_rejected_early() {
         let err = unsupported_create_trusted_raw_error("create_trusted_raw");
@@ -2324,9 +2409,16 @@ pub async fn codex_command_approve(req: &mut Request, depot: &mut Depot, res: &m
             return;
         }
     };
-    let (code, stdout, stderr, duration_ms) =
-        run_project_cmd_for_handler(depot, proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref())
-            .await;
+    let (code, stdout, stderr, duration_ms) = run_project_cmd_for_handler(
+        depot,
+        proj,
+        &cmd,
+        CHECK_TIMEOUT_SECS,
+        projects.ssh.as_ref(),
+        "codex_project_command_request_agent_executor",
+        "agent project command request",
+    )
+    .await;
     let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
     let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
     let now = chrono::Utc::now().timestamp();
@@ -2488,6 +2580,8 @@ async fn run_project_cmd_for_handler(
     cmd: &str,
     timeout_secs: u64,
     ssh_config: Option<&crate::projects::SshConfig>,
+    requested_by: &'static str,
+    timeout_label: &'static str,
 ) -> (i32, String, String, u64) {
     if !proj.is_agent() {
         return run_project_cmd(proj, cmd, timeout_secs, ssh_config);
@@ -2497,8 +2591,8 @@ async fn run_project_cmd_for_handler(
         proj,
         cmd,
         timeout_secs,
-        "codex_project_agent_executor",
-        "agent project command",
+        requested_by,
+        timeout_label,
     )
     .await
 }
@@ -2574,9 +2668,16 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
             return;
         }
     };
-    let (code, stdout, stderr, duration_ms) =
-        run_project_cmd_for_handler(depot, proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref())
-            .await;
+    let (code, stdout, stderr, duration_ms) = run_project_cmd_for_handler(
+        depot,
+        proj,
+        &cmd,
+        CHECK_TIMEOUT_SECS,
+        projects.ssh.as_ref(),
+        "codex_project_command_agent_executor",
+        "agent project command",
+    )
+    .await;
     let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
     let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
     let truncated = stdout_trunc || stderr_trunc;
@@ -2698,8 +2799,16 @@ pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Respons
             return;
         }
     };
-    let (code, stdout, stderr, duration_ms) =
-        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (code, stdout, stderr, duration_ms) = run_project_cmd_for_handler(
+        depot,
+        proj,
+        &cmd,
+        CHECK_TIMEOUT_SECS,
+        projects.ssh.as_ref(),
+        "codex_project_check_agent_executor",
+        "agent project check",
+    )
+    .await;
     let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
     let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
     let truncated = stdout_trunc || stderr_trunc;

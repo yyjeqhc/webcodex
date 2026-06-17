@@ -68,8 +68,8 @@ pub(super) async fn run_agent_project_command(
                         -1,
                         String::new(),
                         format!(
-                            "agent client {} is owned by {}, current user is not allowed",
-                            client_id, owner
+                            "agent client {} is owned by {}; current api key belongs to {}",
+                            client_id, owner, username
                         ),
                         0,
                     );

@@ -176,6 +176,15 @@ Web UI auth: pass `?token=your-secret-token` in the URL, or use the login page w
    - `getMessage` - Get specific message details
    - `deleteMessage` - Delete a message
 
+## Project workflows
+
+For Codex project doctor, hook, and workflow usage, see:
+
+- `docs/WORKFLOWS.md`
+- `docs/CODEX_USAGE.md`
+- `examples/projects.toml.example`
+- `scripts/pdctl.py`
+
 ## Channels
 
 Default channels for organizing messages:

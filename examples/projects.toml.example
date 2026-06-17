@@ -1,0 +1,52 @@
+# Example projects.toml entries for project workflows and hooks.
+#
+# SSH executor is disabled by default. Prefer the agent executor for day-to-day
+# workflow, doctor, and hook runs. Hooks are project-specific command lists;
+# they are not Cargo-specific.
+
+[projects.private-drop]
+path = "/root/git/private-drop"
+executor = "agent"
+client_id = "oe"
+
+[projects.private-drop.hooks]
+doctor = [
+  "git status --short",
+  "git log --oneline -5"
+]
+precommit = [
+  ". /root/.cargo/env && cargo fmt --check",
+  ". /root/.cargo/env && cargo test",
+  ". /root/.cargo/env && cargo build --release"
+]
+
+[projects.python-demo]
+path = "/path/to/python-project"
+executor = "agent"
+client_id = "oe"
+
+[projects.python-demo.hooks]
+doctor = [
+  "git status --short",
+  "python3 --version"
+]
+precommit = [
+  "python3 -m compileall .",
+  "python3 -m unittest"
+]
+
+[projects.android-demo]
+path = "/path/to/android-project"
+executor = "agent"
+client_id = "oe"
+
+[projects.android-demo.hooks]
+doctor = [
+  "git status --short",
+  "./gradlew --version"
+]
+precommit = [
+  "./gradlew test",
+  "./gradlew lint",
+  "./gradlew assembleDebug"
+]

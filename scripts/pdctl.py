@@ -61,6 +61,20 @@ def add_workflow_options(parser, include_mode=False, include_hook=False):
     parser.add_argument("--doctor-hook", default=None, help="Doctor hook name. Defaults to doctor.")
 
 
+def add_agent_workflow_options(parser, include_mode=False, include_hook=False):
+    if include_mode:
+        parser.add_argument("--mode", choices=["snapshot", "doctor", "hook", "precommit"], default="snapshot")
+    if include_hook:
+        parser.add_argument("--hook", dest="hook_opt", help="Agent project hook name.")
+    run_doctor = parser.add_mutually_exclusive_group()
+    run_doctor.add_argument("--run-doctor", dest="run_doctor", action="store_true", default=None)
+    run_doctor.add_argument("--no-run-doctor", dest="run_doctor", action="store_false")
+    parser.add_argument("--run-doctor-hook", action="store_true", help="Allow mode=doctor to run the doctor hook.")
+    parser.add_argument("--doctor-hook", default=None, help="Doctor hook name. Defaults to doctor.")
+    parser.add_argument("--timeout-secs", type=int, help="Per-command timeout passed to the agent.")
+    parser.add_argument("--wait-timeout-secs", type=int, help="Seconds for the server to wait for the agent result.")
+
+
 def request_json(url, token, path, body, timeout_secs, debug=False):
     data = json.dumps(body).encode("utf-8")
     request = urllib.request.Request(
@@ -246,6 +260,29 @@ def print_project_create(payload):
         print("error: {}".format(payload.get("error")))
 
 
+def print_agent_workflow(payload):
+    print("success: {}".format(payload.get("success")))
+    print("client_id: {}".format(payload.get("client_id", "")))
+    print("project_id: {}".format(payload.get("project_id", "")))
+    project = payload.get("project") or {}
+    print("path: {}".format(project.get("path", "-")))
+    print("kind: {}".format(compact_text(project.get("kind")) or "-"))
+    print("mode: {}".format(payload.get("mode", "-")))
+    print_git("git_before", payload.get("git_before"))
+    print_git("git_after", payload.get("git_after"))
+    print_hook_result(payload.get("hook_result"))
+    warnings = payload.get("warnings") or []
+    if warnings:
+        print("warnings:")
+        for warning in warnings:
+            print("  - " + str(warning))
+    else:
+        print("warnings: none")
+    print("recommended_next_action: {}".format(payload.get("recommended_next_action") or "-"))
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
 def print_summary(payload):
     print("success: {}".format(payload.get("success")))
     print("project: {}".format(payload.get("project", "")))
@@ -318,6 +355,41 @@ def build_request(args):
             body["git_init"] = args.git_init
         return "/api/shell/projects/create", body
 
+    if args.command == "agent-workflow":
+        mode = args.mode
+        hook = args.hook_opt
+    elif args.command == "agent-snapshot":
+        mode = "snapshot"
+        hook = args.hook_opt
+    elif args.command == "agent-precommit":
+        mode = "precommit"
+        hook = args.hook_opt
+    elif args.command == "agent-hook":
+        mode = "hook"
+        hook = args.hook_name or args.hook_opt
+        if not hook:
+            raise CliError("hook name is required", 2)
+    else:
+        mode = None
+        hook = None
+
+    if mode is not None:
+        body = {
+            "client_id": args.client_id,
+            "project_id": args.project_id,
+            "mode": mode,
+        }
+        if hook:
+            body["hook"] = hook
+        add_if_present(
+            body,
+            args,
+            ["run_doctor", "run_doctor_hook", "timeout_secs", "wait_timeout_secs"],
+        )
+        if args.doctor_hook:
+            body["doctor_hook"] = args.doctor_hook
+        return "/api/shell/projects/workflow", body
+
     if args.command == "doctor":
         body = {
             "project": args.project,
@@ -372,6 +444,9 @@ def build_parser():
               python3 scripts/pdctl.py clients
               python3 scripts/pdctl.py projects oe
               python3 scripts/pdctl.py new oe foo /root/work/foo --template rust --git-init
+              python3 scripts/pdctl.py agent-snapshot oe foo
+              python3 scripts/pdctl.py agent-precommit oe foo
+              python3 scripts/pdctl.py agent-hook oe foo doctor
               python3 scripts/pdctl.py doctor private-drop
               python3 scripts/pdctl.py workflow private-drop --mode snapshot --json
               python3 scripts/pdctl.py precommit private-drop
@@ -403,6 +478,31 @@ def build_parser():
     new.add_argument("--timeout-secs", type=int)
     new.add_argument("--wait-timeout-secs", type=int)
     add_common_options(new)
+
+    agent_workflow = subcommands.add_parser("agent-workflow", help="Run an agent-native project workflow.")
+    agent_workflow.add_argument("client_id")
+    agent_workflow.add_argument("project_id")
+    add_agent_workflow_options(agent_workflow, include_mode=True, include_hook=True)
+    add_common_options(agent_workflow)
+
+    agent_snapshot = subcommands.add_parser("agent-snapshot", help="Run agent-native workflow mode=snapshot.")
+    agent_snapshot.add_argument("client_id")
+    agent_snapshot.add_argument("project_id")
+    add_agent_workflow_options(agent_snapshot, include_hook=True)
+    add_common_options(agent_snapshot)
+
+    agent_precommit = subcommands.add_parser("agent-precommit", help="Run agent-native workflow mode=precommit.")
+    agent_precommit.add_argument("client_id")
+    agent_precommit.add_argument("project_id")
+    add_agent_workflow_options(agent_precommit, include_hook=True)
+    add_common_options(agent_precommit)
+
+    agent_hook = subcommands.add_parser("agent-hook", help="Run agent-native workflow mode=hook.")
+    agent_hook.add_argument("client_id")
+    agent_hook.add_argument("project_id")
+    agent_hook.add_argument("hook_name")
+    add_agent_workflow_options(agent_hook, include_hook=True)
+    add_common_options(agent_hook)
 
     doctor = subcommands.add_parser("doctor", help="Run project doctor without running hooks by default.")
     doctor.add_argument("project")
@@ -452,6 +552,8 @@ def main(argv):
             print_projects(payload)
         elif args.command == "new":
             print_project_create(payload)
+        elif args.command.startswith("agent-"):
+            print_agent_workflow(payload)
         else:
             print_summary(payload)
         if payload.get("success") is True:

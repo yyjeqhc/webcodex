@@ -50,8 +50,8 @@ pub(crate) use openapi::{
 };
 pub(crate) use shell_client::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
-    shell_clients, shell_file_op, shell_job, shell_project_create, shell_projects, shell_run,
-    ShellClientRegistry,
+    shell_clients, shell_file_op, shell_job, shell_project_create, shell_project_workflow,
+    shell_projects, shell_run, ShellClientRegistry,
 };
 pub(crate) use web::{
     action_session_detail_page, action_sessions_page, agent_playground_page, channel_page,
@@ -160,6 +160,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("shell/clients").post(shell_clients))
                 .push(Router::with_path("shell/projects").post(shell_projects))
                 .push(Router::with_path("shell/projects/create").post(shell_project_create))
+                .push(Router::with_path("shell/projects/workflow").post(shell_project_workflow))
                 .push(Router::with_path("shell/run").post(shell_run))
                 .push(Router::with_path("shell/file").post(shell_file_op))
                 .push(Router::with_path("shell/job").post(shell_job))

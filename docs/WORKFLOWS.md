@@ -1,7 +1,7 @@
 # Project Workflows
 
-Project workflows are a small convenience layer over the existing Codex project
-APIs.
+Project workflows are a small convenience layer over project state checks and
+configured hook commands.
 
 - `doctor`: collect project status, git state, hooks, and recent jobs.
 - `hook`: run a named hook from `projects.toml`.
@@ -9,13 +9,18 @@ APIs.
 
 Workflow does not stage, commit, push, deploy, or delete files.
 
-Agent-owned projects are registered on the agent under
-`~/.config/private-drop-agent/projects.d/` and can be created with
-`python3 scripts/pdctl.py new ...`. The server caches the summaries reported by
-each agent but does not own hook commands. The workflow APIs in this document
-still run server-configured projects from `projects.toml`; `runAgentProjectWorkflow`
-is a later phase. See `docs/AGENT_PROJECTS.md` for the registry format and
-agent project creation flow.
+There are two workflow families:
+
+1. Server project workflow: project name comes from server `projects.toml` and
+   the endpoint is `/api/codex/project_workflow`.
+2. Agent-native project workflow: `client_id` and `project_id` come from the
+   agent registry under `~/.config/private-drop-agent/projects.d/`, and the
+   endpoint is `/api/shell/projects/workflow`.
+
+New GPT Action windows should prefer agent-native workflow after listing
+clients and projects. The server still owns auth, owner checks, audit, request
+forwarding, and result cache updates; the agent reads local project config and
+executes only the structured request.
 
 ## Environment
 
@@ -51,6 +56,14 @@ Run a named hook:
 
 ```bash
 python3 scripts/pdctl.py hook private-drop doctor
+```
+
+Run the same kinds of workflow directly against an agent-owned project:
+
+```bash
+python3 scripts/pdctl.py agent-snapshot oe foo
+python3 scripts/pdctl.py agent-precommit oe foo
+python3 scripts/pdctl.py agent-hook oe foo doctor
 ```
 
 Print the full API response:
@@ -120,6 +133,10 @@ committing.
 Hook failed:
 The response includes `hook_result.steps`, the failing command, exit code, and
 stdout/stderr tails. Fix the failing step and rerun the same hook.
+
+Agent-native workflow hook commands run with cwd set to the agent project path.
+`timeout_secs` is applied per hook command. The first failing hook command stops
+the remaining steps, and git snapshots are still returned before and after.
 
 No git repo:
 Git evidence reports `available=false` or an `error` field. The workflow still

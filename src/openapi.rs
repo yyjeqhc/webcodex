@@ -320,6 +320,33 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             }
         }
     });
+    spec["paths"]["/api/shell/projects/workflow"] = serde_json::json!({
+        "post": {
+            "operationId": "runShellClientProjectWorkflow",
+            "summary": "Run an agent-owned project workflow",
+            "description": "Ask a private-drop-agent client to run a structured workflow for a project from its projects.d registry.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientProjectWorkflowRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Project workflow response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientProjectWorkflowResponse" }
+                        }
+                    }
+                },
+                "403": { "description": "Client owner mismatch" }
+            }
+        }
+    });
     spec["paths"]["/api/shell/run"] = serde_json::json!({
         "post": {
             "operationId": "runShell",
@@ -423,7 +450,8 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "file_write": { "type": "boolean" },
             "git": { "type": "boolean" },
             "jobs": { "type": "boolean" },
-            "project_create": { "type": "boolean" }
+            "project_create": { "type": "boolean" },
+            "project_workflow": { "type": "boolean" }
         }
     });
     spec["components"]["schemas"]["ShellClientView"] = serde_json::json!({
@@ -503,6 +531,105 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "error": { "type": "string", "nullable": true }
         },
         "required": ["success", "client_id", "created_paths", "git_initialized", "warnings"]
+    });
+    spec["components"]["schemas"]["ShellAgentProjectWorkflowPayload"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "project_id": { "type": "string" },
+            "mode": { "type": "string", "enum": ["snapshot", "doctor", "hook", "precommit"], "default": "snapshot" },
+            "hook": { "type": "string", "nullable": true },
+            "run_doctor": { "type": "boolean", "default": true },
+            "run_doctor_hook": { "type": "boolean", "default": false },
+            "doctor_hook": { "type": "string", "default": "doctor" },
+            "timeout_secs": { "type": "integer", "default": 120 }
+        },
+        "required": ["project_id"]
+    });
+    spec["components"]["schemas"]["ShellAgentProjectGitSnapshot"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "available": { "type": "boolean" },
+            "branch": { "type": "string", "nullable": true },
+            "head": { "type": "string", "nullable": true },
+            "head_subject": { "type": "string", "nullable": true },
+            "status_short": { "type": "string", "nullable": true },
+            "dirty": { "type": "boolean", "nullable": true },
+            "diff_stat": { "type": "string", "nullable": true },
+            "changed_files": { "type": "array", "items": { "type": "string" } },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["available", "changed_files"]
+    });
+    spec["components"]["schemas"]["ShellAgentProjectHookStep"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "index": { "type": "integer" },
+            "command": { "type": "string" },
+            "exit_code": { "type": "integer", "nullable": true },
+            "stdout_tail": { "type": "string" },
+            "stderr_tail": { "type": "string" },
+            "duration_ms": { "type": "integer" },
+            "success": { "type": "boolean" }
+        },
+        "required": ["index", "command", "stdout_tail", "stderr_tail", "duration_ms", "success"]
+    });
+    spec["components"]["schemas"]["ShellAgentProjectHookResult"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "hook": { "type": "string" },
+            "success": { "type": "boolean" },
+            "steps": { "type": "array", "items": { "$ref": "#/components/schemas/ShellAgentProjectHookStep" } },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["hook", "success", "steps"]
+    });
+    spec["components"]["schemas"]["ShellAgentProjectWorkflowResult"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "project_id": { "type": "string" },
+            "project": { "$ref": "#/components/schemas/ShellAgentProjectSummary", "nullable": true },
+            "mode": { "type": "string", "enum": ["snapshot", "doctor", "hook", "precommit"] },
+            "git_before": { "$ref": "#/components/schemas/ShellAgentProjectGitSnapshot" },
+            "hook_result": { "$ref": "#/components/schemas/ShellAgentProjectHookResult", "nullable": true },
+            "git_after": { "$ref": "#/components/schemas/ShellAgentProjectGitSnapshot" },
+            "warnings": { "type": "array", "items": { "type": "string" } },
+            "recommended_next_action": { "type": "string" },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "project_id", "mode", "git_before", "git_after", "warnings", "recommended_next_action"]
+    });
+    spec["components"]["schemas"]["ShellClientProjectWorkflowRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" },
+            "project_id": { "type": "string" },
+            "mode": { "type": "string", "enum": ["snapshot", "doctor", "hook", "precommit"], "default": "snapshot" },
+            "hook": { "type": "string", "nullable": true },
+            "run_doctor": { "type": "boolean", "default": true },
+            "run_doctor_hook": { "type": "boolean", "default": false },
+            "doctor_hook": { "type": "string", "default": "doctor" },
+            "timeout_secs": { "type": "integer", "default": 120 },
+            "wait_timeout_secs": { "type": "integer", "default": 30 }
+        },
+        "required": ["client_id", "project_id"]
+    });
+    spec["components"]["schemas"]["ShellClientProjectWorkflowResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "client_id": { "type": "string" },
+            "project_id": { "type": "string" },
+            "project": { "$ref": "#/components/schemas/ShellAgentProjectSummary", "nullable": true },
+            "mode": { "type": "string", "enum": ["snapshot", "doctor", "hook", "precommit"] },
+            "git_before": { "$ref": "#/components/schemas/ShellAgentProjectGitSnapshot" },
+            "hook_result": { "$ref": "#/components/schemas/ShellAgentProjectHookResult", "nullable": true },
+            "git_after": { "$ref": "#/components/schemas/ShellAgentProjectGitSnapshot" },
+            "warnings": { "type": "array", "items": { "type": "string" } },
+            "recommended_next_action": { "type": "string" },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "client_id", "project_id", "mode", "git_before", "git_after", "warnings", "recommended_next_action"]
     });
     spec["components"]["schemas"]["ShellRunRequest"] = serde_json::json!({
         "type": "object",
@@ -946,11 +1073,11 @@ mod tests {
             "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
             "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
             "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
-            "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
             "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
             "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
             "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
             "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
+            "/api/shell/projects/workflow": spec["paths"]["/api/shell/projects/workflow"].clone(),
             "/api/shell/run": spec["paths"]["/api/shell/run"].clone(),
             "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
         })
@@ -963,15 +1090,17 @@ mod tests {
             "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
             "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
             "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
+            "/api/codex/project_workflow": spec["paths"]["/api/codex/project_workflow"].clone(),
             "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
             "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
             "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
-            "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
             "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
             "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
             "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
             "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
-            "/api/shell/run": spec["paths"]["/api/shell/run"].clone()
+            "/api/shell/projects/workflow": spec["paths"]["/api/shell/projects/workflow"].clone(),
+            "/api/shell/run": spec["paths"]["/api/shell/run"].clone(),
+            "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
         })
     }
 
@@ -1253,8 +1382,20 @@ mod tests {
             "compact schema should include shell project creation"
         );
         assert!(
+            !compact_paths["/api/shell/projects/workflow"]["post"].is_null(),
+            "compact schema should include shell project workflow"
+        );
+        assert!(
             !compact_paths["/api/shell/run"]["post"].is_null(),
             "compact schema should include a basic shell operation"
+        );
+        assert!(
+            !compact_paths["/api/shell/file"]["post"].is_null(),
+            "compact schema should include shell file operations"
+        );
+        assert!(
+            compact_paths["/api/codex/report"].is_null(),
+            "compact schema should omit report to stay within the action budget"
         );
         assert!(
             compact_paths["/api/shell/job"].is_null(),
@@ -1348,6 +1489,13 @@ mod tests {
             "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
             "ShellClientProjectCreateRequest": spec["components"]["schemas"]["ShellClientProjectCreateRequest"].clone(),
             "ShellClientProjectCreateResponse": spec["components"]["schemas"]["ShellClientProjectCreateResponse"].clone(),
+            "ShellAgentProjectWorkflowPayload": spec["components"]["schemas"]["ShellAgentProjectWorkflowPayload"].clone(),
+            "ShellAgentProjectGitSnapshot": spec["components"]["schemas"]["ShellAgentProjectGitSnapshot"].clone(),
+            "ShellAgentProjectHookStep": spec["components"]["schemas"]["ShellAgentProjectHookStep"].clone(),
+            "ShellAgentProjectHookResult": spec["components"]["schemas"]["ShellAgentProjectHookResult"].clone(),
+            "ShellAgentProjectWorkflowResult": spec["components"]["schemas"]["ShellAgentProjectWorkflowResult"].clone(),
+            "ShellClientProjectWorkflowRequest": spec["components"]["schemas"]["ShellClientProjectWorkflowRequest"].clone(),
+            "ShellClientProjectWorkflowResponse": spec["components"]["schemas"]["ShellClientProjectWorkflowResponse"].clone(),
             "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
             "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone(),
             "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
@@ -1399,6 +1547,19 @@ mod tests {
             "ArtifactResponse": spec["components"]["schemas"]["ArtifactResponse"].clone(),
             "GitRequest": spec["components"]["schemas"]["GitRequest"].clone(),
             "GitResponse": spec["components"]["schemas"]["GitResponse"].clone(),
+            "ProjectHookRequest": spec["components"]["schemas"]["ProjectHookRequest"].clone(),
+            "ProjectHookStep": spec["components"]["schemas"]["ProjectHookStep"].clone(),
+            "ProjectHookResponse": spec["components"]["schemas"]["ProjectHookResponse"].clone(),
+            "ProjectDoctorRequest": spec["components"]["schemas"]["ProjectDoctorRequest"].clone(),
+            "ProjectDoctorAgentCapabilities": spec["components"]["schemas"]["ProjectDoctorAgentCapabilities"].clone(),
+            "ProjectDoctorAgentInfo": spec["components"]["schemas"]["ProjectDoctorAgentInfo"].clone(),
+            "ProjectDoctorGitInfo": spec["components"]["schemas"]["ProjectDoctorGitInfo"].clone(),
+            "ProjectDoctorHooksInfo": spec["components"]["schemas"]["ProjectDoctorHooksInfo"].clone(),
+            "ProjectDoctorRecentJob": spec["components"]["schemas"]["ProjectDoctorRecentJob"].clone(),
+            "ProjectDoctorResponse": spec["components"]["schemas"]["ProjectDoctorResponse"].clone(),
+            "ProjectWorkflowRequest": spec["components"]["schemas"]["ProjectWorkflowRequest"].clone(),
+            "ProjectWorkflowGitSnapshot": spec["components"]["schemas"]["ProjectWorkflowGitSnapshot"].clone(),
+            "ProjectWorkflowResponse": spec["components"]["schemas"]["ProjectWorkflowResponse"].clone(),
             "CommandRequestBatchItem": spec["components"]["schemas"]["CommandRequestBatchItem"].clone(),
             "CommandRequestOpRequest": spec["components"]["schemas"]["CommandRequestOpRequest"].clone(),
             "CommandRequestOpResponse": spec["components"]["schemas"]["CommandRequestOpResponse"].clone(),
@@ -1427,8 +1588,17 @@ mod tests {
             "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
             "ShellClientProjectCreateRequest": spec["components"]["schemas"]["ShellClientProjectCreateRequest"].clone(),
             "ShellClientProjectCreateResponse": spec["components"]["schemas"]["ShellClientProjectCreateResponse"].clone(),
+            "ShellAgentProjectWorkflowPayload": spec["components"]["schemas"]["ShellAgentProjectWorkflowPayload"].clone(),
+            "ShellAgentProjectGitSnapshot": spec["components"]["schemas"]["ShellAgentProjectGitSnapshot"].clone(),
+            "ShellAgentProjectHookStep": spec["components"]["schemas"]["ShellAgentProjectHookStep"].clone(),
+            "ShellAgentProjectHookResult": spec["components"]["schemas"]["ShellAgentProjectHookResult"].clone(),
+            "ShellAgentProjectWorkflowResult": spec["components"]["schemas"]["ShellAgentProjectWorkflowResult"].clone(),
+            "ShellClientProjectWorkflowRequest": spec["components"]["schemas"]["ShellClientProjectWorkflowRequest"].clone(),
+            "ShellClientProjectWorkflowResponse": spec["components"]["schemas"]["ShellClientProjectWorkflowResponse"].clone(),
             "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
-            "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone()
+            "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone(),
+            "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
+            "ShellFileOpResponse": spec["components"]["schemas"]["ShellFileOpResponse"].clone()
         });
         assert!(count_operations(&spec["paths"]) <= 16);
         assert!(spec["paths"]["/api/codex/command"].is_null());
@@ -1436,7 +1606,9 @@ mod tests {
         assert!(!spec["paths"]["/api/shell/clients"]["post"].is_null());
         assert!(!spec["paths"]["/api/shell/projects"]["post"].is_null());
         assert!(!spec["paths"]["/api/shell/projects/create"]["post"].is_null());
+        assert!(!spec["paths"]["/api/shell/projects/workflow"]["post"].is_null());
         assert!(!spec["paths"]["/api/shell/run"]["post"].is_null());
+        assert!(!spec["paths"]["/api/shell/file"]["post"].is_null());
         assert_operation_descriptions_within_limit(&spec);
         assert_all_descriptions_within_limit(&spec);
         assert_unique_operation_ids(&spec["paths"]);
@@ -1587,11 +1759,11 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
         "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
         "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
-        "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
         "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
         "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
         "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
         "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
+        "/api/shell/projects/workflow": spec["paths"]["/api/shell/projects/workflow"].clone(),
         "/api/shell/run": spec["paths"]["/api/shell/run"].clone(),
         "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
     });
@@ -1624,17 +1796,17 @@ pub async fn codex_openapi_gpt_json(res: &mut Response) {
         "/api/codex/edit": spec["paths"]["/api/codex/edit"].clone(),
         "/api/codex/artifact": spec["paths"]["/api/codex/artifact"].clone(),
         "/api/codex/git": spec["paths"]["/api/codex/git"].clone(),
-        "/api/codex/project_doctor": spec["paths"]["/api/codex/project_doctor"].clone(),
         "/api/codex/project_workflow": spec["paths"]["/api/codex/project_workflow"].clone(),
         "/api/codex/command_request_op": spec["paths"]["/api/codex/command_request_op"].clone(),
         "/api/codex/job": spec["paths"]["/api/codex/job"].clone(),
         "/api/codex/check": spec["paths"]["/api/codex/check"].clone(),
-        "/api/codex/report": spec["paths"]["/api/codex/report"].clone(),
         "/api/codex/action_sessions": spec["paths"]["/api/codex/action_sessions"].clone(),
         "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
         "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
         "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
-        "/api/shell/run": spec["paths"]["/api/shell/run"].clone()
+        "/api/shell/projects/workflow": spec["paths"]["/api/shell/projects/workflow"].clone(),
+        "/api/shell/run": spec["paths"]["/api/shell/run"].clone(),
+        "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
     });
     spec["components"]["schemas"] = serde_json::json!({
         "ContextResponse": spec["components"]["schemas"]["ContextResponse"].clone(),
@@ -1703,8 +1875,17 @@ pub async fn codex_openapi_gpt_json(res: &mut Response) {
         "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
         "ShellClientProjectCreateRequest": spec["components"]["schemas"]["ShellClientProjectCreateRequest"].clone(),
         "ShellClientProjectCreateResponse": spec["components"]["schemas"]["ShellClientProjectCreateResponse"].clone(),
+        "ShellAgentProjectWorkflowPayload": spec["components"]["schemas"]["ShellAgentProjectWorkflowPayload"].clone(),
+        "ShellAgentProjectGitSnapshot": spec["components"]["schemas"]["ShellAgentProjectGitSnapshot"].clone(),
+        "ShellAgentProjectHookStep": spec["components"]["schemas"]["ShellAgentProjectHookStep"].clone(),
+        "ShellAgentProjectHookResult": spec["components"]["schemas"]["ShellAgentProjectHookResult"].clone(),
+        "ShellAgentProjectWorkflowResult": spec["components"]["schemas"]["ShellAgentProjectWorkflowResult"].clone(),
+        "ShellClientProjectWorkflowRequest": spec["components"]["schemas"]["ShellClientProjectWorkflowRequest"].clone(),
+        "ShellClientProjectWorkflowResponse": spec["components"]["schemas"]["ShellClientProjectWorkflowResponse"].clone(),
         "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
-        "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone()
+        "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone(),
+        "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
+        "ShellFileOpResponse": spec["components"]["schemas"]["ShellFileOpResponse"].clone()
     });
     apply_project_description_to_schema(
         &mut spec,

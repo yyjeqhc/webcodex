@@ -93,18 +93,41 @@ Manual creation is still possible:
 `projects.toml` remains supported on the server for existing project workflow,
 doctor, and hook APIs.
 
-## Workflow Status
+## Agent-native Workflow
 
-`python3 scripts/pdctl.py snapshot <project>` and the server
-`project_workflow`, `project_doctor`, and `project_hook` APIs still use server
-`projects.toml` ProjectConfig entries. Agent-owned project discovery and
-creation are available now; running workflows directly by agent project id is a
-later phase.
+Server-configured `project_workflow`, `project_doctor`, and `project_hook` APIs
+still exist and still use server `projects.toml` ProjectConfig entries.
+
+Agent-native workflow uses `client_id` plus the agent-local `project_id` from
+`projects.d`. It does not depend on server `projects.toml`: the server checks
+the caller owns the target client, queues a structured `project_workflow`
+request, and the agent reads its local registry before running git snapshots or
+configured hook commands.
+
+For GPT Actions and new windows, prefer this sequence:
+
+1. `listShellClients`
+2. `listShellClientProjects`
+3. `createShellClientProject` if the project does not exist yet
+4. `runShellClientProjectWorkflow`
+
+CLI examples:
+
+```bash
+python3 scripts/pdctl.py agent-snapshot oe foo
+python3 scripts/pdctl.py agent-precommit oe foo
+python3 scripts/pdctl.py agent-hook oe foo doctor
+```
+
+The agent does not call any large-model API. Model reasoning happens in
+ChatGPT / GPT Action. The agent only executes structured workflow requests from
+the Private Drop server.
 
 ## Current Limits
 
 - Create project on an agent: available through `pdctl.py new` and
   `POST /api/shell/projects/create`.
 - Delete project: not implemented.
-- Run workflow by agent project id: not implemented yet.
+- Run workflow by agent project id: available through
+  `POST /api/shell/projects/workflow`.
 - Path access is controlled by the local agent policy.

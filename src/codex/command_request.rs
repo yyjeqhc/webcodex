@@ -1805,6 +1805,7 @@ mod tests {
                     duration_ms: Some(17),
                     error: None,
                     project_create: None,
+                    project_workflow: None,
                 })
                 .await
                 .unwrap();

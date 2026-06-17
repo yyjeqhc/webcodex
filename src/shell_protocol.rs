@@ -25,6 +25,18 @@ fn default_git_init_true() -> bool {
     true
 }
 
+fn default_project_workflow_mode() -> String {
+    "snapshot".to_string()
+}
+
+fn default_project_workflow_run_doctor() -> bool {
+    true
+}
+
+fn default_project_workflow_doctor_hook() -> String {
+    "doctor".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
     #[serde(default = "default_shell_true")]
@@ -39,6 +51,8 @@ pub struct ShellClientCapabilities {
     pub jobs: bool,
     #[serde(default)]
     pub project_create: bool,
+    #[serde(default)]
+    pub project_workflow: bool,
 }
 
 impl Default for ShellClientCapabilities {
@@ -50,6 +64,7 @@ impl Default for ShellClientCapabilities {
             git: false,
             jobs: false,
             project_create: false,
+            project_workflow: false,
         }
     }
 }
@@ -255,6 +270,111 @@ pub struct ShellClientProjectCreateResponse {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentProjectWorkflowPayload {
+    pub project_id: String,
+    #[serde(default = "default_project_workflow_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub hook: Option<String>,
+    #[serde(default = "default_project_workflow_run_doctor")]
+    pub run_doctor: bool,
+    #[serde(default)]
+    pub run_doctor_hook: bool,
+    #[serde(default = "default_project_workflow_doctor_hook")]
+    pub doctor_hook: String,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct ShellAgentProjectGitSnapshot {
+    pub available: bool,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub head_subject: Option<String>,
+    pub status_short: Option<String>,
+    pub dirty: Option<bool>,
+    pub diff_stat: Option<String>,
+    #[serde(default)]
+    pub changed_files: Vec<String>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentProjectHookStep {
+    pub index: usize,
+    pub command: String,
+    pub exit_code: Option<i32>,
+    pub stdout_tail: String,
+    pub stderr_tail: String,
+    pub duration_ms: u64,
+    pub success: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentProjectHookResult {
+    pub hook: String,
+    pub success: bool,
+    #[serde(default)]
+    pub steps: Vec<ShellAgentProjectHookStep>,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentProjectWorkflowResult {
+    pub success: bool,
+    pub project_id: String,
+    #[serde(default)]
+    pub project: Option<ShellAgentProjectSummary>,
+    pub mode: String,
+    pub git_before: ShellAgentProjectGitSnapshot,
+    #[serde(default)]
+    pub hook_result: Option<ShellAgentProjectHookResult>,
+    pub git_after: ShellAgentProjectGitSnapshot,
+    #[serde(default)]
+    pub warnings: Vec<String>,
+    pub recommended_next_action: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientProjectWorkflowRequest {
+    pub client_id: String,
+    pub project_id: String,
+    #[serde(default = "default_project_workflow_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub hook: Option<String>,
+    #[serde(default = "default_project_workflow_run_doctor")]
+    pub run_doctor: bool,
+    #[serde(default)]
+    pub run_doctor_hook: bool,
+    #[serde(default = "default_project_workflow_doctor_hook")]
+    pub doctor_hook: String,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default = "default_wait_timeout_secs")]
+    pub wait_timeout_secs: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShellClientProjectWorkflowResponse {
+    pub success: bool,
+    pub client_id: String,
+    pub project_id: String,
+    #[serde(default)]
+    pub project: Option<ShellAgentProjectSummary>,
+    pub mode: String,
+    pub git_before: ShellAgentProjectGitSnapshot,
+    #[serde(default)]
+    pub hook_result: Option<ShellAgentProjectHookResult>,
+    pub git_after: ShellAgentProjectGitSnapshot,
+    pub warnings: Vec<String>,
+    pub recommended_next_action: String,
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentShellRequest {
     pub request_id: String,
     pub client_id: String,
@@ -276,6 +396,8 @@ pub struct ShellAgentShellRequest {
     pub create_dirs: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_create: Option<ShellAgentProjectCreatePayload>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_workflow: Option<ShellAgentProjectWorkflowPayload>,
     pub command: String,
     pub timeout_secs: u64,
     pub requested_by: String,
@@ -307,6 +429,8 @@ pub struct ShellAgentResultRequest {
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub project_create: Option<ShellAgentProjectCreateResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_workflow: Option<ShellAgentProjectWorkflowResult>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

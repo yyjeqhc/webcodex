@@ -16,9 +16,10 @@ mod shell_protocol;
 use shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
     ShellAgentPollResponse, ShellAgentProjectCreatePayload, ShellAgentProjectCreateResult,
-    ShellAgentProjectSummary, ShellAgentResultRequest, ShellAgentResultResponse,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellClientRegisterResponse,
+    ShellAgentProjectGitSnapshot, ShellAgentProjectHookResult, ShellAgentProjectHookStep,
+    ShellAgentProjectSummary, ShellAgentProjectWorkflowPayload, ShellAgentProjectWorkflowResult,
+    ShellAgentResultRequest, ShellAgentResultResponse, ShellAgentShellRequest,
+    ShellClientCapabilities, ShellClientRegisterRequest, ShellClientRegisterResponse,
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
@@ -27,6 +28,7 @@ const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 const PROJECT_SCAN_CACHE_MS: u64 = 5000;
+const WORKFLOW_STEP_OUTPUT_BYTES: usize = 16 * 1024;
 
 #[derive(Debug, Clone, Deserialize)]
 struct AgentConfig {
@@ -1029,6 +1031,484 @@ fn create_agent_project(
     }
 }
 
+fn normalize_agent_workflow_mode(mode: &str) -> Result<String, String> {
+    let mode = mode.trim();
+    let mode = if mode.is_empty() { "snapshot" } else { mode };
+    match mode {
+        "snapshot" | "doctor" | "hook" | "precommit" => Ok(mode.to_string()),
+        _ => Err("mode must be one of snapshot, doctor, hook, precommit".to_string()),
+    }
+}
+
+fn load_agent_project_from_dir(dir: &Path, project_id: &str) -> Result<AgentProjectFile, String> {
+    validate_project_id(project_id)?;
+    let file = dir.join(format!("{}.toml", project_id));
+    let content = match std::fs::read_to_string(&file) {
+        Ok(content) => content,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!("agent project '{}' is not configured", project_id));
+        }
+        Err(e) => return Err(format!("failed to read {}: {}", file.display(), e)),
+    };
+    let project = parse_agent_project_toml(&content)
+        .map_err(|e| format!("failed to parse {}: {}", file.display(), e))?;
+    if project.id != project_id {
+        return Err(format!(
+            "agent project registry file {} has id '{}', expected '{}'",
+            file.display(),
+            project.id,
+            project_id
+        ));
+    }
+    Ok(project)
+}
+
+fn run_git_capture_checked(path: &Path, args: &[&str]) -> Result<String, String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .map_err(|e| format!("failed to run git {}: {}", args.join(" "), e))?;
+    if output.status.success() {
+        return Ok(String::from_utf8_lossy(&output.stdout)
+            .trim_end()
+            .to_string());
+    }
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+    Err(if stderr.is_empty() {
+        format!("git {} failed", args.join(" "))
+    } else {
+        format!("git {} failed: {}", args.join(" "), stderr)
+    })
+}
+
+fn collect_agent_project_git_snapshot(path: &Path) -> ShellAgentProjectGitSnapshot {
+    let status_short = match run_git_capture_checked(path, &["status", "--short"]) {
+        Ok(status) => status,
+        Err(e) => {
+            return ShellAgentProjectGitSnapshot {
+                available: false,
+                branch: None,
+                head: None,
+                head_subject: None,
+                status_short: None,
+                dirty: None,
+                diff_stat: None,
+                changed_files: Vec::new(),
+                error: Some(e),
+            };
+        }
+    };
+
+    let mut errors = Vec::new();
+    let branch = match run_git_capture_checked(path, &["rev-parse", "--abbrev-ref", "HEAD"]) {
+        Ok(value) => Some(value),
+        Err(e) => {
+            errors.push(e);
+            None
+        }
+    };
+    let (head, head_subject) =
+        match run_git_capture_checked(path, &["log", "-1", "--pretty=format:%h%x00%s"]) {
+            Ok(value) if value.is_empty() => (None, None),
+            Ok(value) => match value.split_once('\0') {
+                Some((head, subject)) => (Some(head.to_string()), Some(subject.to_string())),
+                None => (Some(value), None),
+            },
+            Err(e) => {
+                errors.push(e);
+                (None, None)
+            }
+        };
+    let diff_stat = match run_git_capture_checked(path, &["diff", "--stat"]) {
+        Ok(value) => Some(value),
+        Err(e) => {
+            errors.push(e);
+            None
+        }
+    };
+    let changed_files = match run_git_capture_checked(path, &["diff", "--name-status"]) {
+        Ok(value) => value
+            .lines()
+            .map(|line| line.trim_end().to_string())
+            .filter(|line| !line.is_empty())
+            .collect(),
+        Err(e) => {
+            errors.push(e);
+            Vec::new()
+        }
+    };
+
+    ShellAgentProjectGitSnapshot {
+        available: true,
+        branch,
+        head,
+        head_subject,
+        status_short: Some(status_short.clone()),
+        dirty: Some(!status_short.trim().is_empty()),
+        diff_stat,
+        changed_files,
+        error: (!errors.is_empty()).then(|| errors.join("; ")),
+    }
+}
+
+fn push_git_snapshot_warning(
+    warnings: &mut Vec<String>,
+    label: &str,
+    snapshot: &ShellAgentProjectGitSnapshot,
+) {
+    if let Some(error) = snapshot.error.as_deref() {
+        warnings.push(format!("{} git snapshot warning: {}", label, error));
+    }
+}
+
+fn workflow_output_tail(value: Option<String>) -> String {
+    truncate_bytes(
+        value.unwrap_or_default().as_bytes(),
+        WORKFLOW_STEP_OUTPUT_BYTES,
+    )
+}
+
+fn agent_project_hook_result(
+    policy: &AgentPolicy,
+    project_path: &Path,
+    hook: &str,
+    commands: &[String],
+    timeout_secs: u64,
+) -> ShellAgentProjectHookResult {
+    let mut steps = Vec::new();
+    let mut result_error = None;
+    let cwd = project_path.to_string_lossy().to_string();
+    for (idx, command) in commands.iter().enumerate() {
+        let start = Instant::now();
+        if command.trim().is_empty() {
+            steps.push(ShellAgentProjectHookStep {
+                index: idx,
+                command: command.clone(),
+                exit_code: None,
+                stdout_tail: String::new(),
+                stderr_tail: String::new(),
+                duration_ms: start.elapsed().as_millis() as u64,
+                success: false,
+            });
+            result_error = Some("hook command cannot be empty".to_string());
+            break;
+        }
+        let command_result = run_shell(policy, Some(&cwd), command, timeout_secs);
+        let step_success = command_result.error.is_none() && command_result.exit_code == Some(0);
+        let step_error = command_result.error.clone();
+        let exit_code = command_result.exit_code;
+        let duration_ms = command_result
+            .duration_ms
+            .unwrap_or_else(|| start.elapsed().as_millis() as u64);
+        let stdout_tail = workflow_output_tail(command_result.stdout);
+        let stderr_tail = workflow_output_tail(command_result.stderr);
+        steps.push(ShellAgentProjectHookStep {
+            index: idx,
+            command: command.clone(),
+            exit_code,
+            stdout_tail,
+            stderr_tail,
+            duration_ms,
+            success: step_success,
+        });
+        if !step_success {
+            result_error = step_error.or_else(|| Some("hook command failed".to_string()));
+            break;
+        }
+    }
+    ShellAgentProjectHookResult {
+        hook: hook.to_string(),
+        success: result_error.is_none(),
+        steps,
+        error: result_error,
+    }
+}
+
+fn recommended_agent_project_next_action(
+    hook_result: Option<&ShellAgentProjectHookResult>,
+    git_after: &ShellAgentProjectGitSnapshot,
+    warnings: &[String],
+    project: Option<&ShellAgentProjectSummary>,
+) -> String {
+    if hook_result.is_some_and(|hook_result| !hook_result.success) {
+        return "Fix failing hook step".to_string();
+    }
+    if warnings
+        .iter()
+        .any(|warning| warning.contains("agent project") && warning.contains("not configured"))
+    {
+        return "Create or configure the agent project".to_string();
+    }
+    if git_after.dirty == Some(true)
+        && project
+            .map(|project| project.hooks.iter().any(|hook| hook == "precommit"))
+            .unwrap_or(false)
+    {
+        return "Run precommit hook before committing".to_string();
+    }
+    if git_after.dirty == Some(true) {
+        return "Review git diff before committing".to_string();
+    }
+    if git_after.dirty == Some(false) {
+        return "No changes detected".to_string();
+    }
+    "Review workflow warnings".to_string()
+}
+
+fn project_workflow_error_result(
+    project_id: String,
+    mode: String,
+    project: Option<ShellAgentProjectSummary>,
+    mut warnings: Vec<String>,
+    error: String,
+) -> ShellAgentProjectWorkflowResult {
+    if warnings.is_empty() {
+        warnings.push(error.clone());
+    }
+    let git_before = ShellAgentProjectGitSnapshot::default();
+    let git_after = ShellAgentProjectGitSnapshot::default();
+    let recommended_next_action =
+        recommended_agent_project_next_action(None, &git_after, &warnings, project.as_ref());
+    ShellAgentProjectWorkflowResult {
+        success: false,
+        project_id,
+        project,
+        mode,
+        git_before,
+        hook_result: None,
+        git_after,
+        warnings,
+        recommended_next_action,
+        error: Some(error),
+    }
+}
+
+fn workflow_hook_name(payload: &ShellAgentProjectWorkflowPayload, mode: &str) -> Option<String> {
+    match mode {
+        "hook" => Some(
+            payload
+                .hook
+                .as_deref()
+                .map(str::trim)
+                .filter(|hook| !hook.is_empty())
+                .unwrap_or("doctor")
+                .to_string(),
+        ),
+        "precommit" => Some(
+            payload
+                .hook
+                .as_deref()
+                .map(str::trim)
+                .filter(|hook| !hook.is_empty())
+                .unwrap_or("precommit")
+                .to_string(),
+        ),
+        _ => None,
+    }
+}
+
+fn normalized_doctor_hook(payload: &ShellAgentProjectWorkflowPayload) -> String {
+    let value = payload.doctor_hook.trim();
+    if value.is_empty() {
+        "doctor".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn run_agent_project_workflow(
+    cfg: &AgentConfig,
+    project_cache: &mut AgentProjectCache,
+    payload: ShellAgentProjectWorkflowPayload,
+) -> ShellAgentProjectWorkflowResult {
+    let project_id = payload.project_id.trim().to_string();
+    let mode = match normalize_agent_workflow_mode(&payload.mode) {
+        Ok(mode) => mode,
+        Err(e) => {
+            return project_workflow_error_result(
+                project_id,
+                "snapshot".to_string(),
+                None,
+                Vec::new(),
+                e,
+            );
+        }
+    };
+    if let Err(e) = validate_project_id(&project_id) {
+        return project_workflow_error_result(project_id, mode, None, Vec::new(), e);
+    }
+
+    let mut project = match load_agent_project_from_dir(&projects_dir(cfg), &project_id) {
+        Ok(project) => project,
+        Err(e) => {
+            return project_workflow_error_result(project_id, mode, None, vec![e.clone()], e);
+        }
+    };
+    if project.disabled {
+        let summary = agent_project_summary(&project, chrono::Utc::now().timestamp(), false);
+        let error = format!("agent project '{}' is disabled", project_id);
+        return project_workflow_error_result(
+            project_id,
+            mode,
+            Some(summary),
+            vec![error.clone()],
+            error,
+        );
+    }
+
+    let project_path = match absolute_path(expand_tilde_path(project.path.trim())) {
+        Ok(path) => path,
+        Err(e) => {
+            let summary = agent_project_summary(&project, chrono::Utc::now().timestamp(), false);
+            return project_workflow_error_result(project_id, mode, Some(summary), Vec::new(), e);
+        }
+    };
+    project.path = project_path.to_string_lossy().to_string();
+    let summary_without_git =
+        || agent_project_summary(&project, chrono::Utc::now().timestamp(), false);
+    if let Err(e) = ensure_project_path_allowed(&cfg.policy, &project_path) {
+        return project_workflow_error_result(
+            project_id,
+            mode,
+            Some(summary_without_git()),
+            Vec::new(),
+            e,
+        );
+    }
+    if !project_path.exists() {
+        let error = format!("project path does not exist: {}", project_path.display());
+        return project_workflow_error_result(
+            project_id,
+            mode,
+            Some(summary_without_git()),
+            Vec::new(),
+            error,
+        );
+    }
+    if !project_path.is_dir() {
+        let error = format!(
+            "project path is not a directory: {}",
+            project_path.display()
+        );
+        return project_workflow_error_result(
+            project_id,
+            mode,
+            Some(summary_without_git()),
+            Vec::new(),
+            error,
+        );
+    }
+
+    let mut warnings = Vec::new();
+    let git_before = collect_agent_project_git_snapshot(&project_path);
+    push_git_snapshot_warning(&mut warnings, "before", &git_before);
+
+    let mut success = true;
+    let mut error = None;
+    let mut hook_result = None;
+
+    match mode.as_str() {
+        "snapshot" => {}
+        "doctor" => {
+            if project.hooks.is_empty() {
+                warnings.push(format!(
+                    "agent project '{}' has no hooks configured",
+                    project_id
+                ));
+            }
+            if payload.run_doctor_hook {
+                let hook_name = normalized_doctor_hook(&payload);
+                match project.hooks.get(&hook_name) {
+                    Some(commands) if !commands.is_empty() => {
+                        let result = agent_project_hook_result(
+                            &cfg.policy,
+                            &project_path,
+                            &hook_name,
+                            commands,
+                            payload.timeout_secs,
+                        );
+                        if !result.success {
+                            success = false;
+                            error = result.error.clone();
+                        }
+                        hook_result = Some(result);
+                    }
+                    _ => warnings.push(format!(
+                        "agent project hook '{}' is not configured",
+                        hook_name
+                    )),
+                }
+            }
+        }
+        "hook" | "precommit" => {
+            let hook_name = workflow_hook_name(&payload, &mode).unwrap_or_else(|| {
+                if mode == "precommit" {
+                    "precommit".to_string()
+                } else {
+                    "doctor".to_string()
+                }
+            });
+            match project.hooks.get(&hook_name) {
+                Some(commands) if !commands.is_empty() => {
+                    let result = agent_project_hook_result(
+                        &cfg.policy,
+                        &project_path,
+                        &hook_name,
+                        commands,
+                        payload.timeout_secs,
+                    );
+                    success = result.success;
+                    if !result.success {
+                        error = result.error.clone();
+                    }
+                    hook_result = Some(result);
+                }
+                _ => {
+                    success = false;
+                    error = Some(format!(
+                        "agent project hook '{}' is not configured",
+                        hook_name
+                    ));
+                }
+            }
+        }
+        _ => unreachable!("mode was validated"),
+    }
+
+    let git_after = collect_agent_project_git_snapshot(&project_path);
+    push_git_snapshot_warning(&mut warnings, "after", &git_after);
+    let refreshed = project_cache.refresh(cfg);
+    let summary = refreshed
+        .into_iter()
+        .find(|summary| summary.id == project_id)
+        .unwrap_or_else(|| agent_project_summary(&project, chrono::Utc::now().timestamp(), true));
+    let recommended_next_action = recommended_agent_project_next_action(
+        hook_result.as_ref(),
+        &git_after,
+        &warnings,
+        Some(&summary),
+    );
+    if error.is_some() {
+        success = false;
+    }
+
+    ShellAgentProjectWorkflowResult {
+        success,
+        project_id,
+        project: Some(summary),
+        mode,
+        git_before,
+        hook_result,
+        git_after,
+        warnings,
+        recommended_next_action,
+        error,
+    }
+}
+
 fn endpoint(cfg: &AgentConfig, path: &str) -> String {
     format!("{}{}", cfg.server_url.trim_end_matches('/'), path)
 }
@@ -1054,16 +1534,22 @@ where
     serde_json::from_str(&text).map_err(|e| format!("failed to parse response {}: {}", path, e))
 }
 
-fn register(
-    client: &Client,
-    cfg: &AgentConfig,
-    project_cache: &mut AgentProjectCache,
-) -> Result<(), String> {
+fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     let mut capabilities = cfg.capabilities.clone().unwrap_or_default();
     capabilities.jobs = true;
     capabilities.file_read = true;
     capabilities.file_write = true;
     capabilities.project_create = true;
+    capabilities.project_workflow = true;
+    capabilities
+}
+
+fn register(
+    client: &Client,
+    cfg: &AgentConfig,
+    project_cache: &mut AgentProjectCache,
+) -> Result<(), String> {
+    let capabilities = agent_register_capabilities(cfg);
     let body = ShellClientRegisterRequest {
         client_id: cfg.client_id.clone(),
         display_name: cfg.display_name.clone(),
@@ -1504,6 +1990,7 @@ fn submit_result(
         duration_ms: result.duration_ms,
         error: result.error,
         project_create: None,
+        project_workflow: None,
     };
     let response: ShellAgentResultResponse =
         post_json(client, cfg, "/api/shell/agent/result", &body)?;
@@ -1533,6 +2020,7 @@ fn submit_project_create_result(
         duration_ms: None,
         error,
         project_create: Some(result),
+        project_workflow: None,
     };
     let response: ShellAgentResultResponse =
         post_json(client, cfg, "/api/shell/agent/result", &body)?;
@@ -1542,6 +2030,36 @@ fn submit_project_create_result(
         Err(response
             .error
             .unwrap_or_else(|| "project create submission failed without error".to_string()))
+    }
+}
+
+fn submit_project_workflow_result(
+    client: &Client,
+    cfg: &AgentConfig,
+    request_id: String,
+    result: ShellAgentProjectWorkflowResult,
+) -> Result<bool, String> {
+    let success = result.success && result.error.is_none();
+    let error = result.error.clone();
+    let body = ShellAgentResultRequest {
+        client_id: cfg.client_id.clone(),
+        request_id,
+        exit_code: Some(if success { 0 } else { 1 }),
+        stdout: None,
+        stderr: None,
+        duration_ms: None,
+        error,
+        project_create: None,
+        project_workflow: Some(result),
+    };
+    let response: ShellAgentResultResponse =
+        post_json(client, cfg, "/api/shell/agent/result", &body)?;
+    if response.success {
+        Ok(true)
+    } else {
+        Err(response
+            .error
+            .unwrap_or_else(|| "project workflow submission failed without error".to_string()))
     }
 }
 
@@ -1879,6 +2397,29 @@ fn handle_one_poll(
             };
             submit_project_create_result(client, cfg, request_id, result)
         }
+        "project_workflow" => {
+            let request_id = request.request_id.clone();
+            let result = match request.project_workflow {
+                Some(payload) => run_agent_project_workflow(cfg, project_cache, payload),
+                None => ShellAgentProjectWorkflowResult {
+                    success: false,
+                    project_id: String::new(),
+                    project: None,
+                    mode: "snapshot".to_string(),
+                    git_before: ShellAgentProjectGitSnapshot::default(),
+                    hook_result: None,
+                    git_after: ShellAgentProjectGitSnapshot::default(),
+                    warnings: vec![
+                        "project_workflow request missing project_workflow payload".to_string()
+                    ],
+                    recommended_next_action: "Review workflow warnings".to_string(),
+                    error: Some(
+                        "project_workflow request missing project_workflow payload".to_string(),
+                    ),
+                },
+            };
+            submit_project_workflow_result(client, cfg, request_id, result)
+        }
         _ => {
             let result = run_shell(
                 &cfg.policy,
@@ -1981,6 +2522,92 @@ mod tests {
             allow_existing: false,
             hooks: None,
         }
+    }
+
+    fn workflow_payload(project_id: &str, mode: &str) -> ShellAgentProjectWorkflowPayload {
+        ShellAgentProjectWorkflowPayload {
+            project_id: project_id.to_string(),
+            mode: mode.to_string(),
+            hook: None,
+            run_doctor: true,
+            run_doctor_hook: false,
+            doctor_hook: "doctor".to_string(),
+            timeout_secs: 10,
+        }
+    }
+
+    fn write_project_registry(
+        projects_dir: &Path,
+        project_id: &str,
+        project_path: &Path,
+        disabled: bool,
+        hooks: HashMap<String, Vec<String>>,
+    ) {
+        std::fs::create_dir_all(projects_dir).unwrap();
+        let project = AgentProjectFile {
+            id: project_id.to_string(),
+            path: project_path.to_string_lossy().to_string(),
+            name: Some(project_id.to_string()),
+            kind: Some("rust".to_string()),
+            description: None,
+            disabled,
+            hooks,
+        };
+        std::fs::write(
+            projects_dir.join(format!("{}.toml", project_id)),
+            toml::to_string_pretty(&project).unwrap(),
+        )
+        .unwrap();
+    }
+
+    fn run_git(path: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .args(args)
+            .current_dir(path)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_clean_git_repo(path: &Path) {
+        std::fs::create_dir_all(path).unwrap();
+        run_git(path, &["init"]);
+        std::fs::write(path.join("README.md"), "# demo\n").unwrap();
+        run_git(path, &["add", "README.md"]);
+        run_git(
+            path,
+            &[
+                "-c",
+                "user.name=Private Drop Test",
+                "-c",
+                "user.email=test@example.invalid",
+                "commit",
+                "-m",
+                "Initial commit",
+            ],
+        );
+    }
+
+    fn hooks(entries: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
+        entries
+            .iter()
+            .map(|(name, commands)| {
+                (
+                    (*name).to_string(),
+                    commands
+                        .iter()
+                        .map(|command| (*command).to_string())
+                        .collect(),
+                )
+            })
+            .collect()
     }
 
     #[test]
@@ -2162,5 +2789,185 @@ path = "/tmp/private-drop"
             .iter()
             .any(|warning| warning.contains("left unchanged")));
         assert!(project_path.join("docs/index.md").exists());
+    }
+
+    #[test]
+    fn agent_register_capabilities_enable_project_workflow() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let capabilities = agent_register_capabilities(&cfg);
+        assert!(capabilities.project_create);
+        assert!(capabilities.project_workflow);
+    }
+
+    #[test]
+    fn project_workflow_snapshot_returns_git_evidence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/foo");
+        init_clean_git_repo(&project_path);
+        write_project_registry(
+            &projects_dir,
+            "foo",
+            &project_path,
+            false,
+            hooks(&[("precommit", &["true"])]),
+        );
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+
+        let result =
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"));
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.mode, "snapshot");
+        assert!(result.git_before.available);
+        assert!(result.git_after.available);
+        assert_eq!(result.project.unwrap().id, "foo");
+    }
+
+    #[test]
+    fn project_workflow_missing_project_is_structured_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let mut cache = AgentProjectCache::default();
+
+        let result =
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("missing", "snapshot"));
+
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("agent project 'missing' is not configured")
+        );
+        assert_eq!(
+            result.recommended_next_action,
+            "Create or configure the agent project"
+        );
+    }
+
+    #[test]
+    fn project_workflow_disabled_project_is_structured_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/foo");
+        std::fs::create_dir_all(&project_path).unwrap();
+        write_project_registry(&projects_dir, "foo", &project_path, true, HashMap::new());
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+
+        let result =
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"));
+
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("agent project 'foo' is disabled")
+        );
+    }
+
+    #[test]
+    fn project_workflow_missing_precommit_is_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/foo");
+        init_clean_git_repo(&project_path);
+        write_project_registry(&projects_dir, "foo", &project_path, false, HashMap::new());
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+
+        let result =
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "precommit"));
+
+        assert!(!result.success);
+        assert_eq!(
+            result.error.as_deref(),
+            Some("agent project hook 'precommit' is not configured")
+        );
+    }
+
+    #[test]
+    fn project_workflow_hook_failure_keeps_git_snapshots() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/foo");
+        init_clean_git_repo(&project_path);
+        write_project_registry(
+            &projects_dir,
+            "foo",
+            &project_path,
+            false,
+            hooks(&[("doctor", &["false"])]),
+        );
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+        let mut payload = workflow_payload("foo", "hook");
+        payload.hook = Some("doctor".to_string());
+
+        let result = run_agent_project_workflow(&cfg, &mut cache, payload);
+
+        assert!(!result.success);
+        assert_eq!(result.recommended_next_action, "Fix failing hook step");
+        assert!(result.git_before.available);
+        assert!(result.git_after.available);
+        let hook_result = result.hook_result.unwrap();
+        assert!(!hook_result.success);
+        assert_eq!(hook_result.steps.len(), 1);
+        assert!(!hook_result.steps[0].success);
+    }
+
+    #[test]
+    fn project_workflow_hook_success_returns_success() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/foo");
+        init_clean_git_repo(&project_path);
+        write_project_registry(
+            &projects_dir,
+            "foo",
+            &project_path,
+            false,
+            hooks(&[("doctor", &["true"])]),
+        );
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+        let mut payload = workflow_payload("foo", "hook");
+        payload.hook = Some("doctor".to_string());
+
+        let result = run_agent_project_workflow(&cfg, &mut cache, payload);
+
+        assert!(result.success, "{:?}", result.error);
+        assert!(result.hook_result.unwrap().success);
+    }
+
+    #[test]
+    fn project_workflow_recommended_next_action_handles_clean_and_dirty() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/foo");
+        init_clean_git_repo(&project_path);
+        write_project_registry(
+            &projects_dir,
+            "foo",
+            &project_path,
+            false,
+            hooks(&[("precommit", &["true"])]),
+        );
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+
+        let clean =
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"));
+        assert!(clean.success);
+        assert_eq!(clean.recommended_next_action, "No changes detected");
+
+        std::fs::write(project_path.join("dirty.txt"), "dirty\n").unwrap();
+        let dirty =
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"));
+        assert!(dirty.success);
+        assert_eq!(
+            dirty.recommended_next_action,
+            "Run precommit hook before committing"
+        );
     }
 }

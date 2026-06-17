@@ -2,9 +2,11 @@ use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
     ShellAgentPollResponse, ShellAgentProjectCreatePayload, ShellAgentProjectCreateResult,
-    ShellAgentProjectSummary, ShellAgentResultRequest, ShellAgentResultResponse,
+    ShellAgentProjectGitSnapshot, ShellAgentProjectSummary, ShellAgentProjectWorkflowPayload,
+    ShellAgentProjectWorkflowResult, ShellAgentResultRequest, ShellAgentResultResponse,
     ShellAgentShellRequest, ShellClientCapabilities, ShellClientProjectCreateRequest,
-    ShellClientProjectCreateResponse, ShellClientProjectsRequest, ShellClientProjectsResponse,
+    ShellClientProjectCreateResponse, ShellClientProjectWorkflowRequest,
+    ShellClientProjectWorkflowResponse, ShellClientProjectsRequest, ShellClientProjectsResponse,
     ShellClientRegisterRequest, ShellClientRegisterResponse, ShellClientView, ShellClientsResponse,
     ShellFileOpRequest, ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo,
     ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
@@ -44,6 +46,7 @@ struct PendingShellRequest {
     request: ShellAgentShellRequest,
     waiter: Option<oneshot::Sender<ShellRunResponse>>,
     project_create_waiter: Option<oneshot::Sender<ShellAgentProjectCreateResult>>,
+    project_workflow_waiter: Option<oneshot::Sender<ShellAgentProjectWorkflowResult>>,
     job_id: Option<String>,
 }
 
@@ -320,6 +323,73 @@ fn validate_project_create_request(body: &ShellClientProjectCreateRequest) -> Re
     Ok(())
 }
 
+fn validate_project_id_for_agent(project_id: &str) -> Result<(), String> {
+    validate_id(project_id, "project_id")?;
+    if project_id == "." || project_id == ".." {
+        return Err("project_id cannot be '.' or '..'".to_string());
+    }
+    if project_id.contains('/') || project_id.contains('\\') {
+        return Err("project_id cannot contain path separators".to_string());
+    }
+    Ok(())
+}
+
+fn normalize_workflow_mode(mode: &str) -> Result<String, String> {
+    let mode = mode.trim();
+    let mode = if mode.is_empty() { "snapshot" } else { mode };
+    match mode {
+        "snapshot" | "doctor" | "hook" | "precommit" => Ok(mode.to_string()),
+        _ => Err("mode must be one of snapshot, doctor, hook, precommit".to_string()),
+    }
+}
+
+fn normalize_hook_name(value: Option<String>) -> Option<String> {
+    trim_string(value)
+}
+
+fn normalize_doctor_hook(value: &str) -> String {
+    let value = value.trim();
+    if value.is_empty() {
+        "doctor".to_string()
+    } else {
+        value.to_string()
+    }
+}
+
+fn validate_hook_name_value(value: &Option<String>, field: &str) -> Result<(), String> {
+    if let Some(value) = value {
+        if value.contains('\0') {
+            return Err(format!("{} cannot contain NUL bytes", field));
+        }
+    }
+    Ok(())
+}
+
+fn validate_project_workflow_request(
+    body: &ShellClientProjectWorkflowRequest,
+) -> Result<(), String> {
+    validate_id(&body.client_id, "client_id")?;
+    validate_project_id_for_agent(&body.project_id)?;
+    normalize_workflow_mode(&body.mode)?;
+    validate_hook_name_value(&body.hook, "hook")?;
+    if body.doctor_hook.contains('\0') {
+        return Err("doctor_hook cannot contain NUL bytes".to_string());
+    }
+    if body.timeout_secs == 0 || body.timeout_secs > MAX_COMMAND_TIMEOUT_SECS {
+        return Err(format!(
+            "timeout_secs must be between 1 and {}",
+            MAX_COMMAND_TIMEOUT_SECS
+        ));
+    }
+    if body.wait_timeout_secs > MAX_SYNC_WAIT_SECS {
+        return Err(format!(
+            "wait_timeout_secs must be <= {} for runShellClientProjectWorkflow",
+            MAX_SYNC_WAIT_SECS
+        ));
+    }
+    Ok(())
+}
+
 fn project_create_payload(
     body: &ShellClientProjectCreateRequest,
 ) -> ShellAgentProjectCreatePayload {
@@ -333,6 +403,20 @@ fn project_create_payload(
         git_init: body.git_init,
         allow_existing: body.allow_existing,
         hooks: body.hooks.clone(),
+    }
+}
+
+fn project_workflow_payload(
+    body: &ShellClientProjectWorkflowRequest,
+) -> ShellAgentProjectWorkflowPayload {
+    ShellAgentProjectWorkflowPayload {
+        project_id: body.project_id.clone(),
+        mode: normalize_workflow_mode(&body.mode).unwrap_or_else(|_| "snapshot".to_string()),
+        hook: normalize_hook_name(body.hook.clone()),
+        run_doctor: body.run_doctor,
+        run_doctor_hook: body.run_doctor_hook,
+        doctor_hook: normalize_doctor_hook(&body.doctor_hook),
+        timeout_secs: body.timeout_secs,
     }
 }
 
@@ -555,6 +639,7 @@ impl ShellClientRegistry {
             expected_sha256: body.expected_sha256.clone(),
             create_dirs: body.create_dirs,
             project_create: None,
+            project_workflow: None,
             command: String::new(),
             timeout_secs: 30,
             requested_by,
@@ -575,6 +660,7 @@ impl ShellClientRegistry {
                 request,
                 waiter: Some(tx),
                 project_create_waiter: None,
+                project_workflow_waiter: None,
                 job_id: None,
             },
         );
@@ -601,6 +687,7 @@ impl ShellClientRegistry {
             expected_sha256: None,
             create_dirs: false,
             project_create: None,
+            project_workflow: None,
             command: body.command.clone(),
             timeout_secs: body.timeout_secs,
             requested_by,
@@ -621,6 +708,7 @@ impl ShellClientRegistry {
                 request,
                 waiter: Some(tx),
                 project_create_waiter: None,
+                project_workflow_waiter: None,
                 job_id: None,
             },
         );
@@ -647,6 +735,7 @@ impl ShellClientRegistry {
             expected_sha256: None,
             create_dirs: false,
             project_create: Some(project_create_payload(&body)),
+            project_workflow: None,
             command: String::new(),
             timeout_secs: body.timeout_secs,
             requested_by,
@@ -673,6 +762,61 @@ impl ShellClientRegistry {
                 request,
                 waiter: None,
                 project_create_waiter: Some(tx),
+                project_workflow_waiter: None,
+                job_id: None,
+            },
+        );
+        Ok((request_id, rx))
+    }
+
+    pub async fn enqueue_project_workflow(
+        &self,
+        body: ShellClientProjectWorkflowRequest,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellAgentProjectWorkflowResult>), String> {
+        validate_project_workflow_request(&body)?;
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: body.client_id.clone(),
+            kind: "project_workflow".to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            project_create: None,
+            project_workflow: Some(project_workflow_payload(&body)),
+            command: String::new(),
+            timeout_secs: body.timeout_secs,
+            requested_by,
+            created_at: now_ts(),
+        };
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get(&body.client_id) else {
+            return Err(format!("unknown shell client: {}", body.client_id));
+        };
+        if !client.capabilities.project_workflow {
+            return Err(format!(
+                "agent client {} does not support project_workflow",
+                body.client_id
+            ));
+        }
+        inner
+            .queues_by_client
+            .entry(body.client_id.clone())
+            .or_default()
+            .push_back(request_id.clone());
+        inner.pending_by_id.insert(
+            request_id.clone(),
+            PendingShellRequest {
+                request,
+                waiter: None,
+                project_create_waiter: None,
+                project_workflow_waiter: Some(tx),
                 job_id: None,
             },
         );
@@ -755,6 +899,7 @@ impl ShellClientRegistry {
         let stdout = truncate_output(body.stdout);
         let stderr = truncate_output(body.stderr);
         let project_create_result = body.project_create.clone();
+        let project_workflow_result = body.project_workflow.clone();
         if let Some(job_id) = pending.job_id.clone() {
             inner.request_to_job.remove(&request_id);
             if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
@@ -796,6 +941,43 @@ impl ShellClientRegistry {
                     if let Some(client) = inner.clients.get_mut(&client_id) {
                         merge_project_summary(&mut client.projects, project);
                     }
+                }
+            }
+            let _ = waiter.send(result);
+        }
+        if let Some(waiter) = pending.project_workflow_waiter.take() {
+            let payload = pending.request.project_workflow.clone();
+            let mut result =
+                project_workflow_result.unwrap_or_else(|| ShellAgentProjectWorkflowResult {
+                    success: error.is_none() && body.exit_code == Some(0),
+                    project_id: payload
+                        .as_ref()
+                        .map(|payload| payload.project_id.clone())
+                        .unwrap_or_default(),
+                    project: None,
+                    mode: payload
+                        .as_ref()
+                        .map(|payload| payload.mode.clone())
+                        .unwrap_or_else(|| "snapshot".to_string()),
+                    git_before: ShellAgentProjectGitSnapshot::default(),
+                    hook_result: None,
+                    git_after: ShellAgentProjectGitSnapshot::default(),
+                    warnings: Vec::new(),
+                    recommended_next_action: "Review workflow warnings".to_string(),
+                    error: error.clone().or_else(|| {
+                        if body.exit_code == Some(0) {
+                            Some("agent did not return project_workflow result".to_string())
+                        } else {
+                            Some("project_workflow failed without structured result".to_string())
+                        }
+                    }),
+                });
+            if result.error.is_some() {
+                result.success = false;
+            }
+            if let Some(project) = result.project.clone() {
+                if let Some(client) = inner.clients.get_mut(&client_id) {
+                    merge_project_summary(&mut client.projects, project);
                 }
             }
             let _ = waiter.send(result);
@@ -854,6 +1036,7 @@ impl ShellClientRegistry {
             expected_sha256: None,
             create_dirs: false,
             project_create: None,
+            project_workflow: None,
             command,
             timeout_secs: run.timeout_secs,
             requested_by,
@@ -891,6 +1074,7 @@ impl ShellClientRegistry {
                 request,
                 waiter: None,
                 project_create_waiter: None,
+                project_workflow_waiter: None,
                 job_id: Some(job_id.clone()),
             },
         );
@@ -991,6 +1175,7 @@ impl ShellClientRegistry {
                     expected_sha256: None,
                     create_dirs: false,
                     project_create: None,
+                    project_workflow: None,
                     command: String::new(),
                     timeout_secs: 1,
                     requested_by,
@@ -1007,6 +1192,7 @@ impl ShellClientRegistry {
                         request,
                         waiter: None,
                         project_create_waiter: None,
+                        project_workflow_waiter: None,
                         job_id: Some(job_id.to_string()),
                     },
                 );
@@ -1164,6 +1350,28 @@ fn record_shell_project_create_action(
     );
 }
 
+fn record_shell_project_workflow_action(
+    audit: &ActionAudit,
+    response: &ShellClientProjectWorkflowResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new("project_workflow", response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({
+                "client_id": response.client_id,
+                "project_id": response.project_id,
+            }))
+            .summary(json!({
+                "mode": response.mode,
+                "path": response.project.as_ref().map(|project| project.path.clone()),
+                "hook": response.hook_result.as_ref().map(|hook| hook.hook.clone()),
+                "warning_count": response.warnings.len(),
+                "recommended_next_action": response.recommended_next_action,
+            })),
+    );
+}
+
 fn record_shell_run_action(
     audit: &ActionAudit,
     response: &ShellRunResponse,
@@ -1283,6 +1491,17 @@ fn render_shell_project_create(
     res.render(Json(response));
 }
 
+fn render_shell_project_workflow(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellClientProjectWorkflowResponse,
+) {
+    res.status_code(status);
+    record_shell_project_workflow_action(audit, &response, status);
+    res.render(Json(response));
+}
+
 fn shell_project_create_error_response(
     client_id: String,
     error: String,
@@ -1295,6 +1514,27 @@ fn shell_project_create_error_response(
         registry_file: None,
         git_initialized: false,
         warnings: Vec::new(),
+        error: Some(error),
+    }
+}
+
+fn shell_project_workflow_error_response(
+    client_id: String,
+    project_id: String,
+    mode: String,
+    error: String,
+) -> ShellClientProjectWorkflowResponse {
+    ShellClientProjectWorkflowResponse {
+        success: false,
+        client_id,
+        project_id,
+        project: None,
+        mode,
+        git_before: ShellAgentProjectGitSnapshot::default(),
+        hook_result: None,
+        git_after: ShellAgentProjectGitSnapshot::default(),
+        warnings: Vec::new(),
+        recommended_next_action: "Review workflow warnings".to_string(),
         error: Some(error),
     }
 }
@@ -1314,6 +1554,28 @@ fn shell_project_create_response_from_result(
         registry_file: result.registry_file,
         git_initialized: result.git_initialized,
         warnings: result.warnings,
+        error: result.error,
+    }
+}
+
+fn shell_project_workflow_response_from_result(
+    client_id: String,
+    mut result: ShellAgentProjectWorkflowResult,
+) -> ShellClientProjectWorkflowResponse {
+    if result.error.is_some() {
+        result.success = false;
+    }
+    ShellClientProjectWorkflowResponse {
+        success: result.success,
+        client_id,
+        project_id: result.project_id,
+        project: result.project,
+        mode: result.mode,
+        git_before: result.git_before,
+        hook_result: result.hook_result,
+        git_after: result.git_after,
+        warnings: result.warnings,
+        recommended_next_action: result.recommended_next_action,
         error: result.error,
     }
 }
@@ -1524,6 +1786,115 @@ pub async fn shell_project_create(req: &mut Request, depot: &mut Depot, res: &mu
                     client_id,
                     format!(
                         "timed out waiting {} seconds for shell client project creation",
+                        wait_timeout_secs
+                    ),
+                ),
+            );
+        }
+    }
+}
+
+#[handler]
+pub async fn shell_project_workflow(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/shell/projects/workflow",
+        "runShellClientProjectWorkflow",
+    );
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_project_workflow(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_project_workflow_error_response(
+                String::new(),
+                String::new(),
+                "snapshot".to_string(),
+                "Shell client registry not configured".to_string(),
+            ),
+        );
+        return;
+    };
+    let body: ShellClientProjectWorkflowRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_project_workflow(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_project_workflow_error_response(
+                    String::new(),
+                    String::new(),
+                    "snapshot".to_string(),
+                    format!("Invalid JSON: {}", e),
+                ),
+            );
+            return;
+        }
+    };
+    let client_id = body.client_id.clone();
+    let project_id = body.project_id.clone();
+    let mode = normalize_workflow_mode(&body.mode).unwrap_or_else(|_| "snapshot".to_string());
+    let wait_timeout_secs = body.wait_timeout_secs;
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+    {
+        render_shell_project_workflow(
+            res,
+            &audit,
+            status,
+            shell_project_workflow_error_response(client_id, project_id, mode, e),
+        );
+        return;
+    }
+    let requested_by = requested_by_from_auth(auth.as_ref());
+    let (request_id, rx) = match registry.enqueue_project_workflow(body, requested_by).await {
+        Ok(result) => result,
+        Err(e) => {
+            render_shell_project_workflow(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_project_workflow_error_response(client_id, project_id, mode, e),
+            );
+            return;
+        }
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(wait_timeout_secs), rx).await {
+        Ok(Ok(result)) => {
+            let response = shell_project_workflow_response_from_result(client_id.clone(), result);
+            let status = if response.success {
+                StatusCode::OK
+            } else {
+                StatusCode::BAD_REQUEST
+            };
+            render_shell_project_workflow(res, &audit, status, response);
+        }
+        Ok(Err(_closed)) => render_shell_project_workflow(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_project_workflow_error_response(
+                client_id,
+                project_id,
+                mode,
+                "shell project workflow waiter was dropped".to_string(),
+            ),
+        ),
+        Err(_elapsed) => {
+            registry.cancel_request(&request_id).await;
+            render_shell_project_workflow(
+                res,
+                &audit,
+                StatusCode::REQUEST_TIMEOUT,
+                shell_project_workflow_error_response(
+                    client_id,
+                    project_id,
+                    mode,
+                    format!(
+                        "timed out waiting {} seconds for shell client project workflow",
                         wait_timeout_secs
                     ),
                 ),
@@ -2310,6 +2681,12 @@ mod tests {
         capabilities
     }
 
+    fn project_workflow_capabilities() -> ShellClientCapabilities {
+        let mut capabilities = project_create_capabilities();
+        capabilities.project_workflow = true;
+        capabilities
+    }
+
     fn project_create_request(
         client_id: &str,
         project_id: &str,
@@ -2325,6 +2702,24 @@ mod tests {
             git_init: false,
             allow_existing: false,
             hooks: None,
+            timeout_secs: 120,
+            wait_timeout_secs: 30,
+        }
+    }
+
+    fn project_workflow_request(
+        client_id: &str,
+        project_id: &str,
+        mode: &str,
+    ) -> ShellClientProjectWorkflowRequest {
+        ShellClientProjectWorkflowRequest {
+            client_id: client_id.to_string(),
+            project_id: project_id.to_string(),
+            mode: mode.to_string(),
+            hook: None,
+            run_doctor: true,
+            run_doctor_hook: false,
+            doctor_hook: "doctor".to_string(),
             timeout_secs: 120,
             wait_timeout_secs: 30,
         }
@@ -2591,6 +2986,153 @@ mod tests {
                     warnings: Vec::new(),
                     error: None,
                 }),
+                project_workflow: None,
+            })
+            .await
+            .unwrap();
+        let result = rx.await.unwrap();
+        assert!(result.success);
+
+        let projects = registry.list_client_projects("oe").await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, "foo");
+    }
+
+    #[tokio::test]
+    async fn registry_project_workflow_owner_check_and_enqueue() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "alice-client".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(project_workflow_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "bob-client".to_string(),
+                display_name: None,
+                owner: Some("bob".to_string()),
+                hostname: None,
+                capabilities: Some(project_workflow_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+
+        let alice = auth_context(Some("alice"), false);
+        assert!(
+            assert_registry_client_owner(&registry, Some(&alice), "alice-client")
+                .await
+                .is_ok()
+        );
+        let (_request_id, _rx) = registry
+            .enqueue_project_workflow(
+                project_workflow_request("alice-client", "foo", "snapshot"),
+                "alice".to_string(),
+            )
+            .await
+            .unwrap();
+        let request = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "alice-client".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(request.kind, "project_workflow");
+        let payload = request.project_workflow.as_ref().unwrap();
+        assert_eq!(payload.project_id, "foo");
+        assert_eq!(payload.mode, "snapshot");
+
+        let mismatch = assert_registry_client_owner(&registry, Some(&alice), "bob-client")
+            .await
+            .unwrap_err();
+        assert_eq!(mismatch.0, StatusCode::FORBIDDEN);
+        assert!(mismatch.1.contains("owned by bob"));
+    }
+
+    #[tokio::test]
+    async fn registry_project_workflow_requires_capability() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: None,
+            })
+            .await
+            .unwrap();
+
+        let err = registry
+            .enqueue_project_workflow(
+                project_workflow_request("oe", "foo", "snapshot"),
+                "alice".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.contains("does not support project_workflow"));
+    }
+
+    #[tokio::test]
+    async fn registry_project_workflow_result_updates_project_cache() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(project_workflow_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let (_request_id, rx) = registry
+            .enqueue_project_workflow(
+                project_workflow_request("oe", "foo", "snapshot"),
+                "alice".to_string(),
+            )
+            .await
+            .unwrap();
+        let request = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        registry
+            .complete(ShellAgentResultRequest {
+                client_id: "oe".to_string(),
+                request_id: request.request_id,
+                exit_code: Some(0),
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(12),
+                error: None,
+                project_create: None,
+                project_workflow: Some(ShellAgentProjectWorkflowResult {
+                    success: true,
+                    project_id: "foo".to_string(),
+                    project: Some(project_summary("foo", "/tmp/foo")),
+                    mode: "snapshot".to_string(),
+                    git_before: ShellAgentProjectGitSnapshot::default(),
+                    hook_result: None,
+                    git_after: ShellAgentProjectGitSnapshot::default(),
+                    warnings: Vec::new(),
+                    recommended_next_action: "No changes detected".to_string(),
+                    error: None,
+                }),
             })
             .await
             .unwrap();
@@ -2613,6 +3155,7 @@ mod tests {
         .unwrap();
         assert_eq!(request.client_id, "oe");
         assert!(!request.capabilities.as_ref().unwrap().project_create);
+        assert!(!request.capabilities.as_ref().unwrap().project_workflow);
         assert!(request.projects.is_none());
     }
 
@@ -2676,6 +3219,7 @@ mod tests {
                 duration_ms: Some(12),
                 error: None,
                 project_create: None,
+                project_workflow: None,
             })
             .await
             .unwrap();
@@ -2774,6 +3318,7 @@ mod tests {
                 duration_ms: Some(20),
                 error: None,
                 project_create: None,
+                project_workflow: None,
             })
             .await
             .unwrap();

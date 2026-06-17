@@ -228,6 +228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("artifact").post(codex::codex_artifact))
             .push(Router::with_path("git").post(codex::codex_git))
             .push(Router::with_path("project_hook").post(codex::codex_project_hook))
+            .push(Router::with_path("project_doctor").post(codex::codex_project_doctor))
             .push(Router::with_path("command").post(codex::codex_command))
             .push(Router::with_path("command_request").post(codex::codex_command_request))
             .push(Router::with_path("command_request_op").post(codex::codex_command_request_op))

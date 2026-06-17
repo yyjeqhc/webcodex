@@ -2506,6 +2506,9 @@
           "git": {
             "type": "boolean"
           },
+          "project_doctor": {
+            "type": "boolean"
+          },
           "checks": {
             "type": "boolean"
           },
@@ -2533,6 +2536,7 @@
           "patch",
           "artifact",
           "git",
+          "project_doctor",
           "checks",
           "jobs",
           "command_requests",
@@ -2558,6 +2562,10 @@
           },
           "root": {
             "type": "string"
+          },
+          "ssh_enabled": {
+            "type": "boolean",
+            "description": "True when server-side SSH execution is enabled."
           },
           "ssh_target": {
             "type": "string",
@@ -2625,6 +2633,7 @@
           "name",
           "executor",
           "root",
+          "ssh_enabled",
           "ssh_endpoints",
           "allowed_checks",
           "configured_checks",
@@ -2936,6 +2945,277 @@
           "hook",
           "steps",
           "git_status_short"
+        ]
+      },
+      "ProjectDoctorRequest": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "run_hook": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true, run the configured doctor hook if it exists."
+          },
+          "hook": {
+            "type": "string",
+            "default": "doctor",
+            "description": "Hook name to treat as the doctor hook."
+          },
+          "recent_jobs": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 0,
+            "maximum": 50,
+            "description": "Number of recent jobs to return; clamped to 0..50."
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 120,
+            "minimum": 1,
+            "maximum": 86400,
+            "description": "Per-command timeout in seconds; defaults to 120 and clamps to 24h."
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "ProjectDoctorAgentCapabilities": {
+        "type": "object",
+        "properties": {
+          "shell": {
+            "type": "boolean"
+          },
+          "file_read": {
+            "type": "boolean"
+          },
+          "file_write": {
+            "type": "boolean"
+          },
+          "git": {
+            "type": "boolean"
+          },
+          "jobs": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "shell",
+          "file_read",
+          "file_write",
+          "git",
+          "jobs"
+        ]
+      },
+      "ProjectDoctorAgentInfo": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "connected": {
+            "type": "boolean"
+          },
+          "owner": {
+            "type": "string",
+            "nullable": true
+          },
+          "hostname": {
+            "type": "string",
+            "nullable": true
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/ProjectDoctorAgentCapabilities"
+          }
+        },
+        "required": [
+          "client_id",
+          "connected",
+          "capabilities"
+        ]
+      },
+      "ProjectDoctorGitInfo": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "branch": {
+            "type": "string",
+            "nullable": true
+          },
+          "head": {
+            "type": "string",
+            "nullable": true
+          },
+          "head_subject": {
+            "type": "string",
+            "nullable": true
+          },
+          "status_short": {
+            "type": "string",
+            "nullable": true
+          },
+          "dirty": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "available"
+        ]
+      },
+      "ProjectDoctorHooksInfo": {
+        "type": "object",
+        "properties": {
+          "configured": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "doctor_hook": {
+            "type": "string"
+          },
+          "doctor_hook_configured": {
+            "type": "boolean"
+          },
+          "recommended_next": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "configured",
+          "doctor_hook",
+          "doctor_hook_configured"
+        ]
+      },
+      "ProjectDoctorRecentJob": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "command_preview": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "executor": {
+            "type": "string",
+            "nullable": true
+          },
+          "client_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "project": {
+            "type": "string",
+            "nullable": true
+          },
+          "goal_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "client_request_id": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "job_id",
+          "status",
+          "created_at",
+          "command_preview",
+          "exit_code",
+          "error"
+        ]
+      },
+      "ProjectDoctorResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "project": {
+            "type": "string"
+          },
+          "executor": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "ssh",
+              "local"
+            ]
+          },
+          "root": {
+            "type": "string"
+          },
+          "ssh_enabled": {
+            "type": "boolean"
+          },
+          "agent": {
+            "$ref": "#/components/schemas/ProjectDoctorAgentInfo",
+            "nullable": true
+          },
+          "git": {
+            "$ref": "#/components/schemas/ProjectDoctorGitInfo"
+          },
+          "hooks": {
+            "$ref": "#/components/schemas/ProjectDoctorHooksInfo"
+          },
+          "hook_result": {
+            "$ref": "#/components/schemas/ProjectHookResponse",
+            "nullable": true
+          },
+          "recent_jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectDoctorRecentJob"
+            }
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "project",
+          "executor",
+          "root",
+          "ssh_enabled",
+          "git",
+          "hooks",
+          "recent_jobs",
+          "warnings",
+          "error"
         ]
       }
     }
@@ -4192,6 +4472,41 @@
           },
           "403": {
             "description": "SSH executor disabled"
+          }
+        }
+      }
+    },
+    "/api/codex/project_doctor": {
+      "post": {
+        "operationId": "runProjectDoctor",
+        "summary": "Run project doctor",
+        "description": "Doctor collects project status, git state, hooks, recent jobs, and optionally runs a configured hook. Agent projects run checks on the agent. SSH projects require DROP_ENABLE_SSH=true for SSH execution.",
+        "tags": [
+          "codex"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectDoctorRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Doctor result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectDoctorResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or unknown project"
           }
         }
       }

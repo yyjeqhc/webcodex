@@ -6,6 +6,7 @@ mod capabilities;
 mod command_request;
 mod command_workflow;
 mod context;
+mod doctor;
 mod edit;
 mod git;
 mod hooks;
@@ -31,6 +32,7 @@ pub use command_request::{
 };
 use context::*;
 pub use context::{codex_context, codex_context_batch};
+pub use doctor::codex_project_doctor;
 pub use edit::codex_edit;
 use edit::*;
 pub use git::codex_git;

@@ -51,6 +51,7 @@ fn project_info(
     name: &str,
     project: &ProjectConfig,
     shell_clients: &HashMap<String, ShellClientView>,
+    ssh_enabled: bool,
 ) -> ProjectCapabilityInfo {
     let mut commands = project.commands.keys().cloned().collect::<Vec<_>>();
     commands.sort();
@@ -81,6 +82,7 @@ fn project_info(
             Executor::Agent => "agent".to_string(),
         },
         root: project.path.clone(),
+        ssh_enabled,
         ssh_target,
         ssh_endpoints,
         agent_client_id,
@@ -107,6 +109,7 @@ fn project_info(
             patch: project.allow_patch(),
             artifact: true,
             git: true,
+            project_doctor: true,
             checks: !configured_checks.is_empty() && project.checks_enabled(),
             jobs: true,
             command_requests: project.allow_command_requests,
@@ -185,13 +188,14 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
             .collect::<HashMap<_, _>>(),
         Err(_) => HashMap::new(),
     };
+    let ssh_enabled = super::is_ssh_enabled(depot);
     let mut infos = project_names
         .iter()
         .filter_map(|name| {
             projects
                 .projects
                 .get(name)
-                .map(|p| project_info(name, p, &shell_clients))
+                .map(|p| project_info(name, p, &shell_clients, ssh_enabled))
         })
         .collect::<Vec<_>>();
     infos.sort_by(|a, b| a.name.cmp(&b.name));

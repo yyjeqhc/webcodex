@@ -161,6 +161,119 @@ pub struct ProjectHookResponse {
     pub error: Option<String>,
 }
 
+fn default_project_doctor_run_hook() -> bool {
+    true
+}
+
+fn default_project_doctor_hook() -> String {
+    "doctor".to_string()
+}
+
+fn default_project_doctor_recent_jobs() -> usize {
+    10
+}
+
+fn default_project_doctor_timeout_secs() -> u64 {
+    120
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ProjectDoctorRequest {
+    pub project: String,
+    #[serde(default = "default_project_doctor_run_hook")]
+    pub run_hook: bool,
+    #[serde(default = "default_project_doctor_hook")]
+    pub hook: String,
+    #[serde(default = "default_project_doctor_recent_jobs")]
+    pub recent_jobs: usize,
+    #[serde(default = "default_project_doctor_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct ProjectDoctorAgentCapabilities {
+    pub shell: bool,
+    pub file_read: bool,
+    pub file_write: bool,
+    pub git: bool,
+    pub jobs: bool,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProjectDoctorAgentInfo {
+    pub client_id: String,
+    pub connected: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub owner: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hostname: Option<String>,
+    pub capabilities: ProjectDoctorAgentCapabilities,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProjectDoctorGitInfo {
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head_subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_short: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dirty: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProjectDoctorHooksInfo {
+    pub configured: Vec<String>,
+    pub doctor_hook: String,
+    pub doctor_hook_configured: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub recommended_next: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProjectDoctorRecentJob {
+    pub job_id: String,
+    pub status: String,
+    pub created_at: i64,
+    pub command_preview: String,
+    pub exit_code: Option<i32>,
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub project: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub goal_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_request_id: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProjectDoctorResponse {
+    pub success: bool,
+    pub project: String,
+    pub executor: String,
+    pub root: String,
+    pub ssh_enabled: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub agent: Option<ProjectDoctorAgentInfo>,
+    pub git: ProjectDoctorGitInfo,
+    pub hooks: ProjectDoctorHooksInfo,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_result: Option<ProjectHookResponse>,
+    pub recent_jobs: Vec<ProjectDoctorRecentJob>,
+    pub warnings: Vec<String>,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CommandRequestCreate {
     pub project: String,
@@ -867,6 +980,7 @@ pub struct ProjectCapabilities {
     pub patch: bool,
     pub artifact: bool,
     pub git: bool,
+    pub project_doctor: bool,
     pub checks: bool,
     pub jobs: bool,
     pub command_requests: bool,
@@ -881,6 +995,7 @@ pub struct ProjectCapabilityInfo {
     pub name: String,
     pub executor: String,
     pub root: String,
+    pub ssh_enabled: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ssh_target: Option<String>,
     pub ssh_endpoints: Vec<String>,

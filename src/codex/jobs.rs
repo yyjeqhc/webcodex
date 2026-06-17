@@ -3006,6 +3006,7 @@ mod tests {
                 owner: None,
                 hostname: None,
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();
@@ -3038,6 +3039,7 @@ mod tests {
         let request = registry
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                projects: None,
             })
             .await
             .unwrap()
@@ -3107,6 +3109,7 @@ mod tests {
                 owner: Some("alice".to_string()),
                 hostname: None,
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();
@@ -3117,6 +3120,7 @@ mod tests {
                 owner: Some("bob".to_string()),
                 hostname: None,
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();

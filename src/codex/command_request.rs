@@ -1742,6 +1742,7 @@ mod tests {
                 owner: None,
                 hostname: None,
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();
@@ -1778,6 +1779,7 @@ mod tests {
                     if let Some(request) = agent_registry
                         .poll(crate::shell_protocol::ShellAgentPollRequest {
                             client_id: "oe".to_string(),
+                            projects: None,
                         })
                         .await
                         .unwrap()

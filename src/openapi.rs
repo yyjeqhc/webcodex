@@ -266,6 +266,33 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             }
         }
     });
+    spec["paths"]["/api/shell/projects"] = serde_json::json!({
+        "post": {
+            "operationId": "listShellClientProjects",
+            "summary": "List shell client projects",
+            "description": "List project summaries most recently reported by one private-drop-agent client.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientProjectsRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Shell client projects response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientProjectsResponse" }
+                        }
+                    }
+                },
+                "403": { "description": "Client owner mismatch" }
+            }
+        }
+    });
     spec["paths"]["/api/shell/run"] = serde_json::json!({
         "post": {
             "operationId": "runShell",
@@ -344,6 +371,23 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             }
         }
     });
+    spec["components"]["schemas"]["ShellAgentProjectSummary"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "id": { "type": "string" },
+            "name": { "type": "string", "nullable": true },
+            "path": { "type": "string" },
+            "kind": { "type": "string", "nullable": true },
+            "description": { "type": "string", "nullable": true },
+            "hooks": { "type": "array", "items": { "type": "string" } },
+            "disabled": { "type": "boolean" },
+            "git_branch": { "type": "string", "nullable": true },
+            "git_head": { "type": "string", "nullable": true },
+            "git_dirty": { "type": "boolean", "nullable": true },
+            "updated_at": { "type": "integer" }
+        },
+        "required": ["id", "path", "hooks", "disabled", "updated_at"]
+    });
     spec["components"]["schemas"]["ShellClientCapabilities"] = serde_json::json!({
         "type": "object",
         "properties": {
@@ -365,9 +409,10 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "connected": { "type": "boolean" },
             "last_seen": { "type": "integer" },
             "capabilities": { "$ref": "#/components/schemas/ShellClientCapabilities" },
-            "pending_requests": { "type": "integer" }
+            "pending_requests": { "type": "integer" },
+            "projects": { "type": "array", "items": { "$ref": "#/components/schemas/ShellAgentProjectSummary" } }
         },
-        "required": ["client_id", "status", "connected", "last_seen", "capabilities", "pending_requests"]
+        "required": ["client_id", "status", "connected", "last_seen", "capabilities", "pending_requests", "projects"]
     });
     spec["components"]["schemas"]["ShellClientsResponse"] = serde_json::json!({
         "type": "object",
@@ -377,6 +422,23 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "error": { "type": "string", "nullable": true }
         },
         "required": ["success", "clients"]
+    });
+    spec["components"]["schemas"]["ShellClientProjectsRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" }
+        },
+        "required": ["client_id"]
+    });
+    spec["components"]["schemas"]["ShellClientProjectsResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "client_id": { "type": "string" },
+            "projects": { "type": "array", "items": { "$ref": "#/components/schemas/ShellAgentProjectSummary" } },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "client_id", "projects"]
     });
     spec["components"]["schemas"]["ShellRunRequest"] = serde_json::json!({
         "type": "object",
@@ -1187,9 +1249,12 @@ mod tests {
             "ActionSessionListItem": spec["components"]["schemas"]["ActionSessionListItem"].clone(),
             "ActionSessionOpRequest": spec["components"]["schemas"]["ActionSessionOpRequest"].clone(),
             "ActionSessionOpResponse": spec["components"]["schemas"]["ActionSessionOpResponse"].clone(),
+            "ShellAgentProjectSummary": spec["components"]["schemas"]["ShellAgentProjectSummary"].clone(),
             "ShellClientCapabilities": spec["components"]["schemas"]["ShellClientCapabilities"].clone(),
             "ShellClientView": spec["components"]["schemas"]["ShellClientView"].clone(),
             "ShellClientsResponse": spec["components"]["schemas"]["ShellClientsResponse"].clone(),
+            "ShellClientProjectsRequest": spec["components"]["schemas"]["ShellClientProjectsRequest"].clone(),
+            "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
             "ShellRunRequest": spec["components"]["schemas"]["ShellRunRequest"].clone(),
             "ShellRunResponse": spec["components"]["schemas"]["ShellRunResponse"].clone(),
             "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
@@ -1404,6 +1469,9 @@ pub async fn codex_openapi_compact_json(res: &mut Response) {
     apply_trusted_command_guidance(&mut spec);
     apply_action_session_openapi(&mut spec);
     apply_shell_client_openapi(&mut spec);
+    if let Some(paths) = spec["paths"].as_object_mut() {
+        paths.remove("/api/shell/projects");
+    }
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
     res.render(Json(spec));

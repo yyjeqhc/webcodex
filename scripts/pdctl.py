@@ -171,6 +171,57 @@ def print_hook_result(hook_result):
         print("  error: {}".format(hook_result.get("error")))
 
 
+def enabled_capabilities(capabilities):
+    capabilities = capabilities or {}
+    names = [name for name in sorted(capabilities) if capabilities.get(name)]
+    return ",".join(names) if names else "-"
+
+
+def print_clients(payload):
+    print("success: {}".format(payload.get("success")))
+    clients = payload.get("clients") or []
+    print("clients: {}".format(len(clients)))
+    for client in clients:
+        projects = client.get("projects") or []
+        print(
+            "{client_id} owner={owner} hostname={hostname} connected={connected} capabilities={capabilities} projects={project_count}".format(
+                client_id=client.get("client_id", "-"),
+                owner=compact_text(client.get("owner")) or "-",
+                hostname=compact_text(client.get("hostname")) or "-",
+                connected=client.get("connected"),
+                capabilities=enabled_capabilities(client.get("capabilities")),
+                project_count=len(projects),
+            )
+        )
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
+def print_projects(payload):
+    print("success: {}".format(payload.get("success")))
+    print("client_id: {}".format(payload.get("client_id", "")))
+    projects = payload.get("projects") or []
+    print("projects: {}".format(len(projects)))
+    for project in projects:
+        hooks = project.get("hooks") or []
+        git = "{}/{}".format(
+            compact_text(project.get("git_branch")) or "-",
+            compact_text(project.get("git_head")) or "-",
+        )
+        print(
+            "{id} path={path} kind={kind} hooks={hooks} git={git} dirty={dirty}".format(
+                id=project.get("id", "-"),
+                path=project.get("path", "-"),
+                kind=compact_text(project.get("kind")) or "-",
+                hooks=",".join(hooks) if hooks else "-",
+                git=git,
+                dirty=project.get("git_dirty"),
+            )
+        )
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
 def print_summary(payload):
     print("success: {}".format(payload.get("success")))
     print("project: {}".format(payload.get("project", "")))
@@ -220,6 +271,12 @@ def add_if_present(body, args, names):
 
 
 def build_request(args):
+    if args.command == "clients":
+        return "/api/shell/clients", {}
+
+    if args.command == "projects":
+        return "/api/shell/projects", {"client_id": args.client_id}
+
     if args.command == "doctor":
         body = {
             "project": args.project,
@@ -271,6 +328,8 @@ def build_parser():
         epilog=textwrap.dedent(
             """\
             Examples:
+              python3 scripts/pdctl.py clients
+              python3 scripts/pdctl.py projects oe
               python3 scripts/pdctl.py doctor private-drop
               python3 scripts/pdctl.py workflow private-drop --mode snapshot --json
               python3 scripts/pdctl.py precommit private-drop
@@ -279,6 +338,13 @@ def build_parser():
         ),
     )
     subcommands = parser.add_subparsers(dest="command", required=True)
+
+    clients = subcommands.add_parser("clients", help="List registered private-drop-agent clients.")
+    add_common_options(clients)
+
+    projects = subcommands.add_parser("projects", help="List projects reported by one agent client.")
+    projects.add_argument("client_id")
+    add_common_options(projects)
 
     doctor = subcommands.add_parser("doctor", help="Run project doctor without running hooks by default.")
     doctor.add_argument("project")
@@ -322,6 +388,10 @@ def main(argv):
         payload = request_json(url, token, path, body, body.get("timeout_secs"), args.debug)
         if args.json:
             print(json.dumps(payload, indent=2, sort_keys=True))
+        elif args.command == "clients":
+            print_clients(payload)
+        elif args.command == "projects":
+            print_projects(payload)
         else:
             print_summary(payload)
         if payload.get("success") is True:

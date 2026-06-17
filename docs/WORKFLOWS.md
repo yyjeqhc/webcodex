@@ -9,6 +9,11 @@ APIs.
 
 Workflow does not stage, commit, push, deploy, or delete files.
 
+Agent-local projects should now be registered on the agent under
+`~/.config/private-drop-agent/projects.d/`. The server caches the summaries
+reported by each agent but does not own hook commands. See
+`docs/AGENT_PROJECTS.md` for the registry format and temporary creation flow.
+
 ## Environment
 
 ```bash

@@ -43,6 +43,29 @@ impl Default for ShellClientCapabilities {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentProjectSummary {
+    pub id: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    pub path: String,
+    #[serde(default)]
+    pub kind: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub hooks: Vec<String>,
+    #[serde(default)]
+    pub disabled: bool,
+    #[serde(default)]
+    pub git_branch: Option<String>,
+    #[serde(default)]
+    pub git_head: Option<String>,
+    #[serde(default)]
+    pub git_dirty: Option<bool>,
+    pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientRegisterRequest {
     pub client_id: String,
     #[serde(default)]
@@ -53,6 +76,8 @@ pub struct ShellClientRegisterRequest {
     pub hostname: Option<String>,
     #[serde(default)]
     pub capabilities: Option<ShellClientCapabilities>,
+    #[serde(default)]
+    pub projects: Option<Vec<ShellAgentProjectSummary>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -66,6 +91,8 @@ pub struct ShellClientView {
     pub last_seen: i64,
     pub capabilities: ShellClientCapabilities,
     pub pending_requests: usize,
+    #[serde(default)]
+    pub projects: Vec<ShellAgentProjectSummary>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -120,6 +147,22 @@ pub struct ShellRunResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentPollRequest {
     pub client_id: String,
+    #[serde(default)]
+    pub projects: Option<Vec<ShellAgentProjectSummary>>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientProjectsRequest {
+    pub client_id: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ShellClientProjectsResponse {
+    pub success: bool,
+    pub client_id: String,
+    pub projects: Vec<ShellAgentProjectSummary>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

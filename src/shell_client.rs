@@ -1,8 +1,9 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
-    ShellAgentPollResponse, ShellAgentResultRequest, ShellAgentResultResponse,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
+    ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
+    ShellClientProjectsRequest, ShellClientProjectsResponse, ShellClientRegisterRequest,
     ShellClientRegisterResponse, ShellClientView, ShellClientsResponse, ShellFileOpRequest,
     ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo, ShellJobOpRequest,
     ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
@@ -33,6 +34,7 @@ struct ShellClientRecord {
     owner: Option<String>,
     hostname: Option<String>,
     capabilities: ShellClientCapabilities,
+    projects: Vec<ShellAgentProjectSummary>,
     last_seen: i64,
 }
 
@@ -249,6 +251,15 @@ fn trim_string(value: Option<String>) -> Option<String> {
         .filter(|v| !v.is_empty())
 }
 
+fn normalize_project_summaries(
+    projects: Option<Vec<ShellAgentProjectSummary>>,
+) -> Vec<ShellAgentProjectSummary> {
+    let mut projects = projects.unwrap_or_default();
+    projects.sort_by(|a, b| a.id.cmp(&b.id));
+    projects.dedup_by(|a, b| a.id == b.id);
+    projects
+}
+
 fn command_preview(command: &str) -> String {
     let first_line = command.lines().next().unwrap_or_default().trim();
     const MAX_PREVIEW: usize = 120;
@@ -413,6 +424,7 @@ impl ShellClientRegistry {
             owner: trim_string(body.owner),
             hostname: trim_string(body.hostname),
             capabilities: body.capabilities.unwrap_or_default(),
+            projects: normalize_project_summaries(body.projects),
             last_seen: now_ts(),
         };
         let mut inner = self.inner.lock().await;
@@ -432,6 +444,18 @@ impl ShellClientRegistry {
     pub async fn get_client_view(&self, client_id: &str) -> Option<ShellClientView> {
         let inner = self.inner.lock().await;
         Self::client_view_locked(&inner, client_id)
+    }
+
+    pub async fn list_client_projects(
+        &self,
+        client_id: &str,
+    ) -> Result<Vec<ShellAgentProjectSummary>, String> {
+        validate_id(client_id, "client_id")?;
+        let inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get(client_id) else {
+            return Err(format!("unknown shell client: {}", client_id));
+        };
+        Ok(client.projects.clone())
     }
 
     pub async fn enqueue_file_op(
@@ -540,6 +564,9 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get_mut(&body.client_id) else {
             return Err(format!("unknown shell client: {}", body.client_id));
         };
+        if body.projects.is_some() {
+            client.projects = normalize_project_summaries(body.projects);
+        }
         client.last_seen = now_ts();
         loop {
             let request_id = {
@@ -898,6 +925,7 @@ impl ShellClientRegistry {
             last_seen: client.last_seen,
             capabilities: client.capabilities.clone(),
             pending_requests,
+            projects: client.projects.clone(),
         })
     }
 }
@@ -932,6 +960,19 @@ fn record_shell_clients_action(
         ActionAuditRecord::new("list", success, http_status)
             .error(error)
             .summary(json!({"client_count": client_count})),
+    );
+}
+
+fn record_shell_projects_action(
+    audit: &ActionAudit,
+    response: &ShellClientProjectsResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new("projects", response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({"client_id": response.client_id}))
+            .summary(json!({"project_count": response.projects.len()})),
     );
 }
 
@@ -1032,9 +1073,21 @@ fn render_shell_job(
     res.render(Json(response));
 }
 
+fn render_shell_projects(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellClientProjectsResponse,
+) {
+    res.status_code(status);
+    record_shell_projects_action(audit, &response, status);
+    res.render(Json(response));
+}
+
 #[handler]
 pub async fn shell_clients(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/shell/clients", "listShellClients");
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let Some(registry) = get_registry(depot) else {
         let response = ShellClientsResponse {
             success: false,
@@ -1052,7 +1105,16 @@ pub async fn shell_clients(req: &mut Request, depot: &mut Depot, res: &mut Respo
         res.render(Json(response));
         return;
     };
-    let clients = registry.list_clients().await;
+    let mut clients = registry.list_clients().await;
+    if !auth.as_ref().map(|auth| auth.is_bootstrap).unwrap_or(false) {
+        for client in &mut clients {
+            if assert_shell_client_owner(auth.as_ref(), &client.client_id, client.owner.as_deref())
+                .is_err()
+            {
+                client.projects.clear();
+            }
+        }
+    }
     let response = ShellClientsResponse {
         success: true,
         clients,
@@ -1060,6 +1122,84 @@ pub async fn shell_clients(req: &mut Request, depot: &mut Depot, res: &mut Respo
     };
     record_shell_clients_action(&audit, true, StatusCode::OK, None, response.clients.len());
     res.render(Json(response));
+}
+
+#[handler]
+pub async fn shell_projects(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/shell/projects", "listShellClientProjects");
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_projects(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            ShellClientProjectsResponse {
+                success: false,
+                client_id: String::new(),
+                projects: Vec::new(),
+                error: Some("Shell client registry not configured".to_string()),
+            },
+        );
+        return;
+    };
+    let body: ShellClientProjectsRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_projects(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                ShellClientProjectsResponse {
+                    success: false,
+                    client_id: String::new(),
+                    projects: Vec::new(),
+                    error: Some(format!("Invalid JSON: {}", e)),
+                },
+            );
+            return;
+        }
+    };
+    let client_id = body.client_id.clone();
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+    {
+        render_shell_projects(
+            res,
+            &audit,
+            status,
+            ShellClientProjectsResponse {
+                success: false,
+                client_id,
+                projects: Vec::new(),
+                error: Some(e),
+            },
+        );
+        return;
+    }
+    match registry.list_client_projects(&body.client_id).await {
+        Ok(projects) => render_shell_projects(
+            res,
+            &audit,
+            StatusCode::OK,
+            ShellClientProjectsResponse {
+                success: true,
+                client_id: body.client_id,
+                projects,
+                error: None,
+            },
+        ),
+        Err(e) => render_shell_projects(
+            res,
+            &audit,
+            StatusCode::BAD_REQUEST,
+            ShellClientProjectsResponse {
+                success: false,
+                client_id: body.client_id,
+                projects: Vec::new(),
+                error: Some(e),
+            },
+        ),
+    }
 }
 
 #[handler]
@@ -1818,6 +1958,22 @@ mod tests {
         }
     }
 
+    fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
+        ShellAgentProjectSummary {
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            path: path.to_string(),
+            kind: Some("rust".to_string()),
+            description: Some("test project".to_string()),
+            hooks: vec!["doctor".to_string(), "precommit".to_string()],
+            disabled: false,
+            git_branch: Some("codex".to_string()),
+            git_head: Some("9a7d3ce".to_string()),
+            git_dirty: Some(false),
+            updated_at: 123456,
+        }
+    }
+
     #[test]
     fn requested_by_from_auth_uses_bootstrap_username_or_anonymous() {
         let bootstrap = auth_context(None, true);
@@ -1859,6 +2015,7 @@ mod tests {
                 owner: Some("yyjeqhc".to_string()),
                 hostname: Some("fineserver".to_string()),
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();
@@ -1867,6 +2024,109 @@ mod tests {
         assert_eq!(clients[0].client_id, "xrh");
         assert!(clients[0].connected);
         assert_eq!(clients[0].pending_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn registry_register_saves_projects() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: Some(vec![project_summary(
+                    "private-drop",
+                    "/root/git/private-drop",
+                )]),
+            })
+            .await
+            .unwrap();
+        let clients = registry.list_clients().await;
+        assert_eq!(clients[0].projects.len(), 1);
+        assert_eq!(clients[0].projects[0].id, "private-drop");
+
+        let projects = registry.list_client_projects("oe").await.unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].path, "/root/git/private-drop");
+    }
+
+    #[tokio::test]
+    async fn registry_poll_updates_projects() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: Some(vec![project_summary("one", "/tmp/one")]),
+            })
+            .await
+            .unwrap();
+        let polled = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: Some(vec![
+                    project_summary("one", "/tmp/one"),
+                    project_summary("two", "/tmp/two"),
+                ]),
+            })
+            .await
+            .unwrap();
+        assert!(polled.is_none());
+
+        let projects = registry.list_client_projects("oe").await.unwrap();
+        assert_eq!(projects.len(), 2);
+        assert_eq!(projects[0].id, "one");
+        assert_eq!(projects[1].id, "two");
+    }
+
+    #[tokio::test]
+    async fn registry_project_owner_check_enforces_boundary() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "alice-client".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: Some(vec![project_summary(
+                    "private-drop",
+                    "/root/git/private-drop",
+                )]),
+            })
+            .await
+            .unwrap();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "bob-client".to_string(),
+                display_name: None,
+                owner: Some("bob".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: Some(vec![project_summary("secret", "/tmp/secret")]),
+            })
+            .await
+            .unwrap();
+
+        let alice = auth_context(Some("alice"), false);
+        assert!(
+            assert_registry_client_owner(&registry, Some(&alice), "alice-client")
+                .await
+                .is_ok()
+        );
+        let projects = registry.list_client_projects("alice-client").await.unwrap();
+        assert_eq!(projects.len(), 1);
+
+        let mismatch = assert_registry_client_owner(&registry, Some(&alice), "bob-client")
+            .await
+            .unwrap_err();
+        assert_eq!(mismatch.0, StatusCode::FORBIDDEN);
+        assert!(mismatch.1.contains("owned by bob"));
     }
 
     #[tokio::test]
@@ -1879,6 +2139,7 @@ mod tests {
                 owner: None,
                 hostname: None,
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();
@@ -1898,6 +2159,7 @@ mod tests {
         let polled = registry
             .poll(ShellAgentPollRequest {
                 client_id: "xrh".to_string(),
+                projects: None,
             })
             .await
             .unwrap()
@@ -1950,6 +2212,7 @@ mod tests {
                 owner: None,
                 hostname: None,
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();
@@ -1992,6 +2255,7 @@ mod tests {
         let polled = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                projects: None,
             })
             .await
             .unwrap()
@@ -2049,6 +2313,7 @@ mod tests {
                 owner: None,
                 hostname: None,
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();
@@ -2079,6 +2344,7 @@ mod tests {
         let polled = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                projects: None,
             })
             .await
             .unwrap();
@@ -2095,6 +2361,7 @@ mod tests {
                 owner: None,
                 hostname: None,
                 capabilities: None,
+                projects: None,
             })
             .await
             .unwrap();
@@ -2120,6 +2387,7 @@ mod tests {
         let _ = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                projects: None,
             })
             .await
             .unwrap()

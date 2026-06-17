@@ -1,7 +1,7 @@
 use reqwest::blocking::Client;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -15,9 +15,9 @@ mod shell_protocol;
 
 use shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
-    ShellAgentPollResponse, ShellAgentResultRequest, ShellAgentResultResponse,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-    ShellClientRegisterResponse,
+    ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
+    ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
+    ShellClientRegisterRequest, ShellClientRegisterResponse,
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
@@ -25,6 +25,7 @@ const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
+const PROJECT_SCAN_CACHE_MS: u64 = 5000;
 
 #[derive(Debug, Clone, Deserialize)]
 struct AgentConfig {
@@ -37,6 +38,8 @@ struct AgentConfig {
     owner: Option<String>,
     #[serde(default)]
     hostname: Option<String>,
+    #[serde(default)]
+    projects_dir: Option<PathBuf>,
     #[serde(default = "default_poll_interval_ms")]
     poll_interval_ms: u64,
     #[serde(default)]
@@ -107,6 +110,28 @@ struct RunningJob {
     stop_requested: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+struct AgentProjectFile {
+    id: String,
+    path: String,
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    disabled: bool,
+    #[serde(default)]
+    hooks: HashMap<String, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct AgentProjectCache {
+    projects: Vec<ShellAgentProjectSummary>,
+    refreshed_at: Option<Instant>,
+}
+
 #[derive(Debug)]
 enum OutputChunk {
     Stdout(String),
@@ -123,6 +148,7 @@ fn usage() -> &'static str {
        client_id = \"xrh\"\n\
        display_name = \"XRH\"\n\
        owner = \"yyjeqhc\"\n\
+       projects_dir = \"/root/.config/private-drop-agent/projects.d\"\n\
        poll_interval_ms = 1000\n\
 \n\
        [policy]\n\
@@ -192,6 +218,205 @@ fn hostname() -> Option<String> {
         })
 }
 
+fn default_projects_dir() -> PathBuf {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config/private-drop-agent/projects.d")
+}
+
+fn projects_dir(cfg: &AgentConfig) -> PathBuf {
+    cfg.projects_dir
+        .clone()
+        .unwrap_or_else(default_projects_dir)
+}
+
+fn validate_project_id(id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("id cannot be empty".to_string());
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+    {
+        return Err("id may only contain ASCII letters, digits, '-', '_', and '.'".to_string());
+    }
+    Ok(())
+}
+
+fn trim_optional(value: Option<String>) -> Option<String> {
+    value
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+fn parse_agent_project_toml(content: &str) -> Result<AgentProjectFile, String> {
+    let mut project: AgentProjectFile =
+        toml::from_str(content).map_err(|e| format!("failed to parse project toml: {}", e))?;
+    project.id = project.id.trim().to_string();
+    validate_project_id(&project.id)?;
+    project.path = project.path.trim().to_string();
+    if project.path.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    project.name = trim_optional(project.name);
+    project.kind = trim_optional(project.kind);
+    project.description = trim_optional(project.description);
+    let mut hooks = HashMap::new();
+    for (name, commands) in project.hooks {
+        let name = name.trim().to_string();
+        if name.is_empty() {
+            return Err("hook name cannot be empty".to_string());
+        }
+        hooks.insert(name, commands);
+    }
+    project.hooks = hooks;
+    Ok(project)
+}
+
+fn run_git_capture(path: &str, args: &[&str]) -> Option<String> {
+    let output = std::process::Command::new("git")
+        .args(args)
+        .current_dir(path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+fn agent_project_summary(
+    project: &AgentProjectFile,
+    updated_at: i64,
+    include_git: bool,
+) -> ShellAgentProjectSummary {
+    let mut hooks = project.hooks.keys().cloned().collect::<Vec<_>>();
+    hooks.sort();
+    let (git_branch, git_head, git_dirty) = if include_git {
+        let branch = run_git_capture(&project.path, &["rev-parse", "--abbrev-ref", "HEAD"]);
+        let head = run_git_capture(&project.path, &["log", "-1", "--pretty=format:%h"]);
+        let dirty = run_git_capture(&project.path, &["status", "--short"])
+            .map(|status| !status.trim().is_empty());
+        (branch, head, dirty)
+    } else {
+        (None, None, None)
+    };
+    ShellAgentProjectSummary {
+        id: project.id.clone(),
+        name: project.name.clone().or_else(|| Some(project.id.clone())),
+        path: project.path.clone(),
+        kind: project.kind.clone(),
+        description: project.description.clone(),
+        hooks,
+        disabled: project.disabled,
+        git_branch,
+        git_head,
+        git_dirty,
+        updated_at,
+    }
+}
+
+fn warn_empty_hook_commands(source: &Path, project: &AgentProjectFile) {
+    for (hook, commands) in &project.hooks {
+        for (idx, command) in commands.iter().enumerate() {
+            if command.trim().is_empty() {
+                eprintln!(
+                    "private-drop-agent project warning: {} hook {} command {} is empty",
+                    source.display(),
+                    hook,
+                    idx
+                );
+            }
+        }
+    }
+}
+
+fn load_agent_project_summaries_from_dir(dir: &Path) -> Vec<ShellAgentProjectSummary> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
+        Err(e) => {
+            eprintln!(
+                "private-drop-agent project warning: failed to read {}: {}",
+                dir.display(),
+                e
+            );
+            return Vec::new();
+        }
+    };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("toml") {
+            files.push(path);
+        }
+    }
+    files.sort();
+
+    let updated_at = chrono::Utc::now().timestamp();
+    let mut seen = HashSet::new();
+    let mut projects = Vec::new();
+    for file in files {
+        let content = match std::fs::read_to_string(&file) {
+            Ok(content) => content,
+            Err(e) => {
+                eprintln!(
+                    "private-drop-agent project warning: failed to read {}: {}",
+                    file.display(),
+                    e
+                );
+                continue;
+            }
+        };
+        let project = match parse_agent_project_toml(&content) {
+            Ok(project) => project,
+            Err(e) => {
+                eprintln!(
+                    "private-drop-agent project warning: skipping {}: {}",
+                    file.display(),
+                    e
+                );
+                continue;
+            }
+        };
+        if project.disabled {
+            continue;
+        }
+        if !seen.insert(project.id.clone()) {
+            eprintln!(
+                "private-drop-agent project warning: duplicate project id {} in {}; skipping",
+                project.id,
+                file.display()
+            );
+            continue;
+        }
+        warn_empty_hook_commands(&file, &project);
+        projects.push(agent_project_summary(&project, updated_at, true));
+    }
+    projects.sort_by(|a, b| a.id.cmp(&b.id));
+    projects
+}
+
+fn load_agent_project_summaries(cfg: &AgentConfig) -> Vec<ShellAgentProjectSummary> {
+    load_agent_project_summaries_from_dir(&projects_dir(cfg))
+}
+
+impl AgentProjectCache {
+    fn get(&mut self, cfg: &AgentConfig) -> Vec<ShellAgentProjectSummary> {
+        if self.refreshed_at.is_some_and(|refreshed_at| {
+            refreshed_at.elapsed() < Duration::from_millis(PROJECT_SCAN_CACHE_MS)
+        }) {
+            return self.projects.clone();
+        }
+        self.projects = load_agent_project_summaries(cfg);
+        self.refreshed_at = Some(Instant::now());
+        self.projects.clone()
+    }
+}
+
 fn endpoint(cfg: &AgentConfig, path: &str) -> String {
     format!("{}{}", cfg.server_url.trim_end_matches('/'), path)
 }
@@ -217,7 +442,11 @@ where
     serde_json::from_str(&text).map_err(|e| format!("failed to parse response {}: {}", path, e))
 }
 
-fn register(client: &Client, cfg: &AgentConfig) -> Result<(), String> {
+fn register(
+    client: &Client,
+    cfg: &AgentConfig,
+    project_cache: &mut AgentProjectCache,
+) -> Result<(), String> {
     let mut capabilities = cfg.capabilities.clone().unwrap_or_default();
     capabilities.jobs = true;
     capabilities.file_read = true;
@@ -228,6 +457,7 @@ fn register(client: &Client, cfg: &AgentConfig) -> Result<(), String> {
         owner: cfg.owner.clone(),
         hostname: cfg.hostname.clone().or_else(hostname),
         capabilities: Some(capabilities),
+        projects: Some(project_cache.get(cfg)),
     };
     let response: ShellClientRegisterResponse =
         post_json(client, cfg, "/api/shell/agent/register", &body)?;
@@ -951,9 +1181,15 @@ impl JobManager {
     }
 }
 
-fn handle_one_poll(client: &Client, cfg: &AgentConfig, jobs: &JobManager) -> Result<bool, String> {
+fn handle_one_poll(
+    client: &Client,
+    cfg: &AgentConfig,
+    jobs: &JobManager,
+    project_cache: &mut AgentProjectCache,
+) -> Result<bool, String> {
     let poll = ShellAgentPollRequest {
         client_id: cfg.client_id.clone(),
+        projects: Some(project_cache.get(cfg)),
     };
     let response: ShellAgentPollResponse = post_json(client, cfg, "/api/shell/agent/poll", &poll)?;
     if !response.success {
@@ -1000,13 +1236,14 @@ fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
         .build()
         .map_err(|e| format!("failed to create http client: {}", e))?;
     let jobs = JobManager::default();
-    register(&client, &cfg)?;
+    let mut project_cache = AgentProjectCache::default();
+    register(&client, &cfg, &mut project_cache)?;
     eprintln!(
         "private-drop-agent registered client_id={} server={}",
         cfg.client_id, cfg.server_url
     );
     loop {
-        match handle_one_poll(&client, &cfg, &jobs) {
+        match handle_one_poll(&client, &cfg, &jobs, &mut project_cache) {
             Ok(ran_request) => {
                 if once {
                     return Ok(());
@@ -1021,7 +1258,7 @@ fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
                     return Err(e);
                 }
                 std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
-                let _ = register(&client, &cfg);
+                let _ = register(&client, &cfg, &mut project_cache);
             }
         }
     }
@@ -1045,5 +1282,54 @@ fn main() {
     if let Err(e) = run_agent(cfg, once) {
         eprintln!("private-drop-agent failed: {}", e);
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn agent_project_toml_parse_sorts_hook_names() {
+        let project = parse_agent_project_toml(
+            r#"
+id = "private-drop"
+path = "/root/git/private-drop"
+kind = "rust"
+
+[hooks]
+precommit = ["cargo test"]
+doctor = ["git status --short"]
+"#,
+        )
+        .unwrap();
+        let summary = agent_project_summary(&project, 123456, false);
+        assert_eq!(summary.id, "private-drop");
+        assert_eq!(summary.name.as_deref(), Some("private-drop"));
+        assert_eq!(summary.path, "/root/git/private-drop");
+        assert_eq!(summary.kind.as_deref(), Some("rust"));
+        assert_eq!(summary.hooks, vec!["doctor", "precommit"]);
+        assert_eq!(summary.updated_at, 123456);
+        assert_eq!(summary.git_branch, None);
+    }
+
+    #[test]
+    fn agent_project_toml_rejects_invalid_id() {
+        let err = parse_agent_project_toml(
+            r#"
+id = "bad id"
+path = "/tmp/private-drop"
+"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("ASCII letters"));
+    }
+
+    #[test]
+    fn missing_projects_dir_returns_empty_list() {
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("missing-projects.d");
+        let projects = load_agent_project_summaries_from_dir(&missing);
+        assert!(projects.is_empty());
     }
 }

@@ -1,0 +1,17 @@
+id = "private-drop"
+path = "/root/git/private-drop"
+name = "private-drop"
+kind = "rust"
+description = "Private Drop server and agent"
+disabled = false
+
+[hooks]
+doctor = [
+  "git status --short",
+  "git log --oneline -5"
+]
+
+precommit = [
+  ". /root/.cargo/env && cargo fmt --check",
+  ". /root/.cargo/env && cargo test"
+]

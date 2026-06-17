@@ -110,6 +110,7 @@ fn project_info(
             artifact: true,
             git: true,
             project_doctor: true,
+            project_workflow: true,
             checks: !configured_checks.is_empty() && project.checks_enabled(),
             jobs: true,
             command_requests: project.allow_command_requests,

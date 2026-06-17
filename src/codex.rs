@@ -21,6 +21,7 @@ mod ssh;
 mod trusted;
 mod types;
 mod url_security;
+mod workflow;
 pub use artifact::codex_artifact;
 pub use capabilities::codex_projects;
 #[cfg(test)]
@@ -52,6 +53,7 @@ use std::time::Instant;
 use types::*;
 #[cfg(test)]
 use url_security::*;
+pub use workflow::codex_project_workflow;
 // =============================================================================
 // Request / Response types
 // =============================================================================

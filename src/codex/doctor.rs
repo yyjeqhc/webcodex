@@ -48,7 +48,7 @@ struct AgentInspection {
     security_error: Option<String>,
 }
 
-fn executor_name(proj: &ProjectConfig) -> &'static str {
+pub(super) fn executor_name(proj: &ProjectConfig) -> &'static str {
     if proj.is_agent() {
         "agent"
     } else if proj.is_ssh() {
@@ -470,7 +470,7 @@ async fn collect_recent_jobs(
     jobs
 }
 
-async fn run_project_doctor_for_project(
+pub(super) async fn run_project_doctor_for_project(
     depot: &Depot,
     projects: &ProjectsConfig,
     project: &str,

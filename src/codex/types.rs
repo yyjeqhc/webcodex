@@ -161,6 +161,84 @@ pub struct ProjectHookResponse {
     pub error: Option<String>,
 }
 
+fn default_project_workflow_mode() -> String {
+    "snapshot".to_string()
+}
+
+fn default_project_workflow_run_doctor() -> bool {
+    true
+}
+
+fn default_project_workflow_doctor_hook() -> String {
+    "doctor".to_string()
+}
+
+fn default_project_workflow_recent_jobs() -> usize {
+    10
+}
+
+fn default_project_workflow_timeout_secs() -> u64 {
+    120
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct ProjectWorkflowRequest {
+    pub project: String,
+    #[serde(default = "default_project_workflow_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub hook: Option<String>,
+    #[serde(default = "default_project_workflow_run_doctor")]
+    pub run_doctor: bool,
+    #[serde(default = "default_project_workflow_doctor_hook")]
+    pub doctor_hook: String,
+    #[serde(default)]
+    pub run_doctor_hook: bool,
+    #[serde(default = "default_project_workflow_recent_jobs")]
+    pub recent_jobs: usize,
+    #[serde(default = "default_project_workflow_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+#[derive(Debug, Serialize, Clone, Default)]
+pub struct ProjectWorkflowGitSnapshot {
+    pub available: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub head_subject: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status_short: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dirty: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub diff_stat: Option<String>,
+    pub changed_files: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProjectWorkflowResponse {
+    pub success: bool,
+    pub project: String,
+    pub mode: String,
+    pub executor: String,
+    pub root: String,
+    pub ssh_enabled: bool,
+    pub git_before: ProjectWorkflowGitSnapshot,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub doctor: Option<ProjectDoctorResponse>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hook_result: Option<ProjectHookResponse>,
+    pub git_after: ProjectWorkflowGitSnapshot,
+    pub warnings: Vec<String>,
+    pub recommended_next_action: String,
+    pub error: Option<String>,
+}
+
 fn default_project_doctor_run_hook() -> bool {
     true
 }
@@ -981,6 +1059,7 @@ pub struct ProjectCapabilities {
     pub artifact: bool,
     pub git: bool,
     pub project_doctor: bool,
+    pub project_workflow: bool,
     pub checks: bool,
     pub jobs: bool,
     pub command_requests: bool,

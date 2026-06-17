@@ -2509,6 +2509,9 @@
           "project_doctor": {
             "type": "boolean"
           },
+          "project_workflow": {
+            "type": "boolean"
+          },
           "checks": {
             "type": "boolean"
           },
@@ -2537,6 +2540,7 @@
           "artifact",
           "git",
           "project_doctor",
+          "project_workflow",
           "checks",
           "jobs",
           "command_requests",
@@ -3215,6 +3219,183 @@
           "hooks",
           "recent_jobs",
           "warnings",
+          "error"
+        ]
+      },
+      "ProjectWorkflowRequest": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "snapshot",
+              "doctor",
+              "hook",
+              "precommit"
+            ],
+            "default": "snapshot",
+            "description": "Workflow mode. Defaults to snapshot."
+          },
+          "hook": {
+            "type": "string",
+            "nullable": true,
+            "description": "Hook name for hook/precommit mode. hook defaults to doctor; precommit defaults to precommit."
+          },
+          "run_doctor": {
+            "type": "boolean",
+            "default": true,
+            "description": "When true, run project doctor before any workflow hook."
+          },
+          "doctor_hook": {
+            "type": "string",
+            "default": "doctor",
+            "description": "Hook name passed to project doctor."
+          },
+          "run_doctor_hook": {
+            "type": "boolean",
+            "default": false,
+            "description": "When mode=doctor, allow project doctor to run its configured hook."
+          },
+          "recent_jobs": {
+            "type": "integer",
+            "default": 10,
+            "minimum": 0,
+            "maximum": 50,
+            "description": "Number of recent jobs for doctor; clamped to 0..50."
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 120,
+            "minimum": 1,
+            "maximum": 86400,
+            "description": "Per-command timeout in seconds; defaults to 120 and clamps to 24h."
+          }
+        },
+        "required": [
+          "project"
+        ]
+      },
+      "ProjectWorkflowGitSnapshot": {
+        "type": "object",
+        "properties": {
+          "available": {
+            "type": "boolean"
+          },
+          "branch": {
+            "type": "string",
+            "nullable": true
+          },
+          "head": {
+            "type": "string",
+            "nullable": true
+          },
+          "head_subject": {
+            "type": "string",
+            "nullable": true
+          },
+          "status_short": {
+            "type": "string",
+            "nullable": true
+          },
+          "dirty": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "diff_stat": {
+            "type": "string",
+            "nullable": true
+          },
+          "changed_files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "available",
+          "changed_files"
+        ]
+      },
+      "ProjectWorkflowResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "project": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "snapshot",
+              "doctor",
+              "hook",
+              "precommit"
+            ]
+          },
+          "executor": {
+            "type": "string",
+            "enum": [
+              "agent",
+              "ssh",
+              "local"
+            ]
+          },
+          "root": {
+            "type": "string"
+          },
+          "ssh_enabled": {
+            "type": "boolean"
+          },
+          "git_before": {
+            "$ref": "#/components/schemas/ProjectWorkflowGitSnapshot"
+          },
+          "doctor": {
+            "$ref": "#/components/schemas/ProjectDoctorResponse",
+            "nullable": true
+          },
+          "hook_result": {
+            "$ref": "#/components/schemas/ProjectHookResponse",
+            "nullable": true
+          },
+          "git_after": {
+            "$ref": "#/components/schemas/ProjectWorkflowGitSnapshot"
+          },
+          "warnings": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "recommended_next_action": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "project",
+          "mode",
+          "executor",
+          "root",
+          "ssh_enabled",
+          "git_before",
+          "git_after",
+          "warnings",
+          "recommended_next_action",
           "error"
         ]
       }
@@ -4507,6 +4688,41 @@
           },
           "400": {
             "description": "Bad request or unknown project"
+          }
+        }
+      }
+    },
+    "/api/codex/project_workflow": {
+      "post": {
+        "operationId": "runProjectWorkflow",
+        "summary": "Run project workflow",
+        "description": "Collect before/after git evidence, optionally run project doctor and hooks, and recommend next action. It never stages, commits, pushes, deploys, or deletes files. Agent projects run on the agent; SSH requires DROP_ENABLE_SSH=true.",
+        "tags": [
+          "codex"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectWorkflowRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Workflow result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectWorkflowResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request, invalid mode, unknown project, or missing hook"
           }
         }
       }

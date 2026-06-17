@@ -450,6 +450,23 @@ pub async fn codex_artifact(req: &mut Request, depot: &mut Depot, res: &mut Resp
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ArtifactResponse {
+            success: false,
+            changed_files: Vec::new(),
+            saved_path: None,
+            relative_path: None,
+            file_size: None,
+            mime_type: artifact_body.mime_type.clone(),
+            markdown_snippet: plan.markdown_snippet.clone(),
+            selected_source: Some(plan.selected_source.clone()),
+            diff: String::new(),
+            warnings: Vec::new(),
+            error: Some(e),
+        }));
+        return;
+    }
     if !proj.allow_patch() {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ArtifactResponse {

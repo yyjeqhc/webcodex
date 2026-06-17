@@ -857,6 +857,11 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     return;
                 }
             };
+            if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+                res.status_code(StatusCode::FORBIDDEN);
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
             if !proj.allow_raw_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
                 render_command_op!(Json(op_response(
@@ -889,7 +894,12 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 )));
                 return;
             }
-            let resp = approve_command_request_inner(&projects, &db, request_id);
+            let resp = approve_command_request_inner(
+                &projects,
+                &db,
+                request_id,
+                super::is_ssh_enabled(depot),
+            );
             let records = resp.record.clone().into_iter().collect::<Vec<_>>();
             render_command_op!(Json(CommandRequestOpResponse {
                 success: resp.success,
@@ -956,6 +966,11 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     return;
                 }
             };
+            if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+                res.status_code(StatusCode::FORBIDDEN);
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
             if !proj.allow_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
                 render_command_op!(Json(op_response(
@@ -996,7 +1011,12 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 )));
                 return;
             }
-            let resp = approve_command_request_inner(&projects, &db, request_id);
+            let resp = approve_command_request_inner(
+                &projects,
+                &db,
+                request_id,
+                super::is_ssh_enabled(depot),
+            );
             let records = resp.record.clone().into_iter().collect::<Vec<_>>();
             render_command_op!(Json(CommandRequestOpResponse {
                 success: resp.success,
@@ -1067,6 +1087,11 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     return;
                 }
             };
+            if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+                res.status_code(StatusCode::FORBIDDEN);
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
             if !proj.allow_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
                 render_command_op!(Json(op_response(
@@ -1144,6 +1169,11 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     return;
                 }
             };
+            if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+                res.status_code(StatusCode::FORBIDDEN);
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
             if !proj.allow_raw_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
                 render_command_op!(Json(op_response(
@@ -1204,6 +1234,11 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     return;
                 }
             };
+            if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+                res.status_code(StatusCode::FORBIDDEN);
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
             if !proj.allow_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
                 render_command_op!(Json(op_response(
@@ -1263,7 +1298,12 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                 return;
             };
             let resp = if body.op == "approve" {
-                approve_command_request_inner(&projects, &db, request_id)
+                approve_command_request_inner(
+                    &projects,
+                    &db,
+                    request_id,
+                    super::is_ssh_enabled(depot),
+                )
             } else {
                 reject_command_request_inner(&db, request_id, body.reason)
             };
@@ -1300,7 +1340,12 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             let mut first_error = None;
             for request_id in body.request_ids {
                 let resp = if body.op == "approve_batch" {
-                    approve_command_request_inner(&projects, &db, request_id)
+                    approve_command_request_inner(
+                        &projects,
+                        &db,
+                        request_id,
+                        super::is_ssh_enabled(depot),
+                    )
                 } else {
                     reject_command_request_inner(&db, request_id, body.reason.clone())
                 };
@@ -1420,6 +1465,11 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
                     return;
                 }
             };
+            if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+                res.status_code(StatusCode::FORBIDDEN);
+                render_command_op!(Json(op_response(&body.op, false, Vec::new(), Some(e))));
+                return;
+            }
             if !proj.allow_raw_command_requests {
                 res.status_code(StatusCode::FORBIDDEN);
                 render_command_op!(Json(op_response(
@@ -1629,6 +1679,59 @@ mod tests {
         (tmp, db)
     }
 
+    #[test]
+    fn approve_command_request_rejects_ssh_when_disabled() {
+        let (_tmp, db) = test_db();
+        let record = build_command_audit_record(
+            "ssh-project".to_string(),
+            "build".to_string(),
+            "printf should-not-run".to_string(),
+            Some("test".to_string()),
+            chrono::Utc::now().timestamp(),
+        );
+        let request_id = record.id.clone();
+        db.insert_command_request(&record).unwrap();
+
+        let mut projects = std::collections::HashMap::new();
+        projects.insert(
+            "ssh-project".to_string(),
+            ProjectConfig {
+                path: "/tmp/private-drop-ssh".to_string(),
+                executor: crate::projects::Executor::Ssh,
+                host: Some("example.invalid".to_string()),
+                ssh_hosts: Vec::new(),
+                user: None,
+                client_id: None,
+                allow_patch: true,
+                allow_command_requests: true,
+                allow_raw_command_requests: true,
+                default_apply_patch_backend: None,
+                allowed_checks: Vec::new(),
+                checks: None,
+                commands: std::collections::HashMap::new(),
+                hooks: std::collections::HashMap::new(),
+            },
+        );
+        let projects = crate::projects::ProjectsConfig {
+            ssh: None,
+            projects,
+        };
+
+        let response = approve_command_request_inner(&projects, &db, request_id, false);
+        assert!(!response.success);
+        assert_eq!(
+            response.error.as_deref(),
+            Some(super::super::SSH_DISABLED_MESSAGE)
+        );
+        assert_eq!(
+            response
+                .record
+                .as_ref()
+                .map(|record| record.status.as_str()),
+            Some("failed")
+        );
+    }
+
     #[tokio::test]
     async fn run_project_check_uses_agent_executor_for_agent_projects() {
         let registry = Arc::new(crate::ShellClientRegistry::default());
@@ -1665,6 +1768,7 @@ mod tests {
             allowed_checks: Vec::new(),
             checks: None,
             commands: std::collections::HashMap::new(),
+            hooks: std::collections::HashMap::new(),
         };
 
         let agent_registry = registry.clone();
@@ -1997,6 +2101,16 @@ pub async fn codex_command_request_raw(req: &mut Request, depot: &mut Depot, res
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some(e),
+        }));
+        return;
+    }
     if !proj.allow_raw_command_requests {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(CommandRequestResponse {
@@ -2133,6 +2247,15 @@ pub async fn codex_command_request_batch(req: &mut Request, depot: &mut Depot, r
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(CommandRequestBatchResponse {
+            success: false,
+            records: Vec::new(),
+            error: Some(e),
+        }));
+        return;
+    }
     if !proj.allow_command_requests {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(CommandRequestBatchResponse {
@@ -2383,6 +2506,20 @@ pub async fn codex_command_approve(req: &mut Request, depot: &mut Depot, res: &m
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        record.status = "failed".to_string();
+        record.executed_at = Some(chrono::Utc::now().timestamp());
+        record.error = Some(e.clone());
+        let _ = db.update_command_request_result(&record);
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: Some(record.id.clone()),
+            record: Some(record),
+            error: Some(e),
+        }));
+        return;
+    }
     if !proj.allow_command_requests {
         let error = "Command requests are not enabled for this project".to_string();
         record.status = "failed".to_string();
@@ -2529,6 +2666,16 @@ pub async fn codex_command_request(req: &mut Request, depot: &mut Depot, res: &m
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(CommandRequestResponse {
+            success: false,
+            request_id: None,
+            record: None,
+            error: Some(e),
+        }));
+        return;
+    }
     if !proj.allow_command_requests {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(CommandRequestResponse {
@@ -2667,6 +2814,11 @@ pub async fn codex_command(req: &mut Request, depot: &mut Depot, res: &mut Respo
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        render_command!(Json(command_error(&body.project, &body.command, e)));
+        return;
+    }
     let cmd = match get_project_command(proj, &body.command) {
         Ok(cmd) => cmd,
         Err(e) => {
@@ -2771,6 +2923,20 @@ pub async fn codex_check(req: &mut Request, depot: &mut Depot, res: &mut Respons
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(CheckResponse {
+            success: false,
+            suite: Some(body.suite),
+            exit_code: None,
+            duration_ms: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            truncated: false,
+            error: Some(e),
+        }));
+        return;
+    }
     if !proj.is_check_allowed(&body.suite) {
         res.status_code(StatusCode::FORBIDDEN);
         let suite = body.suite.clone();

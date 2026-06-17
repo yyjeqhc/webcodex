@@ -182,6 +182,11 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(git_error(&body.project, &body.operation, e)));
+        return;
+    }
     if matches!(
         body.operation,
         GitOperation::Add

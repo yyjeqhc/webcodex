@@ -975,7 +975,7 @@
       },
       "WriteFileEdit": {
         "type": "object",
-        "description": "Write content to a file. Not recommended for small changes — prefer replace_text, replace_range, or create_file instead. Set allow_overwrite=true to overwrite existing files.",
+        "description": "Write content to a file. Not recommended for small changes \u2014 prefer replace_text, replace_range, or create_file instead. Set allow_overwrite=true to overwrite existing files.",
         "properties": {
           "type": {
             "type": "string",
@@ -2523,6 +2523,9 @@
           },
           "reports": {
             "type": "boolean"
+          },
+          "configured_hooks": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -2535,6 +2538,7 @@
           "command_requests",
           "raw_command_requests",
           "configured_commands",
+          "configured_hooks",
           "reports"
         ]
       },
@@ -2609,6 +2613,12 @@
             "type": "boolean",
             "nullable": true,
             "description": "True when the configured agent client is currently connected."
+          },
+          "hooks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           }
         },
         "required": [
@@ -2619,6 +2629,7 @@
           "allowed_checks",
           "configured_checks",
           "commands",
+          "hooks",
           "default_apply_patch_backend",
           "capabilities"
         ]
@@ -2839,6 +2850,92 @@
         },
         "required": [
           "success"
+        ]
+      },
+      "ProjectHookRequest": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Project name from whitelist"
+          },
+          "hook": {
+            "type": "string",
+            "description": "Hook name configured under [projects.<name>.hooks]"
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "nullable": true,
+            "default": 120,
+            "minimum": 1,
+            "maximum": 86400,
+            "description": "Per-command timeout in seconds; defaults to 120 and clamps to 24h."
+          }
+        },
+        "required": [
+          "project",
+          "hook"
+        ]
+      },
+      "ProjectHookStep": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer"
+          },
+          "stdout_tail": {
+            "type": "string"
+          },
+          "stderr_tail": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "command",
+          "exit_code",
+          "stdout_tail",
+          "stderr_tail",
+          "duration_ms"
+        ]
+      },
+      "ProjectHookResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "project": {
+            "type": "string"
+          },
+          "hook": {
+            "type": "string"
+          },
+          "steps": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ProjectHookStep"
+            }
+          },
+          "git_status_short": {
+            "type": "string"
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "project",
+          "hook",
+          "steps",
+          "git_status_short"
         ]
       }
     }
@@ -4057,6 +4154,44 @@
           },
           "400": {
             "description": "Bad request"
+          }
+        }
+      }
+    },
+    "/api/codex/project_hook": {
+      "post": {
+        "operationId": "runProjectHook",
+        "summary": "Run a project-defined hook",
+        "description": "Run commands configured under [projects.<name>.hooks] in order. Agent projects run on the agent; SSH projects require DROP_ENABLE_SSH=true.",
+        "tags": [
+          "codex"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ProjectHookRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Hook result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProjectHookResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad request or missing hook"
+          },
+          "403": {
+            "description": "SSH executor disabled"
           }
         }
       }

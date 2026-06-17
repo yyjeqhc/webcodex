@@ -54,6 +54,8 @@ fn project_info(
 ) -> ProjectCapabilityInfo {
     let mut commands = project.commands.keys().cloned().collect::<Vec<_>>();
     commands.sort();
+    let mut hooks = project.hooks.keys().cloned().collect::<Vec<_>>();
+    hooks.sort();
     let allowed_checks = project.effective_allowed_checks();
     let mut configured_checks = project.configured_check_names();
     configured_checks.sort();
@@ -95,6 +97,7 @@ fn project_info(
         allowed_checks,
         configured_checks: configured_checks.clone(),
         commands: commands.clone(),
+        hooks: hooks.clone(),
         default_apply_patch_backend: project
             .default_apply_patch_backend
             .clone()
@@ -109,6 +112,7 @@ fn project_info(
             command_requests: project.allow_command_requests,
             raw_command_requests: project.allow_raw_command_requests,
             configured_commands: !commands.is_empty(),
+            configured_hooks: !hooks.is_empty(),
             reports: true,
         },
     }

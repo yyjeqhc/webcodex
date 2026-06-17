@@ -8,6 +8,7 @@ mod command_workflow;
 mod context;
 mod edit;
 mod git;
+mod hooks;
 mod jobs;
 mod patch;
 mod remote_edit;
@@ -35,6 +36,7 @@ use edit::*;
 pub use git::codex_git;
 #[cfg(test)]
 use git::*;
+pub use hooks::codex_project_hook;
 pub use jobs::codex_job;
 pub use patch::codex_apply_patch;
 use remote_edit::*;
@@ -58,6 +60,7 @@ use url_security::*;
 
 pub(super) const MAX_OUTPUT_LEN: usize = 50_000;
 pub(super) const CHECK_TIMEOUT_SECS: u64 = 300;
+pub(super) const SSH_DISABLED_MESSAGE: &str = "SSH executor is disabled; use agent executor";
 
 // =============================================================================
 // Helpers
@@ -82,6 +85,25 @@ pub(super) fn get_projects_config_path(depot: &Depot) -> Option<String> {
         .obtain::<Arc<ProjectsState>>()
         .ok()
         .map(|state| state.config_path.clone())
+}
+
+pub(super) fn is_ssh_enabled(depot: &Depot) -> bool {
+    depot
+        .obtain::<Arc<crate::Config>>()
+        .ok()
+        .map(|config| config.is_ssh_enabled())
+        .unwrap_or(false)
+}
+
+pub(super) fn ssh_disabled_error() -> String {
+    SSH_DISABLED_MESSAGE.to_string()
+}
+
+pub(super) fn ensure_ssh_enabled(depot: &Depot, proj: &ProjectConfig) -> Result<(), String> {
+    if proj.is_ssh() && !is_ssh_enabled(depot) {
+        return Err(ssh_disabled_error());
+    }
+    Ok(())
 }
 
 pub(super) fn truncate_string(s: String, max_len: usize) -> (String, bool) {
@@ -971,6 +993,7 @@ mod tests {
             allowed_checks: vec![],
             checks: None,
             commands,
+            hooks: HashMap::new(),
         };
         assert_eq!(get_project_command(&proj, "smoke").unwrap(), "echo ok");
         assert!(get_project_command(&proj, "missing").is_err());
@@ -1227,6 +1250,7 @@ mod tests {
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
+            hooks: HashMap::new(),
         };
         assert_eq!(
             proj.ssh_targets(),
@@ -1251,6 +1275,7 @@ mod tests {
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
+            hooks: HashMap::new(),
         };
         assert_eq!(
             proj_no_user.ssh_targets(),
@@ -1274,6 +1299,7 @@ mod tests {
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
+            hooks: HashMap::new(),
         };
         assert!(proj.ssh_targets().is_empty());
     }
@@ -1294,6 +1320,7 @@ mod tests {
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
+            hooks: HashMap::new(),
         };
         assert!(!proj.is_ssh());
     }
@@ -2080,6 +2107,7 @@ mod trusted_command_tests {
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
+            hooks: HashMap::new(),
         }
     }
 
@@ -2188,6 +2216,7 @@ mod trusted_command_tests {
             allowed_checks: vec![],
             checks: None,
             commands: HashMap::new(),
+            hooks: HashMap::new(),
         };
         // Create .codex/jobs dir so the job can be created
         std::fs::create_dir_all(tmp.path().join(".codex/jobs")).unwrap();

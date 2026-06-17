@@ -51,6 +51,8 @@ pub struct ProjectConfig {
     pub checks: Option<ProjectChecks>,
     #[serde(default)]
     pub commands: HashMap<String, String>,
+    #[serde(default)]
+    pub hooks: HashMap<String, Vec<String>>,
 }
 
 #[derive(Debug, Deserialize, Clone, Default)]
@@ -324,5 +326,45 @@ mod tests {
         assert_eq!(project.agent_client_id().unwrap(), "oe");
         assert!(!project.is_ssh());
         assert!(project.is_agent());
+    }
+
+    #[test]
+    fn project_hooks_default_to_empty() {
+        let cfg: ProjectsConfig = toml::from_str(
+            r#"
+            [projects.demo]
+            path = "/tmp/demo"
+            "#,
+        )
+        .unwrap();
+        let project = cfg.projects.get("demo").unwrap();
+        assert!(project.hooks.is_empty());
+    }
+
+    #[test]
+    fn project_hooks_parse_command_vectors() {
+        let cfg: ProjectsConfig = toml::from_str(
+            r#"
+            [projects.demo]
+            path = "/tmp/demo"
+
+            [projects.demo.hooks]
+            doctor = ["git status --short", "git log --oneline -5"]
+            precommit = ["cargo fmt --check", "cargo test"]
+            "#,
+        )
+        .unwrap();
+        let project = cfg.projects.get("demo").unwrap();
+        assert_eq!(
+            project.hooks.get("doctor").unwrap(),
+            &vec![
+                "git status --short".to_string(),
+                "git log --oneline -5".to_string()
+            ]
+        );
+        assert_eq!(
+            project.hooks.get("precommit").unwrap(),
+            &vec!["cargo fmt --check".to_string(), "cargo test".to_string()]
+        );
     }
 }

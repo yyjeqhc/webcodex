@@ -227,6 +227,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("edit").post(codex::codex_edit))
             .push(Router::with_path("artifact").post(codex::codex_artifact))
             .push(Router::with_path("git").post(codex::codex_git))
+            .push(Router::with_path("project_hook").post(codex::codex_project_hook))
             .push(Router::with_path("command").post(codex::codex_command))
             .push(Router::with_path("command_request").post(codex::codex_command_request))
             .push(Router::with_path("command_request_op").post(codex::codex_command_request_op))
@@ -318,12 +319,14 @@ mod tests {
         std::env::remove_var("DROP_ADDR");
         std::env::remove_var("DROP_DATA");
         std::env::remove_var("DROP_TOKEN");
+        std::env::remove_var("DROP_ENABLE_SSH");
 
         let config = Config::from_env();
         assert_eq!(config.addr, "0.0.0.0:8080");
         assert_eq!(config.data_dir, PathBuf::from("./data"));
         assert_eq!(config.token, None);
         assert!(!config.is_auth_enabled());
+        assert!(!config.is_ssh_enabled());
         assert_eq!(config.max_text_size, 2 * 1024 * 1024);
         assert_eq!(config.max_file_size, 100 * 1024 * 1024);
     }
@@ -334,6 +337,7 @@ mod tests {
             addr: "0.0.0.0:8080".to_string(),
             data_dir: PathBuf::from("./data"),
             token: Some("secret123".to_string()),
+            enable_ssh: false,
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
         };
@@ -349,6 +353,7 @@ mod tests {
             addr: "0.0.0.0:8080".to_string(),
             data_dir: PathBuf::from("./data"),
             token: None,
+            enable_ssh: false,
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
         };

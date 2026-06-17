@@ -134,6 +134,33 @@ pub struct CommandRequest {
     pub command: String,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct ProjectHookRequest {
+    pub project: String,
+    pub hook: String,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProjectHookStep {
+    pub command: String,
+    pub exit_code: i32,
+    pub stdout_tail: String,
+    pub stderr_tail: String,
+    pub duration_ms: u64,
+}
+
+#[derive(Debug, Serialize, Clone)]
+pub struct ProjectHookResponse {
+    pub success: bool,
+    pub project: String,
+    pub hook: String,
+    pub steps: Vec<ProjectHookStep>,
+    pub git_status_short: String,
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct CommandRequestCreate {
     pub project: String,
@@ -845,6 +872,7 @@ pub struct ProjectCapabilities {
     pub command_requests: bool,
     pub raw_command_requests: bool,
     pub configured_commands: bool,
+    pub configured_hooks: bool,
     pub reports: bool,
 }
 
@@ -865,6 +893,7 @@ pub struct ProjectCapabilityInfo {
     pub allowed_checks: Vec<String>,
     pub configured_checks: Vec<String>,
     pub commands: Vec<String>,
+    pub hooks: Vec<String>,
     pub default_apply_patch_backend: String,
     pub capabilities: ProjectCapabilities,
 }

@@ -1973,6 +1973,19 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ContextResponse {
+            success: false,
+            project: body.project.clone(),
+            mode: format!("{:?}", body.mode),
+            content: None,
+            items: None,
+            truncated: false,
+            error: Some(e),
+        }));
+        return;
+    }
 
     // For SSH executor, dispatch to SSH helpers
     if proj.is_ssh() {
@@ -2642,6 +2655,29 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ContextBatchResponse {
+            success: false,
+            project: body.project,
+            results: Vec::new(),
+            duration_ms: 0,
+            ssh_calls: 0,
+            error: Some(e),
+            preflight_rejected: None,
+            estimated_chars: None,
+            max_allowed_chars: None,
+            max_allowed_items: None,
+            project_is_ssh: Some(true),
+            suggestion: None,
+            warnings: Vec::new(),
+            result_metadata: Vec::new(),
+            cache_hits: None,
+            recommended_next_action: Some("Use an agent executor for this project.".to_string()),
+            action_budget_hint: Some(context_batch_action_budget_hint(0)),
+        }));
+        return;
+    }
 
     // Preflight check: reject obviously oversized requests before execution
     let project_is_ssh = proj.is_ssh();

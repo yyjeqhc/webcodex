@@ -1,7 +1,7 @@
 use super::command_request::{validate_command_request_reason, COMMAND_REQUEST_TTL_SECS};
 use super::shell::sanitize_tail;
 use super::types::CommandRequestResponse;
-use super::{run_project_cmd, CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN};
+use super::{run_project_cmd, ssh_disabled_error, CHECK_TIMEOUT_SECS, MAX_OUTPUT_LEN};
 use crate::projects::ProjectsConfig;
 use crate::{CodexGoalRecord, Database};
 
@@ -32,6 +32,7 @@ pub(super) fn approve_command_request_inner(
     projects: &ProjectsConfig,
     db: &Database,
     request_id: String,
+    ssh_enabled: bool,
 ) -> CommandRequestResponse {
     let approved_at = chrono::Utc::now().timestamp();
     let min_created_at = approved_at - COMMAND_REQUEST_TTL_SECS;
@@ -104,6 +105,19 @@ pub(super) fn approve_command_request_inner(
     };
     if !proj.allow_command_requests {
         let error = "Command requests are not enabled for this project".to_string();
+        record.status = "failed".to_string();
+        record.executed_at = Some(chrono::Utc::now().timestamp());
+        record.error = Some(error.clone());
+        let _ = db.update_command_request_result(&record);
+        return CommandRequestResponse {
+            success: false,
+            request_id: Some(record.id.clone()),
+            record: Some(record),
+            error: Some(error),
+        };
+    }
+    if proj.is_ssh() && !ssh_enabled {
+        let error = ssh_disabled_error();
         record.status = "failed".to_string();
         record.executed_at = Some(chrono::Utc::now().timestamp());
         record.error = Some(error.clone());

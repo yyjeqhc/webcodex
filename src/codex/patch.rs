@@ -462,6 +462,21 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
             return;
         }
     };
+    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(patch_response(
+            false,
+            body.backend.as_deref().unwrap_or(BUILTIN_PATCH_BACKEND),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            Some(e),
+        )));
+        return;
+    }
     let backend = body
         .backend
         .as_deref()

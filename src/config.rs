@@ -5,6 +5,7 @@ pub struct Config {
     pub addr: String,
     pub data_dir: PathBuf,
     pub token: Option<String>,
+    pub enable_ssh: bool,
     pub max_text_size: usize,
     pub max_file_size: usize,
 }
@@ -96,6 +97,7 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("./data")),
             token: std::env::var("DROP_TOKEN").ok(),
+            enable_ssh: env_flag("DROP_ENABLE_SSH").unwrap_or(false),
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
         }
@@ -113,7 +115,20 @@ impl Config {
         self.token.is_some()
     }
 
+    pub fn is_ssh_enabled(&self) -> bool {
+        self.enable_ssh
+    }
+
     pub fn validate_token(&self, token: &str) -> bool {
         self.token.as_ref().map(|t| t == token).unwrap_or(false)
+    }
+}
+
+fn env_flag(key: &str) -> Option<bool> {
+    let value = std::env::var(key).ok()?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
     }
 }

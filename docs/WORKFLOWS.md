@@ -17,6 +17,17 @@ There are two workflow families:
    agent registry under `~/.config/private-drop-agent/projects.d/`, and the
    endpoint is `/api/shell/projects/workflow`.
 
+For longer-running agent work, prefer async jobs:
+
+1. `createShellClientShellJob` for a shell command.
+2. `createShellClientProjectWorkflowJob` for a project workflow.
+3. Poll `getShellClientJobStatus` or `getShellClientJobLog`.
+4. Use `stopShellClientJob` for best-effort cancellation.
+
+Async jobs are the right path when a GPT Action request should return
+immediately instead of waiting on the agent. The job id is the only isolation
+token; there is no session, cookie, or window affinity.
+
 New GPT Action windows should prefer agent-native workflow after listing
 clients and projects. The server still owns auth, owner checks, audit, request
 forwarding, and result cache updates; the agent reads local project config and
@@ -138,6 +149,9 @@ Agent-native workflow hook commands run with cwd set to the agent project path.
 `timeout_secs` is applied per hook command. The first failing hook command stops
 the remaining steps, and git snapshots are still returned before and after.
 
+Multiple async jobs may touch the same project directory at once. Private Drop
+does not serialize them with a project lock in this release.
+
 No git repo:
 Git evidence reports `available=false` or an `error` field. The workflow still
 returns a structured response instead of panicking.
@@ -151,3 +165,4 @@ Workflow does not:
 - run `git push`
 - deploy
 - delete files
+- call any LLM API

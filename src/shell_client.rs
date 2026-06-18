@@ -1,15 +1,20 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::shell_protocol::{
-    ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
-    ShellAgentPollResponse, ShellAgentProjectCreatePayload, ShellAgentProjectCreateResult,
-    ShellAgentProjectGitSnapshot, ShellAgentProjectSummary, ShellAgentProjectWorkflowPayload,
-    ShellAgentProjectWorkflowResult, ShellAgentResultRequest, ShellAgentResultResponse,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientProjectCreateRequest,
-    ShellClientProjectCreateResponse, ShellClientProjectWorkflowRequest,
+    ShellAgentJobResult, ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
+    ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentProjectCreatePayload,
+    ShellAgentProjectCreateResult, ShellAgentProjectGitSnapshot, ShellAgentProjectSummary,
+    ShellAgentProjectWorkflowPayload, ShellAgentProjectWorkflowResult, ShellAgentResultRequest,
+    ShellAgentResultResponse, ShellAgentShellJobResult, ShellAgentShellRequest,
+    ShellClientCapabilities, ShellClientJobCreateResponse, ShellClientJobLogRequest,
+    ShellClientJobLogResponse, ShellClientJobStatusRequest, ShellClientJobStatusResponse,
+    ShellClientJobStopRequest, ShellClientJobStopResponse, ShellClientJobsListRequest,
+    ShellClientJobsListResponse, ShellClientProjectCreateRequest, ShellClientProjectCreateResponse,
+    ShellClientProjectWorkflowJobRequest, ShellClientProjectWorkflowRequest,
     ShellClientProjectWorkflowResponse, ShellClientProjectsRequest, ShellClientProjectsResponse,
-    ShellClientRegisterRequest, ShellClientRegisterResponse, ShellClientView, ShellClientsResponse,
-    ShellFileOpRequest, ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo,
-    ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
+    ShellClientRegisterRequest, ShellClientRegisterResponse, ShellClientShellJobBatchRequest,
+    ShellClientShellJobRequest, ShellClientView, ShellClientsResponse, ShellFileOpRequest,
+    ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo, ShellJobOpRequest,
+    ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
 };
 use salvo::prelude::*;
 use serde_json::json;
@@ -55,6 +60,8 @@ struct ShellJobRecord {
     job_id: String,
     request_id: Option<String>,
     client_id: String,
+    kind: String,
+    project_id: Option<String>,
     cwd: Option<String>,
     command_preview: String,
     status: String,
@@ -66,6 +73,7 @@ struct ShellJobRecord {
     stdout: Option<String>,
     stderr: Option<String>,
     error: Option<String>,
+    project_workflow_result: Option<ShellAgentProjectWorkflowResult>,
     codex: Option<ShellJobCodexMetadata>,
 }
 
@@ -390,6 +398,83 @@ fn validate_project_workflow_request(
     Ok(())
 }
 
+fn validate_project_workflow_job_request(
+    body: &ShellClientProjectWorkflowJobRequest,
+) -> Result<(), String> {
+    validate_id(&body.client_id, "client_id")?;
+    validate_project_id_for_agent(&body.project_id)?;
+    normalize_workflow_mode(&body.mode)?;
+    validate_hook_name_value(&body.hook, "hook")?;
+    if body.doctor_hook.contains('\0') {
+        return Err("doctor_hook cannot contain NUL bytes".to_string());
+    }
+    if body.timeout_secs == 0 || body.timeout_secs > MAX_COMMAND_TIMEOUT_SECS {
+        return Err(format!(
+            "timeout_secs must be between 1 and {}",
+            MAX_COMMAND_TIMEOUT_SECS
+        ));
+    }
+    if let Some(max_runtime_secs) = body.max_runtime_secs {
+        if max_runtime_secs == 0 || max_runtime_secs > MAX_COMMAND_TIMEOUT_SECS {
+            return Err(format!(
+                "max_runtime_secs must be between 1 and {}",
+                MAX_COMMAND_TIMEOUT_SECS
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_shell_job_request(body: &ShellClientShellJobRequest) -> Result<(), String> {
+    validate_id(&body.client_id, "client_id")?;
+    let run = ShellRunRequest {
+        client_id: body.client_id.clone(),
+        cwd: body.cwd.clone(),
+        command: body.command.clone(),
+        timeout_secs: body.timeout_secs,
+        wait_timeout_secs: 0,
+    };
+    validate_run_request(&run)?;
+    if let Some(max_runtime_secs) = body.max_runtime_secs {
+        if max_runtime_secs == 0 || max_runtime_secs > MAX_COMMAND_TIMEOUT_SECS {
+            return Err(format!(
+                "max_runtime_secs must be between 1 and {}",
+                MAX_COMMAND_TIMEOUT_SECS
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_shell_job_batch_request(body: &ShellClientShellJobBatchRequest) -> Result<(), String> {
+    validate_id(&body.client_id, "client_id")?;
+    if body.commands.is_empty() {
+        return Err("commands cannot be empty".to_string());
+    }
+    if body.commands.len() > 20 {
+        return Err("commands cannot contain more than 20 items".to_string());
+    }
+    for command in &body.commands {
+        let run = ShellRunRequest {
+            client_id: body.client_id.clone(),
+            cwd: body.cwd.clone(),
+            command: command.clone(),
+            timeout_secs: body.timeout_secs,
+            wait_timeout_secs: 0,
+        };
+        validate_run_request(&run)?;
+    }
+    if let Some(max_runtime_secs) = body.max_runtime_secs {
+        if max_runtime_secs == 0 || max_runtime_secs > MAX_COMMAND_TIMEOUT_SECS {
+            return Err(format!(
+                "max_runtime_secs must be between 1 and {}",
+                MAX_COMMAND_TIMEOUT_SECS
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn project_create_payload(
     body: &ShellClientProjectCreateRequest,
 ) -> ShellAgentProjectCreatePayload {
@@ -417,6 +502,22 @@ fn project_workflow_payload(
         run_doctor_hook: body.run_doctor_hook,
         doctor_hook: normalize_doctor_hook(&body.doctor_hook),
         timeout_secs: body.timeout_secs,
+        max_runtime_secs: None,
+    }
+}
+
+fn project_workflow_job_payload(
+    body: &ShellClientProjectWorkflowJobRequest,
+) -> ShellAgentProjectWorkflowPayload {
+    ShellAgentProjectWorkflowPayload {
+        project_id: body.project_id.clone(),
+        mode: normalize_workflow_mode(&body.mode).unwrap_or_else(|_| "snapshot".to_string()),
+        hook: normalize_hook_name(body.hook.clone()),
+        run_doctor: body.run_doctor,
+        run_doctor_hook: body.run_doctor_hook,
+        doctor_hook: normalize_doctor_hook(&body.doctor_hook),
+        timeout_secs: body.timeout_secs,
+        max_runtime_secs: body.max_runtime_secs,
     }
 }
 
@@ -466,10 +567,42 @@ fn truncate_output(value: Option<String>) -> Option<String> {
 }
 
 fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
+    let now = now_ts();
+    let elapsed_secs = if let Some(duration_ms) = job.duration_ms {
+        Some(duration_ms / 1000)
+    } else {
+        job.started_at
+            .map(|started_at| job.ended_at.unwrap_or(now).saturating_sub(started_at) as u64)
+    };
+    let result = if is_final_job_status(&job.status) {
+        if job.kind == "project_workflow" {
+            job.project_workflow_result
+                .clone()
+                .map(|project_workflow| ShellAgentJobResult {
+                    shell: None,
+                    project_workflow: Some(project_workflow),
+                })
+        } else {
+            Some(ShellAgentJobResult {
+                shell: Some(ShellAgentShellJobResult {
+                    cwd: job.cwd.clone(),
+                    command_preview: job.command_preview.clone(),
+                    exit_code: job.exit_code,
+                    duration_ms: job.duration_ms,
+                    error: job.error.clone(),
+                }),
+                project_workflow: None,
+            })
+        }
+    } else {
+        None
+    };
     ShellJobInfo {
         job_id: job.job_id.clone(),
         request_id: job.request_id.clone(),
         client_id: job.client_id.clone(),
+        kind: job.kind.clone(),
+        project_id: job.project_id.clone(),
         cwd: job.cwd.clone(),
         command_preview: job.command_preview.clone(),
         status: job.status.clone(),
@@ -478,8 +611,10 @@ fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         ended_at: job.ended_at,
         exit_code: job.exit_code,
         duration_ms: job.duration_ms,
+        elapsed_secs,
         error: job.error.clone(),
         codex: job.codex.clone(),
+        result,
     }
 }
 
@@ -532,6 +667,13 @@ fn append_limited(target: &mut Option<String>, chunk: Option<String>) {
     }
 }
 
+fn replace_limited(target: &mut Option<String>, value: Option<String>) {
+    let Some(value) = value else {
+        return;
+    };
+    *target = truncate_output(Some(value));
+}
+
 fn is_final_job_status(status: &str) -> bool {
     matches!(
         status,
@@ -552,7 +694,10 @@ fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, job_id: &str)
         return;
     };
     if is_final_job_status(&job.status)
-        || !matches!(job.status.as_str(), "running" | "stop_requested")
+        || !matches!(
+            job.status.as_str(),
+            "agent_queued" | "running" | "stop_requested"
+        )
     {
         return;
     }
@@ -868,7 +1013,7 @@ impl ShellClientRegistry {
             if let Some(job_id) = job_id {
                 if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
                     if job.status == "queued" {
-                        job.status = "running".to_string();
+                        job.status = "agent_queued".to_string();
                         job.started_at = Some(now_ts());
                     }
                 }
@@ -914,6 +1059,7 @@ impl ShellClientRegistry {
                 job.stdout = stdout.clone();
                 job.stderr = stderr.clone();
                 job.error = error.clone();
+                job.project_workflow_result = project_workflow_result.clone();
             }
         }
         if let Some(waiter) = pending.project_create_waiter.take() {
@@ -1043,8 +1189,14 @@ impl ShellClientRegistry {
             created_at,
         };
         let mut inner = self.inner.lock().await;
-        if !inner.clients.contains_key(&client_id) {
+        let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
+        };
+        if !(client.capabilities.async_jobs || client.capabilities.async_shell_jobs) {
+            return Err(format!(
+                "agent client {} does not support async shell jobs",
+                client_id
+            ));
         }
         inner
             .queues_by_client
@@ -1055,6 +1207,8 @@ impl ShellClientRegistry {
             job_id: job_id.clone(),
             request_id: Some(request_id.clone()),
             client_id: client_id.clone(),
+            kind: "shell".to_string(),
+            project_id: None,
             cwd: run.cwd.clone(),
             command_preview: command_preview(&run.command),
             status: "queued".to_string(),
@@ -1066,7 +1220,151 @@ impl ShellClientRegistry {
             stdout: None,
             stderr: None,
             error: None,
+            project_workflow_result: None,
             codex: body.codex.clone(),
+        };
+        inner.pending_by_id.insert(
+            request_id.clone(),
+            PendingShellRequest {
+                request,
+                waiter: None,
+                project_create_waiter: None,
+                project_workflow_waiter: None,
+                job_id: Some(job_id.clone()),
+            },
+        );
+        inner.request_to_job.insert(request_id, job_id.clone());
+        inner.jobs_by_id.insert(job_id.clone(), job);
+        Ok(job_view(
+            inner.jobs_by_id.get(&job_id).expect("job just inserted"),
+        ))
+    }
+
+    pub async fn create_shell_job(
+        &self,
+        body: ShellClientShellJobRequest,
+        requested_by: String,
+    ) -> Result<ShellJobInfo, String> {
+        validate_shell_job_request(&body)?;
+        self.start_job(
+            ShellJobOpRequest {
+                op: "start".to_string(),
+                client_id: Some(body.client_id),
+                cwd: body.cwd,
+                command: Some(body.command),
+                timeout_secs: body.max_runtime_secs.or(Some(body.timeout_secs)),
+                job_id: None,
+                since_stdout_line: None,
+                since_stderr_line: None,
+                tail_lines: None,
+                limit: None,
+                codex: None,
+            },
+            requested_by,
+        )
+        .await
+    }
+
+    pub async fn create_shell_job_batch(
+        &self,
+        body: ShellClientShellJobBatchRequest,
+        requested_by: String,
+    ) -> Result<Vec<ShellJobInfo>, String> {
+        validate_shell_job_batch_request(&body)?;
+        let mut jobs = Vec::new();
+        for command in body.commands {
+            let job = self
+                .start_job(
+                    ShellJobOpRequest {
+                        op: "start".to_string(),
+                        client_id: Some(body.client_id.clone()),
+                        cwd: body.cwd.clone(),
+                        command: Some(command),
+                        timeout_secs: body.max_runtime_secs.or(Some(body.timeout_secs)),
+                        job_id: None,
+                        since_stdout_line: None,
+                        since_stderr_line: None,
+                        tail_lines: None,
+                        limit: None,
+                        codex: None,
+                    },
+                    requested_by.clone(),
+                )
+                .await?;
+            jobs.push(job);
+        }
+        Ok(jobs)
+    }
+
+    pub async fn create_project_workflow_job(
+        &self,
+        body: ShellClientProjectWorkflowJobRequest,
+        requested_by: String,
+    ) -> Result<ShellJobInfo, String> {
+        validate_project_workflow_job_request(&body)?;
+        let request_id = Uuid::new_v4().to_string();
+        let job_id = Uuid::new_v4().to_string();
+        let created_at = now_ts();
+        let payload = project_workflow_job_payload(&body);
+        let command_preview = format!("project_workflow {} {}", payload.project_id, payload.mode);
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: body.client_id.clone(),
+            kind: "project_workflow_job".to_string(),
+            job_id: Some(job_id.clone()),
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            project_create: None,
+            project_workflow: Some(payload),
+            command: String::new(),
+            timeout_secs: body.max_runtime_secs.unwrap_or(body.timeout_secs),
+            requested_by,
+            created_at,
+        };
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get(&body.client_id) else {
+            return Err(format!("unknown shell client: {}", body.client_id));
+        };
+        if !(client.capabilities.async_jobs || client.capabilities.async_project_workflow_jobs) {
+            return Err(format!(
+                "agent client {} does not support async project workflow jobs",
+                body.client_id
+            ));
+        }
+        if !client.capabilities.project_workflow {
+            return Err(format!(
+                "agent client {} does not support project_workflow",
+                body.client_id
+            ));
+        }
+        inner
+            .queues_by_client
+            .entry(body.client_id.clone())
+            .or_default()
+            .push_back(request_id.clone());
+        let job = ShellJobRecord {
+            job_id: job_id.clone(),
+            request_id: Some(request_id.clone()),
+            client_id: body.client_id.clone(),
+            kind: "project_workflow".to_string(),
+            project_id: Some(body.project_id.clone()),
+            cwd: None,
+            command_preview,
+            status: "queued".to_string(),
+            created_at,
+            started_at: None,
+            ended_at: None,
+            exit_code: None,
+            duration_ms: None,
+            stdout: None,
+            stderr: None,
+            error: None,
+            project_workflow_result: None,
+            codex: None,
         };
         inner.pending_by_id.insert(
             request_id.clone(),
@@ -1107,6 +1405,36 @@ impl ShellClientRegistry {
             .take(limit.unwrap_or(20).clamp(1, 100))
             .map(|job| job_view(&job))
             .collect()
+    }
+
+    pub async fn list_jobs_for_client(
+        &self,
+        client_id: &str,
+        status: Option<&str>,
+        limit: Option<usize>,
+    ) -> Result<Vec<ShellJobInfo>, String> {
+        validate_id(client_id, "client_id")?;
+        let mut inner = self.inner.lock().await;
+        if !inner.clients.contains_key(client_id) {
+            return Err(format!("unknown shell client: {}", client_id));
+        }
+        let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
+        for job_id in job_ids {
+            refresh_job_status_locked(&mut inner, &job_id);
+        }
+        let mut jobs = inner
+            .jobs_by_id
+            .values()
+            .filter(|job| job.client_id == client_id)
+            .filter(|job| status.map(|status| status == job.status).unwrap_or(true))
+            .cloned()
+            .collect::<Vec<_>>();
+        jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
+        Ok(jobs
+            .into_iter()
+            .take(limit.unwrap_or(20).clamp(1, 100))
+            .map(|job| job_view(&job))
+            .collect())
     }
 
     pub async fn job_log(
@@ -1160,7 +1488,7 @@ impl ShellClientRegistry {
                 job.error = Some("job stopped before agent picked it up".to_string());
                 Ok(job_view(job))
             }
-            "running" | "stop_requested" => {
+            "agent_queued" | "running" | "stop_requested" => {
                 let stop_request_id = Uuid::new_v4().to_string();
                 let client_id = job.client_id.clone();
                 let request = ShellAgentShellRequest {
@@ -1216,6 +1544,7 @@ impl ShellClientRegistry {
             client.last_seen = now_ts();
         }
         let mut request_id_to_remove = None;
+        let project_workflow_result = body.project_workflow_result.clone();
         let view = {
             let Some(job) = inner.jobs_by_id.get_mut(&body.job_id) else {
                 return Err(format!("unknown shell job: {}", body.job_id));
@@ -1223,6 +1552,11 @@ impl ShellClientRegistry {
             if job.client_id != body.client_id {
                 return Err("job_id does not belong to client_id".to_string());
             }
+            if is_final_job_status(&job.status) {
+                return Ok(job_view(job));
+            }
+            replace_limited(&mut job.stdout, body.stdout_tail);
+            replace_limited(&mut job.stderr, body.stderr_tail);
             append_limited(&mut job.stdout, body.stdout_chunk);
             append_limited(&mut job.stderr, body.stderr_chunk);
             if job.started_at.is_none()
@@ -1234,7 +1568,12 @@ impl ShellClientRegistry {
                 job.started_at = Some(now_ts());
             }
             if !body.status.trim().is_empty() && !is_final_job_status(&job.status) {
-                job.status = body.status.trim().to_string();
+                let incoming_status = body.status.trim();
+                job.status = if incoming_status == "queued" && job.started_at.is_some() {
+                    "agent_queued".to_string()
+                } else {
+                    incoming_status.to_string()
+                };
             }
             if is_final_job_status(&body.status) {
                 job.status = body.status;
@@ -1242,15 +1581,30 @@ impl ShellClientRegistry {
                 job.exit_code = body.exit_code;
                 job.duration_ms = body.duration_ms;
                 job.error = body.error;
+                job.project_workflow_result = project_workflow_result.clone();
                 request_id_to_remove = job.request_id.clone();
             } else if body.error.is_some() {
                 job.error = body.error;
+            }
+            if body.finished && !is_final_job_status(&job.status) {
+                job.status = if job.error.is_none() && job.exit_code == Some(0) {
+                    "completed".to_string()
+                } else {
+                    "failed".to_string()
+                };
+                job.ended_at = Some(now_ts());
+                request_id_to_remove = job.request_id.clone();
             }
             job_view(job)
         };
         if let Some(request_id) = request_id_to_remove {
             inner.pending_by_id.remove(&request_id);
             inner.request_to_job.remove(&request_id);
+        }
+        if let Some(project) = project_workflow_result.and_then(|result| result.project) {
+            if let Some(client) = inner.clients.get_mut(&body.client_id) {
+                merge_project_summary(&mut client.projects, project);
+            }
         }
         Ok(view)
     }
@@ -1436,6 +1790,95 @@ fn record_shell_job_action(
     );
 }
 
+fn record_shell_job_create_action(
+    audit: &ActionAudit,
+    action: &str,
+    response: &ShellClientJobCreateResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new(action, response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({
+                "job_id": response.job_id,
+                "client_id": response.client_id,
+                "project_id": response.project_id,
+            }))
+            .summary(json!({
+                "status": response.status,
+                "kind": response.job.as_ref().map(|job| job.kind.clone()),
+            })),
+    );
+}
+
+fn record_shell_job_status_action(
+    audit: &ActionAudit,
+    response: &ShellClientJobStatusResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new("shell_job_status", response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({
+                "job_id": response.job_id,
+                "client_id": response.client_id,
+            }))
+            .summary(json!({
+                "kind": response.kind,
+                "status": response.status,
+                "exit_code": response.exit_code,
+                "elapsed_secs": response.elapsed_secs,
+            })),
+    );
+}
+
+fn record_shell_job_log_action(
+    audit: &ActionAudit,
+    response: &ShellClientJobLogResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new("shell_job_log", response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({
+                "job_id": response.job_id,
+                "client_id": response.client_id,
+            }))
+            .summary(json!({
+                "stdout_included": response.stdout_tail.is_some(),
+                "stderr_included": response.stderr_tail.is_some(),
+                "next_stdout_line": response.next_stdout_line,
+                "next_stderr_line": response.next_stderr_line,
+            })),
+    );
+}
+
+fn record_shell_job_stop_action(
+    audit: &ActionAudit,
+    response: &ShellClientJobStopResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new("shell_job_stop", response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({"job_id": response.job_id}))
+            .summary(json!({"status": response.status})),
+    );
+}
+
+fn record_shell_jobs_list_action(
+    audit: &ActionAudit,
+    response: &ShellClientJobsListResponse,
+    http_status: StatusCode,
+) {
+    audit.record(
+        ActionAuditRecord::new("shell_job_list", response.success, http_status)
+            .error(response.error.clone())
+            .ids(json!({"client_id": response.client_id}))
+            .summary(json!({"jobs_count": response.jobs.len()})),
+    );
+}
+
 fn render_shell_run(
     res: &mut Response,
     audit: &ActionAudit,
@@ -1444,6 +1887,62 @@ fn render_shell_run(
 ) {
     res.status_code(status);
     record_shell_run_action(audit, &response, status);
+    res.render(Json(response));
+}
+
+fn render_shell_job_create(
+    res: &mut Response,
+    audit: &ActionAudit,
+    action: &str,
+    status: StatusCode,
+    response: ShellClientJobCreateResponse,
+) {
+    res.status_code(status);
+    record_shell_job_create_action(audit, action, &response, status);
+    res.render(Json(response));
+}
+
+fn render_shell_job_status(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellClientJobStatusResponse,
+) {
+    res.status_code(status);
+    record_shell_job_status_action(audit, &response, status);
+    res.render(Json(response));
+}
+
+fn render_shell_job_log(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellClientJobLogResponse,
+) {
+    res.status_code(status);
+    record_shell_job_log_action(audit, &response, status);
+    res.render(Json(response));
+}
+
+fn render_shell_job_stop_response(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellClientJobStopResponse,
+) {
+    res.status_code(status);
+    record_shell_job_stop_action(audit, &response, status);
+    res.render(Json(response));
+}
+
+fn render_shell_jobs_list(
+    res: &mut Response,
+    audit: &ActionAudit,
+    status: StatusCode,
+    response: ShellClientJobsListResponse,
+) {
+    res.status_code(status);
+    record_shell_jobs_list_action(audit, &response, status);
     res.render(Json(response));
 }
 
@@ -2328,6 +2827,127 @@ fn shell_job_error_response(op: String, error: String) -> ShellJobOpResponse {
     }
 }
 
+fn shell_job_create_response_from_job(
+    job: ShellJobInfo,
+    project_id: Option<String>,
+) -> ShellClientJobCreateResponse {
+    ShellClientJobCreateResponse {
+        success: true,
+        job_id: Some(job.job_id.clone()),
+        job_ids: vec![job.job_id.clone()],
+        client_id: job.client_id.clone(),
+        project_id,
+        status: job.status.clone(),
+        job: Some(job),
+        error: None,
+    }
+}
+
+fn shell_job_create_error_response(
+    client_id: String,
+    project_id: Option<String>,
+    error: String,
+) -> ShellClientJobCreateResponse {
+    ShellClientJobCreateResponse {
+        success: false,
+        job_id: None,
+        job_ids: Vec::new(),
+        client_id,
+        project_id,
+        status: "error".to_string(),
+        job: None,
+        error: Some(error),
+    }
+}
+
+fn shell_job_status_response_from_job(job: ShellJobInfo) -> ShellClientJobStatusResponse {
+    ShellClientJobStatusResponse {
+        success: true,
+        job_id: Some(job.job_id.clone()),
+        client_id: Some(job.client_id.clone()),
+        kind: Some(job.kind.clone()),
+        status: Some(job.status.clone()),
+        elapsed_secs: job.elapsed_secs,
+        exit_code: job.exit_code,
+        result: job.result.clone(),
+        job: Some(job),
+        error: None,
+    }
+}
+
+fn shell_job_status_error_response(error: String) -> ShellClientJobStatusResponse {
+    ShellClientJobStatusResponse {
+        success: false,
+        job_id: None,
+        client_id: None,
+        kind: None,
+        status: None,
+        elapsed_secs: None,
+        exit_code: None,
+        result: None,
+        job: None,
+        error: Some(error),
+    }
+}
+
+fn shell_job_log_error_response(error: String) -> ShellClientJobLogResponse {
+    ShellClientJobLogResponse {
+        success: false,
+        job_id: None,
+        client_id: None,
+        stdout_tail: None,
+        stderr_tail: None,
+        next_stdout_line: None,
+        next_stderr_line: None,
+        job: None,
+        error: Some(error),
+    }
+}
+
+fn shell_job_stop_error_response(error: String) -> ShellClientJobStopResponse {
+    ShellClientJobStopResponse {
+        success: false,
+        job_id: None,
+        status: None,
+        job: None,
+        error: Some(error),
+    }
+}
+
+fn shell_jobs_list_error_response(client_id: String, error: String) -> ShellClientJobsListResponse {
+    ShellClientJobsListResponse {
+        success: false,
+        client_id,
+        jobs: Vec::new(),
+        error: Some(error),
+    }
+}
+
+async fn authorize_job_access(
+    registry: &ShellClientRegistry,
+    auth: Option<&crate::auth::AuthContext>,
+    job_id: &str,
+    requested_client_id: Option<&str>,
+) -> Result<ShellJobInfo, (StatusCode, String)> {
+    let job = registry
+        .get_job(job_id)
+        .await
+        .map_err(|e| (StatusCode::BAD_REQUEST, e))?;
+    if let Some(requested_client_id) = requested_client_id {
+        if requested_client_id != job.client_id {
+            return Err((
+                StatusCode::FORBIDDEN,
+                format!(
+                    "job_id {} belongs to client {}, not {}",
+                    job_id, job.client_id, requested_client_id
+                ),
+            ));
+        }
+    }
+    assert_registry_client_owner(registry, auth, &job.client_id).await?;
+    Ok(job)
+}
+
 #[handler]
 pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/shell/job", "runShellJob");
@@ -2606,6 +3226,500 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
 }
 
 #[handler]
+pub async fn shell_job_create_shell(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/shell/jobs/shell",
+        "createShellClientShellJob",
+    );
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_job_create(
+            res,
+            &audit,
+            "shell_job_create",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_job_create_error_response(
+                String::new(),
+                None,
+                "Shell client registry not configured".to_string(),
+            ),
+        );
+        return;
+    };
+    let body: ShellClientShellJobRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_job_create(
+                res,
+                &audit,
+                "shell_job_create",
+                StatusCode::BAD_REQUEST,
+                shell_job_create_error_response(
+                    String::new(),
+                    None,
+                    format!("Invalid JSON: {}", e),
+                ),
+            );
+            return;
+        }
+    };
+    let client_id = body.client_id.clone();
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+    {
+        render_shell_job_create(
+            res,
+            &audit,
+            "shell_job_create",
+            status,
+            shell_job_create_error_response(client_id, None, e),
+        );
+        return;
+    }
+    let requested_by = requested_by_from_auth(auth.as_ref());
+    match registry.create_shell_job(body, requested_by).await {
+        Ok(job) => render_shell_job_create(
+            res,
+            &audit,
+            "shell_job_create",
+            StatusCode::OK,
+            shell_job_create_response_from_job(job, None),
+        ),
+        Err(e) => render_shell_job_create(
+            res,
+            &audit,
+            "shell_job_create",
+            StatusCode::BAD_REQUEST,
+            shell_job_create_error_response(client_id, None, e),
+        ),
+    }
+}
+
+#[handler]
+pub async fn shell_job_create_shell_batch(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/shell/jobs/shell_batch",
+        "createShellClientShellJobBatch",
+    );
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_job_create(
+            res,
+            &audit,
+            "shell_job_batch_create",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_job_create_error_response(
+                String::new(),
+                None,
+                "Shell client registry not configured".to_string(),
+            ),
+        );
+        return;
+    };
+    let body: ShellClientShellJobBatchRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_job_create(
+                res,
+                &audit,
+                "shell_job_batch_create",
+                StatusCode::BAD_REQUEST,
+                shell_job_create_error_response(
+                    String::new(),
+                    None,
+                    format!("Invalid JSON: {}", e),
+                ),
+            );
+            return;
+        }
+    };
+    let client_id = body.client_id.clone();
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+    {
+        render_shell_job_create(
+            res,
+            &audit,
+            "shell_job_batch_create",
+            status,
+            shell_job_create_error_response(client_id, None, e),
+        );
+        return;
+    }
+    let requested_by = requested_by_from_auth(auth.as_ref());
+    match registry.create_shell_job_batch(body, requested_by).await {
+        Ok(jobs) => {
+            let job_ids = jobs
+                .iter()
+                .map(|job| job.job_id.clone())
+                .collect::<Vec<_>>();
+            let first_job = jobs.first().cloned();
+            let response = ShellClientJobCreateResponse {
+                success: true,
+                job_id: None,
+                job_ids,
+                client_id,
+                project_id: None,
+                status: "queued".to_string(),
+                job: first_job,
+                error: None,
+            };
+            render_shell_job_create(
+                res,
+                &audit,
+                "shell_job_batch_create",
+                StatusCode::OK,
+                response,
+            );
+        }
+        Err(e) => render_shell_job_create(
+            res,
+            &audit,
+            "shell_job_batch_create",
+            StatusCode::BAD_REQUEST,
+            shell_job_create_error_response(client_id, None, e),
+        ),
+    }
+}
+
+#[handler]
+pub async fn shell_project_workflow_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/shell/projects/workflow_job",
+        "createShellClientProjectWorkflowJob",
+    );
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_job_create(
+            res,
+            &audit,
+            "project_workflow_job_create",
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_job_create_error_response(
+                String::new(),
+                None,
+                "Shell client registry not configured".to_string(),
+            ),
+        );
+        return;
+    };
+    let body: ShellClientProjectWorkflowJobRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_job_create(
+                res,
+                &audit,
+                "project_workflow_job_create",
+                StatusCode::BAD_REQUEST,
+                shell_job_create_error_response(
+                    String::new(),
+                    None,
+                    format!("Invalid JSON: {}", e),
+                ),
+            );
+            return;
+        }
+    };
+    let client_id = body.client_id.clone();
+    let project_id = body.project_id.clone();
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+    {
+        render_shell_job_create(
+            res,
+            &audit,
+            "project_workflow_job_create",
+            status,
+            shell_job_create_error_response(client_id, Some(project_id), e),
+        );
+        return;
+    }
+    let requested_by = requested_by_from_auth(auth.as_ref());
+    match registry
+        .create_project_workflow_job(body, requested_by)
+        .await
+    {
+        Ok(job) => render_shell_job_create(
+            res,
+            &audit,
+            "project_workflow_job_create",
+            StatusCode::OK,
+            shell_job_create_response_from_job(job, Some(project_id)),
+        ),
+        Err(e) => render_shell_job_create(
+            res,
+            &audit,
+            "project_workflow_job_create",
+            StatusCode::BAD_REQUEST,
+            shell_job_create_error_response(client_id, Some(project_id), e),
+        ),
+    }
+}
+
+#[handler]
+pub async fn shell_job_status(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/shell/jobs/status",
+        "getShellClientJobStatus",
+    );
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_job_status(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_job_status_error_response("Shell client registry not configured".to_string()),
+        );
+        return;
+    };
+    let body: ShellClientJobStatusRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_job_status(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_job_status_error_response(format!("Invalid JSON: {}", e)),
+            );
+            return;
+        }
+    };
+    match authorize_job_access(
+        &registry,
+        auth.as_ref(),
+        &body.job_id,
+        body.client_id.as_deref(),
+    )
+    .await
+    {
+        Ok(job) => render_shell_job_status(
+            res,
+            &audit,
+            StatusCode::OK,
+            shell_job_status_response_from_job(job),
+        ),
+        Err((status, e)) => {
+            render_shell_job_status(res, &audit, status, shell_job_status_error_response(e))
+        }
+    }
+}
+
+#[handler]
+pub async fn shell_job_log(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/shell/jobs/log", "getShellClientJobLog");
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_job_log(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_job_log_error_response("Shell client registry not configured".to_string()),
+        );
+        return;
+    };
+    let body: ShellClientJobLogRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_job_log(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_job_log_error_response(format!("Invalid JSON: {}", e)),
+            );
+            return;
+        }
+    };
+    let job = match authorize_job_access(
+        &registry,
+        auth.as_ref(),
+        &body.job_id,
+        body.client_id.as_deref(),
+    )
+    .await
+    {
+        Ok(job) => job,
+        Err((status, e)) => {
+            render_shell_job_log(res, &audit, status, shell_job_log_error_response(e));
+            return;
+        }
+    };
+    match registry
+        .job_log(
+            &body.job_id,
+            body.since_stdout_line,
+            body.since_stderr_line,
+            body.tail_lines,
+        )
+        .await
+    {
+        Ok((job, stdout_tail, stderr_tail, next_stdout_line, next_stderr_line)) => {
+            render_shell_job_log(
+                res,
+                &audit,
+                StatusCode::OK,
+                ShellClientJobLogResponse {
+                    success: true,
+                    job_id: Some(job.job_id.clone()),
+                    client_id: Some(job.client_id.clone()),
+                    stdout_tail,
+                    stderr_tail,
+                    next_stdout_line: Some(next_stdout_line),
+                    next_stderr_line: Some(next_stderr_line),
+                    job: Some(job),
+                    error: None,
+                },
+            );
+        }
+        Err(e) => render_shell_job_log(
+            res,
+            &audit,
+            StatusCode::BAD_REQUEST,
+            shell_job_log_error_response(e),
+        ),
+    }
+    let _ = job;
+}
+
+#[handler]
+pub async fn shell_job_stop(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/shell/jobs/stop", "stopShellClientJob");
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_job_stop_response(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_job_stop_error_response("Shell client registry not configured".to_string()),
+        );
+        return;
+    };
+    let body: ShellClientJobStopRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_job_stop_response(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_job_stop_error_response(format!("Invalid JSON: {}", e)),
+            );
+            return;
+        }
+    };
+    if let Err((status, e)) = authorize_job_access(
+        &registry,
+        auth.as_ref(),
+        &body.job_id,
+        body.client_id.as_deref(),
+    )
+    .await
+    {
+        render_shell_job_stop_response(res, &audit, status, shell_job_stop_error_response(e));
+        return;
+    }
+    let requested_by = requested_by_from_auth(auth.as_ref());
+    match registry.stop_job(&body.job_id, requested_by).await {
+        Ok(job) => render_shell_job_stop_response(
+            res,
+            &audit,
+            StatusCode::OK,
+            ShellClientJobStopResponse {
+                success: true,
+                job_id: Some(job.job_id.clone()),
+                status: Some(job.status.clone()),
+                job: Some(job),
+                error: None,
+            },
+        ),
+        Err(e) => render_shell_job_stop_response(
+            res,
+            &audit,
+            StatusCode::BAD_REQUEST,
+            shell_job_stop_error_response(e),
+        ),
+    }
+}
+
+#[handler]
+pub async fn shell_jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/shell/jobs/list", "listShellClientJobs");
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let Some(registry) = get_registry(depot) else {
+        render_shell_jobs_list(
+            res,
+            &audit,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            shell_jobs_list_error_response(
+                String::new(),
+                "Shell client registry not configured".to_string(),
+            ),
+        );
+        return;
+    };
+    let body: ShellClientJobsListRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            render_shell_jobs_list(
+                res,
+                &audit,
+                StatusCode::BAD_REQUEST,
+                shell_jobs_list_error_response(String::new(), format!("Invalid JSON: {}", e)),
+            );
+            return;
+        }
+    };
+    let client_id = body.client_id.clone();
+    if let Err((status, e)) =
+        assert_registry_client_owner(&registry, auth.as_ref(), &client_id).await
+    {
+        render_shell_jobs_list(
+            res,
+            &audit,
+            status,
+            shell_jobs_list_error_response(client_id, e),
+        );
+        return;
+    }
+    match registry
+        .list_jobs_for_client(
+            &client_id,
+            body.status.as_deref(),
+            Some(body.limit.unwrap_or(20).clamp(1, 100)),
+        )
+        .await
+    {
+        Ok(jobs) => render_shell_jobs_list(
+            res,
+            &audit,
+            StatusCode::OK,
+            ShellClientJobsListResponse {
+                success: true,
+                client_id,
+                jobs,
+                error: None,
+            },
+        ),
+        Err(e) => render_shell_jobs_list(
+            res,
+            &audit,
+            StatusCode::BAD_REQUEST,
+            shell_jobs_list_error_response(client_id, e),
+        ),
+    }
+}
+
+#[handler]
 pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = get_registry(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
@@ -2687,6 +3801,15 @@ mod tests {
         capabilities
     }
 
+    fn async_job_capabilities() -> ShellClientCapabilities {
+        let mut capabilities = project_workflow_capabilities();
+        capabilities.async_jobs = true;
+        capabilities.async_shell_jobs = true;
+        capabilities.async_project_workflow_jobs = true;
+        capabilities.jobs = true;
+        capabilities
+    }
+
     fn project_create_request(
         client_id: &str,
         project_id: &str,
@@ -2722,6 +3845,50 @@ mod tests {
             doctor_hook: "doctor".to_string(),
             timeout_secs: 120,
             wait_timeout_secs: 30,
+        }
+    }
+
+    fn shell_job_request(client_id: &str, command: &str) -> ShellClientShellJobRequest {
+        ShellClientShellJobRequest {
+            client_id: client_id.to_string(),
+            cwd: Some("/tmp".to_string()),
+            command: command.to_string(),
+            timeout_secs: 120,
+            max_runtime_secs: None,
+        }
+    }
+
+    fn shell_job_batch_request(
+        client_id: &str,
+        commands: &[&str],
+    ) -> ShellClientShellJobBatchRequest {
+        ShellClientShellJobBatchRequest {
+            client_id: client_id.to_string(),
+            cwd: Some("/tmp".to_string()),
+            commands: commands
+                .iter()
+                .map(|command| (*command).to_string())
+                .collect(),
+            timeout_secs: 120,
+            max_runtime_secs: None,
+        }
+    }
+
+    fn workflow_job_request(
+        client_id: &str,
+        project_id: &str,
+        mode: &str,
+    ) -> ShellClientProjectWorkflowJobRequest {
+        ShellClientProjectWorkflowJobRequest {
+            client_id: client_id.to_string(),
+            project_id: project_id.to_string(),
+            mode: mode.to_string(),
+            hook: None,
+            run_doctor: true,
+            run_doctor_hook: false,
+            doctor_hook: "doctor".to_string(),
+            timeout_secs: 120,
+            max_runtime_secs: None,
         }
     }
 
@@ -3145,6 +4312,236 @@ mod tests {
     }
 
     #[test]
+    fn protocol_async_capability_defaults_false() {
+        let capabilities = ShellClientCapabilities::default();
+        assert!(!capabilities.async_jobs);
+        assert!(!capabilities.async_shell_jobs);
+        assert!(!capabilities.async_project_workflow_jobs);
+
+        let request: ShellClientRegisterRequest = serde_json::from_str(
+            r#"{
+                "client_id": "oe",
+                "capabilities": {"shell": true, "project_workflow": true}
+            }"#,
+        )
+        .unwrap();
+        let capabilities = request.capabilities.unwrap();
+        assert!(!capabilities.async_jobs);
+        assert!(!capabilities.async_shell_jobs);
+        assert!(!capabilities.async_project_workflow_jobs);
+    }
+
+    #[test]
+    fn protocol_async_job_round_trips() {
+        let request = ShellClientShellJobRequest {
+            client_id: "oe".to_string(),
+            cwd: Some("/tmp".to_string()),
+            command: "echo hello".to_string(),
+            timeout_secs: 12,
+            max_runtime_secs: Some(30),
+        };
+        let value = serde_json::to_value(&request).unwrap();
+        let parsed: ShellClientShellJobRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.client_id, "oe");
+        assert_eq!(parsed.command, "echo hello");
+        assert_eq!(parsed.max_runtime_secs, Some(30));
+
+        let result = ShellAgentJobUpdateRequest {
+            client_id: "oe".to_string(),
+            job_id: "job-1".to_string(),
+            request_id: Some("req-1".to_string()),
+            status: "completed".to_string(),
+            stdout_chunk: Some("hello\n".to_string()),
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            exit_code: Some(0),
+            duration_ms: Some(10),
+            error: None,
+            project_workflow_result: None,
+            finished: true,
+        };
+        let value = serde_json::to_value(&result).unwrap();
+        let parsed: ShellAgentJobUpdateRequest = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.job_id, "job-1");
+        assert!(parsed.finished);
+    }
+
+    #[tokio::test]
+    async fn registry_async_shell_job_requires_capability() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let err = registry
+            .create_shell_job(shell_job_request("oe", "echo hello"), "alice".to_string())
+            .await
+            .unwrap_err();
+        assert!(err.contains("does not support async shell jobs"));
+    }
+
+    #[tokio::test]
+    async fn registry_async_shell_job_create_returns_queued_without_waiting() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .create_shell_job(shell_job_request("oe", "echo hello"), "alice".to_string())
+            .await
+            .unwrap();
+        assert_eq!(job.status, "queued");
+        assert_eq!(job.kind, "shell");
+        let polled = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(polled.kind, "start_job");
+        assert_eq!(polled.job_id.as_deref(), Some(job.job_id.as_str()));
+        assert_eq!(polled.command, "echo hello");
+    }
+
+    #[tokio::test]
+    async fn registry_async_shell_job_batch_creates_independent_jobs() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let jobs = registry
+            .create_shell_job_batch(
+                shell_job_batch_request("oe", &["echo one", "echo two"]),
+                "alice".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(jobs.len(), 2);
+        assert_ne!(jobs[0].job_id, jobs[1].job_id);
+        let first = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let second = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(first.command, "echo one");
+        assert_eq!(second.command, "echo two");
+    }
+
+    #[tokio::test]
+    async fn registry_async_project_workflow_job_update_stores_result() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .create_project_workflow_job(
+                workflow_job_request("oe", "foo", "snapshot"),
+                "alice".to_string(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(job.status, "queued");
+        assert_eq!(job.kind, "project_workflow");
+        let polled = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(polled.kind, "project_workflow_job");
+        let result = ShellAgentProjectWorkflowResult {
+            success: true,
+            project_id: "foo".to_string(),
+            project: Some(project_summary("foo", "/tmp/foo")),
+            mode: "snapshot".to_string(),
+            git_before: ShellAgentProjectGitSnapshot::default(),
+            hook_result: None,
+            git_after: ShellAgentProjectGitSnapshot::default(),
+            warnings: Vec::new(),
+            recommended_next_action: "No changes detected".to_string(),
+            error: None,
+        };
+        registry
+            .update_job(ShellAgentJobUpdateRequest {
+                client_id: "oe".to_string(),
+                job_id: job.job_id.clone(),
+                request_id: Some(polled.request_id),
+                status: "completed".to_string(),
+                stdout_chunk: None,
+                stderr_chunk: None,
+                stdout_tail: Some("done\n".to_string()),
+                stderr_tail: None,
+                exit_code: Some(0),
+                duration_ms: Some(1000),
+                error: None,
+                project_workflow_result: Some(result),
+                finished: true,
+            })
+            .await
+            .unwrap();
+        let done = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(done.status, "completed");
+        assert_eq!(done.project_id.as_deref(), Some("foo"));
+        assert_eq!(done.elapsed_secs, Some(1));
+        assert_eq!(
+            done.result
+                .as_ref()
+                .and_then(|result| result.project_workflow.as_ref())
+                .map(|workflow| workflow.project_id.as_str()),
+            Some("foo")
+        );
+        let projects = registry.list_client_projects("oe").await.unwrap();
+        assert_eq!(projects[0].id, "foo");
+    }
+
+    #[test]
     fn protocol_serde_keeps_old_register_compatible() {
         let request: ShellClientRegisterRequest = serde_json::from_str(
             r#"{
@@ -3256,7 +4653,7 @@ mod tests {
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: None,
+                capabilities: Some(async_job_capabilities()),
                 projects: None,
             })
             .await
@@ -3307,7 +4704,7 @@ mod tests {
             .unwrap();
         assert_eq!(polled.command, "printf hello");
         let running = registry.get_job(&job.job_id).await.unwrap();
-        assert_eq!(running.status, "running");
+        assert_eq!(running.status, "agent_queued");
         registry
             .complete(ShellAgentResultRequest {
                 client_id: "oe".to_string(),
@@ -3359,7 +4756,7 @@ mod tests {
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: None,
+                capabilities: Some(async_job_capabilities()),
                 projects: None,
             })
             .await
@@ -3399,6 +4796,230 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn registry_shell_job_stop_running_delivers_stop_to_client() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("oe".to_string()),
+                    cwd: None,
+                    command: Some("sleep 10".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "test".to_string(),
+            )
+            .await
+            .unwrap();
+        let started = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(started.kind, "start_job");
+
+        let stop_requested = registry
+            .stop_job(&job.job_id, "test".to_string())
+            .await
+            .unwrap();
+        assert_eq!(stop_requested.status, "stop_requested");
+        let stop = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stop.kind, "stop_job");
+        assert_eq!(stop.job_id.as_deref(), Some(job.job_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn registry_shell_job_stop_agent_queued_delivers_stop_to_client() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .create_shell_job(shell_job_request("oe", "sleep 10"), "alice".to_string())
+            .await
+            .unwrap();
+        let start = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(start.kind, "start_job");
+        assert_eq!(
+            registry.get_job(&job.job_id).await.unwrap().status,
+            "agent_queued"
+        );
+        registry
+            .update_job(ShellAgentJobUpdateRequest {
+                client_id: "oe".to_string(),
+                job_id: job.job_id.clone(),
+                request_id: Some(start.request_id.clone()),
+                status: "queued".to_string(),
+                stdout_chunk: None,
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: None,
+                duration_ms: None,
+                error: None,
+                project_workflow_result: None,
+                finished: false,
+            })
+            .await
+            .unwrap();
+        assert_eq!(
+            registry.get_job(&job.job_id).await.unwrap().status,
+            "agent_queued"
+        );
+        let stop_requested = registry
+            .stop_job(&job.job_id, "test".to_string())
+            .await
+            .unwrap();
+        assert_eq!(stop_requested.status, "stop_requested");
+        let stop = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(stop.kind, "stop_job");
+        assert_eq!(stop.job_id.as_deref(), Some(job.job_id.as_str()));
+    }
+
+    #[tokio::test]
+    async fn registry_list_jobs_filters_after_collecting_recent_jobs() {
+        let registry = ShellClientRegistry::default();
+        for client_id in ["alice", "bob"] {
+            registry
+                .register(ShellClientRegisterRequest {
+                    client_id: client_id.to_string(),
+                    display_name: None,
+                    owner: None,
+                    hostname: None,
+                    capabilities: Some(async_job_capabilities()),
+                    projects: None,
+                })
+                .await
+                .unwrap();
+        }
+        let alice_job = registry
+            .create_shell_job(
+                shell_job_request("alice", "echo alice"),
+                "alice".to_string(),
+            )
+            .await
+            .unwrap();
+        for idx in 0..5 {
+            registry
+                .create_shell_job(
+                    shell_job_request("bob", &format!("echo bob-{idx}")),
+                    "bob".to_string(),
+                )
+                .await
+                .unwrap();
+        }
+        let alice_jobs = registry
+            .list_jobs_for_client("alice", None, Some(1))
+            .await
+            .unwrap();
+        assert_eq!(alice_jobs.len(), 1);
+        assert_eq!(alice_jobs[0].job_id, alice_job.job_id);
+    }
+
+    #[tokio::test]
+    async fn registry_shell_job_log_tail_is_bounded() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .create_shell_job(shell_job_request("oe", "printf long"), "alice".to_string())
+            .await
+            .unwrap();
+        let polled = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        let big = format!("{}tail", "x".repeat(MAX_OUTPUT_BYTES + 32));
+        registry
+            .update_job(ShellAgentJobUpdateRequest {
+                client_id: "oe".to_string(),
+                job_id: job.job_id.clone(),
+                request_id: Some(polled.request_id),
+                status: "completed".to_string(),
+                stdout_chunk: Some(big),
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: Some(0),
+                duration_ms: Some(10),
+                error: None,
+                project_workflow_result: None,
+                finished: true,
+            })
+            .await
+            .unwrap();
+        let (_job, stdout, _stderr, _next_stdout, _next_stderr) = registry
+            .job_log(&job.job_id, None, None, None)
+            .await
+            .unwrap();
+        let stdout = stdout.unwrap();
+        assert!(stdout.contains("[output truncated to last 262144 bytes]"));
+        assert!(stdout.ends_with("tail\n"));
+    }
+
+    #[tokio::test]
     async fn registry_marks_running_job_lost_when_client_stale() {
         let registry = ShellClientRegistry::default();
         registry
@@ -3407,7 +5028,7 @@ mod tests {
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: None,
+                capabilities: Some(async_job_capabilities()),
                 projects: None,
             })
             .await

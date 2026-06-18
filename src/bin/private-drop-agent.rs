@@ -1,7 +1,7 @@
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
@@ -29,6 +29,7 @@ const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 const PROJECT_SCAN_CACHE_MS: u64 = 5000;
 const WORKFLOW_STEP_OUTPUT_BYTES: usize = 16 * 1024;
+const DEFAULT_MAX_CONCURRENT_JOBS: usize = 2;
 
 #[derive(Debug, Clone, Deserialize)]
 struct AgentConfig {
@@ -47,6 +48,8 @@ struct AgentConfig {
     poll_interval_ms: u64,
     #[serde(default)]
     capabilities: Option<ShellClientCapabilities>,
+    #[serde(default)]
+    max_concurrent_jobs: Option<usize>,
     #[serde(default)]
     policy: AgentPolicy,
 }
@@ -93,6 +96,12 @@ fn default_max_output_bytes() -> usize {
     DEFAULT_MAX_OUTPUT_BYTES
 }
 
+fn max_concurrent_jobs(cfg: &AgentConfig) -> usize {
+    cfg.max_concurrent_jobs
+        .unwrap_or(DEFAULT_MAX_CONCURRENT_JOBS)
+        .max(1)
+}
+
 #[derive(Debug)]
 struct CommandResult {
     exit_code: Option<i32>,
@@ -105,11 +114,13 @@ struct CommandResult {
 #[derive(Debug, Clone, Default)]
 struct JobManager {
     jobs: Arc<Mutex<HashMap<String, RunningJob>>>,
+    queued: Arc<Mutex<VecDeque<(Client, AgentConfig, ShellAgentShellRequest)>>>,
 }
 
 #[derive(Debug, Clone)]
 struct RunningJob {
-    child: Arc<Mutex<Child>>,
+    client_id: String,
+    child: Option<Arc<Mutex<Child>>>,
     stop_requested: Arc<AtomicBool>,
 }
 
@@ -1177,12 +1188,34 @@ fn agent_project_hook_result(
     hook: &str,
     commands: &[String],
     timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+    deadline: Option<Instant>,
 ) -> ShellAgentProjectHookResult {
     let mut steps = Vec::new();
     let mut result_error = None;
     let cwd = project_path.to_string_lossy().to_string();
     for (idx, command) in commands.iter().enumerate() {
         let start = Instant::now();
+        let command_timeout_secs = match deadline {
+            Some(deadline) => {
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                if remaining.is_zero() {
+                    steps.push(ShellAgentProjectHookStep {
+                        index: idx,
+                        command: command.clone(),
+                        exit_code: None,
+                        stdout_tail: String::new(),
+                        stderr_tail: "workflow timed out before hook command started".to_string(),
+                        duration_ms: start.elapsed().as_millis() as u64,
+                        success: false,
+                    });
+                    result_error = Some("workflow timed out".to_string());
+                    break;
+                }
+                timeout_secs.min(remaining.as_secs().max(1))
+            }
+            None => timeout_secs,
+        };
         if command.trim().is_empty() {
             steps.push(ShellAgentProjectHookStep {
                 index: idx,
@@ -1196,7 +1229,13 @@ fn agent_project_hook_result(
             result_error = Some("hook command cannot be empty".to_string());
             break;
         }
-        let command_result = run_shell(policy, Some(&cwd), command, timeout_secs);
+        let command_result = run_shell(
+            policy,
+            Some(&cwd),
+            command,
+            command_timeout_secs,
+            stop_requested,
+        );
         let step_success = command_result.error.is_none() && command_result.exit_code == Some(0);
         let step_error = command_result.error.clone();
         let exit_code = command_result.exit_code;
@@ -1323,7 +1362,15 @@ fn run_agent_project_workflow(
     cfg: &AgentConfig,
     project_cache: &mut AgentProjectCache,
     payload: ShellAgentProjectWorkflowPayload,
+    stop_requested: Option<&AtomicBool>,
 ) -> ShellAgentProjectWorkflowResult {
+    let workflow_started = Instant::now();
+    let max_runtime_secs = payload
+        .max_runtime_secs
+        .unwrap_or(payload.timeout_secs)
+        .min(cfg.policy.max_timeout_secs)
+        .max(1);
+    let deadline = workflow_started + Duration::from_secs(max_runtime_secs);
     let project_id = payload.project_id.trim().to_string();
     let mode = match normalize_agent_workflow_mode(&payload.mode) {
         Ok(mode) => mode,
@@ -1429,6 +1476,8 @@ fn run_agent_project_workflow(
                             &hook_name,
                             commands,
                             payload.timeout_secs,
+                            stop_requested,
+                            Some(deadline),
                         );
                         if !result.success {
                             success = false;
@@ -1459,6 +1508,8 @@ fn run_agent_project_workflow(
                         &hook_name,
                         commands,
                         payload.timeout_secs,
+                        stop_requested,
+                        Some(deadline),
                     );
                     success = result.success;
                     if !result.success {
@@ -1493,6 +1544,15 @@ fn run_agent_project_workflow(
     );
     if error.is_some() {
         success = false;
+    }
+    if workflow_started.elapsed() >= Duration::from_secs(max_runtime_secs)
+        && error.as_deref() != Some("workflow timed out")
+    {
+        success = false;
+        error = Some(format!(
+            "workflow timed out after {} seconds",
+            max_runtime_secs
+        ));
     }
 
     ShellAgentProjectWorkflowResult {
@@ -1541,6 +1601,9 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities.file_write = true;
     capabilities.project_create = true;
     capabilities.project_workflow = true;
+    capabilities.async_jobs = true;
+    capabilities.async_shell_jobs = true;
+    capabilities.async_project_workflow_jobs = true;
     capabilities
 }
 
@@ -1651,6 +1714,7 @@ fn run_shell(
     cwd: Option<&str>,
     command: &str,
     timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
 ) -> CommandResult {
     if !policy.allow_raw_shell {
         return CommandResult {
@@ -1695,6 +1759,33 @@ fn run_shell(
         }
     };
     loop {
+        if stop_requested
+            .map(|flag| flag.load(Ordering::SeqCst))
+            .unwrap_or(false)
+        {
+            let _ = child.kill();
+            let duration_ms = start.elapsed().as_millis() as u64;
+            return match read_pipes(child) {
+                Ok((_status, stdout, stderr)) => CommandResult {
+                    exit_code: Some(-1),
+                    stdout: Some(truncate_bytes(&stdout, policy.max_output_bytes)),
+                    stderr: Some(format!(
+                        "{}{}job stopped by request",
+                        truncate_bytes(&stderr, policy.max_output_bytes),
+                        if stderr.is_empty() { "" } else { "\n" },
+                    )),
+                    duration_ms: Some(duration_ms),
+                    error: Some("job stopped".to_string()),
+                },
+                Err(e) => CommandResult {
+                    exit_code: Some(-1),
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(duration_ms),
+                    error: Some(format!("job stopped; failed to collect output: {}", e)),
+                },
+            };
+        }
         match child.try_wait() {
             Ok(Some(_)) => break,
             Ok(None) => {
@@ -2121,9 +2212,13 @@ fn send_start_failure(
                 status: "failed".to_string(),
                 stdout_chunk: None,
                 stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
                 exit_code: None,
                 duration_ms: Some(0),
                 error: Some(error),
+                project_workflow_result: None,
+                finished: true,
             },
         );
     }
@@ -2147,7 +2242,86 @@ fn kill_child_group(child: &Arc<Mutex<Child>>) -> Result<(), String> {
 }
 
 impl JobManager {
-    fn start(&self, client: Client, cfg: AgentConfig, request: ShellAgentShellRequest) {
+    fn has_work(&self) -> bool {
+        !self.jobs.lock().unwrap().is_empty() || !self.queued.lock().unwrap().is_empty()
+    }
+
+    fn active_job_count(&self, client_id: &str) -> usize {
+        self.jobs
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|job| job.client_id == client_id)
+            .count()
+    }
+
+    fn enqueue(&self, client: Client, cfg: AgentConfig, request: ShellAgentShellRequest) {
+        let Some(job_id) = request.job_id.clone() else {
+            return;
+        };
+        let active = self.active_job_count(&cfg.client_id);
+        if active >= max_concurrent_jobs(&cfg) {
+            let _ = send_job_update(
+                &client,
+                &cfg,
+                &ShellAgentJobUpdateRequest {
+                    client_id: cfg.client_id.clone(),
+                    job_id: job_id.clone(),
+                    request_id: Some(request.request_id.clone()),
+                    status: "agent_queued".to_string(),
+                    stdout_chunk: None,
+                    stderr_chunk: None,
+                    stdout_tail: None,
+                    stderr_tail: None,
+                    exit_code: None,
+                    duration_ms: None,
+                    error: None,
+                    project_workflow_result: None,
+                    finished: false,
+                },
+            );
+            self.queued
+                .lock()
+                .unwrap()
+                .push_back((client, cfg, request));
+            return;
+        }
+        self.start_now(client, cfg, request);
+    }
+
+    fn start_now(&self, client: Client, cfg: AgentConfig, request: ShellAgentShellRequest) {
+        match request.kind.as_str() {
+            "project_workflow_job" => self.start_project_workflow_job(client, cfg, request),
+            _ => self.start_shell_job(client, cfg, request),
+        }
+    }
+
+    fn start_available_queued(&self) {
+        loop {
+            let next = {
+                let jobs = self.jobs.lock().unwrap();
+                let mut queued = self.queued.lock().unwrap();
+                let mut selected = None;
+                for (idx, (_, cfg, request)) in queued.iter().enumerate() {
+                    let active = jobs
+                        .values()
+                        .filter(|job| job.client_id == request.client_id)
+                        .count();
+                    if active < max_concurrent_jobs(cfg) {
+                        selected = Some(idx);
+                        break;
+                    }
+                }
+                selected.and_then(|idx| queued.remove(idx))
+            };
+            let Some((client, cfg, request)) = next else {
+                return;
+            };
+            self.start_now(client, cfg, request);
+        }
+    }
+
+    fn start_shell_job(&self, client: Client, cfg: AgentConfig, request: ShellAgentShellRequest) {
         let Some(job_id) = request.job_id.clone() else {
             return;
         };
@@ -2197,7 +2371,8 @@ impl JobManager {
         self.jobs.lock().unwrap().insert(
             job_id.clone(),
             RunningJob {
-                child: child.clone(),
+                client_id: cfg.client_id.clone(),
+                child: Some(child.clone()),
                 stop_requested: stop_requested.clone(),
             },
         );
@@ -2211,12 +2386,17 @@ impl JobManager {
                 status: "running".to_string(),
                 stdout_chunk: None,
                 stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
                 exit_code: None,
                 duration_ms: None,
                 error: None,
+                project_workflow_result: None,
+                finished: false,
             },
         );
         let jobs = self.jobs.clone();
+        let queued = self.queued.clone();
         std::thread::spawn(move || {
             let (tx, rx) = mpsc::channel::<OutputChunk>();
             let mut readers = Vec::new();
@@ -2249,9 +2429,13 @@ impl JobManager {
                             status: "running".to_string(),
                             stdout_chunk: (!out.is_empty()).then_some(out),
                             stderr_chunk: (!err.is_empty()).then_some(err),
+                            stdout_tail: None,
+                            stderr_tail: None,
                             exit_code: None,
                             duration_ms: None,
                             error: None,
+                            project_workflow_result: None,
+                            finished: false,
                         },
                     );
                 }
@@ -2320,16 +2504,172 @@ impl JobManager {
                     status: final_status.0,
                     stdout_chunk: (!out.is_empty()).then_some(out),
                     stderr_chunk: (!err.is_empty()).then_some(err),
+                    stdout_tail: None,
+                    stderr_tail: None,
                     exit_code: final_status.1,
                     duration_ms: Some(start.elapsed().as_millis() as u64),
                     error: final_status.2,
+                    project_workflow_result: None,
+                    finished: true,
                 },
             );
             jobs.lock().unwrap().remove(&job_id);
+            let manager = JobManager {
+                jobs: jobs.clone(),
+                queued: queued.clone(),
+            };
+            manager.start_available_queued();
+        });
+    }
+
+    fn start_project_workflow_job(
+        &self,
+        client: Client,
+        cfg: AgentConfig,
+        request: ShellAgentShellRequest,
+    ) {
+        let Some(job_id) = request.job_id.clone() else {
+            return;
+        };
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        self.jobs.lock().unwrap().insert(
+            job_id.clone(),
+            RunningJob {
+                client_id: cfg.client_id.clone(),
+                child: None,
+                stop_requested: stop_requested.clone(),
+            },
+        );
+        let _ = send_job_update(
+            &client,
+            &cfg,
+            &ShellAgentJobUpdateRequest {
+                client_id: cfg.client_id.clone(),
+                job_id: job_id.clone(),
+                request_id: Some(request.request_id.clone()),
+                status: "running".to_string(),
+                stdout_chunk: Some("project workflow started\n".to_string()),
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: None,
+                duration_ms: None,
+                error: None,
+                project_workflow_result: None,
+                finished: false,
+            },
+        );
+        let jobs = self.jobs.clone();
+        let queued = self.queued.clone();
+        std::thread::spawn(move || {
+            let start = Instant::now();
+            let mut cache = AgentProjectCache::default();
+            let result = match request.project_workflow.clone() {
+                Some(payload) => run_agent_project_workflow(
+                    &cfg,
+                    &mut cache,
+                    payload,
+                    Some(stop_requested.as_ref()),
+                ),
+                None => ShellAgentProjectWorkflowResult {
+                    success: false,
+                    project_id: String::new(),
+                    project: None,
+                    mode: "snapshot".to_string(),
+                    git_before: ShellAgentProjectGitSnapshot::default(),
+                    hook_result: None,
+                    git_after: ShellAgentProjectGitSnapshot::default(),
+                    warnings: vec![
+                        "project_workflow_job request missing project_workflow payload".to_string(),
+                    ],
+                    recommended_next_action: "Review workflow warnings".to_string(),
+                    error: Some(
+                        "project_workflow_job request missing project_workflow payload".to_string(),
+                    ),
+                },
+            };
+            let stopped = stop_requested.load(Ordering::SeqCst);
+            let success = result.success && result.error.is_none() && !stopped;
+            let final_status = if stopped {
+                "stopped"
+            } else if success {
+                "completed"
+            } else {
+                "failed"
+            };
+            let final_error = if stopped {
+                Some("job stopped by request".to_string())
+            } else {
+                result.error.clone()
+            };
+            let stdout_tail = Some(format!(
+                "project_workflow {} {} finished status={}\n",
+                result.project_id, result.mode, final_status
+            ));
+            let _ = send_job_update(
+                &client,
+                &cfg,
+                &ShellAgentJobUpdateRequest {
+                    client_id: cfg.client_id.clone(),
+                    job_id: job_id.clone(),
+                    request_id: Some(request.request_id),
+                    status: final_status.to_string(),
+                    stdout_chunk: None,
+                    stderr_chunk: None,
+                    stdout_tail,
+                    stderr_tail: final_error.clone(),
+                    exit_code: Some(if success { 0 } else { 1 }),
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: final_error,
+                    project_workflow_result: Some(result),
+                    finished: true,
+                },
+            );
+            jobs.lock().unwrap().remove(&job_id);
+            let manager = JobManager {
+                jobs: jobs.clone(),
+                queued: queued.clone(),
+            };
+            manager.start_available_queued();
         });
     }
 
     fn stop(&self, job_id: &str) -> Result<(), String> {
+        let queued_job = {
+            let mut queued = self.queued.lock().unwrap();
+            if let Some(pos) = queued
+                .iter()
+                .position(|(_, _, request)| request.job_id.as_deref() == Some(job_id))
+            {
+                queued.remove(pos)
+            } else {
+                None
+            }
+        };
+        if let Some((client, cfg, request)) = queued_job {
+            let request_id = request.request_id.clone();
+            let job_id = request.job_id.clone().unwrap_or_default();
+            let _ = send_job_update(
+                &client,
+                &cfg,
+                &ShellAgentJobUpdateRequest {
+                    client_id: cfg.client_id.clone(),
+                    job_id,
+                    request_id: Some(request_id),
+                    status: "stopped".to_string(),
+                    stdout_chunk: None,
+                    stderr_chunk: None,
+                    stdout_tail: None,
+                    stderr_tail: Some("job stopped before start".to_string()),
+                    exit_code: Some(-1),
+                    duration_ms: Some(0),
+                    error: Some("job stopped before start".to_string()),
+                    project_workflow_result: None,
+                    finished: true,
+                },
+            );
+            return Ok(());
+        }
         let (child, stop_requested) = {
             let jobs = self.jobs.lock().unwrap();
             let Some(job) = jobs.get(job_id) else {
@@ -2338,10 +2678,13 @@ impl JobManager {
             (job.child.clone(), job.stop_requested.clone())
         };
         stop_requested.store(true, Ordering::SeqCst);
-        kill_child_group(&child).map_err(|e| format!("failed to kill job {}: {}", job_id, e))
+        if let Some(child) = child {
+            kill_child_group(&child).map_err(|e| format!("failed to kill job {}: {}", job_id, e))
+        } else {
+            Ok(())
+        }
     }
 }
-
 fn handle_one_poll(
     client: &Client,
     cfg: &AgentConfig,
@@ -2362,8 +2705,8 @@ fn handle_one_poll(
         return Ok(false);
     };
     match request.kind.as_str() {
-        "start_job" => {
-            jobs.start(client.clone(), cfg.clone(), request);
+        "start_job" | "project_workflow_job" => {
+            jobs.enqueue(client.clone(), cfg.clone(), request);
             Ok(true)
         }
         "stop_job" => {
@@ -2400,7 +2743,7 @@ fn handle_one_poll(
         "project_workflow" => {
             let request_id = request.request_id.clone();
             let result = match request.project_workflow {
-                Some(payload) => run_agent_project_workflow(cfg, project_cache, payload),
+                Some(payload) => run_agent_project_workflow(cfg, project_cache, payload, None),
                 None => ShellAgentProjectWorkflowResult {
                     success: false,
                     project_id: String::new(),
@@ -2426,6 +2769,7 @@ fn handle_one_poll(
                 request.cwd.as_deref(),
                 &request.command,
                 request.timeout_secs,
+                None,
             );
             submit_result(client, cfg, request.request_id, result)
         }
@@ -2448,6 +2792,9 @@ fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
         match handle_one_poll(&client, &cfg, &jobs, &mut project_cache) {
             Ok(ran_request) => {
                 if once {
+                    while jobs.has_work() {
+                        std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
+                    }
                     return Ok(());
                 }
                 if !ran_request {
@@ -2502,6 +2849,7 @@ mod tests {
             projects_dir: Some(projects_dir),
             poll_interval_ms: 1000,
             capabilities: None,
+            max_concurrent_jobs: None,
             policy: AgentPolicy::default(),
         }
     }
@@ -2533,6 +2881,7 @@ mod tests {
             run_doctor_hook: false,
             doctor_hook: "doctor".to_string(),
             timeout_secs: 10,
+            max_runtime_secs: None,
         }
     }
 
@@ -2798,6 +3147,107 @@ path = "/tmp/private-drop"
         let capabilities = agent_register_capabilities(&cfg);
         assert!(capabilities.project_create);
         assert!(capabilities.project_workflow);
+        assert!(capabilities.async_jobs);
+        assert!(capabilities.async_shell_jobs);
+        assert!(capabilities.async_project_workflow_jobs);
+    }
+
+    #[test]
+    fn max_concurrent_jobs_defaults_to_two_and_clamps_to_one() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("config/projects.d"));
+        assert_eq!(max_concurrent_jobs(&cfg), DEFAULT_MAX_CONCURRENT_JOBS);
+
+        cfg.max_concurrent_jobs = Some(0);
+        assert_eq!(max_concurrent_jobs(&cfg), 1);
+
+        cfg.max_concurrent_jobs = Some(4);
+        assert_eq!(max_concurrent_jobs(&cfg), 4);
+    }
+
+    #[test]
+    fn shell_job_success_and_failure_results_are_structured() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let cwd = tmp.path().to_string_lossy().to_string();
+
+        let success = run_shell(
+            &cfg.policy,
+            Some(&cwd),
+            "printf hello; printf warn >&2",
+            10,
+            None,
+        );
+        assert_eq!(success.exit_code, Some(0));
+        assert_eq!(success.stdout.as_deref(), Some("hello"));
+        assert_eq!(success.stderr.as_deref(), Some("warn"));
+        assert!(success.error.is_none());
+
+        let failure = run_shell(&cfg.policy, Some(&cwd), "exit 7", 10, None);
+        assert_eq!(failure.exit_code, Some(7));
+        assert!(failure.error.is_none());
+    }
+
+    #[test]
+    fn shell_job_timeout_returns_timeout_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let cwd = tmp.path().to_string_lossy().to_string();
+
+        let result = run_shell(&cfg.policy, Some(&cwd), "sleep 2", 1, None);
+        assert_eq!(result.exit_code, Some(-1));
+        assert_eq!(result.error.as_deref(), Some("command timed out"));
+        assert!(result
+            .stderr
+            .as_deref()
+            .unwrap_or_default()
+            .contains("command timed out after 1 seconds"));
+    }
+
+    #[test]
+    fn shell_job_stop_flag_is_best_effort() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let cwd = tmp.path().to_string_lossy().to_string();
+        let stop_requested = AtomicBool::new(true);
+
+        let result = run_shell(
+            &cfg.policy,
+            Some(&cwd),
+            "sleep 2",
+            10,
+            Some(&stop_requested),
+        );
+        assert_eq!(result.exit_code, Some(-1));
+        assert_eq!(result.error.as_deref(), Some("job stopped"));
+        assert!(result
+            .stderr
+            .as_deref()
+            .unwrap_or_default()
+            .contains("job stopped by request"));
+    }
+
+    #[test]
+    fn shell_job_stdout_stderr_are_bounded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("config/projects.d"));
+        cfg.policy.max_output_bytes = 8;
+        let cwd = tmp.path().to_string_lossy().to_string();
+
+        let result = run_shell(
+            &cfg.policy,
+            Some(&cwd),
+            "printf 0123456789; printf abcdefghij >&2",
+            10,
+            None,
+        );
+        assert_eq!(result.exit_code, Some(0));
+        let stdout = result.stdout.unwrap();
+        let stderr = result.stderr.unwrap();
+        assert!(stdout.contains("[output truncated to last 8 bytes]"));
+        assert!(stdout.ends_with("23456789"));
+        assert!(stderr.contains("[output truncated to last 8 bytes]"));
+        assert!(stderr.ends_with("cdefghij"));
     }
 
     #[test]
@@ -2817,7 +3267,7 @@ path = "/tmp/private-drop"
         let mut cache = AgentProjectCache::default();
 
         let result =
-            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"));
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"), None);
 
         assert!(result.success, "{:?}", result.error);
         assert_eq!(result.mode, "snapshot");
@@ -2832,8 +3282,12 @@ path = "/tmp/private-drop"
         let cfg = test_config(tmp.path().join("config/projects.d"));
         let mut cache = AgentProjectCache::default();
 
-        let result =
-            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("missing", "snapshot"));
+        let result = run_agent_project_workflow(
+            &cfg,
+            &mut cache,
+            workflow_payload("missing", "snapshot"),
+            None,
+        );
 
         assert!(!result.success);
         assert_eq!(
@@ -2857,7 +3311,7 @@ path = "/tmp/private-drop"
         let mut cache = AgentProjectCache::default();
 
         let result =
-            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"));
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"), None);
 
         assert!(!result.success);
         assert_eq!(
@@ -2876,8 +3330,12 @@ path = "/tmp/private-drop"
         let cfg = test_config(projects_dir);
         let mut cache = AgentProjectCache::default();
 
-        let result =
-            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "precommit"));
+        let result = run_agent_project_workflow(
+            &cfg,
+            &mut cache,
+            workflow_payload("foo", "precommit"),
+            None,
+        );
 
         assert!(!result.success);
         assert_eq!(
@@ -2904,7 +3362,7 @@ path = "/tmp/private-drop"
         let mut payload = workflow_payload("foo", "hook");
         payload.hook = Some("doctor".to_string());
 
-        let result = run_agent_project_workflow(&cfg, &mut cache, payload);
+        let result = run_agent_project_workflow(&cfg, &mut cache, payload, None);
 
         assert!(!result.success);
         assert_eq!(result.recommended_next_action, "Fix failing hook step");
@@ -2934,10 +3392,40 @@ path = "/tmp/private-drop"
         let mut payload = workflow_payload("foo", "hook");
         payload.hook = Some("doctor".to_string());
 
-        let result = run_agent_project_workflow(&cfg, &mut cache, payload);
+        let result = run_agent_project_workflow(&cfg, &mut cache, payload, None);
 
         assert!(result.success, "{:?}", result.error);
         assert!(result.hook_result.unwrap().success);
+    }
+
+    #[test]
+    fn project_workflow_job_honors_max_runtime_secs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("config/projects.d");
+        let project_path = tmp.path().join("work/foo");
+        init_clean_git_repo(&project_path);
+        write_project_registry(
+            &projects_dir,
+            "foo",
+            &project_path,
+            false,
+            hooks(&[("doctor", &["sleep 2", "true"])]),
+        );
+        let cfg = test_config(projects_dir);
+        let mut cache = AgentProjectCache::default();
+        let mut payload = workflow_payload("foo", "hook");
+        payload.hook = Some("doctor".to_string());
+        payload.timeout_secs = 10;
+        payload.max_runtime_secs = Some(1);
+
+        let result = run_agent_project_workflow(&cfg, &mut cache, payload, None);
+
+        assert!(!result.success);
+        assert!(result
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("timed out"));
     }
 
     #[test]
@@ -2957,13 +3445,13 @@ path = "/tmp/private-drop"
         let mut cache = AgentProjectCache::default();
 
         let clean =
-            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"));
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"), None);
         assert!(clean.success);
         assert_eq!(clean.recommended_next_action, "No changes detected");
 
         std::fs::write(project_path.join("dirty.txt"), "dirty\n").unwrap();
         let dirty =
-            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"));
+            run_agent_project_workflow(&cfg, &mut cache, workflow_payload("foo", "snapshot"), None);
         assert!(dirty.success);
         assert_eq!(
             dirty.recommended_next_action,

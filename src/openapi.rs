@@ -347,6 +347,33 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             }
         }
     });
+    spec["paths"]["/api/shell/projects/workflow_job"] = serde_json::json!({
+        "post": {
+            "operationId": "createShellClientProjectWorkflowJob",
+            "summary": "Create an async agent workflow job",
+            "description": "Queue an agent-native project workflow job and return job_id immediately.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientProjectWorkflowJobRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Async job create response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientJobCreateResponse" }
+                        }
+                    }
+                },
+                "403": { "description": "Client owner mismatch" }
+            }
+        }
+    });
     spec["paths"]["/api/shell/run"] = serde_json::json!({
         "post": {
             "operationId": "runShell",
@@ -393,6 +420,162 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
                     "content": {
                         "application/json": {
                             "schema": { "$ref": "#/components/schemas/ShellJobOpResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["paths"]["/api/shell/jobs/shell"] = serde_json::json!({
+        "post": {
+            "operationId": "createShellClientShellJob",
+            "summary": "Create an async shell job",
+            "description": "Queue a shell command on an agent and return job_id immediately.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientShellJobRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Async shell job create response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientJobCreateResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["paths"]["/api/shell/jobs/shell_batch"] = serde_json::json!({
+        "post": {
+            "operationId": "createShellClientShellJobBatch",
+            "summary": "Create async shell jobs",
+            "description": "Queue multiple shell commands on one agent and return job_ids immediately.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientShellJobBatchRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Async shell job batch create response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientJobCreateResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["paths"]["/api/shell/jobs/status"] = serde_json::json!({
+        "post": {
+            "operationId": "getShellClientJobStatus",
+            "summary": "Get async job status",
+            "description": "Read status and final structured result for an agent async job.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientJobStatusRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Async job status response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientJobStatusResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["paths"]["/api/shell/jobs/log"] = serde_json::json!({
+        "post": {
+            "operationId": "getShellClientJobLog",
+            "summary": "Read async job logs",
+            "description": "Read bounded stdout and stderr tails for an agent async job.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientJobLogRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Async job log response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientJobLogResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["paths"]["/api/shell/jobs/stop"] = serde_json::json!({
+        "post": {
+            "operationId": "stopShellClientJob",
+            "summary": "Stop an async job",
+            "description": "Request best-effort stop for an agent async job.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientJobStopRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Async job stop response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientJobStopResponse" }
+                        }
+                    }
+                }
+            }
+        }
+    });
+    spec["paths"]["/api/shell/jobs/list"] = serde_json::json!({
+        "post": {
+            "operationId": "listShellClientJobs",
+            "summary": "List async jobs",
+            "description": "List async shell and project workflow jobs for one agent client.",
+            "tags": ["shell"],
+            "requestBody": {
+                "required": true,
+                "content": {
+                    "application/json": {
+                        "schema": { "$ref": "#/components/schemas/ShellClientJobsListRequest" }
+                    }
+                }
+            },
+            "responses": {
+                "200": {
+                    "description": "Async jobs list response",
+                    "content": {
+                        "application/json": {
+                            "schema": { "$ref": "#/components/schemas/ShellClientJobsListResponse" }
                         }
                     }
                 }
@@ -451,7 +634,10 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "git": { "type": "boolean" },
             "jobs": { "type": "boolean" },
             "project_create": { "type": "boolean" },
-            "project_workflow": { "type": "boolean" }
+            "project_workflow": { "type": "boolean" },
+            "async_jobs": { "type": "boolean" },
+            "async_shell_jobs": { "type": "boolean" },
+            "async_project_workflow_jobs": { "type": "boolean" }
         }
     });
     spec["components"]["schemas"]["ShellClientView"] = serde_json::json!({
@@ -541,7 +727,8 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "run_doctor": { "type": "boolean", "default": true },
             "run_doctor_hook": { "type": "boolean", "default": false },
             "doctor_hook": { "type": "string", "default": "doctor" },
-            "timeout_secs": { "type": "integer", "default": 120 }
+            "timeout_secs": { "type": "integer", "default": 120 },
+            "max_runtime_secs": { "type": "integer", "nullable": true }
         },
         "required": ["project_id"]
     });
@@ -614,6 +801,21 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
         },
         "required": ["client_id", "project_id"]
     });
+    spec["components"]["schemas"]["ShellClientProjectWorkflowJobRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" },
+            "project_id": { "type": "string" },
+            "mode": { "type": "string", "enum": ["snapshot", "doctor", "hook", "precommit"], "default": "snapshot" },
+            "hook": { "type": "string", "nullable": true },
+            "run_doctor": { "type": "boolean", "default": true },
+            "run_doctor_hook": { "type": "boolean", "default": false },
+            "doctor_hook": { "type": "string", "default": "doctor" },
+            "timeout_secs": { "type": "integer", "default": 120 },
+            "max_runtime_secs": { "type": "integer", "nullable": true }
+        },
+        "required": ["client_id", "project_id"]
+    });
     spec["components"]["schemas"]["ShellClientProjectWorkflowResponse"] = serde_json::json!({
         "type": "object",
         "properties": {
@@ -657,6 +859,28 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "error": { "type": "string", "nullable": true }
         },
         "required": ["success", "request_id", "client_id", "command_preview"]
+    });
+    spec["components"]["schemas"]["ShellClientShellJobRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" },
+            "cwd": { "type": "string", "nullable": true },
+            "command": { "type": "string", "maxLength": 8000 },
+            "timeout_secs": { "type": "integer", "default": 120 },
+            "max_runtime_secs": { "type": "integer", "nullable": true }
+        },
+        "required": ["client_id", "command"]
+    });
+    spec["components"]["schemas"]["ShellClientShellJobBatchRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" },
+            "cwd": { "type": "string", "nullable": true },
+            "commands": { "type": "array", "items": { "type": "string", "maxLength": 8000 }, "minItems": 1, "maxItems": 20 },
+            "timeout_secs": { "type": "integer", "default": 120 },
+            "max_runtime_secs": { "type": "integer", "nullable": true }
+        },
+        "required": ["client_id", "commands"]
     });
     spec["components"]["schemas"]["ShellFileOpRequest"] = serde_json::json!({
         "type": "object",
@@ -722,12 +946,32 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "max_runtime_secs": { "type": "integer", "nullable": true }
         }
     });
+    spec["components"]["schemas"]["ShellAgentShellJobResult"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "cwd": { "type": "string", "nullable": true },
+            "command_preview": { "type": "string" },
+            "exit_code": { "type": "integer", "nullable": true },
+            "duration_ms": { "type": "integer", "nullable": true },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["command_preview"]
+    });
+    spec["components"]["schemas"]["ShellAgentJobResult"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "shell": { "$ref": "#/components/schemas/ShellAgentShellJobResult", "nullable": true },
+            "project_workflow": { "$ref": "#/components/schemas/ShellAgentProjectWorkflowResult", "nullable": true }
+        }
+    });
     spec["components"]["schemas"]["ShellJobInfo"] = serde_json::json!({
         "type": "object",
         "properties": {
             "job_id": { "type": "string" },
             "request_id": { "type": "string", "nullable": true },
             "client_id": { "type": "string" },
+            "kind": { "type": "string", "enum": ["shell", "project_workflow"] },
+            "project_id": { "type": "string", "nullable": true },
             "cwd": { "type": "string", "nullable": true },
             "command_preview": { "type": "string" },
             "status": { "type": "string" },
@@ -736,10 +980,12 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "ended_at": { "type": "integer", "nullable": true },
             "exit_code": { "type": "integer", "nullable": true },
             "duration_ms": { "type": "integer", "nullable": true },
+            "elapsed_secs": { "type": "integer", "nullable": true },
             "error": { "type": "string", "nullable": true },
-            "codex": { "$ref": "#/components/schemas/ShellJobCodexMetadata", "nullable": true }
+            "codex": { "$ref": "#/components/schemas/ShellJobCodexMetadata", "nullable": true },
+            "result": { "$ref": "#/components/schemas/ShellAgentJobResult", "nullable": true }
         },
-        "required": ["job_id", "client_id", "command_preview", "status", "created_at"]
+        "required": ["job_id", "client_id", "kind", "command_preview", "status", "created_at"]
     });
     spec["components"]["schemas"]["ShellJobOpResponse"] = serde_json::json!({
         "type": "object",
@@ -755,6 +1001,108 @@ fn apply_shell_client_openapi(spec: &mut serde_json::Value) {
             "error": { "type": "string", "nullable": true }
         },
         "required": ["success", "op"]
+    });
+    spec["components"]["schemas"]["ShellClientJobCreateResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "job_id": { "type": "string", "nullable": true },
+            "job_ids": { "type": "array", "items": { "type": "string" } },
+            "client_id": { "type": "string" },
+            "project_id": { "type": "string", "nullable": true },
+            "status": { "type": "string" },
+            "job": { "$ref": "#/components/schemas/ShellJobInfo", "nullable": true },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "client_id", "status", "job_ids"]
+    });
+    spec["components"]["schemas"]["ShellClientJobStatusRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string", "nullable": true },
+            "job_id": { "type": "string" }
+        },
+        "required": ["job_id"]
+    });
+    spec["components"]["schemas"]["ShellClientJobStatusResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "job_id": { "type": "string", "nullable": true },
+            "client_id": { "type": "string", "nullable": true },
+            "kind": { "type": "string", "nullable": true },
+            "status": { "type": "string", "nullable": true },
+            "elapsed_secs": { "type": "integer", "nullable": true },
+            "exit_code": { "type": "integer", "nullable": true },
+            "result": { "$ref": "#/components/schemas/ShellAgentJobResult", "nullable": true },
+            "job": { "$ref": "#/components/schemas/ShellJobInfo", "nullable": true },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success"]
+    });
+    spec["components"]["schemas"]["ShellClientJobLogRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string", "nullable": true },
+            "job_id": { "type": "string" },
+            "tail_lines": { "type": "integer", "nullable": true },
+            "since_stdout_line": { "type": "integer", "nullable": true },
+            "since_stderr_line": { "type": "integer", "nullable": true }
+        },
+        "required": ["job_id"]
+    });
+    spec["components"]["schemas"]["ShellClientJobLogResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "job_id": { "type": "string", "nullable": true },
+            "client_id": { "type": "string", "nullable": true },
+            "stdout_tail": { "type": "string", "nullable": true },
+            "stderr_tail": { "type": "string", "nullable": true },
+            "next_stdout_line": { "type": "integer", "nullable": true },
+            "next_stderr_line": { "type": "integer", "nullable": true },
+            "job": { "$ref": "#/components/schemas/ShellJobInfo", "nullable": true },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success"]
+    });
+    spec["components"]["schemas"]["ShellClientJobStopRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string", "nullable": true },
+            "job_id": { "type": "string" }
+        },
+        "required": ["job_id"]
+    });
+    spec["components"]["schemas"]["ShellClientJobStopResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "job_id": { "type": "string", "nullable": true },
+            "status": { "type": "string", "nullable": true },
+            "job": { "$ref": "#/components/schemas/ShellJobInfo", "nullable": true },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success"]
+    });
+    spec["components"]["schemas"]["ShellClientJobsListRequest"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "client_id": { "type": "string" },
+            "status": { "type": "string", "nullable": true },
+            "limit": { "type": "integer", "nullable": true }
+        },
+        "required": ["client_id"]
+    });
+    spec["components"]["schemas"]["ShellClientJobsListResponse"] = serde_json::json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "client_id": { "type": "string" },
+            "jobs": { "type": "array", "items": { "$ref": "#/components/schemas/ShellJobInfo" } },
+            "error": { "type": "string", "nullable": true }
+        },
+        "required": ["success", "client_id", "jobs"]
     });
 }
 
@@ -1100,6 +1448,23 @@ mod tests {
             "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
             "/api/shell/projects/workflow": spec["paths"]["/api/shell/projects/workflow"].clone(),
             "/api/shell/run": spec["paths"]["/api/shell/run"].clone(),
+            "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
+        })
+    }
+
+    fn agent_runtime_paths_from_spec(spec: &serde_json::Value) -> serde_json::Value {
+        serde_json::json!({
+            "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
+            "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
+            "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
+            "/api/shell/projects/workflow": spec["paths"]["/api/shell/projects/workflow"].clone(),
+            "/api/shell/projects/workflow_job": spec["paths"]["/api/shell/projects/workflow_job"].clone(),
+            "/api/shell/jobs/shell": spec["paths"]["/api/shell/jobs/shell"].clone(),
+            "/api/shell/jobs/shell_batch": spec["paths"]["/api/shell/jobs/shell_batch"].clone(),
+            "/api/shell/jobs/status": spec["paths"]["/api/shell/jobs/status"].clone(),
+            "/api/shell/jobs/log": spec["paths"]["/api/shell/jobs/log"].clone(),
+            "/api/shell/jobs/stop": spec["paths"]["/api/shell/jobs/stop"].clone(),
+            "/api/shell/jobs/list": spec["paths"]["/api/shell/jobs/list"].clone(),
             "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
         })
     }
@@ -1502,6 +1867,8 @@ mod tests {
             "ShellFileOpResponse": spec["components"]["schemas"]["ShellFileOpResponse"].clone(),
             "ShellJobOpRequest": spec["components"]["schemas"]["ShellJobOpRequest"].clone(),
             "ShellJobCodexMetadata": spec["components"]["schemas"]["ShellJobCodexMetadata"].clone(),
+            "ShellAgentShellJobResult": spec["components"]["schemas"]["ShellAgentShellJobResult"].clone(),
+            "ShellAgentJobResult": spec["components"]["schemas"]["ShellAgentJobResult"].clone(),
             "ShellJobInfo": spec["components"]["schemas"]["ShellJobInfo"].clone(),
             "ShellJobOpResponse": spec["components"]["schemas"]["ShellJobOpResponse"].clone()
         });
@@ -1609,6 +1976,69 @@ mod tests {
         assert!(!spec["paths"]["/api/shell/projects/workflow"]["post"].is_null());
         assert!(!spec["paths"]["/api/shell/run"]["post"].is_null());
         assert!(!spec["paths"]["/api/shell/file"]["post"].is_null());
+        assert_operation_descriptions_within_limit(&spec);
+        assert_all_descriptions_within_limit(&spec);
+        assert_unique_operation_ids(&spec["paths"]);
+        assert_refs_resolve(&spec);
+    }
+
+    #[test]
+    fn agent_runtime_openapi_contains_async_jobs() {
+        let mut spec: serde_json::Value =
+            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+        apply_shell_client_openapi(&mut spec);
+        spec["paths"] = agent_runtime_paths_from_spec(&spec);
+        spec["components"]["schemas"] = serde_json::json!({
+            "ShellAgentProjectSummary": spec["components"]["schemas"]["ShellAgentProjectSummary"].clone(),
+            "ShellClientCapabilities": spec["components"]["schemas"]["ShellClientCapabilities"].clone(),
+            "ShellClientView": spec["components"]["schemas"]["ShellClientView"].clone(),
+            "ShellClientsResponse": spec["components"]["schemas"]["ShellClientsResponse"].clone(),
+            "ShellClientProjectsRequest": spec["components"]["schemas"]["ShellClientProjectsRequest"].clone(),
+            "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
+            "ShellClientProjectCreateRequest": spec["components"]["schemas"]["ShellClientProjectCreateRequest"].clone(),
+            "ShellClientProjectCreateResponse": spec["components"]["schemas"]["ShellClientProjectCreateResponse"].clone(),
+            "ShellAgentProjectWorkflowPayload": spec["components"]["schemas"]["ShellAgentProjectWorkflowPayload"].clone(),
+            "ShellAgentProjectGitSnapshot": spec["components"]["schemas"]["ShellAgentProjectGitSnapshot"].clone(),
+            "ShellAgentProjectHookStep": spec["components"]["schemas"]["ShellAgentProjectHookStep"].clone(),
+            "ShellAgentProjectHookResult": spec["components"]["schemas"]["ShellAgentProjectHookResult"].clone(),
+            "ShellAgentProjectWorkflowResult": spec["components"]["schemas"]["ShellAgentProjectWorkflowResult"].clone(),
+            "ShellClientProjectWorkflowRequest": spec["components"]["schemas"]["ShellClientProjectWorkflowRequest"].clone(),
+            "ShellClientProjectWorkflowJobRequest": spec["components"]["schemas"]["ShellClientProjectWorkflowJobRequest"].clone(),
+            "ShellClientProjectWorkflowResponse": spec["components"]["schemas"]["ShellClientProjectWorkflowResponse"].clone(),
+            "ShellClientShellJobRequest": spec["components"]["schemas"]["ShellClientShellJobRequest"].clone(),
+            "ShellClientShellJobBatchRequest": spec["components"]["schemas"]["ShellClientShellJobBatchRequest"].clone(),
+            "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
+            "ShellFileOpResponse": spec["components"]["schemas"]["ShellFileOpResponse"].clone(),
+            "ShellJobCodexMetadata": spec["components"]["schemas"]["ShellJobCodexMetadata"].clone(),
+            "ShellAgentShellJobResult": spec["components"]["schemas"]["ShellAgentShellJobResult"].clone(),
+            "ShellAgentJobResult": spec["components"]["schemas"]["ShellAgentJobResult"].clone(),
+            "ShellJobInfo": spec["components"]["schemas"]["ShellJobInfo"].clone(),
+            "ShellClientJobCreateResponse": spec["components"]["schemas"]["ShellClientJobCreateResponse"].clone(),
+            "ShellClientJobStatusRequest": spec["components"]["schemas"]["ShellClientJobStatusRequest"].clone(),
+            "ShellClientJobStatusResponse": spec["components"]["schemas"]["ShellClientJobStatusResponse"].clone(),
+            "ShellClientJobLogRequest": spec["components"]["schemas"]["ShellClientJobLogRequest"].clone(),
+            "ShellClientJobLogResponse": spec["components"]["schemas"]["ShellClientJobLogResponse"].clone(),
+            "ShellClientJobStopRequest": spec["components"]["schemas"]["ShellClientJobStopRequest"].clone(),
+            "ShellClientJobStopResponse": spec["components"]["schemas"]["ShellClientJobStopResponse"].clone(),
+            "ShellClientJobsListRequest": spec["components"]["schemas"]["ShellClientJobsListRequest"].clone(),
+            "ShellClientJobsListResponse": spec["components"]["schemas"]["ShellClientJobsListResponse"].clone()
+        });
+        for path in [
+            "/api/shell/projects/workflow_job",
+            "/api/shell/jobs/shell",
+            "/api/shell/jobs/shell_batch",
+            "/api/shell/jobs/status",
+            "/api/shell/jobs/log",
+            "/api/shell/jobs/stop",
+            "/api/shell/jobs/list",
+            "/api/shell/file",
+        ] {
+            assert!(
+                !spec["paths"][path]["post"].is_null(),
+                "agent runtime schema should include {}",
+                path
+            );
+        }
         assert_operation_descriptions_within_limit(&spec);
         assert_all_descriptions_within_limit(&spec);
         assert_unique_operation_ids(&spec["paths"]);
@@ -1909,5 +2339,79 @@ pub async fn codex_openapi_gpt_json(res: &mut Response) {
     apply_shell_client_openapi(&mut spec);
     spec["components"]["schemas"]["ReportRequest"]["properties"]["channel"]["description"] =
         serde_json::json!("Report channel; not the project field.");
+    res.render(Json(spec));
+}
+
+#[handler]
+pub async fn agent_runtime_openapi_json(res: &mut Response) {
+    let mut spec =
+        match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json")) {
+            Ok(spec) => spec,
+            Err(e) => {
+                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                res.render(json_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    &e.to_string(),
+                ));
+                return;
+            }
+        };
+    spec["openapi"] = serde_json::json!("3.1.0");
+    spec["servers"] = serde_json::json!([{ "url": public_url(), "description": "Public server" }]);
+    spec["info"] = serde_json::json!({
+        "title": "Private Drop Agent Runtime API",
+        "version": env!("CARGO_PKG_VERSION"),
+        "description": "Agent project, file, and async job API for GPT Actions."
+    });
+    apply_shell_client_openapi(&mut spec);
+    spec["paths"] = serde_json::json!({
+        "/api/shell/clients": spec["paths"]["/api/shell/clients"].clone(),
+        "/api/shell/projects": spec["paths"]["/api/shell/projects"].clone(),
+        "/api/shell/projects/create": spec["paths"]["/api/shell/projects/create"].clone(),
+        "/api/shell/projects/workflow": spec["paths"]["/api/shell/projects/workflow"].clone(),
+        "/api/shell/projects/workflow_job": spec["paths"]["/api/shell/projects/workflow_job"].clone(),
+        "/api/shell/jobs/shell": spec["paths"]["/api/shell/jobs/shell"].clone(),
+        "/api/shell/jobs/shell_batch": spec["paths"]["/api/shell/jobs/shell_batch"].clone(),
+        "/api/shell/jobs/status": spec["paths"]["/api/shell/jobs/status"].clone(),
+        "/api/shell/jobs/log": spec["paths"]["/api/shell/jobs/log"].clone(),
+        "/api/shell/jobs/stop": spec["paths"]["/api/shell/jobs/stop"].clone(),
+        "/api/shell/jobs/list": spec["paths"]["/api/shell/jobs/list"].clone(),
+        "/api/shell/file": spec["paths"]["/api/shell/file"].clone()
+    });
+    spec["components"]["schemas"] = serde_json::json!({
+        "ShellAgentProjectSummary": spec["components"]["schemas"]["ShellAgentProjectSummary"].clone(),
+        "ShellClientCapabilities": spec["components"]["schemas"]["ShellClientCapabilities"].clone(),
+        "ShellClientView": spec["components"]["schemas"]["ShellClientView"].clone(),
+        "ShellClientsResponse": spec["components"]["schemas"]["ShellClientsResponse"].clone(),
+        "ShellClientProjectsRequest": spec["components"]["schemas"]["ShellClientProjectsRequest"].clone(),
+        "ShellClientProjectsResponse": spec["components"]["schemas"]["ShellClientProjectsResponse"].clone(),
+        "ShellClientProjectCreateRequest": spec["components"]["schemas"]["ShellClientProjectCreateRequest"].clone(),
+        "ShellClientProjectCreateResponse": spec["components"]["schemas"]["ShellClientProjectCreateResponse"].clone(),
+        "ShellAgentProjectWorkflowPayload": spec["components"]["schemas"]["ShellAgentProjectWorkflowPayload"].clone(),
+        "ShellAgentProjectGitSnapshot": spec["components"]["schemas"]["ShellAgentProjectGitSnapshot"].clone(),
+        "ShellAgentProjectHookStep": spec["components"]["schemas"]["ShellAgentProjectHookStep"].clone(),
+        "ShellAgentProjectHookResult": spec["components"]["schemas"]["ShellAgentProjectHookResult"].clone(),
+        "ShellAgentProjectWorkflowResult": spec["components"]["schemas"]["ShellAgentProjectWorkflowResult"].clone(),
+        "ShellClientProjectWorkflowRequest": spec["components"]["schemas"]["ShellClientProjectWorkflowRequest"].clone(),
+        "ShellClientProjectWorkflowJobRequest": spec["components"]["schemas"]["ShellClientProjectWorkflowJobRequest"].clone(),
+        "ShellClientProjectWorkflowResponse": spec["components"]["schemas"]["ShellClientProjectWorkflowResponse"].clone(),
+        "ShellClientShellJobRequest": spec["components"]["schemas"]["ShellClientShellJobRequest"].clone(),
+        "ShellClientShellJobBatchRequest": spec["components"]["schemas"]["ShellClientShellJobBatchRequest"].clone(),
+        "ShellFileOpRequest": spec["components"]["schemas"]["ShellFileOpRequest"].clone(),
+        "ShellFileOpResponse": spec["components"]["schemas"]["ShellFileOpResponse"].clone(),
+        "ShellJobCodexMetadata": spec["components"]["schemas"]["ShellJobCodexMetadata"].clone(),
+        "ShellAgentShellJobResult": spec["components"]["schemas"]["ShellAgentShellJobResult"].clone(),
+        "ShellAgentJobResult": spec["components"]["schemas"]["ShellAgentJobResult"].clone(),
+        "ShellJobInfo": spec["components"]["schemas"]["ShellJobInfo"].clone(),
+        "ShellClientJobCreateResponse": spec["components"]["schemas"]["ShellClientJobCreateResponse"].clone(),
+        "ShellClientJobStatusRequest": spec["components"]["schemas"]["ShellClientJobStatusRequest"].clone(),
+        "ShellClientJobStatusResponse": spec["components"]["schemas"]["ShellClientJobStatusResponse"].clone(),
+        "ShellClientJobLogRequest": spec["components"]["schemas"]["ShellClientJobLogRequest"].clone(),
+        "ShellClientJobLogResponse": spec["components"]["schemas"]["ShellClientJobLogResponse"].clone(),
+        "ShellClientJobStopRequest": spec["components"]["schemas"]["ShellClientJobStopRequest"].clone(),
+        "ShellClientJobStopResponse": spec["components"]["schemas"]["ShellClientJobStopResponse"].clone(),
+        "ShellClientJobsListRequest": spec["components"]["schemas"]["ShellClientJobsListRequest"].clone(),
+        "ShellClientJobsListResponse": spec["components"]["schemas"]["ShellClientJobsListResponse"].clone()
+    });
     res.render(Json(spec));
 }

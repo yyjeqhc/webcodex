@@ -37,6 +37,10 @@ fn default_project_workflow_doctor_hook() -> String {
     "doctor".to_string()
 }
 
+fn default_shell_job_kind() -> String {
+    "shell".to_string()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
     #[serde(default = "default_shell_true")]
@@ -53,6 +57,12 @@ pub struct ShellClientCapabilities {
     pub project_create: bool,
     #[serde(default)]
     pub project_workflow: bool,
+    #[serde(default)]
+    pub async_jobs: bool,
+    #[serde(default)]
+    pub async_shell_jobs: bool,
+    #[serde(default)]
+    pub async_project_workflow_jobs: bool,
 }
 
 impl Default for ShellClientCapabilities {
@@ -65,6 +75,9 @@ impl Default for ShellClientCapabilities {
             jobs: false,
             project_create: false,
             project_workflow: false,
+            async_jobs: false,
+            async_shell_jobs: false,
+            async_project_workflow_jobs: false,
         }
     }
 }
@@ -284,6 +297,8 @@ pub struct ShellAgentProjectWorkflowPayload {
     pub doctor_hook: String,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+    #[serde(default)]
+    pub max_runtime_secs: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -357,6 +372,26 @@ pub struct ShellClientProjectWorkflowRequest {
     pub wait_timeout_secs: u64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientProjectWorkflowJobRequest {
+    pub client_id: String,
+    pub project_id: String,
+    #[serde(default = "default_project_workflow_mode")]
+    pub mode: String,
+    #[serde(default)]
+    pub hook: Option<String>,
+    #[serde(default = "default_project_workflow_run_doctor")]
+    pub run_doctor: bool,
+    #[serde(default)]
+    pub run_doctor_hook: bool,
+    #[serde(default = "default_project_workflow_doctor_hook")]
+    pub doctor_hook: String,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub max_runtime_secs: Option<u64>,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ShellClientProjectWorkflowResponse {
     pub success: bool,
@@ -372,6 +407,66 @@ pub struct ShellClientProjectWorkflowResponse {
     pub warnings: Vec<String>,
     pub recommended_next_action: String,
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientShellJobRequest {
+    pub client_id: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    pub command: String,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub max_runtime_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientShellJobBatchRequest {
+    pub client_id: String,
+    #[serde(default)]
+    pub cwd: Option<String>,
+    pub commands: Vec<String>,
+    #[serde(default = "default_timeout_secs")]
+    pub timeout_secs: u64,
+    #[serde(default)]
+    pub max_runtime_secs: Option<u64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobStatusRequest {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobLogRequest {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    pub job_id: String,
+    #[serde(default)]
+    pub tail_lines: Option<usize>,
+    #[serde(default)]
+    pub since_stdout_line: Option<usize>,
+    #[serde(default)]
+    pub since_stderr_line: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobStopRequest {
+    #[serde(default)]
+    pub client_id: Option<String>,
+    pub job_id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobsListRequest {
+    pub client_id: String,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -452,11 +547,19 @@ pub struct ShellAgentJobUpdateRequest {
     #[serde(default)]
     pub stderr_chunk: Option<String>,
     #[serde(default)]
+    pub stdout_tail: Option<String>,
+    #[serde(default)]
+    pub stderr_tail: Option<String>,
+    #[serde(default)]
     pub exit_code: Option<i32>,
     #[serde(default)]
     pub duration_ms: Option<u64>,
     #[serde(default)]
     pub error: Option<String>,
+    #[serde(default)]
+    pub project_workflow_result: Option<ShellAgentProjectWorkflowResult>,
+    #[serde(default)]
+    pub finished: bool,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -558,11 +661,36 @@ pub struct ShellJobOpRequest {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentShellJobResult {
+    #[serde(default)]
+    pub cwd: Option<String>,
+    pub command_preview: String,
+    #[serde(default)]
+    pub exit_code: Option<i32>,
+    #[serde(default)]
+    pub duration_ms: Option<u64>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellAgentJobResult {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell: Option<ShellAgentShellJobResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_workflow: Option<ShellAgentProjectWorkflowResult>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellJobInfo {
     pub job_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
     pub client_id: String,
+    #[serde(default = "default_shell_job_kind")]
+    pub kind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cwd: Option<String>,
     pub command_preview: String,
@@ -576,10 +704,14 @@ pub struct ShellJobInfo {
     pub exit_code: Option<i32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub elapsed_secs: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<ShellJobCodexMetadata>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<ShellAgentJobResult>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -598,6 +730,89 @@ pub struct ShellJobOpResponse {
     pub next_stdout_line: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_stderr_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobCreateResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub job_ids: Vec<String>,
+    pub client_id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<ShellJobInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobStatusResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub elapsed_secs: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<ShellAgentJobResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<ShellJobInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobLogResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stdout_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub stderr_tail: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_stdout_line: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub next_stderr_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<ShellJobInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobStopResponse {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub job_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub status: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<ShellJobInfo>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellClientJobsListResponse {
+    pub success: bool,
+    pub client_id: String,
+    pub jobs: Vec<ShellJobInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

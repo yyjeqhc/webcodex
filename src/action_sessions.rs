@@ -29,6 +29,7 @@ pub const AUDITED_ACTION_ROUTES: &[&str] = &[
     "/api/shell/run",
     "/api/shell/file",
     "/api/shell/job",
+    "/api/shell/jobs/shell_batch",
     "/api/desktop/task_op",
 ];
 
@@ -872,6 +873,7 @@ mod tests {
             "/api/shell/run",
             "/api/shell/file",
             "/api/shell/job",
+            "/api/shell/jobs/shell_batch",
             "/api/desktop/task_op",
         ] {
             assert!(

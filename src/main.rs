@@ -46,12 +46,15 @@ pub use models::{
     DesktopTaskOpRequest, Message, MessageKind,
 };
 pub(crate) use openapi::{
-    codex_openapi_compact_json, codex_openapi_gpt_json, codex_openapi_json, openapi_json,
+    agent_runtime_openapi_json, codex_openapi_compact_json, codex_openapi_gpt_json,
+    codex_openapi_json, openapi_json,
 };
 pub(crate) use shell_client::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
-    shell_clients, shell_file_op, shell_job, shell_project_create, shell_project_workflow,
-    shell_projects, shell_run, ShellClientRegistry,
+    shell_clients, shell_file_op, shell_job, shell_job_create_shell, shell_job_create_shell_batch,
+    shell_job_log, shell_job_status, shell_job_stop, shell_jobs_list, shell_project_create,
+    shell_project_workflow, shell_project_workflow_job, shell_projects, shell_run,
+    ShellClientRegistry,
 };
 pub(crate) use web::{
     action_session_detail_page, action_sessions_page, agent_playground_page, channel_page,
@@ -161,9 +164,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .push(Router::with_path("shell/projects").post(shell_projects))
                 .push(Router::with_path("shell/projects/create").post(shell_project_create))
                 .push(Router::with_path("shell/projects/workflow").post(shell_project_workflow))
+                .push(
+                    Router::with_path("shell/projects/workflow_job")
+                        .post(shell_project_workflow_job),
+                )
                 .push(Router::with_path("shell/run").post(shell_run))
                 .push(Router::with_path("shell/file").post(shell_file_op))
                 .push(Router::with_path("shell/job").post(shell_job))
+                .push(Router::with_path("shell/jobs/shell").post(shell_job_create_shell))
+                .push(
+                    Router::with_path("shell/jobs/shell_batch").post(shell_job_create_shell_batch),
+                )
+                .push(Router::with_path("shell/jobs/status").post(shell_job_status))
+                .push(Router::with_path("shell/jobs/log").post(shell_job_log))
+                .push(Router::with_path("shell/jobs/stop").post(shell_job_stop))
+                .push(Router::with_path("shell/jobs/list").post(shell_jobs_list))
                 .push(Router::with_path("shell/agent/register").post(shell_agent_register))
                 .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
                 .push(Router::with_path("shell/agent/result").post(shell_agent_result))
@@ -204,6 +219,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Router::with_path("codex-openapi-compact.json").get(codex_openapi_compact_json);
     let codex_openapi_gpt_router =
         Router::with_path("codex-openapi-gpt.json").get(codex_openapi_gpt_json);
+    let agent_runtime_openapi_router =
+        Router::with_path("agent-runtime-openapi.json").get(agent_runtime_openapi_json);
 
     let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
@@ -216,6 +233,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(codex_openapi_router)
         .push(codex_openapi_compact_router)
         .push(codex_openapi_gpt_router)
+        .push(agent_runtime_openapi_router)
         .push(assets_router)
         .push(web_router);
 

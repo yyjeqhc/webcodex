@@ -1741,7 +1741,14 @@ mod tests {
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: None,
+                capabilities: Some({
+                    let mut capabilities =
+                        crate::shell_protocol::ShellClientCapabilities::default();
+                    capabilities.jobs = true;
+                    capabilities.async_jobs = true;
+                    capabilities.async_shell_jobs = true;
+                    capabilities
+                }),
                 projects: None,
             })
             .await

@@ -1,0 +1,10 @@
+{
+  "client_id": "oe",
+  "project_id": "foo",
+  "mode": "precommit",
+  "run_doctor": true,
+  "run_doctor_hook": false,
+  "doctor_hook": "doctor",
+  "timeout_secs": 120,
+  "max_runtime_secs": 600
+}

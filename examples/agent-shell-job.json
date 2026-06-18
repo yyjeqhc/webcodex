@@ -1,0 +1,7 @@
+{
+  "client_id": "oe",
+  "cwd": "/tmp",
+  "command": "echo hello && sleep 5 && echo done",
+  "timeout_secs": 120,
+  "max_runtime_secs": 120
+}

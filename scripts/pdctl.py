@@ -283,6 +283,77 @@ def print_agent_workflow(payload):
         print("error: {}".format(payload.get("error")))
 
 
+def print_job_create(payload):
+    print("success: {}".format(payload.get("success")))
+    print("job_id: {}".format(payload.get("job_id") or "-"))
+    print("client_id: {}".format(payload.get("client_id") or "-"))
+    if payload.get("project_id"):
+        print("project_id: {}".format(payload.get("project_id")))
+    print("status: {}".format(payload.get("status") or "-"))
+    job = payload.get("job") or {}
+    if job:
+        print("kind: {}".format(job.get("kind") or "-"))
+        print("command: {}".format(job.get("command_preview") or "-"))
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
+def print_job_status(payload):
+    print("success: {}".format(payload.get("success")))
+    print("job_id: {}".format(payload.get("job_id") or "-"))
+    print("client_id: {}".format(payload.get("client_id") or "-"))
+    print("kind: {}".format(payload.get("kind") or "-"))
+    print("status: {}".format(payload.get("status") or "-"))
+    print("elapsed_secs: {}".format(payload.get("elapsed_secs") if payload.get("elapsed_secs") is not None else "-"))
+    print("exit_code: {}".format(payload.get("exit_code") if payload.get("exit_code") is not None else "-"))
+    result = payload.get("result") or {}
+    workflow = result.get("project_workflow") or {}
+    if workflow:
+        print("project_id: {}".format(workflow.get("project_id") or "-"))
+        print("mode: {}".format(workflow.get("mode") or "-"))
+        print("recommended_next_action: {}".format(workflow.get("recommended_next_action") or "-"))
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
+def print_job_log(payload):
+    print("success: {}".format(payload.get("success")))
+    print("job_id: {}".format(payload.get("job_id") or "-"))
+    print("client_id: {}".format(payload.get("client_id") or "-"))
+    print_multiline("stdout_tail:", payload.get("stdout_tail"))
+    print_multiline("stderr_tail:", payload.get("stderr_tail"))
+    print("next_stdout_line: {}".format(payload.get("next_stdout_line") or "-"))
+    print("next_stderr_line: {}".format(payload.get("next_stderr_line") or "-"))
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
+def print_job_stop(payload):
+    print("success: {}".format(payload.get("success")))
+    print("job_id: {}".format(payload.get("job_id") or "-"))
+    print("status: {}".format(payload.get("status") or "-"))
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
+def print_jobs(payload):
+    print("success: {}".format(payload.get("success")))
+    print("client_id: {}".format(payload.get("client_id") or "-"))
+    jobs = payload.get("jobs") or []
+    print("jobs: {}".format(len(jobs)))
+    for job in jobs:
+        print(
+            "{job_id} kind={kind} status={status} command={command}".format(
+                job_id=job.get("job_id", "-"),
+                kind=job.get("kind", "-"),
+                status=job.get("status", "-"),
+                command=job.get("command_preview", "-"),
+            )
+        )
+    if payload.get("error"):
+        print("error: {}".format(payload.get("error")))
+
+
 def print_summary(payload):
     print("success: {}".format(payload.get("success")))
     print("project: {}".format(payload.get("project", "")))
@@ -354,6 +425,59 @@ def build_request(args):
         if args.git_init is not None:
             body["git_init"] = args.git_init
         return "/api/shell/projects/create", body
+
+    if args.command == "shell-job":
+        body = {
+            "client_id": args.client_id,
+            "command": args.command_text,
+        }
+        add_if_present(body, args, ["cwd", "timeout_secs", "max_runtime_secs"])
+        return "/api/shell/jobs/shell", body
+
+    if args.command == "shell-batch":
+        body = {
+            "client_id": args.client_id,
+            "commands": args.commands,
+        }
+        add_if_present(body, args, ["cwd", "timeout_secs", "max_runtime_secs"])
+        return "/api/shell/jobs/shell_batch", body
+
+    if args.command == "workflow-job":
+        body = {
+            "client_id": args.client_id,
+            "project_id": args.project_id,
+            "mode": args.mode,
+        }
+        if args.hook_opt:
+            body["hook"] = args.hook_opt
+        add_if_present(
+            body,
+            args,
+            ["run_doctor", "run_doctor_hook", "timeout_secs", "max_runtime_secs"],
+        )
+        if args.doctor_hook:
+            body["doctor_hook"] = args.doctor_hook
+        return "/api/shell/projects/workflow_job", body
+
+    if args.command == "job-status":
+        body = {"job_id": args.job_id}
+        add_if_present(body, args, ["client_id"])
+        return "/api/shell/jobs/status", body
+
+    if args.command == "job-log":
+        body = {"job_id": args.job_id}
+        add_if_present(body, args, ["client_id", "tail_lines", "since_stdout_line", "since_stderr_line"])
+        return "/api/shell/jobs/log", body
+
+    if args.command == "job-stop":
+        body = {"job_id": args.job_id}
+        add_if_present(body, args, ["client_id"])
+        return "/api/shell/jobs/stop", body
+
+    if args.command == "jobs":
+        body = {"client_id": args.client_id}
+        add_if_present(body, args, ["status", "limit"])
+        return "/api/shell/jobs/list", body
 
     if args.command == "agent-workflow":
         mode = args.mode
@@ -444,6 +568,13 @@ def build_parser():
               python3 scripts/pdctl.py clients
               python3 scripts/pdctl.py projects oe
               python3 scripts/pdctl.py new oe foo /root/work/foo --template rust --git-init
+              python3 scripts/pdctl.py shell-job oe --cwd /tmp --command "echo hello"
+              python3 scripts/pdctl.py shell-batch oe --command "echo one" --command "echo two"
+              python3 scripts/pdctl.py workflow-job oe foo --mode precommit
+              python3 scripts/pdctl.py job-status JOB_ID
+              python3 scripts/pdctl.py job-log JOB_ID
+              python3 scripts/pdctl.py job-stop JOB_ID
+              python3 scripts/pdctl.py jobs oe
               python3 scripts/pdctl.py agent-snapshot oe foo
               python3 scripts/pdctl.py agent-precommit oe foo
               python3 scripts/pdctl.py agent-hook oe foo doctor
@@ -478,6 +609,53 @@ def build_parser():
     new.add_argument("--timeout-secs", type=int)
     new.add_argument("--wait-timeout-secs", type=int)
     add_common_options(new)
+
+    shell_job = subcommands.add_parser("shell-job", help="Create an async shell job on an agent client.")
+    shell_job.add_argument("client_id")
+    shell_job.add_argument("--cwd")
+    shell_job.add_argument("--command", dest="command_text", required=True)
+    shell_job.add_argument("--timeout-secs", type=int)
+    shell_job.add_argument("--max-runtime-secs", type=int)
+    add_common_options(shell_job)
+
+    shell_batch = subcommands.add_parser("shell-batch", help="Create multiple async shell jobs on one agent client.")
+    shell_batch.add_argument("client_id")
+    shell_batch.add_argument("--cwd")
+    shell_batch.add_argument("--command", dest="commands", action="append", required=True)
+    shell_batch.add_argument("--timeout-secs", type=int)
+    shell_batch.add_argument("--max-runtime-secs", type=int)
+    add_common_options(shell_batch)
+
+    workflow_job = subcommands.add_parser("workflow-job", help="Create an async agent-native project workflow job.")
+    workflow_job.add_argument("client_id")
+    workflow_job.add_argument("project_id")
+    add_agent_workflow_options(workflow_job, include_mode=True, include_hook=True)
+    workflow_job.add_argument("--max-runtime-secs", type=int)
+    add_common_options(workflow_job)
+
+    job_status = subcommands.add_parser("job-status", help="Get async shell/client job status.")
+    job_status.add_argument("job_id")
+    job_status.add_argument("--client-id")
+    add_common_options(job_status)
+
+    job_log = subcommands.add_parser("job-log", help="Read async shell/client job stdout/stderr tails.")
+    job_log.add_argument("job_id")
+    job_log.add_argument("--client-id")
+    job_log.add_argument("--tail-lines", type=int)
+    job_log.add_argument("--since-stdout-line", type=int)
+    job_log.add_argument("--since-stderr-line", type=int)
+    add_common_options(job_log)
+
+    job_stop = subcommands.add_parser("job-stop", help="Best-effort stop for an async shell/client job.")
+    job_stop.add_argument("job_id")
+    job_stop.add_argument("--client-id")
+    add_common_options(job_stop)
+
+    jobs = subcommands.add_parser("jobs", help="List async jobs for an agent client.")
+    jobs.add_argument("client_id")
+    jobs.add_argument("--status")
+    jobs.add_argument("--limit", type=int)
+    add_common_options(jobs)
 
     agent_workflow = subcommands.add_parser("agent-workflow", help="Run an agent-native project workflow.")
     agent_workflow.add_argument("client_id")
@@ -552,6 +730,16 @@ def main(argv):
             print_projects(payload)
         elif args.command == "new":
             print_project_create(payload)
+        elif args.command in ("shell-job", "shell-batch", "workflow-job"):
+            print_job_create(payload)
+        elif args.command == "job-status":
+            print_job_status(payload)
+        elif args.command == "job-log":
+            print_job_log(payload)
+        elif args.command == "job-stop":
+            print_job_stop(payload)
+        elif args.command == "jobs":
+            print_jobs(payload)
         elif args.command.startswith("agent-"):
             print_agent_workflow(payload)
         else:

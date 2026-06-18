@@ -1000,12 +1000,13 @@ This endpoint supports both local and SSH executors. SSH jobs are created in the
 
 ## OpenAPI schema variants
 
-Private Drop exposes four OpenAPI schema variants:
+Private Drop exposes five OpenAPI schema variants:
 
 - `/openapi.json`: the full API schema, including message, file, channel, web-adjacent, and Codex project APIs.
 - `/codex-openapi.json`: the full Codex-only schema. It keeps the detailed command request endpoints such as `createCommandRequest`, `createRawCommandRequest`, `listCommandRequests`, `createCommandRequestBatch`, `approveCommandRequest`, and `rejectCommandRequest`. This is useful for debugging or clients that prefer fine-grained operations.
 - `/codex-openapi-compact.json`: the recommended schema for GPT Actions. It exposes a smaller set of core Codex operations and uses `runCommandRequestOp` for command request create/list/approve/reject/batch workflows, reducing the total Action count.
 - `/codex-openapi-gpt.json`: the slimmer online-GPT schema. It omits direct command and desktop task actions, keeping the core project loop smaller and harder to misuse.
+- `/agent-runtime-openapi.json`: an agent project/file/async-job profile for GPT Actions. It includes single and batch async shell jobs, async project workflow jobs, job status/log/stop/list, project listing/creation/workflow, and `shellFileOp`.
 
 For GPT Builder, prefer importing:
 
@@ -1014,6 +1015,22 @@ https://<your-domain>/codex-openapi-gpt.json
 ```
 
 The compact and GPT schemas keep the same `servers[0].url` behavior as the other schemas: they use `DROP_PUBLIC_URL` when set, otherwise they fall back to `http://localhost:8080`.
+
+For long agent commands, use the async job APIs instead of blocking a GPT
+Action request on `runShell` or `runShellClientProjectWorkflow`. The server
+returns `job_id` immediately, then stores bounded stdout/stderr tails, status,
+and final structured result as the agent reports updates.
+
+Use `createShellClientShellJobBatch` when one GPT Action window needs to start
+several independent shell commands. It returns `job_ids` immediately; poll or
+stop each job independently.
+
+Agent async jobs use `job_id` as the isolation unit. They do not use sessions,
+cookies, GPT-window affinity, or one-window-one-process routing. A single agent
+client can run multiple background jobs; `private-drop-agent` defaults to
+`max_concurrent_jobs = 2` and queues the rest FIFO. Stop is best-effort, and
+concurrent jobs against the same project directory are not protected by a
+project lock. The agent does not call any LLM API.
 
 
 ## GPT workflow and diagram assets

@@ -975,7 +975,7 @@
       },
       "WriteFileEdit": {
         "type": "object",
-        "description": "Write content to a file. Not recommended for small changes \u2014 prefer replace_text, replace_range, or create_file instead. Set allow_overwrite=true to overwrite existing files.",
+        "description": "Write content to a file. Not recommended for small changes — prefer replace_text, replace_range, or create_file instead. Set allow_overwrite=true to overwrite existing files.",
         "properties": {
           "type": {
             "type": "string",
@@ -2942,6 +2942,15 @@
           },
           "project_workflow": {
             "type": "boolean"
+          },
+          "async_jobs": {
+            "type": "boolean"
+          },
+          "async_shell_jobs": {
+            "type": "boolean"
+          },
+          "async_project_workflow_jobs": {
+            "type": "boolean"
           }
         }
       },
@@ -3201,6 +3210,10 @@
           "timeout_secs": {
             "type": "integer",
             "default": 120
+          },
+          "max_runtime_secs": {
+            "type": "integer",
+            "nullable": true
           }
         },
         "required": [
@@ -4011,6 +4024,832 @@
           "warnings",
           "recommended_next_action",
           "error"
+        ]
+      },
+      "ShellClientProjectWorkflowJobRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "snapshot",
+              "doctor",
+              "hook",
+              "precommit"
+            ],
+            "default": "snapshot"
+          },
+          "hook": {
+            "type": "string",
+            "nullable": true
+          },
+          "run_doctor": {
+            "type": "boolean",
+            "default": true
+          },
+          "run_doctor_hook": {
+            "type": "boolean",
+            "default": false
+          },
+          "doctor_hook": {
+            "type": "string",
+            "default": "doctor"
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 120
+          },
+          "max_runtime_secs": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "client_id",
+          "project_id"
+        ]
+      },
+      "ShellRunRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 8000
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 120
+          },
+          "wait_timeout_secs": {
+            "type": "integer",
+            "default": 30
+          }
+        },
+        "required": [
+          "client_id",
+          "command"
+        ]
+      },
+      "ShellRunResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "command_preview": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "stdout": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr": {
+            "type": "string",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "request_id",
+          "client_id",
+          "command_preview"
+        ]
+      },
+      "ShellClientShellJobRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "command": {
+            "type": "string",
+            "maxLength": 8000
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 120
+          },
+          "max_runtime_secs": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "client_id",
+          "command"
+        ]
+      },
+      "ShellFileOpRequest": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "read",
+              "write",
+              "list"
+            ]
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "content": {
+            "type": "string",
+            "nullable": true
+          },
+          "max_bytes": {
+            "type": "integer",
+            "nullable": true
+          },
+          "expected_sha256": {
+            "type": "string",
+            "nullable": true
+          },
+          "create_dirs": {
+            "type": "boolean",
+            "default": false
+          },
+          "wait_timeout_secs": {
+            "type": "integer",
+            "default": 30
+          }
+        },
+        "required": [
+          "op",
+          "client_id",
+          "path"
+        ]
+      },
+      "ShellFileOpResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "op": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "content": {
+            "type": "string",
+            "nullable": true
+          },
+          "entries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "bytes": {
+            "type": "integer",
+            "nullable": true
+          },
+          "sha256": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr": {
+            "type": "string",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "op",
+          "request_id",
+          "client_id",
+          "path"
+        ]
+      },
+      "ShellJobCodexMetadata": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "nullable": true
+          },
+          "goal_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "client_request_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "command": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true
+          },
+          "suite": {
+            "type": "string",
+            "nullable": true
+          },
+          "script_path": {
+            "type": "string",
+            "nullable": true
+          },
+          "reason": {
+            "type": "string",
+            "nullable": true
+          },
+          "max_runtime_secs": {
+            "type": "integer",
+            "nullable": true
+          }
+        }
+      },
+      "ShellJobOpRequest": {
+        "type": "object",
+        "properties": {
+          "op": {
+            "type": "string",
+            "enum": [
+              "start",
+              "status",
+              "log",
+              "stop",
+              "list"
+            ]
+          },
+          "client_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "command": {
+            "type": "string",
+            "nullable": true,
+            "maxLength": 8000
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "job_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "since_stdout_line": {
+            "type": "integer",
+            "nullable": true
+          },
+          "since_stderr_line": {
+            "type": "integer",
+            "nullable": true
+          },
+          "tail_lines": {
+            "type": "integer",
+            "nullable": true
+          },
+          "limit": {
+            "type": "integer",
+            "nullable": true
+          },
+          "codex": {
+            "$ref": "#/components/schemas/ShellJobCodexMetadata",
+            "nullable": true
+          }
+        },
+        "required": [
+          "op"
+        ]
+      },
+      "ShellAgentShellJobResult": {
+        "type": "object",
+        "properties": {
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "command_preview": {
+            "type": "string"
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "command_preview"
+        ]
+      },
+      "ShellAgentJobResult": {
+        "type": "object",
+        "properties": {
+          "shell": {
+            "$ref": "#/components/schemas/ShellAgentShellJobResult",
+            "nullable": true
+          },
+          "project_workflow": {
+            "$ref": "#/components/schemas/ShellAgentProjectWorkflowResult",
+            "nullable": true
+          }
+        }
+      },
+      "ShellJobInfo": {
+        "type": "object",
+        "properties": {
+          "job_id": {
+            "type": "string"
+          },
+          "request_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "kind": {
+            "type": "string",
+            "enum": [
+              "shell",
+              "project_workflow"
+            ]
+          },
+          "project_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "command_preview": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "queued",
+              "agent_queued",
+              "running",
+              "completed",
+              "failed",
+              "stopped",
+              "timeout",
+              "lost",
+              "stop_requested"
+            ]
+          },
+          "created_at": {
+            "type": "integer"
+          },
+          "started_at": {
+            "type": "integer",
+            "nullable": true
+          },
+          "ended_at": {
+            "type": "integer",
+            "nullable": true
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "duration_ms": {
+            "type": "integer",
+            "nullable": true
+          },
+          "elapsed_secs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "codex": {
+            "$ref": "#/components/schemas/ShellJobCodexMetadata",
+            "nullable": true
+          },
+          "result": {
+            "$ref": "#/components/schemas/ShellAgentJobResult",
+            "nullable": true
+          }
+        },
+        "required": [
+          "job_id",
+          "client_id",
+          "kind",
+          "command_preview",
+          "status",
+          "created_at"
+        ]
+      },
+      "ShellJobOpResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "op": {
+            "type": "string"
+          },
+          "job": {
+            "$ref": "#/components/schemas/ShellJobInfo",
+            "nullable": true
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShellJobInfo"
+            }
+          },
+          "stdout": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr": {
+            "type": "string",
+            "nullable": true
+          },
+          "next_stdout_line": {
+            "type": "integer",
+            "nullable": true
+          },
+          "next_stderr_line": {
+            "type": "integer",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "op"
+        ]
+      },
+      "ShellClientJobCreateResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "job_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "project_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string"
+          },
+          "job": {
+            "$ref": "#/components/schemas/ShellJobInfo",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          },
+          "job_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": [
+          "success",
+          "client_id",
+          "status",
+          "job_ids"
+        ]
+      },
+      "ShellClientJobStatusRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "job_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ]
+      },
+      "ShellClientJobStatusResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "job_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "client_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "kind": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "elapsed_secs": {
+            "type": "integer",
+            "nullable": true
+          },
+          "exit_code": {
+            "type": "integer",
+            "nullable": true
+          },
+          "result": {
+            "$ref": "#/components/schemas/ShellAgentJobResult",
+            "nullable": true
+          },
+          "job": {
+            "$ref": "#/components/schemas/ShellJobInfo",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "ShellClientJobLogRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "job_id": {
+            "type": "string"
+          },
+          "tail_lines": {
+            "type": "integer",
+            "nullable": true
+          },
+          "since_stdout_line": {
+            "type": "integer",
+            "nullable": true
+          },
+          "since_stderr_line": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "job_id"
+        ]
+      },
+      "ShellClientJobLogResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "job_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "client_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "stdout_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "stderr_tail": {
+            "type": "string",
+            "nullable": true
+          },
+          "next_stdout_line": {
+            "type": "integer",
+            "nullable": true
+          },
+          "next_stderr_line": {
+            "type": "integer",
+            "nullable": true
+          },
+          "job": {
+            "$ref": "#/components/schemas/ShellJobInfo",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "ShellClientJobStopRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "job_id": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_id"
+        ]
+      },
+      "ShellClientJobStopResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "job_id": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "job": {
+            "$ref": "#/components/schemas/ShellJobInfo",
+            "nullable": true
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success"
+        ]
+      },
+      "ShellClientJobsListRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "limit": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "client_id"
+        ]
+      },
+      "ShellClientJobsListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean"
+          },
+          "client_id": {
+            "type": "string"
+          },
+          "jobs": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ShellJobInfo"
+            }
+          },
+          "error": {
+            "type": "string",
+            "nullable": true
+          }
+        },
+        "required": [
+          "success",
+          "client_id",
+          "jobs"
+        ]
+      },
+      "ShellClientShellJobBatchRequest": {
+        "type": "object",
+        "properties": {
+          "client_id": {
+            "type": "string"
+          },
+          "cwd": {
+            "type": "string",
+            "nullable": true
+          },
+          "commands": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "maxLength": 8000
+            },
+            "minItems": 1,
+            "maxItems": 20
+          },
+          "timeout_secs": {
+            "type": "integer",
+            "default": 120
+          },
+          "max_runtime_secs": {
+            "type": "integer",
+            "nullable": true
+          }
+        },
+        "required": [
+          "client_id",
+          "commands"
         ]
       }
     }
@@ -5475,6 +6314,329 @@
           },
           "400": {
             "description": "Bad request, invalid mode, unknown project, or missing hook"
+          }
+        }
+      }
+    },
+    "/api/shell/projects/workflow_job": {
+      "post": {
+        "operationId": "createShellClientProjectWorkflowJob",
+        "summary": "Create an async agent workflow job",
+        "description": "Queue an agent-native project workflow job and return job_id immediately.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellClientProjectWorkflowJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JobCreateResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellClientJobCreateResponse"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Client owner mismatch"
+          }
+        }
+      }
+    },
+    "/api/shell/run": {
+      "post": {
+        "operationId": "runShell",
+        "summary": "Run shell on a client",
+        "description": "Run a shell command through a registered private-drop-agent client. Use short waits; use async job APIs for long tasks.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellRunRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "RunResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellRunResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell/job": {
+      "post": {
+        "operationId": "runShellJob",
+        "summary": "Manage shell jobs",
+        "description": "Start, inspect, read logs, stop, or list async shell jobs running through private-drop-agent.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellJobOpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JobOpResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellJobOpResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell/jobs/shell": {
+      "post": {
+        "operationId": "createShellClientShellJob",
+        "summary": "Create an async shell job",
+        "description": "Queue a shell command on an agent and return job_id immediately.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellClientShellJobRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JobCreateResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellClientJobCreateResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell/jobs/status": {
+      "post": {
+        "operationId": "getShellClientJobStatus",
+        "summary": "Get async job status",
+        "description": "Read status and final structured result for an agent async job.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellClientJobStatusRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JobStatusResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellClientJobStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell/jobs/log": {
+      "post": {
+        "operationId": "getShellClientJobLog",
+        "summary": "Read async job logs",
+        "description": "Read bounded stdout and stderr tails for an agent async job.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellClientJobLogRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JobLogResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellClientJobLogResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell/jobs/stop": {
+      "post": {
+        "operationId": "stopShellClientJob",
+        "summary": "Stop an async job",
+        "description": "Request best-effort stop for an agent async job.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellClientJobStopRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JobStopResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellClientJobStopResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell/jobs/list": {
+      "post": {
+        "operationId": "listShellClientJobs",
+        "summary": "List async jobs",
+        "description": "List async shell and project workflow jobs for one agent client.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellClientJobsListRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "JobsListResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellClientJobsListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell/file": {
+      "post": {
+        "operationId": "shellFileOp",
+        "summary": "Read, write, or list files",
+        "description": "Read, write, or list files through a registered private-drop-agent client.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellFileOpRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "FileOpResponse response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellFileOpResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/shell/jobs/shell_batch": {
+      "post": {
+        "operationId": "createShellClientShellJobBatch",
+        "summary": "Create async shell jobs",
+        "description": "Queue multiple shell commands on one agent and return job_ids immediately.",
+        "tags": [
+          "shell"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ShellClientShellJobBatchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Async shell job batch create response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShellClientJobCreateResponse"
+                }
+              }
+            }
           }
         }
       }

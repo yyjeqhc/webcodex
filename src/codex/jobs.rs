@@ -2973,6 +2973,14 @@ mod tests {
         }
     }
 
+    fn async_shell_job_capabilities() -> crate::shell_protocol::ShellClientCapabilities {
+        let mut capabilities = crate::shell_protocol::ShellClientCapabilities::default();
+        capabilities.jobs = true;
+        capabilities.async_jobs = true;
+        capabilities.async_shell_jobs = true;
+        capabilities
+    }
+
     #[test]
     fn ssh_disabled_gate_rejects_job_project() {
         let proj = ProjectConfig {
@@ -3005,7 +3013,7 @@ mod tests {
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: None,
+                capabilities: Some(async_shell_job_capabilities()),
                 projects: None,
             })
             .await
@@ -3110,7 +3118,7 @@ mod tests {
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
-                capabilities: None,
+                capabilities: Some(async_shell_job_capabilities()),
                 projects: None,
             })
             .await
@@ -3121,7 +3129,7 @@ mod tests {
                 display_name: None,
                 owner: Some("bob".to_string()),
                 hostname: None,
-                capabilities: None,
+                capabilities: Some(async_shell_job_capabilities()),
                 projects: None,
             })
             .await

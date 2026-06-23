@@ -41,10 +41,8 @@ pub use models::{
 pub(crate) use openapi::openapi_json;
 pub(crate) use shell_client::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
-    shell_clients, shell_file_op, shell_job, shell_job_create_shell, shell_job_create_shell_batch,
-    shell_job_log, shell_job_status, shell_job_stop, shell_jobs_list, shell_project_create,
-    shell_project_workflow, shell_project_workflow_job, shell_projects, shell_run,
-    ShellClientRegistry,
+    shell_file_op, shell_job, shell_job_log, shell_job_status, shell_job_stop, shell_jobs_list,
+    shell_run, ShellClientRegistry,
 };
 pub(crate) use web::{
     action_session_detail_page, action_sessions_page, agent_playground_page, channel_page,
@@ -140,21 +138,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Router::with_path("codex/action_sessions")
                         .post(action_sessions::codex_action_sessions),
                 )
-                .push(Router::with_path("shell/clients").post(shell_clients))
-                .push(Router::with_path("shell/projects").post(shell_projects))
-                .push(Router::with_path("shell/projects/create").post(shell_project_create))
-                .push(Router::with_path("shell/projects/workflow").post(shell_project_workflow))
-                .push(
-                    Router::with_path("shell/projects/workflow_job")
-                        .post(shell_project_workflow_job),
-                )
                 .push(Router::with_path("shell/run").post(shell_run))
                 .push(Router::with_path("shell/file").post(shell_file_op))
                 .push(Router::with_path("shell/job").post(shell_job))
-                .push(Router::with_path("shell/jobs/shell").post(shell_job_create_shell))
-                .push(
-                    Router::with_path("shell/jobs/shell_batch").post(shell_job_create_shell_batch),
-                )
                 .push(Router::with_path("shell/jobs/status").post(shell_job_status))
                 .push(Router::with_path("shell/jobs/log").post(shell_job_log))
                 .push(Router::with_path("shell/jobs/stop").post(shell_job_stop))

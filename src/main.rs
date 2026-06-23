@@ -38,10 +38,7 @@ pub use models::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
     CodexGoalRecord, CommandAuditRecord, CreateMessageRequest, Message, MessageKind,
 };
-pub(crate) use openapi::{
-    agent_runtime_openapi_json, codex_openapi_compact_json, codex_openapi_gpt_json,
-    codex_openapi_json, openapi_json,
-};
+pub(crate) use openapi::openapi_json;
 pub(crate) use shell_client::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
     shell_clients, shell_file_op, shell_job, shell_job_create_shell, shell_job_create_shell_batch,
@@ -195,13 +192,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(Router::with_path("").get(home_page));
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
-    let codex_openapi_router = Router::with_path("codex-openapi.json").get(codex_openapi_json);
-    let codex_openapi_compact_router =
-        Router::with_path("codex-openapi-compact.json").get(codex_openapi_compact_json);
-    let codex_openapi_gpt_router =
-        Router::with_path("codex-openapi-gpt.json").get(codex_openapi_gpt_json);
-    let agent_runtime_openapi_router =
-        Router::with_path("agent-runtime-openapi.json").get(agent_runtime_openapi_json);
 
     let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
@@ -211,10 +201,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)
-        .push(codex_openapi_router)
-        .push(codex_openapi_compact_router)
-        .push(codex_openapi_gpt_router)
-        .push(agent_runtime_openapi_router)
         .push(assets_router)
         .push(web_router);
 
@@ -252,17 +238,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let port = addr.split(':').last().unwrap_or("8080");
     tracing::info!("Web UI: http://localhost:{}", port);
     tracing::info!("API: http://localhost:{}/api", port);
-    tracing::info!("OpenAPI: http://localhost:{}/openapi.json", port);
     tracing::info!(
-        "Codex OpenAPI: http://localhost:{}/codex-openapi.json",
-        port
-    );
-    tracing::info!(
-        "Compact Codex OpenAPI: http://localhost:{}/codex-openapi-compact.json",
-        port
-    );
-    tracing::info!(
-        "GPT Codex OpenAPI: http://localhost:{}/codex-openapi-gpt.json",
+        "OpenAPI (GPT Actions): http://localhost:{}/openapi.json",
         port
     );
     Server::new(acceptor).serve(router).await;

@@ -11,8 +11,6 @@ use std::sync::Arc;
 pub const ACTION_SESSION_IDLE_TIMEOUT_SECS: i64 = 1800;
 const MAX_SUMMARY_TEXT: usize = 500;
 const MAX_PREVIEW_TEXT: usize = 120;
-pub const ACTION_SESSION_GUIDANCE: &str =
-    "Audited in rolling action sessions. Optional X-Action-Session-Id groups related calls.";
 #[cfg(test)]
 pub const AUDITED_ACTION_ROUTES: &[&str] = &[
     "/api/codex/projects",

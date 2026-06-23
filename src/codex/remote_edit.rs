@@ -1,11 +1,3 @@
-use super::edit::edit_error;
-use super::edit::finalize_edit_response;
-use super::shell::shell_escape;
-use super::types::{EditRequest, EditResponse};
-use super::CHECK_TIMEOUT_SECS;
-use crate::projects::{ProjectConfig, SshConfig};
-use std::time::Instant;
-
 /// Embedded Python3 script for remote edit operations.
 /// Receives project root via argv[1] and edit JSON via stdin.
 /// Returns JSON result on stdout.

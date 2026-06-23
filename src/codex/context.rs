@@ -4,15 +4,12 @@ use super::types::{
     ContextBatchItem, ContextBatchRequest, ContextBatchResponse, ContextBatchResultMetadata,
     ContextMode, ContextRequest, ContextResponse,
 };
-use super::{
-    agent_context_shell_fragment, run_project_cmd, ssh_grep_context, ssh_overview, ssh_read_file,
-    ssh_search, ssh_tree, truncate_string, try_ssh_context_batch_once, MAX_OUTPUT_LEN,
-};
+use super::{agent_context_shell_fragment, truncate_string, MAX_OUTPUT_LEN};
 use crate::action_sessions::{
     record_action_event, request_action_session_id, ActionAuditEventInput,
 };
 use crate::get_db;
-use crate::projects::{canonicalize_and_verify, ProjectConfig, SshConfig};
+use crate::projects::{canonicalize_and_verify, ProjectConfig};
 use salvo::prelude::*;
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -1296,7 +1293,7 @@ pub(super) fn execute_context_item(
     project_name: &str,
     item: &ContextBatchItem,
 ) -> (ContextResponse, u64) {
-    let start = Instant::now();
+    let _start = Instant::now();
 
     let root = proj.root();
     if !root.exists() {
@@ -1764,7 +1761,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
             return;
         }
     };
-    let request_start = Instant::now();
+    let _request_start = Instant::now();
     let proj = match projects.get_project(&body.project) {
         Ok(p) => p,
         Err(e) => {

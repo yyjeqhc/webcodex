@@ -1,4 +1,4 @@
-use crate::projects::{ProjectConfig, ProjectsConfig, ProjectsState, SshConfig};
+use crate::projects::{ProjectConfig, ProjectsConfig, ProjectsState};
 use salvo::prelude::*;
 mod agent_exec;
 mod artifact;
@@ -862,7 +862,7 @@ mod tests {
 }
 
 pub(super) fn apply_edit_request_with_metrics(
-    projects: &ProjectsConfig,
+    _projects: &ProjectsConfig,
     proj: &ProjectConfig,
     body: &EditRequest,
     operation: &'static str,

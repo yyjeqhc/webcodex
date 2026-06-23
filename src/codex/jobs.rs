@@ -600,7 +600,7 @@ pub(super) fn b64_text(s: &str) -> String {
 pub(super) fn remote_read_job_metadata(
     proj: &ProjectConfig,
     job_id: &str,
-    ssh_config: Option<&SshConfig>,
+    _ssh_config: Option<&SshConfig>,
 ) -> Result<JobMetadata, String> {
     validate_job_id(job_id)?;
     let cmd = format!("cat {}/metadata.json", shell_escape(&job_dir_rel(job_id)));
@@ -614,7 +614,7 @@ pub(super) fn remote_read_job_metadata(
 pub(super) fn remote_job_status_string(
     proj: &ProjectConfig,
     job_id: &str,
-    ssh_config: Option<&SshConfig>,
+    _ssh_config: Option<&SshConfig>,
 ) -> (Option<String>, Option<i64>, Option<i32>, Option<i64>) {
     let dir = job_dir_rel(job_id);
     let cmd = format!(
@@ -903,7 +903,7 @@ pub(super) fn ssh_job_log_with_count(
     job_id: &str,
     tail_lines: usize,
     since_line: Option<usize>,
-    ssh_config: Option<&SshConfig>,
+    _ssh_config: Option<&SshConfig>,
 ) -> Result<(String, String, usize), String> {
     validate_job_id(job_id)?;
     let dir = shell_escape(&job_dir_rel(job_id));
@@ -975,7 +975,7 @@ pub(super) fn ssh_job_log_stderr_tail(
     proj: &ProjectConfig,
     job_id: &str,
     tail_lines: usize,
-    ssh_config: Option<&SshConfig>,
+    _ssh_config: Option<&SshConfig>,
 ) -> String {
     if validate_job_id(job_id).is_err() {
         return String::new();
@@ -1126,7 +1126,7 @@ fn recover_local_job_info(root: &Path, job_id: &str) -> Result<JobInfo, String> 
 fn recover_ssh_job_info(
     proj: &ProjectConfig,
     job_id: &str,
-    ssh_config: Option<&SshConfig>,
+    _ssh_config: Option<&SshConfig>,
 ) -> Result<JobInfo, String> {
     validate_job_id(job_id)?;
     let dir = shell_escape(&job_dir_rel(job_id));
@@ -1650,7 +1650,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
         res.render(Json(response));
         return;
     };
-    let Some(db) = get_db(depot) else {
+    let Some(_db) = get_db(depot) else {
         let mut response = job_response(
             "unknown",
             false,

@@ -1563,8 +1563,7 @@ pub async fn codex_command_request_op(req: &mut Request, depot: &mut Depot, res:
             // Execute immediately for create_trusted_raw_and_approve
             let wrapped = build_trusted_wrapper(&script);
             let start_time = chrono::Utc::now().timestamp();
-            let (code, stdout, stderr, duration_ms) =
-                run_project_cmd(proj, &wrapped, timeout_secs, projects.ssh.as_ref());
+            let (code, stdout, stderr, duration_ms) = run_project_cmd(proj, &wrapped, timeout_secs);
             let end_time = chrono::Utc::now().timestamp();
             // Write audit
             let audit_dir = proj.root().join(".codex").join("audit");
@@ -2749,7 +2748,7 @@ async fn run_project_cmd_for_handler(
     timeout_label: &'static str,
 ) -> (i32, String, String, u64) {
     if !proj.is_agent() {
-        return run_project_cmd(proj, cmd, timeout_secs, ssh_config);
+        return run_project_cmd(proj, cmd, timeout_secs);
     }
     super::agent_exec::run_agent_project_command(
         depot,

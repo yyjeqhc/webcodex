@@ -4,7 +4,7 @@ use super::types::{
     ProjectDoctorRequest, ProjectHookResponse, ProjectWorkflowGitSnapshot, ProjectWorkflowRequest,
     ProjectWorkflowResponse,
 };
-use super::{get_projects, is_ssh_enabled, run_project_cmd, SSH_DISABLED_MESSAGE};
+use super::{get_projects, is_ssh_enabled, run_project_cmd};
 use crate::projects::{ProjectConfig, ProjectsConfig};
 use salvo::prelude::*;
 
@@ -154,7 +154,7 @@ async fn run_workflow_command(
         )
         .await;
     }
-    run_project_cmd(proj, command, timeout_secs, projects.ssh.as_ref())
+    run_project_cmd(proj, command, timeout_secs)
 }
 
 async fn collect_git_snapshot(
@@ -162,11 +162,10 @@ async fn collect_git_snapshot(
     projects: &ProjectsConfig,
     proj: &ProjectConfig,
     timeout_secs: u64,
-    ssh_enabled: bool,
 ) -> (ProjectWorkflowGitSnapshot, Vec<String>) {
     let mut warnings = Vec::new();
-    if proj.is_ssh() && !ssh_enabled {
-        let warning = SSH_DISABLED_MESSAGE.to_string();
+    if proj.is_ssh() {
+        let warning = "SSH removed in v2".to_string();
         warnings.push(warning.clone());
         return (unavailable_git_snapshot(warning), warnings);
     }
@@ -314,7 +313,7 @@ fn recommended_next_action(
     }
     if warnings
         .iter()
-        .any(|warning| warning.contains(SSH_DISABLED_MESSAGE))
+        .any(|warning| warning.contains("SSH removed in v2"))
     {
         return "Use agent executor or enable SSH explicitly".to_string();
     }
@@ -378,14 +377,14 @@ pub(super) async fn run_project_workflow_for_project(
                 body.mode,
                 executor_name(proj).to_string(),
                 proj.path.clone(),
-                is_ssh_enabled(depot),
+                false,
                 e,
             );
         }
     };
     let mode_name = mode.as_str().to_string();
     let timeout_secs = body.effective_timeout_secs();
-    let ssh_enabled = is_ssh_enabled(depot);
+    let ssh_enabled = false;
     let mut warnings = Vec::new();
     let mut success = true;
     let mut error = None;
@@ -401,7 +400,7 @@ pub(super) async fn run_project_workflow_for_project(
     };
 
     let (git_before, git_before_warnings) =
-        collect_git_snapshot(depot, projects, proj, timeout_secs, ssh_enabled).await;
+        collect_git_snapshot(depot, projects, proj, timeout_secs).await;
     for warning in git_before_warnings {
         push_warning(&mut warnings, warning);
     }
@@ -435,7 +434,7 @@ pub(super) async fn run_project_workflow_for_project(
     if let Some(hook_name) = workflow_hook.as_deref() {
         if proj.is_ssh() && !ssh_enabled {
             success = false;
-            let warning = SSH_DISABLED_MESSAGE.to_string();
+            let warning = "SSH removed in v2".to_string();
             push_warning(&mut warnings, warning.clone());
             error = Some(warning);
         } else if error.is_none() || mode != ProjectWorkflowMode::Doctor {
@@ -460,7 +459,7 @@ pub(super) async fn run_project_workflow_for_project(
     }
 
     let (git_after, git_after_warnings) =
-        collect_git_snapshot(depot, projects, proj, timeout_secs, ssh_enabled).await;
+        collect_git_snapshot(depot, projects, proj, timeout_secs).await;
     for warning in git_after_warnings {
         push_warning(&mut warnings, warning);
     }
@@ -518,7 +517,7 @@ pub async fn codex_project_workflow(req: &mut Request, depot: &mut Depot, res: &
                 DEFAULT_WORKFLOW_MODE.to_string(),
                 "local".to_string(),
                 String::new(),
-                is_ssh_enabled(depot),
+                false,
                 format!("Invalid JSON: {}", e),
             )));
             return;
@@ -535,7 +534,7 @@ pub async fn codex_project_workflow(req: &mut Request, depot: &mut Depot, res: &
                 mode_for_error,
                 "local".to_string(),
                 String::new(),
-                is_ssh_enabled(depot),
+                false,
                 e,
             )));
             return;
@@ -683,7 +682,7 @@ mod tests {
         );
 
         assert_eq!(
-            recommended_next_action(&clean, None, &[SSH_DISABLED_MESSAGE.to_string()], &project),
+            recommended_next_action(&clean, None, &["SSH removed in v2".to_string()], &project),
             "Use agent executor or enable SSH explicitly"
         );
     }
@@ -754,8 +753,7 @@ mod tests {
         let project = local_project(tmp.path().to_str().unwrap(), HashMap::new());
         let projects = projects_with(project.clone());
         let depot = Depot::new();
-        let (snapshot, warnings) =
-            collect_git_snapshot(&depot, &projects, &project, 5, false).await;
+        let (snapshot, warnings) = collect_git_snapshot(&depot, &projects, &project, 5).await;
 
         assert!(warnings.is_empty());
         assert!(snapshot.available);
@@ -801,7 +799,7 @@ mod tests {
         assert!(response
             .warnings
             .iter()
-            .any(|warning| warning.contains(SSH_DISABLED_MESSAGE)));
+            .any(|warning| warning.contains("SSH removed in v2")));
         assert_eq!(
             response.recommended_next_action,
             "Use agent executor or enable SSH explicitly"

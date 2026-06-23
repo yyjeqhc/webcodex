@@ -182,11 +182,6 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
             return;
         }
     };
-    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(git_error(&body.project, &body.operation, e)));
-        return;
-    }
     if matches!(
         body.operation,
         GitOperation::Add
@@ -222,7 +217,7 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
         )
         .await
     } else {
-        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref())
+        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS)
     };
     let (stdout_tail, stdout_trunc) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
     let (stderr_tail, stderr_trunc) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
@@ -233,12 +228,10 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
         operation = "runProjectGit",
         project = %body.project,
         git_operation = git_operation_name(&body.operation),
-        executor = if proj.is_agent() { "agent" } else if proj.is_ssh() { "ssh" } else { "local" },
+        executor = if proj.is_agent() { "agent" } else { "local" },
         success = success,
         exit_code = code,
         duration_ms = duration_ms,
-        ssh_calls = if proj.is_ssh() { 1 } else { 0 },
-        control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
         "codex_git_completed"
     );
     let response = GitResponse {

@@ -1,10 +1,9 @@
 use super::get_projects;
 use super::security::is_sensitive_path;
 use super::shell::{run_command, shell_escape};
-use super::ssh::{build_ssh_targets, run_ssh_patch_targets, run_ssh_targets};
 use super::truncate_string;
 use super::types::{PatchRequest, PatchResponse};
-use crate::projects::{ProjectConfig, SshConfig};
+use crate::projects::ProjectConfig;
 use salvo::prelude::*;
 use std::collections::BTreeSet;
 use std::path::Path;
@@ -108,82 +107,9 @@ fn git_diff_local(root: &Path) -> Option<String> {
     }
 }
 
-fn git_diff_ssh(proj: &ProjectConfig, ssh_config: Option<&SshConfig>) -> Option<String> {
-    let ssh_targets = build_ssh_targets(proj).ok()?;
-    let remote_cmd = format!(
-        "cd {} && git diff --no-ext-diff -- && git status --short",
-        shell_escape(&proj.path)
-    );
-    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &remote_cmd, 60, ssh_config);
-    if code == 0 {
-        let (diff, _) = truncate_string(stdout, super::MAX_OUTPUT_LEN);
-        Some(diff)
-    } else {
-        let (err, _) = truncate_string(stderr, super::MAX_OUTPUT_LEN);
-        Some(format!("git diff failed:\n{}", err))
-    }
-}
-
 fn codex_apply_patch_bin() -> String {
     std::env::var("CODEX_APPLY_PATCH_BIN")
         .unwrap_or_else(|_| DEFAULT_CODEX_APPLY_PATCH_BIN.to_string())
-}
-
-pub(super) fn ssh_apply_patch(
-    proj: &ProjectConfig,
-    _project_name: &str,
-    patch: &str,
-    changed: Vec<String>,
-    ssh_config: Option<&SshConfig>,
-) -> PatchResponse {
-    let ssh_targets = match build_ssh_targets(proj) {
-        Ok(t) => t,
-        Err(e) => {
-            return patch_response(
-                false,
-                BUILTIN_PATCH_BACKEND,
-                Some(changed),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(e),
-            )
-        }
-    };
-    let remote_cmd = format!(
-        "cd {} && git apply --check __PATCH__ && git apply __PATCH__",
-        shell_escape(&proj.path)
-    );
-    let (code, stdout, stderr, duration_ms) =
-        run_ssh_patch_targets(&ssh_targets, &proj.path, patch, &remote_cmd, ssh_config);
-    let diff = git_diff_ssh(proj, ssh_config);
-    if code == 0 {
-        patch_response(
-            true,
-            BUILTIN_PATCH_BACKEND,
-            Some(changed),
-            Some(stdout),
-            Some(stderr),
-            Some(code),
-            Some(duration_ms),
-            diff,
-            None,
-        )
-    } else {
-        patch_response(
-            false,
-            BUILTIN_PATCH_BACKEND,
-            Some(changed),
-            Some(stdout),
-            Some(stderr),
-            Some(code),
-            Some(duration_ms),
-            diff,
-            Some("git apply failed".to_string()),
-        )
-    }
 }
 
 fn local_apply_builtin_patch(
@@ -353,63 +279,6 @@ fn local_apply_codex_patch(
     }
 }
 
-fn ssh_apply_codex_patch(
-    proj: &ProjectConfig,
-    patch: &str,
-    changed: Vec<String>,
-    ssh_config: Option<&SshConfig>,
-) -> PatchResponse {
-    let ssh_targets = match build_ssh_targets(proj) {
-        Ok(t) => t,
-        Err(e) => {
-            return patch_response(
-                false,
-                CODEX_APPLY_PATCH_BACKEND,
-                Some(changed),
-                None,
-                None,
-                None,
-                None,
-                None,
-                Some(e),
-            )
-        }
-    };
-    let remote_cmd = format!(
-        "cd {} && patch_file=__PATCH__; {} < \"$patch_file\"; code=$?; rm -f \"$patch_file\"; exit $code",
-        shell_escape(&proj.path),
-        shell_escape(&codex_apply_patch_bin())
-    );
-    let (code, stdout, stderr, duration_ms) =
-        run_ssh_patch_targets(&ssh_targets, &proj.path, patch, &remote_cmd, ssh_config);
-    let diff = git_diff_ssh(proj, ssh_config);
-    if code == 0 {
-        patch_response(
-            true,
-            CODEX_APPLY_PATCH_BACKEND,
-            Some(changed),
-            Some(stdout),
-            Some(stderr),
-            Some(code),
-            Some(duration_ms),
-            diff,
-            None,
-        )
-    } else {
-        patch_response(
-            false,
-            CODEX_APPLY_PATCH_BACKEND,
-            Some(changed),
-            Some(stdout),
-            Some(stderr),
-            Some(code),
-            Some(duration_ms),
-            diff,
-            Some("codex apply_patch failed; worktree may contain partial changes".to_string()),
-        )
-    }
-}
-
 #[handler]
 pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(projects) = get_projects(depot) else {
@@ -462,21 +331,6 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
             return;
         }
     };
-    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(patch_response(
-            false,
-            body.backend.as_deref().unwrap_or(BUILTIN_PATCH_BACKEND),
-            None,
-            None,
-            None,
-            None,
-            None,
-            None,
-            Some(e),
-        )));
-        return;
-    }
     let backend = body
         .backend
         .as_deref()
@@ -565,24 +419,7 @@ pub async fn codex_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut R
     }
 
     if backend == CODEX_APPLY_PATCH_BACKEND {
-        let resp = if proj.is_ssh() {
-            ssh_apply_codex_patch(proj, &body.patch, changed, projects.ssh.as_ref())
-        } else {
-            local_apply_codex_patch(proj, &body.patch, changed)
-        };
-        res.render(Json(resp));
-        return;
-    }
-
-    if proj.is_ssh() {
-        let resp = ssh_apply_patch(
-            proj,
-            &body.project,
-            &body.patch,
-            changed,
-            projects.ssh.as_ref(),
-        );
-        res.render(Json(resp));
+        res.render(Json(local_apply_codex_patch(proj, &body.patch, changed)));
         return;
     }
 

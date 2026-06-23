@@ -189,7 +189,7 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
             .collect::<HashMap<_, _>>(),
         Err(_) => HashMap::new(),
     };
-    let ssh_enabled = super::is_ssh_enabled(depot);
+    let ssh_enabled = false; // SSH removed in v2
     let mut infos = project_names
         .iter()
         .filter_map(|name| {

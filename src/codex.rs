@@ -17,7 +17,6 @@ mod report;
 mod security;
 mod shell;
 mod source;
-mod ssh;
 mod trusted;
 mod types;
 mod url_security;
@@ -46,7 +45,6 @@ use remote_edit::*;
 pub use report::codex_report;
 pub use security::is_sensitive_path;
 use shell::*;
-use ssh::*;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
@@ -64,7 +62,179 @@ pub use workflow::codex_project_workflow;
 
 pub(super) const MAX_OUTPUT_LEN: usize = 50_000;
 pub(super) const CHECK_TIMEOUT_SECS: u64 = 300;
-pub(super) const SSH_DISABLED_MESSAGE: &str = "SSH executor is disabled; use agent executor";
+
+// =============================================================================
+// SSH stubs (removed in v2 — SSH executor no longer supported)
+// =============================================================================
+
+pub(super) const SSH_DISABLED_MESSAGE: &str = "SSH removed in v2";
+
+pub(super) fn is_ssh_enabled(_depot: &Depot) -> bool {
+    false
+}
+
+pub(super) fn ssh_disabled_error() -> String {
+    SSH_DISABLED_MESSAGE.to_string()
+}
+
+pub(in crate::codex) fn ensure_ssh_enabled(
+    _depot: &Depot,
+    proj: &ProjectConfig,
+) -> Result<(), String> {
+    if proj.is_ssh() {
+        return Err(ssh_disabled_error());
+    }
+    Ok(())
+}
+
+/// SSH context stubs — return errors since SSH is removed in v2.
+pub(super) fn ssh_overview(
+    _proj: &ProjectConfig,
+    project_name: &str,
+    _ssh_config: Option<&crate::projects::SshConfig>,
+) -> types::ContextResponse {
+    types::ContextResponse {
+        success: false,
+        project: project_name.to_string(),
+        mode: "overview".to_string(),
+        content: None,
+        items: None,
+        truncated: false,
+        error: Some("SSH executor removed in v2".to_string()),
+    }
+}
+
+pub(super) fn ssh_tree(
+    _proj: &ProjectConfig,
+    project_name: &str,
+    _depth: usize,
+    _max_files: usize,
+    _ssh_config: Option<&crate::projects::SshConfig>,
+) -> types::ContextResponse {
+    types::ContextResponse {
+        success: false,
+        project: project_name.to_string(),
+        mode: "tree".to_string(),
+        content: None,
+        items: None,
+        truncated: false,
+        error: Some("SSH executor removed in v2".to_string()),
+    }
+}
+
+pub(super) fn ssh_search(
+    _proj: &ProjectConfig,
+    project_name: &str,
+    _query: &str,
+    _ssh_config: Option<&crate::projects::SshConfig>,
+) -> types::ContextResponse {
+    types::ContextResponse {
+        success: false,
+        project: project_name.to_string(),
+        mode: "search".to_string(),
+        content: None,
+        items: None,
+        truncated: false,
+        error: Some("SSH executor removed in v2".to_string()),
+    }
+}
+
+pub(super) fn ssh_grep_context(
+    _proj: &ProjectConfig,
+    project_name: &str,
+    _path: &str,
+    _query: Option<&str>,
+    _ssh_config: Option<&crate::projects::SshConfig>,
+) -> types::ContextResponse {
+    types::ContextResponse {
+        success: false,
+        project: project_name.to_string(),
+        mode: "grep_context".to_string(),
+        content: None,
+        items: None,
+        truncated: false,
+        error: Some("SSH executor removed in v2".to_string()),
+    }
+}
+
+pub(super) fn ssh_read_file(
+    _proj: &ProjectConfig,
+    project_name: &str,
+    _path: &str,
+    _start_line: Option<usize>,
+    _max_lines: Option<usize>,
+    _ssh_config: Option<&crate::projects::SshConfig>,
+) -> types::ContextResponse {
+    types::ContextResponse {
+        success: false,
+        project: project_name.to_string(),
+        mode: "read_file".to_string(),
+        content: None,
+        items: None,
+        truncated: false,
+        error: Some("SSH executor removed in v2".to_string()),
+    }
+}
+
+pub(super) fn try_ssh_context_batch_once(
+    _proj: &ProjectConfig,
+    _project_name: &str,
+    _requests: &[types::ContextBatchItem],
+    _ssh_config: Option<&crate::projects::SshConfig>,
+) -> Option<(
+    Vec<types::ContextBatchResultMetadata>,
+    types::ContextBatchResponse,
+    Vec<bool>,
+    u32,
+)> {
+    None
+}
+
+pub(super) fn ssh_context_batch_error_results(
+    project_name: &str,
+    requests: &[types::ContextBatchItem],
+    error: String,
+) -> (
+    Vec<types::ContextBatchResultMetadata>,
+    types::ContextBatchResponse,
+    Vec<bool>,
+    u32,
+) {
+    let results = requests
+        .iter()
+        .enumerate()
+        .map(|(i, item)| types::ContextBatchResultMetadata {
+            request_index: i,
+            mode: format!("{:?}", item.mode),
+            path: item.path.clone(),
+            fingerprint: None,
+            unchanged: false,
+            file_size: None,
+            modified_unix_ms: None,
+            total_lines: None,
+        })
+        .collect();
+    let response = types::ContextBatchResponse {
+        success: false,
+        project: project_name.to_string(),
+        results: Vec::new(),
+        duration_ms: 0,
+        ssh_calls: 0,
+        error: Some(error),
+        preflight_rejected: None,
+        estimated_chars: None,
+        max_allowed_chars: None,
+        max_allowed_items: None,
+        project_is_ssh: None,
+        suggestion: None,
+        warnings: Vec::new(),
+        result_metadata: Vec::new(),
+        cache_hits: None,
+        recommended_next_action: None,
+        action_budget_hint: None,
+    };
+    (results, response, vec![false; requests.len()], 0)
+}
 
 // =============================================================================
 // Helpers
@@ -91,25 +261,6 @@ pub(super) fn get_projects_config_path(depot: &Depot) -> Option<String> {
         .map(|state| state.config_path.clone())
 }
 
-pub(super) fn is_ssh_enabled(depot: &Depot) -> bool {
-    depot
-        .obtain::<Arc<crate::Config>>()
-        .ok()
-        .map(|config| config.is_ssh_enabled())
-        .unwrap_or(false)
-}
-
-pub(super) fn ssh_disabled_error() -> String {
-    SSH_DISABLED_MESSAGE.to_string()
-}
-
-pub(super) fn ensure_ssh_enabled(depot: &Depot, proj: &ProjectConfig) -> Result<(), String> {
-    if proj.is_ssh() && !is_ssh_enabled(depot) {
-        return Err(ssh_disabled_error());
-    }
-    Ok(())
-}
-
 pub(super) fn truncate_string(s: String, max_len: usize) -> (String, bool) {
     if s.len() <= max_len {
         (s, false)
@@ -123,374 +274,21 @@ pub(super) fn truncate_string(s: String, max_len: usize) -> (String, bool) {
 }
 
 // =============================================================================
-// SSH helpers
+// Command helpers
 // =============================================================================
 
-/// Run a command in the project directory.
-/// For SSH: wraps with `cd <path> && <cmd>`.
-/// For local: delegates to run_command with cwd.
+/// Run a command in the project directory (local only).
 pub(super) fn run_project_cmd(
     proj: &ProjectConfig,
     cmd: &str,
     timeout_secs: u64,
-    ssh_config: Option<&SshConfig>,
 ) -> (i32, String, String, u64) {
-    if proj.is_ssh() {
-        let ssh_targets = match build_ssh_targets(proj) {
-            Ok(t) => t,
-            Err(e) => return (-1, String::new(), e, 0),
-        };
-        let remote_cmd = format!("cd {} && {}", shell_escape(&proj.path), cmd);
-        run_ssh_targets(&ssh_targets, &remote_cmd, timeout_secs, ssh_config)
-    } else {
-        run_command(cmd, &proj.root(), timeout_secs)
-    }
-}
-
-/// Validate a path for SSH read_file operations.
-fn validate_ssh_read_path(rel_path: &str) -> Result<(), String> {
-    if rel_path.starts_with('/') {
-        return Err("Absolute paths are not allowed".to_string());
-    }
-    if rel_path.contains("..") {
-        return Err("Path traversal (..) is not allowed".to_string());
-    }
-    if is_sensitive_path(rel_path) {
-        return Err(format!("Cannot access sensitive path: {}", rel_path));
-    }
-    Ok(())
+    run_command(cmd, &proj.root(), timeout_secs)
 }
 
 // =============================================================================
-// SSH context helpers
+// Agent context
 // =============================================================================
-
-pub(super) fn ssh_overview(
-    proj: &ProjectConfig,
-    project_name: &str,
-    ssh_config: Option<&SshConfig>,
-) -> ContextResponse {
-    let ssh_targets = match build_ssh_targets(proj) {
-        Ok(t) => t,
-        Err(e) => {
-            return ContextResponse {
-                success: false,
-                project: project_name.to_string(),
-                mode: "overview".to_string(),
-                content: None,
-                items: None,
-                truncated: false,
-                error: Some(e),
-            }
-        }
-    };
-    let important_files = [
-        "README.md",
-        "TODO.md",
-        "Cargo.toml",
-        "scripts/e2e_test.sh",
-        "src/main.rs",
-    ];
-    let file_args = important_files
-        .iter()
-        .map(|f| shell_escape(f))
-        .collect::<Vec<_>>()
-        .join(" ");
-    let remote_cmd = format!(
-        "cd {} || exit 2; printf '__BRANCH__\\n'; git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\\n'; printf '__STATUS__\\n'; git status --short --untracked-files=no 2>/dev/null || true; printf '__FILES__\\n'; for f in {}; do if test -f \"$f\"; then printf '%s=yes\\n' \"$f\"; else printf '%s=no\\n' \"$f\"; fi; done",
-        shell_escape(&proj.path),
-        file_args
-    );
-    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &remote_cmd, 15, ssh_config);
-    if code != 0 {
-        return ContextResponse {
-            success: false,
-            project: project_name.to_string(),
-            mode: "overview".to_string(),
-            content: None,
-            items: None,
-            truncated: false,
-            error: Some(format!("SSH overview failed: {}", stderr.trim())),
-        };
-    }
-
-    let mut section = "";
-    let mut branch = "unknown".to_string();
-    let mut status_lines: Vec<String> = Vec::new();
-    let mut file_status: HashMap<String, String> = HashMap::new();
-    for line in stdout.lines() {
-        match line {
-            "__BRANCH__" => section = "branch",
-            "__STATUS__" => section = "status",
-            "__FILES__" => section = "files",
-            _ => match section {
-                "branch" if !line.trim().is_empty() => branch = line.trim().to_string(),
-                "status" => status_lines.push(line.to_string()),
-                "files" => {
-                    if let Some((path, exists)) = line.split_once('=') {
-                        file_status.insert(path.to_string(), exists.to_string());
-                    }
-                }
-                _ => {}
-            },
-        }
-    }
-    let status = status_lines.join("\n");
-    let mut content = format!(
-        "Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:",
-        project_name,
-        proj.path,
-        branch,
-        status.trim(),
-        proj.effective_allowed_checks().join(", ")
-    );
-    for f in &important_files {
-        let exists = file_status.get(*f).map(String::as_str).unwrap_or("no");
-        content.push_str(&format!(
-            "\n  {}: {}",
-            f,
-            if exists == "yes" { "yes" } else { "no" }
-        ));
-    }
-    ContextResponse {
-        success: true,
-        project: project_name.to_string(),
-        mode: "overview".to_string(),
-        content: Some(content),
-        items: None,
-        truncated: false,
-        error: None,
-    }
-}
-
-pub(super) fn ssh_tree(
-    proj: &ProjectConfig,
-    project_name: &str,
-    rel_path: Option<&str>,
-    limit: usize,
-    max_depth: usize,
-    ssh_config: Option<&SshConfig>,
-) -> ContextResponse {
-    let mut excludes = String::new();
-    for dir in IGNORED_DIRS {
-        excludes.push_str(&format!(" -not -path '*/{}/*'", dir));
-    }
-    let limit = normalize_tree_limit(limit);
-    let max_depth = normalize_tree_depth(max_depth);
-    let find_root = match rel_path {
-        Some(path) => {
-            if let Err(e) = validate_ssh_read_path(path) {
-                return context_error(project_name, &ContextMode::Tree, e);
-            }
-            shell_escape(path)
-        }
-        None => shell_escape("."),
-    };
-    let cmd = format!(
-        "cd {} && find {} -mindepth 1 -maxdepth {}{} -type f -print 2>/dev/null | sort | head -n {} | sed 's|^\\./||'",
-        shell_escape(&proj.path), find_root, max_depth, excludes, limit
-    );
-    let ssh_targets = match build_ssh_targets(proj) {
-        Ok(t) => t,
-        Err(e) => return context_error(project_name, &ContextMode::Tree, e),
-    };
-    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &cmd, 30, ssh_config);
-    if code != 0 {
-        return ContextResponse {
-            success: false,
-            project: project_name.to_string(),
-            mode: "tree".to_string(),
-            content: None,
-            items: None,
-            truncated: false,
-            error: Some(format!("SSH tree failed: {}", stderr.trim())),
-        };
-    }
-    let mut items: Vec<String> = stdout
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect();
-    let truncated = items.len() >= limit;
-    items.truncate(limit);
-    ContextResponse {
-        success: true,
-        project: project_name.to_string(),
-        mode: "tree".to_string(),
-        content: None,
-        items: Some(items),
-        truncated,
-        error: None,
-    }
-}
-
-pub(super) fn ssh_search(
-    proj: &ProjectConfig,
-    project_name: &str,
-    query: &str,
-    ssh_config: Option<&SshConfig>,
-) -> ContextResponse {
-    // Build grep exclusions
-    let mut excludes = String::new();
-    for dir in IGNORED_DIRS {
-        excludes.push_str(&format!(" --exclude-dir='{}'", dir));
-    }
-    // Use grep -rn, then head to limit results
-    let escaped_query = query.replace('\'', "'\\''");
-    let cmd = format!(
-        "cd {} && grep -rn{} --include='*' '{}' . 2>/dev/null | head -n {} | sed 's|^\\./||'",
-        shell_escape(&proj.path),
-        excludes,
-        escaped_query,
-        MAX_SEARCH_RESULTS
-    );
-    let ssh_targets = match build_ssh_targets(proj) {
-        Ok(t) => t,
-        Err(e) => return context_error(project_name, &ContextMode::Search, e),
-    };
-    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &cmd, 30, ssh_config);
-    // grep returns 1 if no match, that's ok
-    if code != 0 && code != 1 {
-        return ContextResponse {
-            success: false,
-            project: project_name.to_string(),
-            mode: "search".to_string(),
-            content: None,
-            items: None,
-            truncated: false,
-            error: Some(format!("SSH search failed: {}", stderr.trim())),
-        };
-    }
-    let items: Vec<String> = stdout
-        .lines()
-        .filter(|l| !l.is_empty())
-        .map(|l| l.to_string())
-        .collect();
-    let truncated = items.len() >= MAX_SEARCH_RESULTS;
-    ContextResponse {
-        success: true,
-        project: project_name.to_string(),
-        mode: "search".to_string(),
-        content: None,
-        items: Some(items),
-        truncated,
-        error: None,
-    }
-}
-
-pub(super) fn ssh_grep_context(
-    proj: &ProjectConfig,
-    project_name: &str,
-    rel_path: Option<&str>,
-    query: &str,
-    limit: usize,
-    ssh_config: Option<&SshConfig>,
-) -> ContextResponse {
-    if let Some(path) = rel_path {
-        if let Err(e) = validate_ssh_read_path(path) {
-            return context_error(project_name, &ContextMode::GrepContext, e);
-        }
-    }
-    let mut excludes = String::new();
-    for dir in IGNORED_DIRS {
-        excludes.push_str(&format!(" --exclude-dir='{}'", dir));
-    }
-    let search_root = shell_escape(rel_path.unwrap_or("."));
-    let escaped_query = query.replace('\'', "'\\''");
-    let limit = limit.clamp(1, MAX_READ_FILE_LIMIT);
-    let cmd = format!(
-        "cd {} && grep -R -n -C 3{} --include='*' '{}' {} 2>/dev/null | head -n {} | sed 's|^\\./||' | awk '{{ if(length($0)>{}) print substr($0,1,{}) \"… [line truncated]\"; else print }}'",
-        shell_escape(&proj.path),
-        excludes,
-        escaped_query,
-        search_root,
-        limit,
-        MAX_CONTEXT_LINE_LEN,
-        MAX_CONTEXT_LINE_LEN
-    );
-    let ssh_targets = match build_ssh_targets(proj) {
-        Ok(t) => t,
-        Err(e) => return context_error(project_name, &ContextMode::GrepContext, e),
-    };
-    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &cmd, 30, ssh_config);
-    if code != 0 && code != 1 {
-        return context_error(
-            project_name,
-            &ContextMode::GrepContext,
-            format!("SSH grep_context failed: {}", stderr.trim()),
-        );
-    }
-    mode_content_response(project_name, "grep_context", stdout, MAX_OUTPUT_LEN)
-}
-
-pub(super) fn ssh_read_file(
-    proj: &ProjectConfig,
-    project_name: &str,
-    rel_path: &str,
-    start_line: usize,
-    limit: usize,
-    ssh_config: Option<&SshConfig>,
-) -> ContextResponse {
-    if let Err(e) = validate_ssh_read_path(rel_path) {
-        return ContextResponse {
-            success: false,
-            project: project_name.to_string(),
-            mode: "read_file".to_string(),
-            content: None,
-            items: None,
-            truncated: false,
-            error: Some(e),
-        };
-    }
-    let end_line = match validate_read_file_range(start_line, limit) {
-        Ok(end_line) => end_line,
-        Err(e) => {
-            return ContextResponse {
-                success: false,
-                project: project_name.to_string(),
-                mode: "read_file".to_string(),
-                content: None,
-                items: None,
-                truncated: false,
-                error: Some(e),
-            }
-        }
-    };
-    let escaped_path = shell_escape(rel_path);
-    let cmd = format!(
-        "sed -n '{},{}p' -- {} | awk '{{ if(length($0)>{}) print substr($0,1,{}) \"… [line truncated]\"; else print }}'",
-        start_line, end_line, escaped_path, MAX_CONTEXT_LINE_LEN, MAX_CONTEXT_LINE_LEN
-    );
-    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 30, ssh_config);
-    if code != 0 {
-        return ContextResponse {
-            success: false,
-            project: project_name.to_string(),
-            mode: "read_file".to_string(),
-            content: None,
-            items: None,
-            truncated: false,
-            error: Some(format!("Failed to read file: {}", stderr.trim())),
-        };
-    }
-    // Add line numbers like the local version
-    let lines: Vec<String> = stdout
-        .lines()
-        .enumerate()
-        .map(|(i, l)| format_context_line(start_line + i, l).0)
-        .collect();
-    let output = lines.join("\n");
-    let (output, truncated) = truncate_string(output, MAX_OUTPUT_LEN);
-    ContextResponse {
-        success: true,
-        project: project_name.to_string(),
-        mode: "read_file".to_string(),
-        content: Some(output),
-        items: None,
-        truncated,
-        error: None,
-    }
-}
 
 pub(super) fn agent_context_shell_fragment() -> String {
     let files = AGENT_CONTEXT_FILES
@@ -504,417 +302,6 @@ pub(super) fn agent_context_shell_fragment() -> String {
     )
 }
 
-fn ssh_overview_from_batch_block(
-    proj: &ProjectConfig,
-    project_name: &str,
-    block: &str,
-) -> ContextResponse {
-    let important_files = [
-        "README.md",
-        "TODO.md",
-        "Cargo.toml",
-        "scripts/e2e_test.sh",
-        "src/main.rs",
-    ];
-    let mut section = "";
-    let mut branch = "unknown".to_string();
-    let mut status_lines: Vec<String> = Vec::new();
-    let mut file_status: HashMap<String, String> = HashMap::new();
-    for line in block.lines() {
-        match line {
-            "__BRANCH__" => section = "branch",
-            "__STATUS__" => section = "status",
-            "__FILES__" => section = "files",
-            _ => match section {
-                "branch" if !line.trim().is_empty() => branch = line.trim().to_string(),
-                "status" => status_lines.push(line.to_string()),
-                "files" => {
-                    if let Some((path, exists)) = line.split_once('=') {
-                        file_status.insert(path.to_string(), exists.to_string());
-                    }
-                }
-                _ => {}
-            },
-        }
-    }
-    let status = status_lines.join("\n");
-    let mut content = format!(
-        "Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:",
-        project_name,
-        proj.path,
-        branch,
-        status.trim(),
-        proj.effective_allowed_checks().join(", ")
-    );
-    for f in &important_files {
-        let exists = file_status.get(*f).map(String::as_str).unwrap_or("no");
-        content.push_str(&format!(
-            "\n  {}: {}",
-            f,
-            if exists == "yes" { "yes" } else { "no" }
-        ));
-    }
-    ContextResponse {
-        success: true,
-        project: project_name.to_string(),
-        mode: "overview".to_string(),
-        content: Some(content),
-        items: None,
-        truncated: false,
-        error: None,
-    }
-}
-
-fn ssh_batch_block_to_response(
-    proj: &ProjectConfig,
-    project_name: &str,
-    item: &ContextBatchItem,
-    request_index: usize,
-    block: &str,
-) -> (ContextResponse, Option<ContextBatchResultMetadata>) {
-    if let Some(err) = block.strip_prefix("__PDCTX_ERROR__:") {
-        return (
-            context_error(project_name, &item.mode, err.trim().to_string()),
-            None,
-        );
-    }
-    let response = match item.mode {
-        ContextMode::Overview => ssh_overview_from_batch_block(proj, project_name, block),
-        ContextMode::Tree => {
-            let mut items: Vec<String> = block
-                .lines()
-                .filter(|l| !l.is_empty())
-                .map(|l| l.to_string())
-                .collect();
-            let truncated = items.len() >= MAX_TREE_ITEMS;
-            items.truncate(MAX_TREE_ITEMS);
-            ContextResponse {
-                success: true,
-                project: project_name.to_string(),
-                mode: "tree".to_string(),
-                content: None,
-                items: Some(items),
-                truncated,
-                error: None,
-            }
-        }
-        ContextMode::ReadFile => {
-            let (content_block, _metadata, unchanged) =
-                parse_ssh_read_file_block(item, request_index, block);
-            if unchanged {
-                return (
-                    ContextResponse {
-                        success: true,
-                        project: project_name.to_string(),
-                        mode: "read_file".to_string(),
-                        content: None,
-                        items: None,
-                        truncated: false,
-                        error: None,
-                    },
-                    _metadata,
-                );
-            }
-            let lines: Vec<String> = content_block
-                .lines()
-                .enumerate()
-                .map(|(i, l)| format!("{:4} | {}", item.start_line + i, l))
-                .collect();
-            let (output, truncated) = truncate_string(lines.join("\n"), MAX_OUTPUT_LEN);
-            return (
-                ContextResponse {
-                    success: true,
-                    project: project_name.to_string(),
-                    mode: "read_file".to_string(),
-                    content: Some(output),
-                    items: None,
-                    truncated,
-                    error: None,
-                },
-                _metadata,
-            );
-        }
-        ContextMode::MarkdownOutline => mode_content_response(
-            project_name,
-            "markdown_outline",
-            block.to_string(),
-            MAX_OUTPUT_LEN,
-        ),
-        ContextMode::ReadSection => mode_content_response(
-            project_name,
-            "read_section",
-            block.to_string(),
-            MAX_OUTPUT_LEN,
-        ),
-        ContextMode::AgentContext => mode_content_response(
-            project_name,
-            "agent_context",
-            block.to_string(),
-            MAX_OUTPUT_LEN,
-        ),
-        ContextMode::GitStatus => {
-            let (content, truncated) = truncate_string(block.to_string(), MAX_OUTPUT_LEN);
-            ContextResponse {
-                success: true,
-                project: project_name.to_string(),
-                mode: "git_status".to_string(),
-                content: Some(content),
-                items: None,
-                truncated,
-                error: None,
-            }
-        }
-        ContextMode::GitDiff => {
-            let (content, truncated) = truncate_string(block.to_string(), MAX_OUTPUT_LEN);
-            ContextResponse {
-                success: true,
-                project: project_name.to_string(),
-                mode: "git_diff".to_string(),
-                content: Some(content),
-                items: None,
-                truncated,
-                error: None,
-            }
-        }
-        ContextMode::Search | ContextMode::GrepContext | ContextMode::ExperimentOutputs => {
-            // ExperimentOutputs is not supported in single-SSH batch mode; run it standalone.
-            context_error(
-                project_name,
-                &item.mode,
-                "search-like and experiment_outputs modes are not supported by single-SSH context batch".to_string(),
-            )
-        }
-    };
-    (response, None)
-}
-
-fn parse_ssh_read_file_metadata(
-    item: &ContextBatchItem,
-    request_index: usize,
-    line: &str,
-) -> Option<ContextBatchResultMetadata> {
-    let marker = "__PDCTX_META__:";
-    let data = line.strip_prefix(marker)?;
-    let mut file_size = None;
-    let mut modified_unix_ms = None;
-    let mut total_lines = None;
-    for part in data.split_whitespace() {
-        let Some((key, value)) = part.split_once('=') else {
-            continue;
-        };
-        match key {
-            "size" => file_size = value.parse::<u64>().ok(),
-            "mtime_ms" => modified_unix_ms = value.parse::<u64>().ok(),
-            "total_lines" => total_lines = value.parse::<usize>().ok(),
-            _ => {}
-        }
-    }
-    let path = item.path.clone();
-    let fingerprint = match (path.as_deref(), file_size, modified_unix_ms) {
-        (Some(path), Some(size), Some(mtime_ms)) => {
-            Some(file_fingerprint("ssh-v1", path, size, mtime_ms))
-        }
-        _ => None,
-    };
-    Some(ContextBatchResultMetadata {
-        request_index,
-        mode: "read_file".to_string(),
-        path,
-        fingerprint,
-        unchanged: false,
-        file_size,
-        modified_unix_ms,
-        total_lines,
-    })
-}
-
-fn parse_ssh_read_file_block(
-    item: &ContextBatchItem,
-    request_index: usize,
-    block: &str,
-) -> (String, Option<ContextBatchResultMetadata>, bool) {
-    let mut lines = block.lines();
-    let first = lines.next();
-    let mut metadata =
-        first.and_then(|line| parse_ssh_read_file_metadata(item, request_index, line));
-    let mut content_lines = Vec::new();
-    let mut unchanged = false;
-    let consumed_first = metadata.is_some();
-    if !consumed_first {
-        if let Some(line) = first {
-            content_lines.push(line.to_string());
-        }
-    }
-    for line in lines {
-        if consumed_first && line == "__PDCTX_UNCHANGED__" {
-            unchanged = true;
-            if let Some(metadata) = metadata.as_mut() {
-                metadata.unchanged = true;
-            }
-            continue;
-        }
-        content_lines.push(line.to_string());
-    }
-    (content_lines.join("\n"), metadata, unchanged)
-}
-
-pub(super) fn ssh_context_batch_error_results(
-    project_name: &str,
-    requests: &[ContextBatchItem],
-    error: String,
-) -> Vec<ContextResponse> {
-    requests
-        .iter()
-        .map(|item| context_error(project_name, &item.mode, error.clone()))
-        .collect()
-}
-
-pub(super) fn try_ssh_context_batch_once(
-    proj: &ProjectConfig,
-    project_name: &str,
-    requests: &[ContextBatchItem],
-    ssh_config: Option<&SshConfig>,
-) -> Option<(
-    Vec<ContextResponse>,
-    Vec<ContextBatchResultMetadata>,
-    usize,
-    u64,
-)> {
-    if requests.is_empty() {
-        return Some((Vec::new(), Vec::new(), 0, 0));
-    }
-    let ssh_targets = match build_ssh_targets(proj) {
-        Ok(t) => t,
-        Err(e) => {
-            return Some((
-                ssh_context_batch_error_results(project_name, requests, e),
-                Vec::new(),
-                0,
-                0,
-            ))
-        }
-    };
-
-    let nonce = uuid::Uuid::new_v4().simple().to_string();
-    let mut script = format!("cd {} || exit 2;", shell_escape(&proj.path));
-    for (idx, item) in requests.iter().enumerate() {
-        if matches!(
-            item.mode,
-            ContextMode::Search | ContextMode::GrepContext | ContextMode::ExperimentOutputs
-        ) {
-            return None;
-        }
-        script.push_str(&format!(" printf '\n__PDCTX_{}_START_{}__\n';", nonce, idx));
-        match item.mode {
-            ContextMode::Overview => {
-                let file_args = [
-                    "README.md",
-                    "TODO.md",
-                    "Cargo.toml",
-                    "scripts/e2e_test.sh",
-                    "src/main.rs",
-                ]
-                .iter()
-                .map(|f| shell_escape(f))
-                .collect::<Vec<_>>()
-                .join(" ");
-                script.push_str(&format!(" printf '__BRANCH__\\n'; git rev-parse --abbrev-ref HEAD 2>/dev/null || printf 'unknown\\n'; printf '__STATUS__\\n'; git status --short --untracked-files=no 2>/dev/null || true; printf '__FILES__\\n'; for f in {}; do if test -f \"$f\"; then printf '%s=yes\\n' \"$f\"; else printf '%s=no\\n' \"$f\"; fi; done;", file_args));
-            }
-            ContextMode::Tree => {
-                let mut excludes = String::new();
-                for dir in IGNORED_DIRS {
-                    excludes.push_str(&format!(" -not -path '*/{}/*'", dir));
-                }
-                let limit = normalize_tree_limit(item.limit);
-                let max_depth = normalize_tree_depth(item.max_depth);
-                let find_root = match &item.path {
-                    Some(path) => {
-                        if validate_ssh_read_path(path).is_err() {
-                            return None;
-                        }
-                        shell_escape(path)
-                    }
-                    None => shell_escape("."),
-                };
-                script.push_str(&format!(" find {} -mindepth 1 -maxdepth {}{} -type f -print 2>/dev/null | sort | head -n {} | sed 's|^\\./||';", find_root, max_depth, excludes, limit));
-            }
-            ContextMode::ReadFile => {
-                let Some(path) = &item.path else {
-                    return None;
-                };
-                if validate_ssh_read_path(path).is_err() {
-                    return None;
-                }
-                let end_line = match validate_read_file_range(item.start_line, item.limit) {
-                    Ok(end_line) => end_line,
-                    Err(_) => return None,
-                };
-                let escaped_path = shell_escape(path);
-                let expected = shell_escape(item.if_fingerprint.as_deref().unwrap_or(""));
-                script.push_str(&format!(" if test -f {0}; then size=$(wc -c < {0} | tr -d ' '); mtime=$(stat -c %Y -- {0} 2>/dev/null || stat -f %m -- {0} 2>/dev/null || printf '0'); mtime_ms=\"${{mtime}}000\"; total=$(wc -l < {0} | tr -d ' '); fp_hash=$(printf '%s\\000%s\\000%s' {0} \"$size\" \"$mtime_ms\" | sha256sum 2>/dev/null | awk '{{print substr($1,1,24)}}'); fp=\"ssh-v1-${{fp_hash}}\"; printf '__PDCTX_META__:size=%s mtime_ms=%s fingerprint=%s total_lines=%s\\n' \"$size\" \"$mtime_ms\" \"$fp\" \"$total\"; if test -n {4} && test \"$fp\" = {4}; then printf '__PDCTX_UNCHANGED__\\n'; else sed -n '{1},{2}p' -- {0} | awk '{{ if(length($0)>{3}) print substr($0,1,{3}) \"… [line truncated]\"; else print }}'; fi; else printf '__PDCTX_ERROR__:File not found: {0}\\n'; fi;", escaped_path, item.start_line, end_line, MAX_CONTEXT_LINE_LEN, expected));
-            }
-            ContextMode::MarkdownOutline => {
-                let Some(path) = &item.path else {
-                    return None;
-                };
-                if validate_ssh_read_path(path).is_err() {
-                    return None;
-                }
-                script.push_str(&markdown_outline_shell_fragment(path, item.limit));
-            }
-            ContextMode::ReadSection => {
-                let (Some(path), Some(query)) = (&item.path, &item.query) else {
-                    return None;
-                };
-                if validate_ssh_read_path(path).is_err() {
-                    return None;
-                }
-                script.push_str(&markdown_section_shell_fragment(path, query, item.limit));
-            }
-            ContextMode::AgentContext => {
-                script.push_str(&agent_context_shell_fragment());
-            }
-            ContextMode::GitStatus => {
-                script.push_str(" git status --short --untracked-files=no 2>/dev/null || true;");
-            }
-            ContextMode::GitDiff => {
-                script.push_str(" git diff 2>/dev/null || true;");
-            }
-            ContextMode::Search | ContextMode::GrepContext | ContextMode::ExperimentOutputs => {
-                return None
-            }
-        }
-        script.push_str(&format!(" printf '\n__PDCTX_{}_END_{}__\n';", nonce, idx));
-    }
-
-    let (code, stdout, stderr, _) = run_ssh_targets(&ssh_targets, &script, 30, ssh_config);
-    if code != 0 {
-        let error = format!("SSH context batch failed: {}", stderr.trim());
-        return Some((
-            ssh_context_batch_error_results(project_name, requests, error),
-            Vec::new(),
-            0,
-            1,
-        ));
-    }
-    let blocks = parse_ssh_batch_blocks(&stdout, requests.len(), &nonce);
-    let mut results = Vec::with_capacity(requests.len());
-    let mut result_metadata = Vec::new();
-    let mut cache_hits = 0usize;
-    for (idx, (item, block)) in requests.iter().zip(blocks.iter()).enumerate() {
-        let (response, metadata) =
-            ssh_batch_block_to_response(proj, project_name, item, idx, block);
-        if let Some(metadata) = metadata {
-            if metadata.unchanged {
-                cache_hits += 1;
-            }
-            result_metadata.push(metadata);
-        }
-        results.push(response);
-    }
-    Some((results, result_metadata, cache_hits, 1))
-}
-
 // =============================================================================
 // Trusted async shell job helpers
 // =============================================================================
@@ -926,33 +313,6 @@ pub(super) fn try_ssh_context_batch_once(
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_validate_ssh_path_rejects_absolute() {
-        assert!(validate_ssh_read_path("/etc/passwd").is_err());
-    }
-
-    #[test]
-    fn test_validate_ssh_path_rejects_traversal() {
-        assert!(validate_ssh_read_path("../evil.txt").is_err());
-        assert!(validate_ssh_read_path("src/../../../etc/passwd").is_err());
-    }
-
-    #[test]
-    fn test_validate_ssh_path_rejects_sensitive() {
-        assert!(validate_ssh_read_path(".env").is_err());
-        assert!(validate_ssh_read_path("secret.pem").is_err());
-        assert!(validate_ssh_read_path(".git/config").is_err());
-        assert!(validate_ssh_read_path("target/debug/binary").is_err());
-        assert!(validate_ssh_read_path("node_modules/pkg/index.js").is_err());
-    }
-
-    #[test]
-    fn test_validate_ssh_path_allows_normal() {
-        assert!(validate_ssh_read_path("src/main.rs").is_ok());
-        assert!(validate_ssh_read_path("README.md").is_ok());
-        assert!(validate_ssh_read_path("src/lib/helper.rs").is_ok());
-    }
 
     #[test]
     fn test_is_sensitive_path_variants() {
@@ -1163,149 +523,11 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_ssh_batch_blocks_with_nonce() {
-        let nonce = "abc123";
-        let stdout = "__PDCTX_abc123_START_0__\nfirst\n__PDCTX_abc123_END_0__\n__PDCTX_abc123_START_1__\nsecond\n__PDCTX_abc123_END_1__\n";
-        let blocks = parse_ssh_batch_blocks(stdout, 2, nonce);
-        assert_eq!(blocks[0], "first\n");
-        assert_eq!(blocks[1], "second\n");
-    }
-
-    #[test]
-    fn test_parse_ssh_batch_blocks_ignores_old_style_markers() {
-        let nonce = "abc123";
-        let stdout = "__PDCTX_abc123_START_0__\nline before\n__PDCTX_START_0__\nfile content\n__PDCTX_END_0__\nline after\n__PDCTX_abc123_END_0__\n";
-        let blocks = parse_ssh_batch_blocks(stdout, 1, nonce);
-        assert!(blocks[0].contains("__PDCTX_START_0__"));
-        assert!(blocks[0].contains("__PDCTX_END_0__"));
-        assert!(blocks[0].contains("line after"));
-    }
-
-    #[test]
     fn test_invalid_read_file_ranges_return_errors() {
         assert!(validate_read_file_range(0, 10).is_err());
         assert!(validate_read_file_range(1, 0).is_err());
         assert!(validate_read_file_range(1, MAX_READ_FILE_LIMIT + 1).is_err());
         assert!(validate_read_file_range(usize::MAX, 2).is_err());
-    }
-
-    #[test]
-    fn test_ssh_batch_failure_returns_one_result_per_request() {
-        let requests = vec![
-            ContextBatchItem {
-                mode: ContextMode::Overview,
-                path: None,
-                query: None,
-                if_fingerprint: None,
-                start_line: 1,
-                limit: 10,
-                max_depth: default_tree_max_depth(),
-            },
-            ContextBatchItem {
-                mode: ContextMode::ReadFile,
-                path: Some("README.md".to_string()),
-                query: None,
-                if_fingerprint: None,
-                start_line: 1,
-                limit: 10,
-                max_depth: default_tree_max_depth(),
-            },
-        ];
-        let results = ssh_context_batch_error_results("proj", &requests, "boom".to_string());
-        assert_eq!(results.len(), requests.len());
-        assert!(results.iter().all(|r| !r.success));
-        assert!(results.iter().all(|r| r.error.as_deref() == Some("boom")));
-    }
-
-    #[test]
-    fn test_parse_ssh_read_file_block_metadata_unchanged() {
-        let item = ContextBatchItem {
-            mode: ContextMode::ReadFile,
-            path: Some("README.md".to_string()),
-            query: None,
-            if_fingerprint: None,
-            start_line: 1,
-            limit: 10,
-            max_depth: default_tree_max_depth(),
-        };
-        let block = "__PDCTX_META__:size=12 mtime_ms=1000 fingerprint=ignored total_lines=2\n__PDCTX_UNCHANGED__\n";
-        let (content, metadata, unchanged) = parse_ssh_read_file_block(&item, 3, block);
-        let metadata = metadata.unwrap();
-        assert!(unchanged);
-        assert!(content.is_empty());
-        assert_eq!(metadata.request_index, 3);
-        assert!(metadata.unchanged);
-        let expected = file_fingerprint("ssh-v1", "README.md", 12, 1000);
-        assert_eq!(metadata.fingerprint.as_deref(), Some(expected.as_str()));
-    }
-    #[test]
-    fn test_build_ssh_targets() {
-        let proj = ProjectConfig {
-            path: "/tmp/test".to_string(),
-            executor: crate::projects::Executor::Ssh,
-            host: Some("msi".to_string()),
-            ssh_hosts: vec!["msi-rev4".to_string(), "msi-rev6".to_string()],
-            user: Some("root".to_string()),
-            client_id: None,
-            allow_patch: false,
-            allow_command_requests: false,
-            allow_raw_command_requests: false,
-            default_apply_patch_backend: None,
-            allowed_checks: vec![],
-            checks: None,
-            commands: HashMap::new(),
-            hooks: HashMap::new(),
-        };
-        assert_eq!(
-            proj.ssh_targets(),
-            vec![
-                "root@msi".to_string(),
-                "root@msi-rev4".to_string(),
-                "root@msi-rev6".to_string()
-            ]
-        );
-
-        let proj_no_user = ProjectConfig {
-            path: "/tmp/test".to_string(),
-            executor: crate::projects::Executor::Ssh,
-            host: Some("msi".to_string()),
-            ssh_hosts: vec!["msi".to_string(), "msi-rev6".to_string()],
-            user: None,
-            client_id: None,
-            allow_patch: false,
-            allow_command_requests: false,
-            allow_raw_command_requests: false,
-            default_apply_patch_backend: None,
-            allowed_checks: vec![],
-            checks: None,
-            commands: HashMap::new(),
-            hooks: HashMap::new(),
-        };
-        assert_eq!(
-            proj_no_user.ssh_targets(),
-            vec!["msi".to_string(), "msi-rev6".to_string()]
-        );
-    }
-
-    #[test]
-    fn test_build_ssh_targets_no_host() {
-        let proj = ProjectConfig {
-            path: "/tmp/test".to_string(),
-            executor: crate::projects::Executor::Ssh,
-            host: None,
-            ssh_hosts: vec![],
-            user: None,
-            client_id: None,
-            allow_patch: false,
-            allow_command_requests: false,
-            allow_raw_command_requests: false,
-            default_apply_patch_backend: None,
-            allowed_checks: vec![],
-            checks: None,
-            commands: HashMap::new(),
-            hooks: HashMap::new(),
-        };
-        assert!(proj.ssh_targets().is_empty());
     }
 
     #[test]
@@ -1560,35 +782,6 @@ mod tests {
         // which is safe because the dangerous content is inside single quotes
     }
 
-    #[test]
-    fn test_ssh_edit_command_no_user_input_in_shell() {
-        // Verify that user-controlled edit content does not appear in the SSH command string
-        let user_input = "'; malicious_command; echo '";
-        let body = EditRequest {
-            project: "test".to_string(),
-            reason: None,
-            dry_run: false,
-            response_mode: None,
-            expected_fingerprints: Default::default(),
-            post_check: None,
-            rollback_on_check_failure: true,
-            edits: vec![EditOperation::ReplaceText {
-                path: "src/main.rs".to_string(),
-                old_text: user_input.to_string(),
-                new_text: "safe".to_string(),
-                occurrence: None,
-            }],
-        };
-        let _body_json = serde_json::to_string(&body).unwrap();
-        // The JSON-serialized body should contain the user input escaped inside JSON,
-        // but the shell_escape of the python script itself should not contain raw user input
-        let escaped_script = shell_escape(REMOTE_EDIT_SCRIPT);
-        assert!(!escaped_script.contains(user_input));
-        // The body JSON is piped via stdin, not embedded in the command
-        // So the SSH command is: ssh target -- python3 -c '<script>' '<project_path>'
-        // Neither argument contains the user's edit payload directly
-    }
-
     // =========================================================================
     // Remote python3 script local run test
     // =========================================================================
@@ -1738,30 +931,6 @@ pub(super) fn apply_edit_request_with_metrics(
     operation: &'static str,
 ) -> EditResponse {
     let edit_start = Instant::now();
-    if proj.is_ssh() {
-        if body.post_check.is_some() {
-            return edit_error(
-                "post_check auto-rollback is currently supported for local and agent executors; use runProjectGit checkpoint before SSH edits"
-                    .to_string(),
-            );
-        }
-        let response = ssh_apply_project_edit(proj, body, projects.ssh.as_ref());
-        tracing::info!(
-            target: "codex.metrics",
-            operation = operation,
-            project = %body.project,
-            executor = "ssh",
-            success = response.success,
-            dry_run = body.dry_run,
-            edit_count = body.edits.len(),
-            changed_files = response.changed_files.len(),
-            duration_ms = edit_start.elapsed().as_millis() as u64,
-            ssh_calls = 1,
-            control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
-            "codex_edit_completed"
-        );
-        return response;
-    }
     let response = local_apply_project_edit(proj, body);
     tracing::info!(
         target: "codex.metrics",
@@ -1784,79 +953,11 @@ pub(super) fn apply_edit_request_with_metrics(
 mod ssh_command_tests {
     use super::*;
 
-    fn ssh_config() -> SshConfig {
-        SshConfig {
-            batch_mode: false,
-            connect_timeout_secs: None,
-            control_master: false,
-            control_persist: None,
-            control_path: None,
-            server_alive_interval: None,
-            server_alive_count_max: None,
-        }
-    }
-
     fn command_args(command: &std::process::Command) -> Vec<String> {
         command
             .get_args()
             .map(|arg| arg.to_string_lossy().to_string())
             .collect()
-    }
-
-    #[test]
-    fn default_ssh_config_does_not_add_controlmaster() {
-        let args = ssh_option_args(None);
-        assert!(!args.iter().any(|arg| arg.contains("ControlMaster")));
-        assert!(args.is_empty());
-    }
-
-    #[test]
-    fn control_master_adds_reuse_options() {
-        let mut cfg = ssh_config();
-        cfg.control_master = true;
-        cfg.control_persist = Some("10m".into());
-        cfg.control_path = Some("/tmp/private-drop-ssh-%C".into());
-        let args = ssh_option_args(Some(&cfg));
-        assert!(args.contains(&"BatchMode=yes".to_string()));
-        assert!(args.contains(&"ControlMaster=auto".to_string()));
-        assert!(args.contains(&"ControlPersist=10m".to_string()));
-        assert!(args.contains(&"ControlPath=/tmp/private-drop-ssh-%C".to_string()));
-    }
-
-    #[test]
-    fn batch_mode_without_control_master_adds_batchmode_only() {
-        let mut cfg = ssh_config();
-        cfg.batch_mode = true;
-        let args = ssh_option_args(Some(&cfg));
-        assert!(args.contains(&"BatchMode=yes".to_string()));
-        assert!(!args.iter().any(|arg| arg.contains("ControlMaster")));
-    }
-
-    #[test]
-    fn connect_timeout_and_keepalive_options_are_rendered() {
-        let mut cfg = ssh_config();
-        cfg.connect_timeout_secs = Some(10);
-        cfg.server_alive_interval = Some(30);
-        cfg.server_alive_count_max = Some(3);
-        let args = ssh_option_args(Some(&cfg));
-        assert!(args.contains(&"ConnectTimeout=10".to_string()));
-        assert!(args.contains(&"ServerAliveInterval=30".to_string()));
-        assert!(args.contains(&"ServerAliveCountMax=3".to_string()));
-    }
-
-    #[test]
-    fn ssh_command_uses_args_not_local_shell() {
-        let mut cfg = ssh_config();
-        cfg.batch_mode = true;
-        let command = build_ssh_command("root@example", "cd /repo && git status", Some(&cfg));
-        assert_eq!(command.get_program().to_string_lossy(), "ssh");
-        let args = command_args(&command);
-        assert_eq!(
-            args.last().map(String::as_str),
-            Some("cd /repo && git status")
-        );
-        assert!(args.contains(&"root@example".to_string()));
-        assert!(!args.iter().any(|arg| arg == "sh" || arg == "-c"));
     }
 
     // --- Context batch preflight tests ---
@@ -2122,7 +1223,7 @@ mod trusted_command_tests {
         let proj = make_local_proj();
         let script = "echo hello\necho world";
         let wrapped = build_trusted_wrapper(script);
-        let (code, stdout, stderr, _duration) = run_project_cmd(&proj, &wrapped, 30, None);
+        let (code, stdout, stderr, _duration) = run_project_cmd(&proj, &wrapped, 30);
         assert_eq!(code, 0, "stderr: {}", stderr);
         assert!(stdout.contains("hello"), "stdout: {}", stdout);
         assert!(stdout.contains("world"), "stdout: {}", stdout);
@@ -2133,7 +1234,7 @@ mod trusted_command_tests {
         let proj = make_local_proj();
         let script = "pwd";
         let wrapped = build_trusted_wrapper(script);
-        let (code, stdout, stderr, _duration) = run_project_cmd(&proj, &wrapped, 30, None);
+        let (code, stdout, stderr, _duration) = run_project_cmd(&proj, &wrapped, 30);
         assert_eq!(code, 0, "stderr: {}", stderr);
         assert!(
             stdout.contains(&proj.path),

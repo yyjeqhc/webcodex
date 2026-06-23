@@ -4,7 +4,7 @@ use super::types::{
     JobInfo, ProjectDoctorAgentCapabilities, ProjectDoctorAgentInfo, ProjectDoctorGitInfo,
     ProjectDoctorHooksInfo, ProjectDoctorRecentJob, ProjectDoctorRequest, ProjectDoctorResponse,
 };
-use super::{get_projects, is_ssh_enabled, run_project_cmd, SSH_DISABLED_MESSAGE};
+use super::{get_projects, run_project_cmd};
 use crate::projects::{ProjectConfig, ProjectsConfig};
 use crate::shell_client::assert_shell_client_owner;
 use crate::shell_protocol::{ShellClientView, ShellJobInfo};
@@ -280,7 +280,7 @@ async fn run_doctor_command(
         )
         .await
     } else {
-        run_project_cmd(proj, command, timeout_secs, projects.ssh.as_ref())
+        run_project_cmd(proj, command, timeout_secs)
     }
 }
 
@@ -480,7 +480,7 @@ pub(super) async fn run_project_doctor_for_project(
     let hook_name = body.effective_hook_name();
     let timeout_secs = body.effective_timeout_secs();
     let recent_jobs_limit = body.effective_recent_jobs();
-    let ssh_enabled = is_ssh_enabled(depot);
+    let ssh_enabled = false;
     let hooks = build_hooks_info(proj, &hook_name);
     let mut warnings = Vec::new();
     let mut error = None;
@@ -499,7 +499,7 @@ pub(super) async fn run_project_doctor_for_project(
     let mut can_execute = true;
     let mut execution_blocker = None;
     if proj.is_ssh() && !ssh_enabled {
-        let warning = SSH_DISABLED_MESSAGE.to_string();
+        let warning = "SSH removed in v2".to_string();
         warnings.push(warning.clone());
         can_execute = false;
         execution_blocker = Some(warning);
@@ -900,7 +900,7 @@ mod tests {
         )
         .await;
 
-        assert!(warning_contains(&response, SSH_DISABLED_MESSAGE));
+        assert!(warning_contains(&response, "SSH removed in v2"));
         assert!(response.hook_result.is_none());
         assert!(!response.git.available);
     }

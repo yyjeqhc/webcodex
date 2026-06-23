@@ -1,6 +1,6 @@
 use super::shell::sanitize_tail;
 use super::types::{ProjectHookRequest, ProjectHookResponse, ProjectHookStep};
-use super::{ensure_ssh_enabled, get_projects, run_project_cmd, MAX_OUTPUT_LEN};
+use super::{get_projects, run_project_cmd, MAX_OUTPUT_LEN};
 use crate::projects::{ProjectConfig, ProjectsConfig};
 use salvo::prelude::*;
 
@@ -73,7 +73,7 @@ async fn run_hook_command(
         )
         .await;
     }
-    run_project_cmd(proj, command, timeout_secs, projects.ssh.as_ref())
+    run_project_cmd(proj, command, timeout_secs)
 }
 
 async fn git_status_short(
@@ -165,11 +165,6 @@ pub async fn codex_project_hook(req: &mut Request, depot: &mut Depot, res: &mut 
             return;
         }
     };
-    if let Err(e) = ensure_ssh_enabled(depot, proj) {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(hook_error(body.project, body.hook, e)));
-        return;
-    }
     let hook_name_owned = body.hook.trim().to_string();
     let hook_name = hook_name_owned.as_str();
     let commands = match get_hook_commands(proj, hook_name) {
@@ -295,14 +290,5 @@ mod tests {
         let project = local_project("/tmp/demo", HashMap::new());
         let err = get_hook_commands(&project, "missing").unwrap_err();
         assert_eq!(err, "hook 'missing' is not configured for this project");
-    }
-
-    #[test]
-    fn ssh_project_hook_is_rejected_when_ssh_disabled() {
-        let mut project = local_project("/tmp/demo", HashMap::new());
-        project.executor = Executor::Ssh;
-        let depot = Depot::new();
-        let err = ensure_ssh_enabled(&depot, &project).unwrap_err();
-        assert_eq!(err, super::super::ssh_disabled_error());
     }
 }

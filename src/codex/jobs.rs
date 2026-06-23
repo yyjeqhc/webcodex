@@ -605,7 +605,7 @@ pub(super) fn remote_read_job_metadata(
 ) -> Result<JobMetadata, String> {
     validate_job_id(job_id)?;
     let cmd = format!("cat {}/metadata.json", shell_escape(&job_dir_rel(job_id)));
-    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10);
     if code != 0 {
         return Err(format!("Failed to read job metadata: {}", stderr.trim()));
     }
@@ -622,7 +622,7 @@ pub(super) fn remote_job_status_string(
         "printf 'STATUS='; cat {0}/status 2>/dev/null || true; printf '\nPID='; cat {0}/pid 2>/dev/null || true; printf '\nEXIT='; cat {0}/exit_code 2>/dev/null || true; printf '\nFINISHED='; cat {0}/finished_at 2>/dev/null || true; printf '\n'",
         shell_escape(&dir)
     );
-    let (code, stdout, _, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    let (code, stdout, _, _) = run_project_cmd(proj, &cmd, 10);
     if code != 0 {
         return (None, None, None, None);
     }
@@ -665,11 +665,11 @@ pub(super) fn update_job_status_ssh(
                     shell_escape(&dir),
                     shell_escape(&dir)
                 );
-                let _ = run_project_cmd(proj, &cmd, 10, ssh_config);
+                let _ = run_project_cmd(proj, &cmd, 10);
                 status_value = "timeout".to_string();
             } else {
                 let cmd = format!("kill -0 {} 2>/dev/null", pid);
-                let (code, _, _, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+                let (code, _, _, _) = run_project_cmd(proj, &cmd, 10);
                 if code != 0 {
                     status_value = if exit_code.unwrap_or(1) == 0 {
                         "completed".to_string()
@@ -683,7 +683,7 @@ pub(super) fn update_job_status_ssh(
                         shell_escape(&dir),
                         shell_escape(&dir)
                     );
-                    let _ = run_project_cmd(proj, &cmd, 10, ssh_config);
+                    let _ = run_project_cmd(proj, &cmd, 10);
                     let (_, _, _, refreshed_finished_at) =
                         remote_job_status_string(proj, &meta.job_id, ssh_config);
                     finished_at = refreshed_finished_at.or(finished_at);
@@ -793,7 +793,7 @@ pub(super) fn create_ssh_job(
         cmd_b64 = shell_escape(&command_b64),
         wrapper = shell_escape(&wrapper)
     );
-    let (code, _, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    let (code, _, stderr, _) = run_project_cmd(proj, &cmd, 10);
     if code != 0 {
         return Err(format!("Failed to create SSH job: {}", stderr.trim()));
     }
@@ -843,7 +843,7 @@ pub(super) fn list_ssh_jobs(
     ssh_config: Option<&SshConfig>,
 ) -> Vec<JobInfo> {
     let cmd = "find .codex/jobs -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | sort | tail -n 200";
-    let (code, stdout, _, _) = run_project_cmd(proj, cmd, 10, ssh_config);
+    let (code, stdout, _, _) = run_project_cmd(proj, cmd, 10);
     if code != 0 {
         return Vec::new();
     }
@@ -937,7 +937,7 @@ pub(super) fn ssh_job_log_with_count(
         n = n,
         dir = dir
     );
-    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10);
     if code != 0 {
         return Err(format!("Failed to read job log: {}", stderr.trim()));
     }
@@ -984,7 +984,7 @@ pub(super) fn ssh_job_log_stderr_tail(
     let dir = shell_escape(&job_dir_rel(job_id));
     let n = tail_lines.clamp(1, 200);
     let cmd = format!("tail -n {n} {dir}/stderr.log 2>/dev/null || true");
-    let (_, stdout, _, _) = run_project_cmd(proj, &cmd, 5, ssh_config);
+    let (_, stdout, _, _) = run_project_cmd(proj, &cmd, 5);
     stdout
 }
 
@@ -1034,7 +1034,7 @@ pub(super) fn stop_ssh_job(
         "if test -f {0}/pid; then pid=$(cat {0}/pid); kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -TERM \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; sleep 1; if kill -0 \"$pid\" 2>/dev/null; then kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -KILL \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; fi; fi; now=$(date +%s); printf stopped > {0}/status; echo $now > {0}/finished_at",
         shell_escape(&dir)
     );
-    let (code, _, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    let (code, _, stderr, _) = run_project_cmd(proj, &cmd, 10);
     if code != 0 {
         return Err(format!("Failed to stop job: {}", stderr.trim()));
     }
@@ -1139,7 +1139,7 @@ fn recover_ssh_job_info(
          printf '\\n__RECOVER_FINISHED__\\n'; cat {dir}/finished_at 2>/dev/null || true",
         dir = dir
     );
-    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10);
     if code != 0 {
         return Err(format!("Failed to read job info: {}", stderr.trim()));
     }
@@ -1252,7 +1252,7 @@ fn find_ssh_job_id_by_client_request_id(
          printf '%s' \"$d\"; break; fi; done",
         rid = rid_escaped
     );
-    let (code, stdout, _, _) = run_project_cmd(proj, &cmd, 10, ssh_config);
+    let (code, stdout, _, _) = run_project_cmd(proj, &cmd, 10);
     if code != 0 || stdout.trim().is_empty() {
         return None;
     }

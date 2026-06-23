@@ -96,8 +96,7 @@ fn run_local_edit_post_check(
     suite: &str,
     command: &str,
 ) -> EditPostCheckResult {
-    let (code, stdout, stderr, duration_ms) =
-        run_project_cmd(proj, command, CHECK_TIMEOUT_SECS, None);
+    let (code, stdout, stderr, duration_ms) = run_project_cmd(proj, command, CHECK_TIMEOUT_SECS);
     edit_post_check_result(suite, command, code, stdout, stderr, duration_ms)
 }
 
@@ -1736,11 +1735,6 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     };
-    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
-        res.status_code(StatusCode::FORBIDDEN);
-        res.render(Json(edit_error(e)));
-        return;
-    }
     if !proj.allow_patch() {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(edit_error(

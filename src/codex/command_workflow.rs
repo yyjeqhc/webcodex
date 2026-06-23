@@ -116,8 +116,8 @@ pub(super) fn approve_command_request_inner(
             error: Some(error),
         };
     }
-    if proj.is_ssh() && !ssh_enabled {
-        let error = ssh_disabled_error();
+    if proj.is_ssh() {
+        let error = "SSH removed in v2".to_string();
         record.status = "failed".to_string();
         record.executed_at = Some(chrono::Utc::now().timestamp());
         record.error = Some(error.clone());
@@ -145,8 +145,7 @@ pub(super) fn approve_command_request_inner(
             };
         }
     };
-    let (code, stdout, stderr, _) =
-        run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS, projects.ssh.as_ref());
+    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, CHECK_TIMEOUT_SECS);
     let (stdout_tail, _) = sanitize_tail(&stdout, MAX_OUTPUT_LEN);
     let (stderr_tail, _) = sanitize_tail(&stderr, MAX_OUTPUT_LEN);
     record.status = if code == 0 { "completed" } else { "failed" }.to_string();

@@ -216,21 +216,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("edit").post(codex::codex_edit))
             .push(Router::with_path("artifact").post(codex::codex_artifact))
             .push(Router::with_path("git").post(codex::codex_git))
-            .push(Router::with_path("project_hook").post(codex::codex_project_hook))
-            .push(Router::with_path("project_doctor").post(codex::codex_project_doctor))
-            .push(Router::with_path("project_workflow").post(codex::codex_project_workflow))
-            .push(Router::with_path("command").post(codex::codex_command))
-            .push(Router::with_path("command_request").post(codex::codex_command_request))
-            .push(Router::with_path("command_request_op").post(codex::codex_command_request_op))
             .push(Router::with_path("job").post(codex::codex_job))
-            .push(Router::with_path("command_request_raw").post(codex::codex_command_request_raw))
-            .push(Router::with_path("command_requests").post(codex::codex_command_requests))
-            .push(
-                Router::with_path("command_request_batch").post(codex::codex_command_request_batch),
-            )
-            .push(Router::with_path("command_approve").post(codex::codex_command_approve))
-            .push(Router::with_path("command_reject").post(codex::codex_command_reject))
-            .push(Router::with_path("check").post(codex::codex_check))
             .push(Router::with_path("report").post(codex::codex_report)),
     );
     let acceptor = TcpListener::new(addr.clone()).bind().await;

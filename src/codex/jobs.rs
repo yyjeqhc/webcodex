@@ -1,4 +1,3 @@
-use super::command_workflow::require_active_goal;
 use super::get_projects;
 use super::shell::shell_escape;
 use super::trusted::{
@@ -1718,11 +1717,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 )));
                 return;
             };
-            if let Err(e) = require_active_goal(&db, goal_id, &project) {
-                res.status_code(StatusCode::FORBIDDEN);
-                render_job!(Json(job_response(&op, false, Some(e))));
-                return;
-            }
             let Some(suite) = body.suite.as_deref() else {
                 res.status_code(StatusCode::BAD_REQUEST);
                 render_job!(Json(job_response(
@@ -1882,11 +1876,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 )));
                 return;
             };
-            if let Err(e) = require_active_goal(&db, goal_id, &project) {
-                res.status_code(StatusCode::FORBIDDEN);
-                render_job!(Json(job_response(&op, false, Some(e))));
-                return;
-            }
             // Determine the command source: trusted script_text, command, or script_path
             let (command, job_kind, job_script_path, trusted_script_text) = match (
                 body.script_text.as_deref(),
@@ -2138,11 +2127,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 )));
                 return;
             };
-            if let Err(e) = require_active_goal(&db, goal_id, &project) {
-                res.status_code(StatusCode::FORBIDDEN);
-                render_job!(Json(job_response(&op, false, Some(e))));
-                return;
-            }
             if body.commands.is_empty() || body.commands.len() > 20 {
                 res.status_code(StatusCode::BAD_REQUEST);
                 render_job!(Json(job_response(

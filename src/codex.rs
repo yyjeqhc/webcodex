@@ -3,13 +3,9 @@ use salvo::prelude::*;
 mod agent_exec;
 mod artifact;
 mod capabilities;
-mod command_request;
-mod command_workflow;
 mod context;
-mod doctor;
 mod edit;
 mod git;
-mod hooks;
 mod jobs;
 mod patch;
 mod remote_edit;
@@ -20,25 +16,15 @@ mod source;
 mod trusted;
 mod types;
 mod url_security;
-mod workflow;
 pub use artifact::codex_artifact;
 pub use capabilities::codex_projects;
-#[cfg(test)]
-use command_request::*;
-pub use command_request::{
-    codex_check, codex_command, codex_command_approve, codex_command_reject, codex_command_request,
-    codex_command_request_batch, codex_command_request_op, codex_command_request_raw,
-    codex_command_requests,
-};
 use context::*;
 pub use context::{codex_context, codex_context_batch};
-pub use doctor::codex_project_doctor;
 pub use edit::codex_edit;
 use edit::*;
 pub use git::codex_git;
 #[cfg(test)]
 use git::*;
-pub use hooks::codex_project_hook;
 pub use jobs::codex_job;
 pub use patch::codex_apply_patch;
 use remote_edit::*;
@@ -51,7 +37,6 @@ use std::time::Instant;
 use types::*;
 #[cfg(test)]
 use url_security::*;
-pub use workflow::codex_project_workflow;
 // =============================================================================
 // Request / Response types
 // =============================================================================
@@ -326,44 +311,6 @@ mod tests {
     }
 
     #[test]
-    fn test_validate_command_name_accepts_safe_ids() {
-        assert!(validate_command_name("clippy").is_ok());
-        assert!(validate_command_name("doc.build-1").is_ok());
-    }
-
-    #[test]
-    fn test_validate_command_name_rejects_shell_like_text() {
-        assert!(validate_command_name("").is_err());
-        assert!(validate_command_name("cargo test").is_err());
-        assert!(validate_command_name("test;rm").is_err());
-        assert!(validate_command_name(&"a".repeat(101)).is_err());
-    }
-
-    #[test]
-    fn test_get_project_command_returns_configured_command() {
-        let mut commands = HashMap::new();
-        commands.insert("smoke".to_string(), "echo ok".to_string());
-        let proj = ProjectConfig {
-            path: "/tmp/project".to_string(),
-            executor: crate::projects::Executor::Local,
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
-            client_id: None,
-            allow_patch: true,
-            allow_command_requests: true,
-            allow_raw_command_requests: true,
-            default_apply_patch_backend: None,
-            allowed_checks: vec![],
-            checks: None,
-            commands,
-            hooks: HashMap::new(),
-        };
-        assert_eq!(get_project_command(&proj, "smoke").unwrap(), "echo ok");
-        assert!(get_project_command(&proj, "missing").is_err());
-    }
-
-    #[test]
     fn test_git_command_status_and_diff_are_fixed() {
         let status = GitRequest {
             project: "p".to_string(),
@@ -452,16 +399,6 @@ mod tests {
             checkpoint_id: None,
         };
         assert!(git_command_for_request(&request).is_err());
-    }
-
-    #[test]
-    fn test_raw_command_validation_rejects_high_risk_tokens() {
-        assert!(validate_raw_command_text("echo ok").is_ok());
-        assert!(validate_raw_command_text("git status --short").is_ok());
-        assert!(validate_raw_command_text("git push origin main").is_err());
-        assert!(validate_raw_command_text("sudo systemctl restart nginx").is_err());
-        assert!(validate_raw_command_text("rm -rf target").is_err());
-        assert!(validate_raw_command_text("echo one\necho two").is_err());
     }
 
     #[test]
@@ -1504,17 +1441,6 @@ mod trusted_command_tests {
 
         let resp_props = &spec["components"]["schemas"]["CommandRequestOpResponse"]["properties"];
         assert!(!resp_props["trusted_result"].is_null());
-    }
-
-    // --- Test 9: Old create_raw and script_path behavior unchanged ---
-
-    #[test]
-    fn old_create_raw_behavior_unchanged() {
-        assert!(validate_raw_command_text("echo ok").is_ok());
-        assert!(validate_raw_command_text("git status --short").is_ok());
-        assert!(validate_raw_command_text("git push").is_err());
-        assert!(validate_raw_command_text("sudo rm -rf /").is_err());
-        assert!(validate_raw_command_text("echo one\necho two").is_err());
     }
 
     #[test]

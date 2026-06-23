@@ -12,7 +12,6 @@ fn default_true() -> bool {
 pub enum Executor {
     #[default]
     Local,
-    Ssh,
     Agent,
 }
 
@@ -30,12 +29,6 @@ pub struct ProjectConfig {
     pub path: String,
     #[serde(default)]
     pub executor: Executor,
-    #[serde(default)]
-    pub host: Option<String>,
-    #[serde(default)]
-    pub ssh_hosts: Vec<String>,
-    #[serde(default)]
-    pub user: Option<String>,
     #[serde(default)]
     pub client_id: Option<String>,
     #[serde(default = "default_true")]
@@ -55,16 +48,8 @@ pub struct ProjectConfig {
     pub hooks: HashMap<String, Vec<String>>,
 }
 
-#[derive(Debug, Deserialize, Clone, Default)]
-pub struct SshConfig {
-    #[serde(default)]
-    pub control_master: bool,
-}
-
 #[derive(Debug, Deserialize)]
 pub struct ProjectsConfig {
-    #[serde(default)]
-    pub ssh: Option<SshConfig>,
     pub projects: HashMap<String, ProjectConfig>,
 }
 
@@ -196,10 +181,6 @@ impl ProjectConfig {
         !self.effective_allowed_checks().is_empty()
     }
 
-    pub fn is_ssh(&self) -> bool {
-        self.executor == Executor::Ssh
-    }
-
     pub fn is_agent(&self) -> bool {
         self.executor == Executor::Agent
     }
@@ -210,27 +191,6 @@ impl ProjectConfig {
             .map(str::trim)
             .filter(|client_id| !client_id.is_empty())
             .ok_or_else(|| "Agent executor requires client_id".to_string())
-    }
-
-    /// Build ordered SSH endpoints, preserving legacy host compatibility.
-    pub fn ssh_targets(&self) -> Vec<String> {
-        let mut hosts = Vec::new();
-        if let Some(host) = self.host.as_ref().filter(|h| !h.trim().is_empty()) {
-            hosts.push(host.trim().to_string());
-        }
-        for host in &self.ssh_hosts {
-            let host = host.trim();
-            if !host.is_empty() && !hosts.iter().any(|h| h == host) {
-                hosts.push(host.to_string());
-            }
-        }
-        hosts
-            .into_iter()
-            .map(|host| match &self.user {
-                Some(user) if !user.trim().is_empty() => format!("{}@{}", user, host),
-                _ => host,
-            })
-            .collect()
     }
 }
 pub fn canonicalize_and_verify(path: &Path, project_root: &Path) -> Result<PathBuf, String> {
@@ -312,7 +272,6 @@ mod tests {
         let project = cfg.projects.get("demo").unwrap();
         assert_eq!(project.executor, super::Executor::Agent);
         assert_eq!(project.agent_client_id().unwrap(), "oe");
-        assert!(!project.is_ssh());
         assert!(project.is_agent());
     }
 

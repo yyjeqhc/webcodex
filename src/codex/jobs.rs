@@ -8,11 +8,10 @@ use crate::action_sessions::{
     record_action_event, request_action_session_id, summarize_command_text, ActionAuditEventInput,
 };
 use crate::get_db;
-use crate::projects::{ProjectConfig, SshConfig};
+use crate::projects::ProjectConfig;
 use salvo::prelude::*;
 use serde_json::json;
 
-use super::run_project_cmd;
 use super::security::is_sensitive_path;
 use super::types::{JobInfo, JobMetadata};
 use crate::shell_client::requested_by_from_auth;
@@ -20,7 +19,6 @@ use crate::shell_protocol::{
     ShellJobCodexMetadata, ShellJobInfo as AgentShellJobInfo, ShellJobOpRequest,
 };
 use crate::ShellClientRegistry;
-use base64::Engine;
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
@@ -593,212 +591,6 @@ pub(super) fn create_local_job(
     Ok(update_job_status_local(&root, &meta))
 }
 
-pub(super) fn b64_text(s: &str) -> String {
-    base64::engine::general_purpose::STANDARD.encode(s.as_bytes())
-}
-
-pub(super) fn remote_read_job_metadata(
-    proj: &ProjectConfig,
-    job_id: &str,
-    _ssh_config: Option<&SshConfig>,
-) -> Result<JobMetadata, String> {
-    validate_job_id(job_id)?;
-    let cmd = format!("cat {}/metadata.json", shell_escape(&job_dir_rel(job_id)));
-    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10);
-    if code != 0 {
-        return Err(format!("Failed to read job metadata: {}", stderr.trim()));
-    }
-    serde_json::from_str(&stdout).map_err(|e| format!("Failed to parse job metadata: {}", e))
-}
-
-pub(super) fn remote_job_status_string(
-    proj: &ProjectConfig,
-    job_id: &str,
-    _ssh_config: Option<&SshConfig>,
-) -> (Option<String>, Option<i64>, Option<i32>, Option<i64>) {
-    let dir = job_dir_rel(job_id);
-    let cmd = format!(
-        "printf 'STATUS='; cat {0}/status 2>/dev/null || true; printf '\nPID='; cat {0}/pid 2>/dev/null || true; printf '\nEXIT='; cat {0}/exit_code 2>/dev/null || true; printf '\nFINISHED='; cat {0}/finished_at 2>/dev/null || true; printf '\n'",
-        shell_escape(&dir)
-    );
-    let (code, stdout, _, _) = run_project_cmd(proj, &cmd, 10);
-    if code != 0 {
-        return (None, None, None, None);
-    }
-    let mut status = None;
-    let mut pid = None;
-    let mut exit_code = None;
-    let mut finished_at = None;
-    for line in stdout.lines() {
-        if let Some(v) = line.strip_prefix("STATUS=") {
-            if !v.trim().is_empty() {
-                status = Some(v.trim().to_string());
-            }
-        } else if let Some(v) = line.strip_prefix("PID=") {
-            pid = v.trim().parse::<i64>().ok();
-        } else if let Some(v) = line.strip_prefix("EXIT=") {
-            exit_code = v.trim().parse::<i32>().ok();
-        } else if let Some(v) = line.strip_prefix("FINISHED=") {
-            finished_at = v.trim().parse::<i64>().ok();
-        }
-    }
-    (status, pid, exit_code, finished_at)
-}
-
-pub(super) fn update_job_status_ssh(
-    proj: &ProjectConfig,
-    meta: &JobMetadata,
-    ssh_config: Option<&SshConfig>,
-) -> JobInfo {
-    let now = chrono::Utc::now().timestamp();
-    let dir = job_dir_rel(&meta.job_id);
-    let (mut status, pid, exit_code, mut finished_at) =
-        remote_job_status_string(proj, &meta.job_id, ssh_config);
-    let mut status_value = status.take().unwrap_or_else(|| meta.status.clone());
-    if status_value == "running" {
-        if let Some(pid) = pid {
-            if meta.started_at.unwrap_or(meta.created_at) + meta.max_runtime_secs < now {
-                let cmd = format!(
-                    "pid={}; kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -TERM \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; sleep 1; if kill -0 \"$pid\" 2>/dev/null; then kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -KILL \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; fi; now=$(date +%s); printf timeout > {}/status; echo $now > {}/finished_at",
-                    pid,
-                    shell_escape(&dir),
-                    shell_escape(&dir)
-                );
-                let _ = run_project_cmd(proj, &cmd, 10);
-                status_value = "timeout".to_string();
-            } else {
-                let cmd = format!("kill -0 {} 2>/dev/null", pid);
-                let (code, _, _, _) = run_project_cmd(proj, &cmd, 10);
-                if code != 0 {
-                    status_value = if exit_code.unwrap_or(1) == 0 {
-                        "completed".to_string()
-                    } else {
-                        "failed".to_string()
-                    };
-                    let cmd = format!(
-                        "printf {} > {}/status; test -f {}/finished_at || date +%s > {}/finished_at",
-                        shell_escape(&status_value),
-                        shell_escape(&dir),
-                        shell_escape(&dir),
-                        shell_escape(&dir)
-                    );
-                    let _ = run_project_cmd(proj, &cmd, 10);
-                    let (_, _, _, refreshed_finished_at) =
-                        remote_job_status_string(proj, &meta.job_id, ssh_config);
-                    finished_at = refreshed_finished_at.or(finished_at);
-                }
-            }
-        }
-    }
-    if status_value == "timeout" && finished_at.is_none() {
-        let (_, _, _, refreshed_finished_at) =
-            remote_job_status_string(proj, &meta.job_id, ssh_config);
-        finished_at = refreshed_finished_at;
-    }
-    let resolved_finished_at = finished_at.or(meta.finished_at);
-    let elapsed_secs = meta
-        .started_at
-        .map(|s| resolved_finished_at.unwrap_or(now) - s);
-    // For SSH, we read stderr tail to detect OOM hints
-    let oom_hint = {
-        let stderr_tail = ssh_job_log_stderr_tail(proj, &meta.job_id, 40, ssh_config);
-        detect_oom_hint(&stderr_tail)
-    };
-    JobInfo {
-        job_id: meta.job_id.clone(),
-        client_request_id: meta.client_request_id.clone(),
-        project: meta.project.clone(),
-        goal_id: meta.goal_id.clone(),
-        command: meta.command.clone(),
-        kind: meta.kind.clone(),
-        suite: meta.suite.clone(),
-        script_path: meta.script_path.clone(),
-        reason: meta.reason.clone(),
-        status: status_value,
-        created_at: meta.created_at,
-        started_at: meta.started_at,
-        finished_at: resolved_finished_at,
-        max_runtime_secs: meta.max_runtime_secs,
-        executor: meta.executor.clone(),
-        pid,
-        exit_code,
-        elapsed_secs,
-        oom_hint,
-    }
-}
-
-pub(super) fn ssh_job_info(
-    proj: &ProjectConfig,
-    job_id: &str,
-    ssh_config: Option<&SshConfig>,
-) -> Result<JobInfo, String> {
-    let meta = remote_read_job_metadata(proj, job_id, ssh_config)?;
-    Ok(update_job_status_ssh(proj, &meta, ssh_config))
-}
-
-pub(super) fn create_ssh_job(
-    proj: &ProjectConfig,
-    project: &str,
-    goal_id: &str,
-    command: &str,
-    client_request_id: Option<String>,
-    kind: Option<String>,
-    suite: Option<String>,
-    script_path: Option<String>,
-    reason: Option<String>,
-    max_runtime_secs: i64,
-    ssh_config: Option<&SshConfig>,
-    trusted_script_text: Option<&str>,
-) -> Result<JobInfo, String> {
-    if trusted_script_text.is_some() {
-        return Err(
-            "trusted script_text jobs are currently supported only for local or agent executors; use script_path or create a script file in project for SSH jobs".to_string()
-        );
-    }
-    validate_job_command(command)?;
-    let job_id = uuid::Uuid::new_v4().to_string();
-    let dir = job_dir_rel(&job_id);
-    let now = chrono::Utc::now().timestamp();
-    let meta = JobMetadata {
-        job_id: job_id.clone(),
-        client_request_id,
-        project: project.to_string(),
-        goal_id: goal_id.to_string(),
-        command: command.to_string(),
-        kind,
-        suite,
-        script_path,
-        reason,
-        status: "running".to_string(),
-        created_at: now,
-        started_at: Some(now),
-        finished_at: None,
-        max_runtime_secs,
-        executor: "ssh".to_string(),
-        host: proj.host.clone(),
-        path: proj.path.clone(),
-    };
-    let meta_b64 = b64_text(&serde_json::to_string_pretty(&meta).map_err(|e| e.to_string())?);
-    let command_b64 = b64_text(&format!("#!/usr/bin/env bash\n{}\n", command));
-    let dir_q = shell_escape(&dir);
-    let wrapper = format!(
-        "bash {0}/command.sh > {0}/stdout.log 2> {0}/stderr.log; code=$?; echo $code > {0}/exit_code; finished=$(date +%s); echo $finished > {0}/finished_at; if [ $code -eq 0 ]; then echo completed > {0}/status; else echo failed > {0}/status; fi",
-        dir_q
-    );
-    let cmd = format!(
-        "mkdir -p {dir}; printf %s {meta} | base64 -d > {dir}/metadata.json; printf %s {cmd_b64} | base64 -d > {dir}/command.sh; printf running > {dir}/status; nohup setsid sh -c {wrapper} >/dev/null 2>&1 & echo $! > {dir}/pid",
-        dir = dir_q,
-        meta = shell_escape(&meta_b64),
-        cmd_b64 = shell_escape(&command_b64),
-        wrapper = shell_escape(&wrapper)
-    );
-    let (code, _, stderr, _) = run_project_cmd(proj, &cmd, 10);
-    if code != 0 {
-        return Err(format!("Failed to create SSH job: {}", stderr.trim()));
-    }
-    ssh_job_info(proj, &job_id, ssh_config)
-}
-
 pub(super) fn list_local_jobs(
     root: &Path,
     limit: usize,
@@ -835,35 +627,6 @@ pub(super) fn filter_jobs_by_client_request_id(
     }
 }
 
-pub(super) fn list_ssh_jobs(
-    proj: &ProjectConfig,
-    limit: usize,
-    status_filter: Option<&str>,
-    ssh_config: Option<&SshConfig>,
-) -> Vec<JobInfo> {
-    let cmd = "find .codex/jobs -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | sort | tail -n 200";
-    let (code, stdout, _, _) = run_project_cmd(proj, cmd, 10);
-    if code != 0 {
-        return Vec::new();
-    }
-    let mut jobs = Vec::new();
-    for job_id in stdout.lines() {
-        if jobs.len() >= limit {
-            break;
-        }
-        if validate_job_id(job_id).is_ok() {
-            if let Ok(info) = ssh_job_info(proj, job_id, ssh_config) {
-                if status_filter.map(|s| s == info.status).unwrap_or(true) {
-                    jobs.push(info);
-                }
-            }
-        }
-    }
-    jobs.sort_by_key(|j| -j.created_at);
-    jobs.truncate(limit);
-    jobs
-}
-
 pub(super) fn local_job_log(
     root: &Path,
     job_id: &str,
@@ -885,106 +648,6 @@ pub(super) fn local_job_log(
         stderr_text.unwrap_or_default(),
         total_lines,
     ))
-}
-
-pub(super) fn ssh_job_log(
-    proj: &ProjectConfig,
-    job_id: &str,
-    tail_lines: usize,
-    ssh_config: Option<&SshConfig>,
-) -> Result<(String, String), String> {
-    let (out, err, _) = ssh_job_log_with_count(proj, job_id, tail_lines, None, ssh_config)?;
-    Ok((out, err))
-}
-
-/// ssh_job_log with total_lines and since_line support. Returns (stdout, stderr, total_stdout_lines).
-pub(super) fn ssh_job_log_with_count(
-    proj: &ProjectConfig,
-    job_id: &str,
-    tail_lines: usize,
-    since_line: Option<usize>,
-    _ssh_config: Option<&SshConfig>,
-) -> Result<(String, String, usize), String> {
-    validate_job_id(job_id)?;
-    let dir = shell_escape(&job_dir_rel(job_id));
-    let n = tail_lines.clamp(1, 1000);
-    // Get total line count of stdout.log and the requested slice
-    let (since_cmd, tail_cmd) = if let Some(sl) = since_line.filter(|&n| n > 0) {
-        (
-            format!("wc -l < {dir}/stdout.log 2>/dev/null || echo 0"),
-            format!(
-                "tail -n +{sl} {dir}/stdout.log 2>/dev/null | head -n {n} || true",
-                sl = sl,
-                n = n,
-                dir = dir
-            ),
-        )
-    } else {
-        (
-            format!("wc -l < {dir}/stdout.log 2>/dev/null || echo 0"),
-            format!(
-                "tail -n {n} {dir}/stdout.log 2>/dev/null || true",
-                n = n,
-                dir = dir
-            ),
-        )
-    };
-    let cmd = format!(
-        "printf '__TOTAL__\\n'; {total}; printf '__STDOUT__\\n'; {stdout}; printf '\\n__STDERR__\\n'; tail -n {n} {dir}/stderr.log 2>/dev/null || true",
-        total = since_cmd,
-        stdout = tail_cmd,
-        n = n,
-        dir = dir
-    );
-    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10);
-    if code != 0 {
-        return Err(format!("Failed to read job log: {}", stderr.trim()));
-    }
-    let mut out = String::new();
-    let mut err = String::new();
-    let mut total_lines: usize = 0;
-    let mut section = "";
-    for line in stdout.lines() {
-        match line {
-            "__TOTAL__" => section = "total",
-            "__STDOUT__" => section = "out",
-            "__STDERR__" => section = "err",
-            _ if section == "total" => {
-                total_lines = line.trim().parse::<usize>().unwrap_or(0);
-            }
-            _ if section == "out" => {
-                out.push_str(line);
-                out.push('\n');
-            }
-            _ if section == "err" => {
-                err.push_str(line);
-                err.push('\n');
-            }
-            _ => {}
-        }
-    }
-    Ok((
-        out.trim_end().to_string(),
-        err.trim_end().to_string(),
-        total_lines,
-    ))
-}
-
-/// Read only stderr tail for OOM detection.
-pub(super) fn ssh_job_log_stderr_tail(
-    proj: &ProjectConfig,
-    job_id: &str,
-    tail_lines: usize,
-    _ssh_config: Option<&SshConfig>,
-) -> String {
-    if validate_job_id(job_id).is_err() {
-        return String::new();
-    }
-    let dir = shell_escape(&job_dir_rel(job_id));
-    let n = tail_lines.clamp(1, 200);
-    let cmd = format!("tail -n {n} {dir}/stderr.log 2>/dev/null || true");
-    let (_, stdout, _, _) = run_project_cmd(proj, &cmd, 5);
-    stdout
 }
 
 fn kill_local_tree(pid: i64, signal: &str) {
@@ -1020,24 +683,6 @@ pub(super) fn stop_local_job(root: &Path, job_id: &str) -> Result<JobInfo, Strin
     write_status_file(&dir, "stopped");
     write_finished_at_file(&dir, chrono::Utc::now().timestamp());
     Ok(update_job_status_local(root, &meta))
-}
-
-pub(super) fn stop_ssh_job(
-    proj: &ProjectConfig,
-    job_id: &str,
-    ssh_config: Option<&SshConfig>,
-) -> Result<JobInfo, String> {
-    validate_job_id(job_id)?;
-    let dir = job_dir_rel(job_id);
-    let cmd = format!(
-        "if test -f {0}/pid; then pid=$(cat {0}/pid); kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -TERM \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; sleep 1; if kill -0 \"$pid\" 2>/dev/null; then kill_tree() {{ for child in $(pgrep -P \"$1\" 2>/dev/null || true); do kill_tree \"$child\"; done; kill -KILL \"$1\" 2>/dev/null || true; }}; kill_tree \"$pid\"; fi; fi; now=$(date +%s); printf stopped > {0}/status; echo $now > {0}/finished_at",
-        shell_escape(&dir)
-    );
-    let (code, _, stderr, _) = run_project_cmd(proj, &cmd, 10);
-    if code != 0 {
-        return Err(format!("Failed to stop job: {}", stderr.trim()));
-    }
-    ssh_job_info(proj, job_id, ssh_config)
 }
 
 pub(super) fn summarize_jobs_markdown(jobs: &[JobInfo], log_tails: &[(String, String)]) -> String {
@@ -1122,92 +767,6 @@ fn recover_local_job_info(root: &Path, job_id: &str) -> Result<JobInfo, String> 
 
 /// Lightweight metadata-only job info for SSH jobs.
 /// Single SSH call: reads metadata.json + status/pid/exit_code/finished_at.
-/// No kill -0, no kill_tree, no OOM detection, no log reading.
-fn recover_ssh_job_info(
-    proj: &ProjectConfig,
-    job_id: &str,
-    _ssh_config: Option<&SshConfig>,
-) -> Result<JobInfo, String> {
-    validate_job_id(job_id)?;
-    let dir = shell_escape(&job_dir_rel(job_id));
-    // Combined single SSH call to read metadata + status files
-    let cmd = format!(
-        "cat {dir}/metadata.json; printf '\\n__RECOVER_STATUS__\\n'; cat {dir}/status 2>/dev/null || true; \
-         printf '\\n__RECOVER_PID__\\n'; cat {dir}/pid 2>/dev/null || true; \
-         printf '\\n__RECOVER_EXIT__\\n'; cat {dir}/exit_code 2>/dev/null || true; \
-         printf '\\n__RECOVER_FINISHED__\\n'; cat {dir}/finished_at 2>/dev/null || true",
-        dir = dir
-    );
-    let (code, stdout, stderr, _) = run_project_cmd(proj, &cmd, 10);
-    if code != 0 {
-        return Err(format!("Failed to read job info: {}", stderr.trim()));
-    }
-    let mut section = "meta";
-    let mut meta_json = String::new();
-    let mut status_val: Option<String> = None;
-    let mut pid: Option<i64> = None;
-    let mut exit_code: Option<i32> = None;
-    let mut finished_at: Option<i64> = None;
-    for line in stdout.lines() {
-        match line {
-            "__RECOVER_STATUS__" => section = "status",
-            "__RECOVER_PID__" => section = "pid",
-            "__RECOVER_EXIT__" => section = "exit",
-            "__RECOVER_FINISHED__" => section = "finished",
-            _ => match section {
-                "meta" => {
-                    meta_json.push_str(line);
-                    meta_json.push('\n');
-                }
-                "status" => {
-                    if !line.trim().is_empty() {
-                        status_val = Some(line.trim().to_string());
-                    }
-                }
-                "pid" => {
-                    pid = line.trim().parse::<i64>().ok();
-                }
-                "exit" => {
-                    exit_code = line.trim().parse::<i32>().ok();
-                }
-                "finished" => {
-                    finished_at = line.trim().parse::<i64>().ok();
-                }
-                _ => {}
-            },
-        }
-    }
-    let meta: JobMetadata = serde_json::from_str(meta_json.trim())
-        .map_err(|e| format!("Failed to parse job metadata: {}", e))?;
-    let status = status_val.unwrap_or_else(|| meta.status.clone());
-    let resolved_finished_at = finished_at.or(meta.finished_at);
-    let now = chrono::Utc::now().timestamp();
-    let elapsed_secs = meta
-        .started_at
-        .map(|s| resolved_finished_at.unwrap_or(now) - s);
-    Ok(JobInfo {
-        job_id: meta.job_id,
-        client_request_id: meta.client_request_id,
-        project: meta.project,
-        goal_id: meta.goal_id,
-        command: meta.command,
-        kind: meta.kind,
-        suite: meta.suite,
-        script_path: meta.script_path,
-        reason: meta.reason,
-        status,
-        created_at: meta.created_at,
-        started_at: meta.started_at,
-        finished_at: resolved_finished_at,
-        max_runtime_secs: meta.max_runtime_secs,
-        executor: meta.executor,
-        pid,
-        exit_code,
-        elapsed_secs,
-        oom_hint: None, // No OOM detection in recover
-    })
-}
-
 /// Find a local job ID by client_request_id. Only reads metadata.json (no status update).
 fn find_local_job_id_by_client_request_id(
     root: &Path,
@@ -1232,44 +791,6 @@ fn find_local_job_id_by_client_request_id(
     }
     candidates.sort_by(|a, b| b.0.cmp(&a.0));
     candidates.first().map(|(_, id)| id.clone())
-}
-
-/// Find an SSH job ID by client_request_id using a single grep-based SSH command.
-/// Note: SSH recover by client_request_id scans recent job metadata only (last 100 dirs);
-/// job_id is more direct when available.
-fn find_ssh_job_id_by_client_request_id(
-    proj: &ProjectConfig,
-    client_request_id: &str,
-    goal_id: Option<&str>,
-    ssh_config: Option<&SshConfig>,
-) -> Option<String> {
-    // Single SSH call: scan recent job dirs, grep metadata for client_request_id
-    let rid_escaped = shell_escape(&format!("\"client_request_id\": \"{}\"", client_request_id));
-    let cmd = format!(
-        "for d in $(find .codex/jobs -mindepth 1 -maxdepth 1 -type d -printf '%f\\n' 2>/dev/null | sort -r | head -100); do \
-         if grep -qF {rid} \".codex/jobs/$d/metadata.json\" 2>/dev/null; then \
-         printf '%s' \"$d\"; break; fi; done",
-        rid = rid_escaped
-    );
-    let (code, stdout, _, _) = run_project_cmd(proj, &cmd, 10);
-    if code != 0 || stdout.trim().is_empty() {
-        return None;
-    }
-    let job_id = stdout.trim().to_string();
-    if validate_job_id(&job_id).is_err() {
-        return None;
-    }
-    // Verify goal_id if specified
-    if let Some(goal_id) = goal_id {
-        if let Ok(meta) = remote_read_job_metadata(proj, &job_id, ssh_config) {
-            if meta.goal_id != goal_id {
-                return None;
-            }
-        } else {
-            return None;
-        }
-    }
-    Some(job_id)
 }
 
 /// Lightweight status update for local jobs (skip OOM detection).
@@ -1336,62 +857,6 @@ fn local_job_info_basic(root: &Path, job_id: &str) -> Result<JobInfo, String> {
 
 /// Lightweight status update for SSH jobs (skip kill -0, kill_tree, OOM detection).
 /// Note: basic is metadata/status-file based and may be stale for SSH jobs;
-/// use detail=logs, log, or summarize for deeper inspection.
-fn update_job_status_ssh_basic(
-    proj: &ProjectConfig,
-    meta: &JobMetadata,
-    ssh_config: Option<&SshConfig>,
-) -> JobInfo {
-    let now = chrono::Utc::now().timestamp();
-    // Single SSH call to read status files (no kill -0, no process tree walk)
-    let (mut status, pid, exit_code, mut finished_at) =
-        remote_job_status_string(proj, &meta.job_id, ssh_config);
-    let status_value = status.take().unwrap_or_else(|| meta.status.clone());
-    // For basic detail, skip kill -0 / kill_tree / timeout checks entirely.
-    // Status is taken at face value from the status file.
-    if status_value == "timeout" && finished_at.is_none() {
-        let (_, _, _, refreshed_finished_at) =
-            remote_job_status_string(proj, &meta.job_id, ssh_config);
-        finished_at = refreshed_finished_at;
-    }
-    let resolved_finished_at = finished_at.or(meta.finished_at);
-    let elapsed_secs = meta
-        .started_at
-        .map(|s| resolved_finished_at.unwrap_or(now) - s);
-    // Skip OOM detection (no stderr read) for basic detail
-    JobInfo {
-        job_id: meta.job_id.clone(),
-        client_request_id: meta.client_request_id.clone(),
-        project: meta.project.clone(),
-        goal_id: meta.goal_id.clone(),
-        command: meta.command.clone(),
-        kind: meta.kind.clone(),
-        suite: meta.suite.clone(),
-        script_path: meta.script_path.clone(),
-        reason: meta.reason.clone(),
-        status: status_value,
-        created_at: meta.created_at,
-        started_at: meta.started_at,
-        finished_at: resolved_finished_at,
-        max_runtime_secs: meta.max_runtime_secs,
-        executor: meta.executor.clone(),
-        pid,
-        exit_code,
-        elapsed_secs,
-        oom_hint: None,
-    }
-}
-
-/// Lightweight SSH job info (basic detail, no kill -0, no OOM detection).
-fn ssh_job_info_basic(
-    proj: &ProjectConfig,
-    job_id: &str,
-    ssh_config: Option<&SshConfig>,
-) -> Result<JobInfo, String> {
-    let meta = remote_read_job_metadata(proj, job_id, ssh_config)?;
-    Ok(update_job_status_ssh_basic(proj, &meta, ssh_config))
-}
-
 fn agent_shell_job_to_job_info(
     info: AgentShellJobInfo,
     expected_client_id: Option<&str>,
@@ -1692,7 +1157,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             return;
         }
     };
-    let ssh_config = None; // SSH removed in v2
     let client_request_id = body.client_request_id.as_deref();
     if let Some(client_request_id) = client_request_id {
         if let Err(e) = validate_client_request_id(client_request_id) {
@@ -1758,8 +1222,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             return;
                         }
                     }
-                } else if proj.is_ssh() {
-                    list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
                 };
@@ -1808,21 +1270,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     max_runtime_secs,
                 )
                 .await
-            } else if proj.is_ssh() {
-                create_ssh_job(
-                    proj,
-                    &project,
-                    goal_id,
-                    &command,
-                    body.client_request_id.clone(),
-                    Some("check".to_string()),
-                    Some(suite.to_string()),
-                    None,
-                    reason,
-                    max_runtime_secs,
-                    ssh_config,
-                    None,
-                )
             } else {
                 create_local_job(
                     proj,
@@ -1900,15 +1347,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     if let Some(err) = check_background_escape(script_text) {
                         res.status_code(StatusCode::BAD_REQUEST);
                         render_job!(Json(job_response(&op, false, Some(err))));
-                        return;
-                    }
-                    if proj.is_ssh() {
-                        res.status_code(StatusCode::BAD_REQUEST);
-                        render_job!(Json(job_response(
-                            &op,
-                            false,
-                            Some("trusted script_text jobs are currently supported only for local or agent executors; use script_path or create a script file in project for SSH jobs".to_string()),
-                        )));
                         return;
                     }
                     let command = if proj.is_agent() {
@@ -2009,8 +1447,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             return;
                         }
                     }
-                } else if proj.is_ssh() {
-                    list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
                 };
@@ -2055,21 +1491,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     max_runtime_secs,
                 )
                 .await
-            } else if proj.is_ssh() {
-                create_ssh_job(
-                    proj,
-                    &project,
-                    goal_id,
-                    &command,
-                    body.client_request_id.clone(),
-                    Some(job_kind.clone()),
-                    None,
-                    job_script_path.clone(),
-                    body.reason.clone(),
-                    max_runtime_secs,
-                    ssh_config,
-                    trusted_script_text.as_deref(),
-                )
             } else {
                 create_local_job(
                     proj,
@@ -2155,8 +1576,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             return;
                         }
                     }
-                } else if proj.is_ssh() {
-                    list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
                 };
@@ -2219,21 +1638,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         max_runtime_secs,
                     )
                     .await
-                } else if proj.is_ssh() {
-                    create_ssh_job(
-                        proj,
-                        &project,
-                        goal_id,
-                        command,
-                        batch_client_request_id,
-                        Some("command".to_string()),
-                        None,
-                        None,
-                        body.reason.clone(),
-                        max_runtime_secs,
-                        ssh_config,
-                        None,
-                    )
                 } else {
                     create_local_job(
                         proj,
@@ -2289,8 +1693,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         return;
                     }
                 }
-            } else if proj.is_ssh() {
-                list_ssh_jobs(proj, limit, status_filter, ssh_config)
             } else {
                 list_local_jobs(&proj.root(), limit, status_filter)
             };
@@ -2342,8 +1744,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             return;
                         }
                     }
-                } else if proj.is_ssh() {
-                    list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
                 };
@@ -2382,13 +1782,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
 
             let job_result = if proj.is_agent() {
                 agent_job_info_basic(depot, proj, &project, job_id).await
-            } else if proj.is_ssh() {
-                if effective_detail == "basic" {
-                    ssh_job_info_basic(proj, job_id, ssh_config)
-                } else {
-                    // detail=logs: use basic status + read log tails
-                    ssh_job_info_basic(proj, job_id, ssh_config)
-                }
             } else if effective_detail == "basic" {
                 local_job_info_basic(&proj.root(), job_id)
             } else {
@@ -2412,17 +1805,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             )
                             .await
                             {
-                                Ok((out, err, total)) => (Some(out), Some(err), Some(total)),
-                                Err(_) => (None, None, None),
-                            }
-                        } else if proj.is_ssh() {
-                            match ssh_job_log_with_count(
-                                proj,
-                                job_id,
-                                tail_lines,
-                                body.since_line,
-                                ssh_config,
-                            ) {
                                 Ok((out, err, total)) => (Some(out), Some(err), Some(total)),
                                 Err(_) => (None, None, None),
                             }
@@ -2492,8 +1874,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             return;
                         }
                     }
-                } else if proj.is_ssh() {
-                    list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
                 };
@@ -2527,8 +1907,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             let result: Result<(String, String, usize), String> = if proj.is_agent() {
                 agent_job_log_with_count(depot, proj, &project, job_id, tail_lines, since_line)
                     .await
-            } else if proj.is_ssh() {
-                ssh_job_log_with_count(proj, job_id, tail_lines, since_line, ssh_config)
             } else {
                 local_job_log(&proj.root(), job_id, tail_lines, since_line)
             };
@@ -2576,8 +1954,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             return;
                         }
                     }
-                } else if proj.is_ssh() {
-                    list_ssh_jobs(proj, 100, None, ssh_config)
                 } else {
                     list_local_jobs(&proj.root(), 100, None)
                 };
@@ -2608,8 +1984,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             };
             let result = if proj.is_agent() {
                 stop_agent_job(depot, proj, &project, job_id).await
-            } else if proj.is_ssh() {
-                stop_ssh_job(proj, job_id, ssh_config)
             } else {
                 stop_local_job(&proj.root(), job_id)
             };
@@ -2646,8 +2020,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                         return;
                     }
                 }
-            } else if proj.is_ssh() {
-                list_ssh_jobs(proj, limit, body.status.as_deref(), ssh_config)
             } else {
                 list_local_jobs(&proj.root(), limit, body.status.as_deref())
             };
@@ -2678,14 +2050,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                     )
                     .await
                     .map(|(out, err, _)| (out, err))
-                    .unwrap_or_default()
-                } else if proj.is_ssh() {
-                    ssh_job_log(
-                        proj,
-                        &job.job_id,
-                        body.tail_lines.clamp(1, 1000),
-                        ssh_config,
-                    )
                     .unwrap_or_default()
                 } else {
                     local_job_log(
@@ -2744,13 +2108,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
                             return;
                         }
                     }
-                } else if proj.is_ssh() {
-                    find_ssh_job_id_by_client_request_id(
-                        proj,
-                        crid,
-                        body.goal_id.as_deref(),
-                        ssh_config,
-                    )
                 } else {
                     find_local_job_id_by_client_request_id(
                         &proj.root(),
@@ -2812,8 +2169,6 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             };
             let result = if proj.is_agent() {
                 recover_agent_job_info(depot, proj, &project, resolved_job_id).await
-            } else if proj.is_ssh() {
-                recover_ssh_job_info(proj, resolved_job_id, ssh_config)
             } else {
                 recover_local_job_info(&proj.root(), resolved_job_id)
             };
@@ -2937,9 +2292,6 @@ mod tests {
         ProjectConfig {
             path: root.to_string(),
             executor: crate::projects::Executor::Agent,
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: Some("oe".to_string()),
             allow_patch: true,
             allow_command_requests: true,
@@ -3455,9 +2807,6 @@ mod tests {
         let proj = ProjectConfig {
             path: tmp.path().to_string_lossy().to_string(),
             executor: crate::projects::Executor::Local,
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: None,
             allow_patch: true,
             allow_command_requests: true,
@@ -3528,9 +2877,6 @@ mod tests {
         let proj = ProjectConfig {
             path: tmp.path().to_string_lossy().to_string(),
             executor: crate::projects::Executor::Local,
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: None,
             allow_patch: true,
             allow_command_requests: true,
@@ -3565,9 +2911,6 @@ mod tests {
         let proj = ProjectConfig {
             path: tmp.path().to_string_lossy().to_string(),
             executor: crate::projects::Executor::Local,
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: None,
             allow_patch: true,
             allow_command_requests: true,
@@ -3602,9 +2945,6 @@ mod tests {
         let proj = ProjectConfig {
             path: tmp.path().to_string_lossy().to_string(),
             executor: crate::projects::Executor::Local,
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: None,
             allow_patch: true,
             allow_command_requests: true,

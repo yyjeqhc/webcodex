@@ -5,15 +5,14 @@ use crate::shell_protocol::{
     ShellAgentProjectCreateResult, ShellAgentProjectGitSnapshot, ShellAgentProjectSummary,
     ShellAgentProjectWorkflowPayload, ShellAgentProjectWorkflowResult, ShellAgentResultRequest,
     ShellAgentResultResponse, ShellAgentShellJobResult, ShellAgentShellRequest,
-    ShellClientCapabilities, ShellClientJobLogRequest,
-    ShellClientJobLogResponse, ShellClientJobStatusRequest, ShellClientJobStatusResponse,
-    ShellClientJobStopRequest, ShellClientJobStopResponse, ShellClientJobsListRequest,
-    ShellClientJobsListResponse, ShellClientProjectCreateRequest,
-    ShellClientProjectWorkflowJobRequest, ShellClientProjectWorkflowRequest,
-    ShellClientRegisterRequest, ShellClientRegisterResponse, ShellClientShellJobBatchRequest,
-    ShellClientShellJobRequest, ShellClientView, ShellFileOpRequest,
-    ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo, ShellJobOpRequest,
-    ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
+    ShellClientCapabilities, ShellClientJobLogRequest, ShellClientJobLogResponse,
+    ShellClientJobStatusRequest, ShellClientJobStatusResponse, ShellClientJobStopRequest,
+    ShellClientJobStopResponse, ShellClientJobsListRequest, ShellClientJobsListResponse,
+    ShellClientProjectCreateRequest, ShellClientProjectWorkflowJobRequest,
+    ShellClientProjectWorkflowRequest, ShellClientRegisterRequest, ShellClientRegisterResponse,
+    ShellClientShellJobBatchRequest, ShellClientShellJobRequest, ShellClientView,
+    ShellFileOpRequest, ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo,
+    ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
 };
 use salvo::prelude::*;
 use serde_json::json;

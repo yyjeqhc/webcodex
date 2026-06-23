@@ -1779,7 +1779,6 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
         }
     };
 
-
     // Local executor
     let root = proj.root();
     if !root.exists() {
@@ -2170,9 +2169,8 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
         }
     };
 
-
     // Preflight check: reject obviously oversized requests before execution
-    let project_is_ssh = proj.is_ssh();
+    let project_is_ssh = false; // SSH removed in v2
     let project_is_agent = proj.is_agent();
     match preflight_context_batch(&body, project_is_ssh, &body.project) {
         Ok(preflight_warnings) => {
@@ -2239,12 +2237,10 @@ pub async fn codex_context_batch(req: &mut Request, depot: &mut Depot, res: &mut
                 target: "codex.metrics",
                 operation = "getProjectContextBatch",
                 project = %body.project,
-                executor = if project_is_agent { "agent" } else if project_is_ssh { "ssh" } else { "local" },
+                executor = if project_is_agent { "agent" } else { "local" },
                 success = success,
                 request_count = results.len(),
                 duration_ms = duration_ms,
-                ssh_calls = ssh_calls,
-                control_master = projects.ssh.as_ref().map(|s| s.control_master).unwrap_or(false),
                 "codex_context_batch_completed"
             );
             let response = ContextBatchResponse {

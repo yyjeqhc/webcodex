@@ -1420,9 +1420,6 @@ mod tests {
         ProjectConfig {
             path: root.display().to_string(),
             executor: Default::default(),
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: None,
             allow_patch: true,
             allow_command_requests: false,
@@ -1840,7 +1837,7 @@ pub async fn codex_edit(req: &mut Request, depot: &mut Depot, res: &mut Response
                 changed_files,
                 ids: json!({}),
                 summary: json!({
-                    "executor": if proj.is_agent() { "agent" } else if proj.is_ssh() { "ssh" } else { "local" },
+                    "executor": if proj.is_agent() { "agent" } else { "local" },
                     "edit_types": edit_types,
                     "paths": body.edits.iter().map(|edit| edit_path(edit).to_string()).collect::<Vec<_>>(),
                     "response_mode": body.response_mode,

@@ -121,9 +121,9 @@ pub(super) fn agent_context_shell_fragment() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use super::security::is_sensitive_path;
     use super::remote_edit::REMOTE_EDIT_SCRIPT;
+    use super::security::is_sensitive_path;
+    use super::*;
     use std::collections::HashMap;
 
     #[test]
@@ -299,9 +299,6 @@ mod tests {
         let proj = ProjectConfig {
             path: "/tmp/test".to_string(),
             executor: crate::projects::Executor::default(),
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: None,
             allow_patch: false,
             allow_command_requests: false,
@@ -312,7 +309,7 @@ mod tests {
             commands: HashMap::new(),
             hooks: HashMap::new(),
         };
-        assert!(!proj.is_ssh());
+        assert!(!proj.is_agent());
     }
 
     // =========================================================================
@@ -959,9 +956,6 @@ mod trusted_command_tests {
         ProjectConfig {
             path: std::env::temp_dir().to_string_lossy().to_string(),
             executor: crate::projects::Executor::Local,
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: None,
             allow_patch: true,
             allow_command_requests: true,
@@ -1068,9 +1062,6 @@ mod trusted_command_tests {
         let proj = ProjectConfig {
             path: tmp.path().to_string_lossy().to_string(),
             executor: crate::projects::Executor::Local,
-            host: None,
-            ssh_hosts: Vec::new(),
-            user: None,
             client_id: None,
             allow_patch: true,
             allow_command_requests: true,

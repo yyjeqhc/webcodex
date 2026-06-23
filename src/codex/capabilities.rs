@@ -51,7 +51,7 @@ fn project_info(
     name: &str,
     project: &ProjectConfig,
     shell_clients: &HashMap<String, ShellClientView>,
-    ssh_enabled: bool,
+    _ssh_enabled: bool,
 ) -> ProjectCapabilityInfo {
     let mut commands = project.commands.keys().cloned().collect::<Vec<_>>();
     commands.sort();
@@ -60,12 +60,6 @@ fn project_info(
     let allowed_checks = project.effective_allowed_checks();
     let mut configured_checks = project.configured_check_names();
     configured_checks.sort();
-    let ssh_endpoints = if project.executor == Executor::Ssh {
-        project.ssh_targets()
-    } else {
-        Vec::new()
-    };
-    let ssh_target = ssh_endpoints.first().cloned();
     let agent_client_id = if project.executor == Executor::Agent {
         project.client_id.clone()
     } else {
@@ -78,13 +72,12 @@ fn project_info(
         name: name.to_string(),
         executor: match project.executor {
             Executor::Local => "local".to_string(),
-            Executor::Ssh => "ssh".to_string(),
             Executor::Agent => "agent".to_string(),
         },
         root: project.path.clone(),
-        ssh_enabled,
-        ssh_target,
-        ssh_endpoints,
+        ssh_enabled: false,
+        ssh_target: None,
+        ssh_endpoints: Vec::new(),
         agent_client_id,
         agent_status: agent.map(|client| client.status.clone()).or_else(|| {
             if project.executor == Executor::Agent {

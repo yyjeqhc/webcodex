@@ -280,7 +280,7 @@ pub async fn codex_git(req: &mut Request, depot: &mut Depot, res: &mut Response)
                 ids: json!({}),
                 summary: json!({
                     "operation": git_operation_name(&body.operation),
-                    "executor": if proj.is_agent() { "agent" } else if proj.is_ssh() { "ssh" } else { "local" },
+                    "executor": if proj.is_agent() { "agent" } else { "local" },
                     "path_count": body.paths.len(),
                     "paths": body.paths,
                     "checkpoint_id": body.checkpoint_id,

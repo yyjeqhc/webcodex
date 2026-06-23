@@ -1,5 +1,11 @@
 # TODO
 
+## v2 Direction: Remote MCP Tool Runtime
+
+See [V2_SCOPE.md](V2_SCOPE.md) for full scope.
+
+**In progress:** Stripping legacy code to prepare for MCP over HTTP + GPT Actions as parallel access layers over a shared tool runtime.
+
 ## Done
 
 - [x] Core API: create, list, get, delete messages

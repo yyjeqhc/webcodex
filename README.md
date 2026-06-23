@@ -1,5 +1,7 @@
 # Private Drop
 
+> **v2 direction:** Private Drop is evolving into a **Remote MCP Tool Runtime** — exposing shell, git, file, patch, and job capabilities as standardized tool endpoints, consumable by both MCP clients and GPT Actions. See [V2_SCOPE.md](V2_SCOPE.md).
+
 A self-hosted private long-text/file drop box. Replace QQ/WeChat's "File Transfer Assistant" with your own service.
 
 ## Features

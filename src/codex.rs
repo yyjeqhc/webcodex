@@ -27,11 +27,8 @@ pub use git::codex_git;
 use git::*;
 pub use jobs::codex_job;
 pub use patch::codex_apply_patch;
-use remote_edit::*;
 pub use report::codex_report;
-pub use security::is_sensitive_path;
 use shell::*;
-use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 use types::*;
@@ -47,179 +44,6 @@ use url_security::*;
 
 pub(super) const MAX_OUTPUT_LEN: usize = 50_000;
 pub(super) const CHECK_TIMEOUT_SECS: u64 = 300;
-
-// =============================================================================
-// SSH stubs (removed in v2 — SSH executor no longer supported)
-// =============================================================================
-
-pub(super) const SSH_DISABLED_MESSAGE: &str = "SSH removed in v2";
-
-pub(super) fn is_ssh_enabled(_depot: &Depot) -> bool {
-    false
-}
-
-pub(super) fn ssh_disabled_error() -> String {
-    SSH_DISABLED_MESSAGE.to_string()
-}
-
-pub(in crate::codex) fn ensure_ssh_enabled(
-    _depot: &Depot,
-    proj: &ProjectConfig,
-) -> Result<(), String> {
-    if proj.is_ssh() {
-        return Err(ssh_disabled_error());
-    }
-    Ok(())
-}
-
-/// SSH context stubs — return errors since SSH is removed in v2.
-pub(super) fn ssh_overview(
-    _proj: &ProjectConfig,
-    project_name: &str,
-    _ssh_config: Option<&crate::projects::SshConfig>,
-) -> types::ContextResponse {
-    types::ContextResponse {
-        success: false,
-        project: project_name.to_string(),
-        mode: "overview".to_string(),
-        content: None,
-        items: None,
-        truncated: false,
-        error: Some("SSH executor removed in v2".to_string()),
-    }
-}
-
-pub(super) fn ssh_tree(
-    _proj: &ProjectConfig,
-    project_name: &str,
-    _depth: usize,
-    _max_files: usize,
-    _ssh_config: Option<&crate::projects::SshConfig>,
-) -> types::ContextResponse {
-    types::ContextResponse {
-        success: false,
-        project: project_name.to_string(),
-        mode: "tree".to_string(),
-        content: None,
-        items: None,
-        truncated: false,
-        error: Some("SSH executor removed in v2".to_string()),
-    }
-}
-
-pub(super) fn ssh_search(
-    _proj: &ProjectConfig,
-    project_name: &str,
-    _query: &str,
-    _ssh_config: Option<&crate::projects::SshConfig>,
-) -> types::ContextResponse {
-    types::ContextResponse {
-        success: false,
-        project: project_name.to_string(),
-        mode: "search".to_string(),
-        content: None,
-        items: None,
-        truncated: false,
-        error: Some("SSH executor removed in v2".to_string()),
-    }
-}
-
-pub(super) fn ssh_grep_context(
-    _proj: &ProjectConfig,
-    project_name: &str,
-    _path: &str,
-    _query: Option<&str>,
-    _ssh_config: Option<&crate::projects::SshConfig>,
-) -> types::ContextResponse {
-    types::ContextResponse {
-        success: false,
-        project: project_name.to_string(),
-        mode: "grep_context".to_string(),
-        content: None,
-        items: None,
-        truncated: false,
-        error: Some("SSH executor removed in v2".to_string()),
-    }
-}
-
-pub(super) fn ssh_read_file(
-    _proj: &ProjectConfig,
-    project_name: &str,
-    _path: &str,
-    _start_line: Option<usize>,
-    _max_lines: Option<usize>,
-    _ssh_config: Option<&crate::projects::SshConfig>,
-) -> types::ContextResponse {
-    types::ContextResponse {
-        success: false,
-        project: project_name.to_string(),
-        mode: "read_file".to_string(),
-        content: None,
-        items: None,
-        truncated: false,
-        error: Some("SSH executor removed in v2".to_string()),
-    }
-}
-
-pub(super) fn try_ssh_context_batch_once(
-    _proj: &ProjectConfig,
-    _project_name: &str,
-    _requests: &[types::ContextBatchItem],
-    _ssh_config: Option<&crate::projects::SshConfig>,
-) -> Option<(
-    Vec<types::ContextBatchResultMetadata>,
-    types::ContextBatchResponse,
-    Vec<bool>,
-    u32,
-)> {
-    None
-}
-
-pub(super) fn ssh_context_batch_error_results(
-    project_name: &str,
-    requests: &[types::ContextBatchItem],
-    error: String,
-) -> (
-    Vec<types::ContextBatchResultMetadata>,
-    types::ContextBatchResponse,
-    Vec<bool>,
-    u32,
-) {
-    let results = requests
-        .iter()
-        .enumerate()
-        .map(|(i, item)| types::ContextBatchResultMetadata {
-            request_index: i,
-            mode: format!("{:?}", item.mode),
-            path: item.path.clone(),
-            fingerprint: None,
-            unchanged: false,
-            file_size: None,
-            modified_unix_ms: None,
-            total_lines: None,
-        })
-        .collect();
-    let response = types::ContextBatchResponse {
-        success: false,
-        project: project_name.to_string(),
-        results: Vec::new(),
-        duration_ms: 0,
-        ssh_calls: 0,
-        error: Some(error),
-        preflight_rejected: None,
-        estimated_chars: None,
-        max_allowed_chars: None,
-        max_allowed_items: None,
-        project_is_ssh: None,
-        suggestion: None,
-        warnings: Vec::new(),
-        result_metadata: Vec::new(),
-        cache_hits: None,
-        recommended_next_action: None,
-        action_budget_hint: None,
-    };
-    (results, response, vec![false; requests.len()], 0)
-}
 
 // =============================================================================
 // Helpers
@@ -298,6 +122,9 @@ pub(super) fn agent_context_shell_fragment() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::security::is_sensitive_path;
+    use super::remote_edit::REMOTE_EDIT_SCRIPT;
+    use std::collections::HashMap;
 
     #[test]
     fn test_is_sensitive_path_variants() {
@@ -890,13 +717,6 @@ pub(super) fn apply_edit_request_with_metrics(
 mod ssh_command_tests {
     use super::*;
 
-    fn command_args(command: &std::process::Command) -> Vec<String> {
-        command
-            .get_args()
-            .map(|arg| arg.to_string_lossy().to_string())
-            .collect()
-    }
-
     // --- Context batch preflight tests ---
 
     fn make_batch_request(
@@ -1133,6 +953,7 @@ mod trusted_command_tests {
         build_script_job_command, build_trusted_script_content, build_trusted_script_job_command,
         create_local_job,
     };
+    use std::collections::HashMap;
 
     fn make_local_proj() -> ProjectConfig {
         ProjectConfig {

@@ -1692,12 +1692,7 @@ pub async fn codex_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             return;
         }
     };
-    if let Err(e) = super::ensure_ssh_enabled(depot, proj) {
-        res.status_code(StatusCode::FORBIDDEN);
-        render_job!(Json(job_response(&op, false, Some(e))));
-        return;
-    }
-    let ssh_config = projects.ssh.as_ref();
+    let ssh_config = None; // SSH removed in v2
     let client_request_id = body.client_request_id.as_deref();
     if let Some(client_request_id) = client_request_id {
         if let Err(e) = validate_client_request_id(client_request_id) {
@@ -2963,29 +2958,6 @@ mod tests {
         capabilities.async_jobs = true;
         capabilities.async_shell_jobs = true;
         capabilities
-    }
-
-    #[test]
-    fn ssh_disabled_gate_rejects_job_project() {
-        let proj = ProjectConfig {
-            path: "/tmp/private-drop-ssh".to_string(),
-            executor: crate::projects::Executor::Ssh,
-            host: Some("example.invalid".to_string()),
-            ssh_hosts: Vec::new(),
-            user: None,
-            client_id: None,
-            allow_patch: true,
-            allow_command_requests: true,
-            allow_raw_command_requests: true,
-            default_apply_patch_backend: None,
-            allowed_checks: Vec::new(),
-            checks: None,
-            commands: HashMap::new(),
-            hooks: HashMap::new(),
-        };
-        let depot = Depot::new();
-        let err = super::super::ensure_ssh_enabled(&depot, &proj).unwrap_err();
-        assert_eq!(err, super::super::SSH_DISABLED_MESSAGE);
     }
 
     #[tokio::test]

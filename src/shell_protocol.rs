@@ -136,14 +136,6 @@ pub struct ShellClientView {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct ShellClientsResponse {
-    pub success: bool,
-    pub clients: Vec<ShellClientView>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
 pub struct ShellClientRegisterResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -189,20 +181,6 @@ pub struct ShellAgentPollRequest {
     pub client_id: String,
     #[serde(default)]
     pub projects: Option<Vec<ShellAgentProjectSummary>>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientProjectsRequest {
-    pub client_id: String,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ShellClientProjectsResponse {
-    pub success: bool,
-    pub client_id: String,
-    pub projects: Vec<ShellAgentProjectSummary>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -265,21 +243,6 @@ pub struct ShellClientProjectCreateRequest {
     pub timeout_secs: u64,
     #[serde(default = "default_wait_timeout_secs")]
     pub wait_timeout_secs: u64,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ShellClientProjectCreateResponse {
-    pub success: bool,
-    pub client_id: String,
-    #[serde(default)]
-    pub project: Option<ShellAgentProjectSummary>,
-    pub created_paths: Vec<String>,
-    #[serde(default)]
-    pub registry_file: Option<String>,
-    pub git_initialized: bool,
-    pub warnings: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -390,23 +353,6 @@ pub struct ShellClientProjectWorkflowJobRequest {
     pub timeout_secs: u64,
     #[serde(default)]
     pub max_runtime_secs: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-pub struct ShellClientProjectWorkflowResponse {
-    pub success: bool,
-    pub client_id: String,
-    pub project_id: String,
-    #[serde(default)]
-    pub project: Option<ShellAgentProjectSummary>,
-    pub mode: String,
-    pub git_before: ShellAgentProjectGitSnapshot,
-    #[serde(default)]
-    pub hook_result: Option<ShellAgentProjectHookResult>,
-    pub git_after: ShellAgentProjectGitSnapshot,
-    pub warnings: Vec<String>,
-    pub recommended_next_action: String,
-    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -730,23 +676,6 @@ pub struct ShellJobOpResponse {
     pub next_stdout_line: Option<usize>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub next_stderr_line: Option<usize>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ShellClientJobCreateResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub job_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub job_ids: Vec<String>,
-    pub client_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_id: Option<String>,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub job: Option<ShellJobInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }

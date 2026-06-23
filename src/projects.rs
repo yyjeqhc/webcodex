@@ -58,19 +58,7 @@ pub struct ProjectConfig {
 #[derive(Debug, Deserialize, Clone, Default)]
 pub struct SshConfig {
     #[serde(default)]
-    pub batch_mode: bool,
-    #[serde(default)]
-    pub connect_timeout_secs: Option<u64>,
-    #[serde(default)]
     pub control_master: bool,
-    #[serde(default)]
-    pub control_persist: Option<String>,
-    #[serde(default)]
-    pub control_path: Option<String>,
-    #[serde(default)]
-    pub server_alive_interval: Option<u64>,
-    #[serde(default)]
-    pub server_alive_count_max: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

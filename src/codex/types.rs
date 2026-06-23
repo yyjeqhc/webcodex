@@ -1,4 +1,3 @@
-use crate::{CodexGoalRecord, CommandAuditRecord};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
 
@@ -88,12 +87,6 @@ pub struct PatchRequest {
 }
 
 #[derive(Debug, Deserialize)]
-pub struct CheckRequest {
-    pub project: String,
-    pub suite: String,
-}
-
-#[derive(Debug, Deserialize)]
 pub struct ReportRequest {
     pub project: String,
     pub status: String,
@@ -129,326 +122,6 @@ pub struct GitRequest {
 }
 
 #[derive(Debug, Deserialize, Clone)]
-pub struct CommandRequest {
-    pub project: String,
-    pub command: String,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct ProjectHookRequest {
-    pub project: String,
-    pub hook: String,
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ProjectHookStep {
-    pub command: String,
-    pub exit_code: i32,
-    pub stdout_tail: String,
-    pub stderr_tail: String,
-    pub duration_ms: u64,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ProjectHookResponse {
-    pub success: bool,
-    pub project: String,
-    pub hook: String,
-    pub steps: Vec<ProjectHookStep>,
-    pub git_status_short: String,
-    pub error: Option<String>,
-}
-
-fn default_project_workflow_mode() -> String {
-    "snapshot".to_string()
-}
-
-fn default_project_workflow_run_doctor() -> bool {
-    true
-}
-
-fn default_project_workflow_doctor_hook() -> String {
-    "doctor".to_string()
-}
-
-fn default_project_workflow_recent_jobs() -> usize {
-    10
-}
-
-fn default_project_workflow_timeout_secs() -> u64 {
-    120
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct ProjectWorkflowRequest {
-    pub project: String,
-    #[serde(default = "default_project_workflow_mode")]
-    pub mode: String,
-    #[serde(default)]
-    pub hook: Option<String>,
-    #[serde(default = "default_project_workflow_run_doctor")]
-    pub run_doctor: bool,
-    #[serde(default = "default_project_workflow_doctor_hook")]
-    pub doctor_hook: String,
-    #[serde(default)]
-    pub run_doctor_hook: bool,
-    #[serde(default = "default_project_workflow_recent_jobs")]
-    pub recent_jobs: usize,
-    #[serde(default = "default_project_workflow_timeout_secs")]
-    pub timeout_secs: u64,
-}
-
-#[derive(Debug, Serialize, Clone, Default)]
-pub struct ProjectWorkflowGitSnapshot {
-    pub available: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub head: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub head_subject: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status_short: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dirty: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub diff_stat: Option<String>,
-    pub changed_files: Vec<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ProjectWorkflowResponse {
-    pub success: bool,
-    pub project: String,
-    pub mode: String,
-    pub executor: String,
-    pub root: String,
-    pub ssh_enabled: bool,
-    pub git_before: ProjectWorkflowGitSnapshot,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub doctor: Option<ProjectDoctorResponse>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hook_result: Option<ProjectHookResponse>,
-    pub git_after: ProjectWorkflowGitSnapshot,
-    pub warnings: Vec<String>,
-    pub recommended_next_action: String,
-    pub error: Option<String>,
-}
-
-fn default_project_doctor_run_hook() -> bool {
-    true
-}
-
-fn default_project_doctor_hook() -> String {
-    "doctor".to_string()
-}
-
-fn default_project_doctor_recent_jobs() -> usize {
-    10
-}
-
-fn default_project_doctor_timeout_secs() -> u64 {
-    120
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct ProjectDoctorRequest {
-    pub project: String,
-    #[serde(default = "default_project_doctor_run_hook")]
-    pub run_hook: bool,
-    #[serde(default = "default_project_doctor_hook")]
-    pub hook: String,
-    #[serde(default = "default_project_doctor_recent_jobs")]
-    pub recent_jobs: usize,
-    #[serde(default = "default_project_doctor_timeout_secs")]
-    pub timeout_secs: u64,
-}
-
-#[derive(Debug, Serialize, Clone, Default)]
-pub struct ProjectDoctorAgentCapabilities {
-    pub shell: bool,
-    pub file_read: bool,
-    pub file_write: bool,
-    pub git: bool,
-    pub jobs: bool,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ProjectDoctorAgentInfo {
-    pub client_id: String,
-    pub connected: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub owner: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hostname: Option<String>,
-    pub capabilities: ProjectDoctorAgentCapabilities,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ProjectDoctorGitInfo {
-    pub available: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub branch: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub head: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub head_subject: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub status_short: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub dirty: Option<bool>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ProjectDoctorHooksInfo {
-    pub configured: Vec<String>,
-    pub doctor_hook: String,
-    pub doctor_hook_configured: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub recommended_next: Option<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ProjectDoctorRecentJob {
-    pub job_id: String,
-    pub status: String,
-    pub created_at: i64,
-    pub command_preview: String,
-    pub exit_code: Option<i32>,
-    pub error: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub executor: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub project: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub goal_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub client_request_id: Option<String>,
-}
-
-#[derive(Debug, Serialize, Clone)]
-pub struct ProjectDoctorResponse {
-    pub success: bool,
-    pub project: String,
-    pub executor: String,
-    pub root: String,
-    pub ssh_enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub agent: Option<ProjectDoctorAgentInfo>,
-    pub git: ProjectDoctorGitInfo,
-    pub hooks: ProjectDoctorHooksInfo,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub hook_result: Option<ProjectHookResponse>,
-    pub recent_jobs: Vec<ProjectDoctorRecentJob>,
-    pub warnings: Vec<String>,
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommandRequestCreate {
-    pub project: String,
-    pub command: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct RawCommandRequestCreate {
-    pub project: String,
-    pub command_text: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommandRequestBatchCreate {
-    pub project: String,
-    pub requests: Vec<CommandRequestBatchItem>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct CommandRequestBatchItem {
-    pub command: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommandRequestsListRequest {
-    #[serde(default)]
-    pub project: Option<String>,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default = "default_command_request_limit")]
-    pub limit: usize,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommandApproveRequest {
-    pub request_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-pub struct CommandRejectRequest {
-    pub request_id: String,
-    #[serde(default)]
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
-pub struct CommandRequestOpRequest {
-    pub op: String,
-    #[serde(default)]
-    pub project: Option<String>,
-    #[serde(default)]
-    pub command: Option<String>,
-    #[serde(default)]
-    pub command_text: Option<String>,
-    #[serde(default)]
-    pub script_path: Option<String>,
-    #[serde(default)]
-    pub script_args: Vec<String>,
-    #[serde(default)]
-    pub reason: Option<String>,
-    #[serde(default)]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub summary: Option<String>,
-    #[serde(default)]
-    pub goal_id: Option<String>,
-    #[serde(default)]
-    pub ttl_secs: Option<i64>,
-    #[serde(default)]
-    pub requests: Vec<CommandRequestBatchItem>,
-    #[serde(default)]
-    pub request_id: Option<String>,
-    #[serde(default)]
-    pub request_ids: Vec<String>,
-    #[serde(default)]
-    pub status: Option<String>,
-    #[serde(default = "default_command_request_limit")]
-    pub limit: usize,
-    /// For create_trusted_raw / create_trusted_raw_and_approve: multi-line script text.
-    #[serde(default)]
-    pub script_text: Option<String>,
-    /// For create_trusted_raw / create_trusted_raw_and_approve: timeout in seconds (default 120, max 1800).
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
-    /// For create_trusted_raw / create_trusted_raw_and_approve: response mode.
-    /// "summary" (default, tail only), "full" (more output but still truncated), "minimal" (success/exit_code/cwd only).
-    #[serde(default)]
-    pub response_mode: Option<String>,
-}
-
-#[derive(Debug, Deserialize, Clone)]
 pub struct JobOpRequest {
     pub op: String,
     #[serde(default)]
@@ -479,7 +152,7 @@ pub struct JobOpRequest {
     pub reason: Option<String>,
     #[serde(default)]
     pub status: Option<String>,
-    #[serde(default = "default_command_request_limit")]
+    #[serde(default = "default_job_limit")]
     pub limit: usize,
     #[serde(default = "default_job_tail_lines")]
     pub tail_lines: usize,
@@ -592,7 +265,7 @@ fn default_channel() -> String {
     "omo".to_string()
 }
 
-fn default_command_request_limit() -> usize {
+fn default_job_limit() -> usize {
     20
 }
 
@@ -720,24 +393,6 @@ pub struct PatchResponse {
 }
 
 #[derive(Debug, Serialize)]
-pub struct CheckResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub suite: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub exit_code: Option<i32>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub duration_ms: Option<u64>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stdout_tail: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stderr_tail: Option<String>,
-    pub truncated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
 pub struct ReportResponse {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -764,71 +419,6 @@ pub struct GitResponse {
     pub truncated: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CommandResponse {
-    pub success: bool,
-    pub project: String,
-    pub command: String,
-    pub exit_code: Option<i32>,
-    pub duration_ms: u64,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stdout_tail: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stderr_tail: Option<String>,
-    pub truncated: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CommandRequestResponse {
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub record: Option<CommandAuditRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CommandRequestsListResponse {
-    pub success: bool,
-    pub records: Vec<CommandAuditRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CommandRequestBatchResponse {
-    pub success: bool,
-    pub records: Vec<CommandAuditRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct CommandRequestOpResponse {
-    pub success: bool,
-    pub op: String,
-    pub records: Vec<CommandAuditRecord>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub goals: Vec<CodexGoalRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub request_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub record: Option<CommandAuditRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub goal_id: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub goal: Option<CodexGoalRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-    /// For create_trusted_raw / create_trusted_raw_and_approve: structured result.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub trusted_result: Option<TrustedRawCommandResult>,
 }
 
 /// Result of a trusted raw command execution.

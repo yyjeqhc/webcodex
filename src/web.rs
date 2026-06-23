@@ -25,7 +25,7 @@ fn app_shell(title: &str, page_js: &str) -> String {
 <body>
 <div class="container">
 <div class="header"><h1>Private Drop</h1></div>
-<div class="nav"><a href="/channels">Channels</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a><a href="/desktop">Desktop</a><a href="/agent/playground">Agent</a><a href="/actions/sessions">Actions</a></div>
+<div class="nav"><a href="/channels">Channels</a><a href="/c/inbox">Inbox</a><a href="/c/files">Files</a><a href="/send">Send</a><a href="/agent/playground">Agent</a><a href="/actions/sessions">Actions</a></div>
 <div id="app"><div class="loading">Loading...</div></div>
 </div>
 <script defer>
@@ -237,108 +237,6 @@ pub async fn message_page(req: &mut Request, _depot: &mut Depot, res: &mut Respo
         id_json = serde_json::to_string(&id).unwrap()
     );
     res.render(Text::Html(app_shell("Message", &page_js)));
-}
-
-#[handler]
-pub async fn desktop_page(_req: &mut Request, _depot: &mut Depot, res: &mut Response) {
-    let page_js = r#"
-(async function(){
-    if(!requireToken())return;
-    var app=document.getElementById('app');
-    function taskCard(t){
-        var shot=t.screenshot_url?'<div style="margin-top:8px"><a href="'+escapeHtml(t.screenshot_url)+'" target="_blank">Screenshot</a></div>':'';
-        return '<a href="/desktop/tasks/'+encodeURIComponent(t.id)+'" style="color:inherit;text-decoration:none"><div class="card">'+
-            '<div class="card-header"><div><div class="card-title">'+escapeHtml(t.title)+'</div><div class="card-meta">'+fmtTime(t.updated_at)+' · '+escapeHtml(t.claimed_by||'')+'</div></div><span class="channel-badge">'+escapeHtml(t.status)+'</span></div>'+
-            '<div class="card-text">'+escapeHtml(t.last_event||t.instructions||'')+'</div>'+shot+'</div></a>';
-    }
-    async function loadTasks(){
-        var r=await apiCall('/api/desktop/tasks?limit=20');
-        if(!r)return;
-        if(!r.ok)return;
-        var d=await r.json();
-        var html='';
-        (d.tasks||[]).forEach(function(t){html+=taskCard(t)});
-        document.getElementById('task-list').innerHTML=html||'<div class="card"><p>No desktop tasks yet</p></div>';
-    }
-    app.innerHTML='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px"><h2>Desktop Agent</h2><button id="refresh" class="btn btn-sm btn-primary">Refresh</button></div>'+ 
-        '<div id="msg"></div><div class="card"><h3 style="margin-bottom:12px">Send Desktop Task</h3>'+ 
-        '<form id="df">'+
-        '<div class="form-group"><label for="title">Title</label><input id="title" placeholder="Open site and type message" required></div>'+ 
-        '<div class="form-group"><label for="url">URL to open (optional)</label><input id="url" placeholder="https://example.com"></div>'+ 
-        '<div class="form-group"><label for="text">Text to type/send (optional)</label><textarea id="text" rows="5" placeholder="Text the worker should paste into the active page/app"></textarea></div>'+ 
-        '<div class="form-group"><label><input type="checkbox" id="sendKey"> Press Enter after typing</label></div>'+ 
-        '<div class="form-group"><label for="extra">Extra instructions</label><textarea id="extra" rows="4" placeholder="Wait for page load, click the input first if needed..."></textarea></div>'+ 
-        '<div class="form-actions"><button class="btn btn-primary" type="submit">Create Task</button></div></form></div>'+ 
-        '<h3 style="margin:20px 0 12px">Recent Desktop Tasks</h3><div id="task-list"><div class="loading">Loading...</div></div>';
-    document.getElementById('refresh').addEventListener('click',loadTasks);
-    document.getElementById('df').addEventListener('submit',async function(e){
-        e.preventDefault();
-        var title=document.getElementById('title').value.trim();
-        var url=document.getElementById('url').value.trim();
-        var text=document.getElementById('text').value;
-        var extra=document.getElementById('extra').value.trim();
-        var sendKey=document.getElementById('sendKey').checked;
-        var parts=[];
-        if(url)parts.push('open: '+url);
-        if(text)parts.push('type: '+text);
-        if(sendKey)parts.push('press_enter: true');
-        if(extra)parts.push(extra);
-        var instructions=parts.join('\n');
-        if(!instructions){instructions=title}
-        var r=await apiCall('/api/desktop/tasks',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({title:title,instructions:instructions,priority:10})});
-        if(!r)return;
-        var d=await r.json();
-        if(r.ok&&d.task){window.location.href='/desktop/tasks/'+encodeURIComponent(d.task.id)}else{document.getElementById('msg').innerHTML='<div class="alert alert-error">'+escapeHtml(d.error||'Failed to create task')+'</div>'}
-    });
-    await loadTasks();
-})()
-"#;
-    res.render(Text::Html(app_shell("Desktop", page_js)));
-}
-
-#[handler]
-pub async fn desktop_task_page(req: &mut Request, _depot: &mut Depot, res: &mut Response) {
-    let id = req.param::<String>("id").unwrap_or_default();
-    let page_js = format!(
-        r#"
-(async function(){{
-    if(!requireToken())return;
-    var taskId={id_json};
-    var app=document.getElementById('app');
-    function row(label,value){{return '<div style="margin:6px 0"><strong>'+escapeHtml(label)+':</strong> '+escapeHtml(value||'')+'</div>'}}
-    try{{
-        var r=await apiCall('/api/desktop/tasks/'+encodeURIComponent(taskId));
-        if(!r)return;
-        if(!r.ok){{app.innerHTML='<div class="alert alert-error">Desktop task not found</div>';return}}
-        var d=await r.json();
-        var t=d.task;
-        var events=d.events||[];
-        var html='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">'+
-            '<div><a href="/channels" style="display:inline-block;margin-bottom:8px;color:#3498db;text-decoration:none">← Back</a>'+
-            '<h2>Desktop Task</h2></div><span class="channel-badge">'+escapeHtml(t.status)+'</span></div>';
-        html+='<div class="card"><div class="card-title">'+escapeHtml(t.title)+'</div>'+
-            row('ID',t.id)+row('Worker',t.claimed_by||'')+row('Priority',String(t.priority))+row('Updated',fmtTime(t.updated_at))+
-            '<div style="margin-top:12px"><strong>Instructions</strong><div class="card-text" style="max-height:none">'+escapeHtml(t.instructions)+'</div></div>';
-        if(t.screenshot_url){{html+='<div style="margin-top:16px"><a href="'+escapeHtml(t.screenshot_url)+'" target="_blank"><img src="'+escapeHtml(t.screenshot_url)+'" style="max-width:100%;border:1px solid #ddd;border-radius:8px"></a></div>'}}
-        html+='</div>';
-        html+='<h3 style="margin:20px 0 12px">Event Timeline</h3>';
-        if(events.length===0){{html+='<div class="card"><p>No events recorded yet</p></div>'}}else{{
-            events.forEach(function(ev){{
-                html+='<div class="card"><div class="card-header"><div><div class="card-title">'+escapeHtml(ev.status)+'</div><div class="card-meta">'+fmtTime(ev.created_at)+' '+escapeHtml(ev.worker||'')+'</div></div></div>'+
-                    '<div class="card-text" style="max-height:none">'+escapeHtml(ev.message||'')+'</div>';
-                if(ev.screenshot_url){{html+='<div style="margin-top:12px"><a href="'+escapeHtml(ev.screenshot_url)+'" target="_blank">Open screenshot</a></div>'}}
-                html+='</div>';
-            }});
-        }}
-        app.innerHTML=html;
-    }}catch(e){{
-        app.innerHTML='<div class="alert alert-error">Error: '+escapeHtml(e.message)+'</div>';
-    }}
-}})()
-"#,
-        id_json = serde_json::to_string(&id).unwrap()
-    );
-    res.render(Text::Html(app_shell("Desktop Task", &page_js)));
 }
 
 #[handler]

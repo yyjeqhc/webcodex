@@ -16,7 +16,6 @@ mod auth;
 mod codex;
 mod config;
 mod db;
-mod desktop;
 mod drop_api;
 mod models;
 mod openapi;
@@ -31,19 +30,13 @@ pub(crate) use config::load_startup_env_files;
 pub(crate) use config::parse_env_file_line;
 pub use config::Config;
 pub use db::Database;
-pub(crate) use desktop::{
-    append_desktop_task_event, claim_desktop_task, claim_next_desktop_task, create_desktop_task,
-    desktop_task_op, get_desktop_task_detail, list_desktop_tasks,
-};
 pub(crate) use drop_api::{
     create_message, delete_message, download_file, get_message, health, list_channels,
     list_messages, upload_file,
 };
 pub use models::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
-    CodexGoalRecord, CommandAuditRecord, CreateDesktopTaskRequest, CreateMessageRequest,
-    DesktopTask, DesktopTaskClaimRequest, DesktopTaskEvent, DesktopTaskEventRequest,
-    DesktopTaskOpRequest, Message, MessageKind,
+    CodexGoalRecord, CommandAuditRecord, CreateMessageRequest, Message, MessageKind,
 };
 pub(crate) use openapi::{
     agent_runtime_openapi_json, codex_openapi_compact_json, codex_openapi_gpt_json,
@@ -58,8 +51,8 @@ pub(crate) use shell_client::{
 };
 pub(crate) use web::{
     action_session_detail_page, action_sessions_page, agent_playground_page, channel_page,
-    channels_page, desktop_page, desktop_task_page, frontend_app_js, frontend_styles_css,
-    home_page, login_page, message_page, send_page,
+    channels_page, frontend_app_js, frontend_styles_css, home_page, login_page, message_page,
+    send_page,
 };
 
 // ============================================================================
@@ -146,20 +139,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .push(Router::with_path("files/{file_id}").get(download_file))
                 .push(Router::with_path("files").post(upload_file))
-                .push(Router::with_path("desktop/task_op").post(desktop_task_op))
                 .push(
                     Router::with_path("codex/action_sessions")
                         .post(action_sessions::codex_action_sessions),
                 )
-                .push(
-                    Router::with_path("desktop/tasks")
-                        .get(list_desktop_tasks)
-                        .post(create_desktop_task),
-                )
-                .push(Router::with_path("desktop/tasks/claim_next").post(claim_next_desktop_task))
-                .push(Router::with_path("desktop/tasks/{id}").get(get_desktop_task_detail))
-                .push(Router::with_path("desktop/tasks/{id}/claim").post(claim_desktop_task))
-                .push(Router::with_path("desktop/tasks/{id}/event").post(append_desktop_task_event))
                 .push(Router::with_path("shell/clients").post(shell_clients))
                 .push(Router::with_path("shell/projects").post(shell_projects))
                 .push(Router::with_path("shell/projects/create").post(shell_project_create))
@@ -204,13 +187,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(Router::with_path("login").get(login_page))
         .push(Router::with_path("channels").get(channels_page))
         .push(Router::with_path("send").get(send_page))
-        .push(Router::with_path("desktop").get(desktop_page))
         .push(Router::with_path("actions/sessions").get(action_sessions_page))
         .push(Router::with_path("actions/sessions/{id}").get(action_session_detail_page))
         .push(Router::with_path("agent/playground").get(agent_playground_page))
         .push(Router::with_path("c/{channel}").get(channel_page))
         .push(Router::with_path("m/{id}").get(message_page))
-        .push(Router::with_path("desktop/tasks/{id}").get(desktop_task_page))
         .push(Router::with_path("").get(home_page));
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);

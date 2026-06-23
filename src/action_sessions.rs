@@ -30,7 +30,6 @@ pub const AUDITED_ACTION_ROUTES: &[&str] = &[
     "/api/shell/file",
     "/api/shell/job",
     "/api/shell/jobs/shell_batch",
-    "/api/desktop/task_op",
 ];
 
 #[derive(Debug, Clone, Serialize)]
@@ -46,7 +45,6 @@ pub struct ActionSessionStats {
     pub artifact_count: i64,
     pub git_count: i64,
     pub shell_count: i64,
-    pub desktop_count: i64,
     pub changed_files_distinct_count: usize,
     pub job_ids_distinct_count: usize,
 }
@@ -453,7 +451,6 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
     let mut artifact_count = 0;
     let mut git_count = 0;
     let mut shell_count = 0;
-    let mut desktop_count = 0;
     for event in events {
         *by_endpoint.entry(event.endpoint.clone()).or_insert(0) += 1;
         *by_status.entry(event.status.clone()).or_insert(0) += 1;
@@ -486,7 +483,6 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
             "/api/shell/clients" | "/api/shell/run" | "/api/shell/file" | "/api/shell/job" => {
                 shell_count += 1
             }
-            "/api/desktop/task_op" => desktop_count += 1,
             _ => {}
         }
     }
@@ -502,7 +498,6 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
         artifact_count,
         git_count,
         shell_count,
-        desktop_count,
         changed_files_distinct_count: changed_files.len(),
         job_ids_distinct_count: job_ids.len(),
     }
@@ -874,7 +869,6 @@ mod tests {
             "/api/shell/file",
             "/api/shell/job",
             "/api/shell/jobs/shell_batch",
-            "/api/desktop/task_op",
         ] {
             assert!(
                 is_audited_action_route(route),

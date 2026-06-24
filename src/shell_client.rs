@@ -326,7 +326,6 @@ fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
                 duration_ms: job.duration_ms,
                 error: job.error.clone(),
             }),
-            project_workflow: None,
         })
     } else {
         None
@@ -517,8 +516,6 @@ impl ShellClientRegistry {
             max_bytes: body.max_bytes,
             expected_sha256: body.expected_sha256.clone(),
             create_dirs: body.create_dirs,
-            project_create: None,
-            project_workflow: None,
             command: String::new(),
             timeout_secs: 30,
             requested_by,
@@ -563,8 +560,6 @@ impl ShellClientRegistry {
             max_bytes: None,
             expected_sha256: None,
             create_dirs: false,
-            project_create: None,
-            project_workflow: None,
             command: body.command.clone(),
             timeout_secs: body.timeout_secs,
             requested_by,
@@ -734,8 +729,6 @@ impl ShellClientRegistry {
             max_bytes: None,
             expected_sha256: None,
             create_dirs: false,
-            project_create: None,
-            project_workflow: None,
             command,
             timeout_secs: run.timeout_secs,
             requested_by,
@@ -909,8 +902,6 @@ impl ShellClientRegistry {
                     max_bytes: None,
                     expected_sha256: None,
                     create_dirs: false,
-                    project_create: None,
-                    project_workflow: None,
                     command: String::new(),
                     timeout_secs: 1,
                     requested_by,
@@ -2375,23 +2366,10 @@ mod tests {
         }
     }
 
-    fn project_create_capabilities() -> ShellClientCapabilities {
-        let mut capabilities = ShellClientCapabilities::default();
-        capabilities.project_create = true;
-        capabilities
-    }
-
-    fn project_workflow_capabilities() -> ShellClientCapabilities {
-        let mut capabilities = project_create_capabilities();
-        capabilities.project_workflow = true;
-        capabilities
-    }
-
     fn async_job_capabilities() -> ShellClientCapabilities {
-        let mut capabilities = project_workflow_capabilities();
+        let mut capabilities = ShellClientCapabilities::default();
         capabilities.async_jobs = true;
         capabilities.async_shell_jobs = true;
-        capabilities.async_project_workflow_jobs = true;
         capabilities.jobs = true;
         capabilities
     }
@@ -2556,19 +2534,17 @@ mod tests {
         let capabilities = ShellClientCapabilities::default();
         assert!(!capabilities.async_jobs);
         assert!(!capabilities.async_shell_jobs);
-        assert!(!capabilities.async_project_workflow_jobs);
 
         let request: ShellClientRegisterRequest = serde_json::from_str(
             r#"{
                 "client_id": "oe",
-                "capabilities": {"shell": true, "project_workflow": true}
+                "capabilities": {"shell": true}
             }"#,
         )
         .unwrap();
         let capabilities = request.capabilities.unwrap();
         assert!(!capabilities.async_jobs);
         assert!(!capabilities.async_shell_jobs);
-        assert!(!capabilities.async_project_workflow_jobs);
     }
 
     #[test]
@@ -2581,8 +2557,6 @@ mod tests {
         )
         .unwrap();
         assert_eq!(request.client_id, "oe");
-        assert!(!request.capabilities.as_ref().unwrap().project_create);
-        assert!(!request.capabilities.as_ref().unwrap().project_workflow);
         assert!(request.projects.is_none());
     }
 
@@ -2632,8 +2606,6 @@ mod tests {
                 stderr: Some(String::new()),
                 duration_ms: Some(12),
                 error: None,
-                project_create: None,
-                project_workflow: None,
             })
             .await
             .unwrap();
@@ -2731,8 +2703,6 @@ mod tests {
                 stderr: Some(String::new()),
                 duration_ms: Some(20),
                 error: None,
-                project_create: None,
-                project_workflow: None,
             })
             .await
             .unwrap();

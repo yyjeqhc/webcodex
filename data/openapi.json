@@ -975,7 +975,7 @@
       },
       "WriteFileEdit": {
         "type": "object",
-        "description": "Write content to a file. Not recommended for small changes — prefer replace_text, replace_range, or create_file instead. Set allow_overwrite=true to overwrite existing files.",
+        "description": "Write content to a file. Not recommended for small changes \u2014 prefer replace_text, replace_range, or create_file instead. Set allow_overwrite=true to overwrite existing files.",
         "properties": {
           "type": {
             "type": "string",
@@ -2937,19 +2937,10 @@
           "jobs": {
             "type": "boolean"
           },
-          "project_create": {
-            "type": "boolean"
-          },
-          "project_workflow": {
-            "type": "boolean"
-          },
           "async_jobs": {
             "type": "boolean"
           },
           "async_shell_jobs": {
-            "type": "boolean"
-          },
-          "async_project_workflow_jobs": {
             "type": "boolean"
           }
         }
@@ -3173,214 +3164,6 @@
           "created_paths",
           "git_initialized",
           "warnings"
-        ]
-      },
-      "ShellAgentProjectWorkflowPayload": {
-        "type": "object",
-        "properties": {
-          "project_id": {
-            "type": "string"
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "snapshot",
-              "doctor",
-              "hook",
-              "precommit"
-            ],
-            "default": "snapshot"
-          },
-          "hook": {
-            "type": "string",
-            "nullable": true
-          },
-          "run_doctor": {
-            "type": "boolean",
-            "default": true
-          },
-          "run_doctor_hook": {
-            "type": "boolean",
-            "default": false
-          },
-          "doctor_hook": {
-            "type": "string",
-            "default": "doctor"
-          },
-          "timeout_secs": {
-            "type": "integer",
-            "default": 120
-          },
-          "max_runtime_secs": {
-            "type": "integer",
-            "nullable": true
-          }
-        },
-        "required": [
-          "project_id"
-        ]
-      },
-      "ShellAgentProjectGitSnapshot": {
-        "type": "object",
-        "properties": {
-          "available": {
-            "type": "boolean"
-          },
-          "branch": {
-            "type": "string",
-            "nullable": true
-          },
-          "head": {
-            "type": "string",
-            "nullable": true
-          },
-          "head_subject": {
-            "type": "string",
-            "nullable": true
-          },
-          "status_short": {
-            "type": "string",
-            "nullable": true
-          },
-          "dirty": {
-            "type": "boolean",
-            "nullable": true
-          },
-          "diff_stat": {
-            "type": "string",
-            "nullable": true
-          },
-          "changed_files": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "error": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "required": [
-          "available",
-          "changed_files"
-        ]
-      },
-      "ShellAgentProjectHookStep": {
-        "type": "object",
-        "properties": {
-          "index": {
-            "type": "integer"
-          },
-          "command": {
-            "type": "string"
-          },
-          "exit_code": {
-            "type": "integer",
-            "nullable": true
-          },
-          "stdout_tail": {
-            "type": "string"
-          },
-          "stderr_tail": {
-            "type": "string"
-          },
-          "duration_ms": {
-            "type": "integer"
-          },
-          "success": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "index",
-          "command",
-          "stdout_tail",
-          "stderr_tail",
-          "duration_ms",
-          "success"
-        ]
-      },
-      "ShellAgentProjectHookResult": {
-        "type": "object",
-        "properties": {
-          "hook": {
-            "type": "string"
-          },
-          "success": {
-            "type": "boolean"
-          },
-          "steps": {
-            "type": "array",
-            "items": {
-              "$ref": "#/components/schemas/ShellAgentProjectHookStep"
-            }
-          },
-          "error": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "required": [
-          "hook",
-          "success",
-          "steps"
-        ]
-      },
-      "ShellAgentProjectWorkflowResult": {
-        "type": "object",
-        "properties": {
-          "success": {
-            "type": "boolean"
-          },
-          "project_id": {
-            "type": "string"
-          },
-          "project": {
-            "$ref": "#/components/schemas/ShellAgentProjectSummary",
-            "nullable": true
-          },
-          "mode": {
-            "type": "string",
-            "enum": [
-              "snapshot",
-              "doctor",
-              "hook",
-              "precommit"
-            ]
-          },
-          "git_before": {
-            "$ref": "#/components/schemas/ShellAgentProjectGitSnapshot"
-          },
-          "hook_result": {
-            "$ref": "#/components/schemas/ShellAgentProjectHookResult",
-            "nullable": true
-          },
-          "git_after": {
-            "$ref": "#/components/schemas/ShellAgentProjectGitSnapshot"
-          },
-          "warnings": {
-            "type": "array",
-            "items": {
-              "type": "string"
-            }
-          },
-          "recommended_next_action": {
-            "type": "string"
-          },
-          "error": {
-            "type": "string",
-            "nullable": true
-          }
-        },
-        "required": [
-          "success",
-          "project_id",
-          "mode",
-          "git_before",
-          "git_after",
-          "warnings",
-          "recommended_next_action"
         ]
       },
       "ShellClientProjectWorkflowRequest": {
@@ -4415,10 +4198,6 @@
         "properties": {
           "shell": {
             "$ref": "#/components/schemas/ShellAgentShellJobResult",
-            "nullable": true
-          },
-          "project_workflow": {
-            "$ref": "#/components/schemas/ShellAgentProjectWorkflowResult",
             "nullable": true
           }
         }

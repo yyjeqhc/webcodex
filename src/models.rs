@@ -22,13 +22,6 @@ pub struct Message {
     pub expires_at: Option<i64>,
 }
 
-#[derive(Debug, Deserialize)]
-pub struct CreateMessageRequest {
-    pub channel: String,
-    pub title: Option<String>,
-    pub text: String,
-}
-
 #[derive(Debug, Serialize)]
 pub struct Channel {
     pub name: String,

@@ -1,5 +1,5 @@
-use crate::json_error;
 use salvo::prelude::*;
+use serde_json::{json, Value};
 
 fn public_url() -> String {
     std::env::var("DROP_PUBLIC_URL")
@@ -9,194 +9,313 @@ fn public_url() -> String {
         .unwrap_or_else(|| "http://localhost:8080".to_string())
 }
 
-/// GPT Actions OpenAPI endpoint.
-///
-/// Returns a clean OpenAPI 3.1 spec exposing only the operations needed for
-/// GPT Actions integration. Both GPT Actions and (future) MCP over HTTP call
-/// the same underlying tool runtime.
+#[cfg(test)]
+const GPT_ACTION_OPS: &[&str] = &[
+    "listRuntimeTools",
+    "callRuntimeTool",
+    "runCodexTask",
+    "getRuntimeJobStatus",
+    "getRuntimeJobLog",
+];
+
 #[handler]
 pub async fn openapi_json(res: &mut Response) {
-    let spec = match serde_json::from_str::<serde_json::Value>(include_str!("../data/openapi.json"))
-    {
-        Ok(s) => s,
-        Err(e) => {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(json_error(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                &format!("Invalid OpenAPI schema: {}", e),
-            ));
-            return;
-        }
-    };
+    res.render(Json(build_openapi_spec()));
+}
 
-    // GPT Actions operationIds to keep.
-    let keep_ops: &[&str] = &[
-        "listProjects",
-        "getProjectContext",
-        "getProjectContextBatch",
-        "applyProjectPatch",
-        "applyProjectEdit",
-        "runProjectGit",
-        "runShell",
-        "runShellJob",
-        "getShellClientJobStatus",
-        "getShellClientJobLog",
-        "stopShellClientJob",
-        "listShellClientJobs",
-        "shellFileOp",
-        "runJobOp",
-        "healthCheck",
-    ];
-
-    let keep_set: std::collections::HashSet<&str> = keep_ops.iter().copied().collect();
-
-    // Filter paths to only kept operations.
-    let mut filtered_paths = serde_json::Map::new();
-    if let Some(paths) = spec["paths"].as_object() {
-        for (path, methods) in paths {
-            let mut filtered_methods = serde_json::Map::new();
-            let Some(methods_map) = methods.as_object() else {
-                continue;
-            };
-            for (method, op) in methods_map {
-                if let Some(op_id) = op["operationId"].as_str() {
-                    if keep_set.contains(op_id) {
-                        filtered_methods.insert(method.clone(), op.clone());
-                    }
-                }
-            }
-            if !filtered_methods.is_empty() {
-                filtered_paths.insert(path.clone(), serde_json::Value::Object(filtered_methods));
-            }
-        }
-    }
-
-    // Filter schemas to only those referenced by kept paths.
-    let mut used_schemas = std::collections::HashSet::new();
-    collect_schema_refs_from_value(&spec["paths"], &mut used_schemas);
-    // Also keep the schemas that appear in our filtered paths.
-    let filtered_paths_value = serde_json::Value::Object(filtered_paths.clone());
-    let mut filtered_refs = std::collections::HashSet::new();
-    collect_schema_refs_from_value(&filtered_paths_value, &mut filtered_refs);
-
-    let mut filtered_schemas = serde_json::Map::new();
-    if let Some(schemas) = spec["components"]["schemas"].as_object() {
-        for (name, schema) in schemas {
-            if filtered_refs.contains(name.as_str()) || is_base_schema(name) {
-                filtered_schemas.insert(name.clone(), schema.clone());
-            }
-        }
-    }
-
-    let mut result = serde_json::json!({
+fn build_openapi_spec() -> Value {
+    json!({
         "openapi": "3.1.0",
         "info": {
-            "title": "Private Drop — GPT Actions API",
+            "title": "Private Drop Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "GPT Actions integration for Private Drop tool runtime. Exposes project context, file operations, git, shell execution, and job management."
+            "description": "Minimal GPT Actions API for invoking Private Drop runtime tools, Codex CLI jobs, and job inspection."
         },
-        "servers": [{ "url": public_url(), "description": "Server" }],
-        "paths": filtered_paths,
+        "servers": [
+            {
+                "url": public_url(),
+                "description": "Private Drop server"
+            }
+        ],
+        "paths": {
+            "/api/tools/list": {
+                "post": operation(
+                    "listRuntimeTools",
+                    "List runtime tools",
+                    "Returns the MCP-compatible tool list exposed by the server.",
+                    "EmptyRequest",
+                    "ToolsListResponse"
+                )
+            },
+            "/api/tools/call": {
+                "post": operation(
+                    "callRuntimeTool",
+                    "Call runtime tool",
+                    "Calls one tool by name. Use listRuntimeTools first when the available tools are unknown.",
+                    "ToolCallRequest",
+                    "ToolResult"
+                )
+            },
+            "/api/codex/run": {
+                "post": operation(
+                    "runCodexTask",
+                    "Run Codex CLI task",
+                    "Starts Codex CLI asynchronously inside a configured project and returns a job_id. Poll with getRuntimeJobStatus and getRuntimeJobLog.",
+                    "CodexRunRequest",
+                    "ToolResult"
+                )
+            },
+            "/api/jobs/status": {
+                "post": operation(
+                    "getRuntimeJobStatus",
+                    "Get job status",
+                    "Returns status, timing, and exit metadata for a runtime job.",
+                    "JobStatusRequest",
+                    "ToolResult"
+                )
+            },
+            "/api/jobs/log": {
+                "post": operation(
+                    "getRuntimeJobLog",
+                    "Get job log",
+                    "Returns stdout/stderr text for a runtime job.",
+                    "JobLogRequest",
+                    "ToolResult"
+                )
+            }
+        },
         "components": {
-            "schemas": filtered_schemas,
             "securitySchemes": {
                 "bearerAuth": {
                     "type": "http",
                     "scheme": "bearer"
                 }
-            }
+            },
+            "schemas": schemas()
         },
-        "security": [{ "bearerAuth": [] }]
-    });
-
-    // Remove project enum from schemas — projects are runtime-configured.
-    apply_project_description(&mut result);
-
-    res.render(Json(result));
-}
-
-const PROJECT_DESC: &str =
-    "Runtime-validated project name. Configure projects in projects.toml and restart.";
-
-fn apply_project_description(spec: &mut serde_json::Value) {
-    let schemas = [
-        "ContextRequest",
-        "ContextBatchRequest",
-        "PatchRequest",
-        "EditRequest",
-        "GitRequest",
-        "CheckRequest",
-        "ReportRequest",
-        "JobOpRequest",
-    ];
-    for name in &schemas {
-        if let Some(project) = spec["components"]["schemas"][*name]["properties"].get_mut("project")
-        {
-            if let Some(obj) = project.as_object_mut() {
-                obj.remove("enum");
-                obj.insert("description".to_string(), serde_json::json!(PROJECT_DESC));
+        "security": [
+            {
+                "bearerAuth": []
             }
-        }
-    }
+        ]
+    })
 }
 
-fn is_base_schema(name: &str) -> bool {
-    matches!(
-        name,
-        "ContextRequest"
-            | "ContextResponse"
-            | "ContextBatchItem"
-            | "ContextBatchRequest"
-            | "ContextBatchResultMetadata"
-            | "ContextBatchResponse"
-            | "PatchRequest"
-            | "PatchResponse"
-            | "EditRequest"
-            | "EditResponse"
-            | "EditPostCheckResult"
-            | "GitRequest"
-            | "GitResponse"
-            | "CheckRequest"
-            | "CheckResponse"
-            | "ReportRequest"
-            | "ReportResponse"
-            | "ProjectsResponse"
-            | "ProjectCapabilities"
-            | "ProjectCapabilityInfo"
-            | "InstanceInfo"
-            | "JobOpRequest"
-            | "JobInfo"
-            | "JobOpResponse"
-            | "ReplaceTextEdit"
-            | "ReplaceRangeEdit"
-            | "AppendFileEdit"
-            | "CreateFileEdit"
-            | "WriteFileEdit"
-    )
-}
-
-/// Recursively collect schema names referenced via `$ref`.
-fn collect_schema_refs_from_value(
-    value: &serde_json::Value,
-    out: &mut std::collections::HashSet<String>,
-) {
-    match value {
-        serde_json::Value::Object(map) => {
-            if let Some(reference) = map.get("$ref").and_then(|v| v.as_str()) {
-                // Extract schema name from "#/components/schemas/Name"
-                if let Some(name) = reference.strip_prefix("#/components/schemas/") {
-                    out.insert(name.to_string());
+fn operation(
+    operation_id: &str,
+    summary: &str,
+    description: &str,
+    request_schema: &str,
+    response_schema: &str,
+) -> Value {
+    json!({
+        "operationId": operation_id,
+        "summary": summary,
+        "description": description,
+        "requestBody": {
+            "required": true,
+            "content": {
+                "application/json": {
+                    "schema": {
+                        "$ref": format!("#/components/schemas/{}", request_schema)
+                    }
                 }
             }
-            for v in map.values() {
-                collect_schema_refs_from_value(v, out);
+        },
+        "responses": {
+            "200": {
+                "description": "Success",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": format!("#/components/schemas/{}", response_schema)
+                        }
+                    }
+                }
+            },
+            "400": {
+                "description": "Bad request",
+                "content": {
+                    "application/json": {
+                        "schema": {
+                            "$ref": "#/components/schemas/ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "401": {
+                "description": "Unauthorized"
             }
         }
-        serde_json::Value::Array(arr) => {
-            for v in arr {
-                collect_schema_refs_from_value(v, out);
+    })
+}
+
+fn schemas() -> Value {
+    json!({
+        "EmptyRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {}
+        },
+        "ToolCallRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["tool"],
+            "properties": {
+                "tool": {
+                    "type": "string",
+                    "description": "Runtime tool name, for example run_shell, run_job, run_codex, read_file, git_status, git_diff, apply_patch, job_status, or job_log."
+                },
+                "params": {
+                    "type": "object",
+                    "description": "Tool-specific arguments object.",
+                    "additionalProperties": true
+                }
+            }
+        },
+        "CodexRunRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "prompt"],
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Configured project id from projects.toml."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Instruction prompt passed to Codex CLI."
+                },
+                "approval_mode": {
+                    "type": "string",
+                    "description": "Codex approval mode. Defaults to CODEX_APPROVAL_MODE or full-auto."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Maximum runtime in seconds."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional project-relative working directory."
+                },
+                "extra_args": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    },
+                    "description": "Optional additional Codex CLI arguments."
+                }
+            }
+        },
+        "JobStatusRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["job_id"],
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "Runtime job id."
+                }
+            }
+        },
+        "JobLogRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["job_id"],
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "Runtime job id."
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Optional stdout line cursor returned as next_stdout_line."
+                }
+            }
+        },
+        "ToolSpec": {
+            "type": "object",
+            "required": ["name", "description", "inputSchema"],
+            "properties": {
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "inputSchema": { "type": "object", "additionalProperties": true }
+            }
+        },
+        "ToolsListResponse": {
+            "type": "object",
+            "required": ["success", "tools"],
+            "properties": {
+                "success": { "type": "boolean" },
+                "tools": {
+                    "type": "array",
+                    "items": { "$ref": "#/components/schemas/ToolSpec" }
+                }
+            }
+        },
+        "ToolResult": {
+            "type": "object",
+            "required": ["success", "output"],
+            "properties": {
+                "success": { "type": "boolean" },
+                "output": {
+                    "description": "Tool-specific JSON output.",
+                    "type": ["object", "array", "string", "number", "boolean", "null"]
+                },
+                "error": {
+                    "type": "string",
+                    "description": "Human-readable error when success is false."
+                }
+            }
+        },
+        "ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "status": { "type": "integer" },
+                "error": { "type": "string" }
             }
         }
-        _ => {}
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn openapi_operation_ids_are_minimal() {
+        let spec = build_openapi_spec();
+        let mut ids = Vec::new();
+        for methods in spec["paths"].as_object().unwrap().values() {
+            for op in methods.as_object().unwrap().values() {
+                ids.push(op["operationId"].as_str().unwrap().to_string());
+            }
+        }
+        ids.sort();
+        let mut expected = GPT_ACTION_OPS
+            .iter()
+            .map(|s| s.to_string())
+            .collect::<Vec<_>>();
+        expected.sort();
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn openapi_uses_bearer_auth() {
+        let spec = build_openapi_spec();
+        assert_eq!(
+            spec["components"]["securitySchemes"]["bearerAuth"]["scheme"],
+            "bearer"
+        );
+    }
+
+    #[test]
+    fn openapi_does_not_expose_legacy_drop_routes() {
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        assert!(!paths.contains_key("/api/messages"));
+        assert!(!paths.contains_key("/api/files"));
+        assert!(!paths.contains_key("/api/desktop/task_op"));
+        assert!(!paths.contains_key("/api/codex/command_request_op"));
     }
 }

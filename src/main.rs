@@ -11,46 +11,34 @@ use uuid::Uuid;
 
 mod action_audit;
 mod action_sessions;
-mod agent;
-mod agent_transport;
 mod auth;
 mod codex;
 mod config;
 mod db;
-mod drop_api;
 mod mcp;
 mod models;
 mod openapi;
 mod projects;
+mod runtime_http;
 mod shell_client;
 mod shell_protocol;
 mod tool_runtime;
-mod web;
 
-pub(crate) use auth::{get_config, get_db, json_error, AuthMiddleware};
+pub(crate) use auth::{get_db, json_error, AuthMiddleware};
 pub(crate) use config::load_startup_env_files;
 #[cfg(test)]
 pub(crate) use config::parse_env_file_line;
 pub use config::Config;
 pub use db::Database;
-pub(crate) use drop_api::{
-    create_message, delete_message, download_file, get_message, health, list_channels,
-    list_messages, upload_file,
-};
 pub use models::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
-    CodexGoalRecord, CommandAuditRecord, CreateMessageRequest, Message, MessageKind,
+    CodexGoalRecord, CommandAuditRecord, Message, MessageKind,
 };
 pub(crate) use openapi::openapi_json;
 pub(crate) use shell_client::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
     shell_file_op, shell_job, shell_job_log, shell_job_status, shell_job_stop, shell_jobs_list,
     shell_run, ShellClientRegistry,
-};
-pub(crate) use web::{
-    action_session_detail_page, action_sessions_page, agent_playground_page, channel_page,
-    channels_page, frontend_app_js, frontend_styles_css, home_page, login_page, message_page,
-    send_page,
 };
 
 // ============================================================================
@@ -118,67 +106,31 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(db);
     let projects_state = Arc::new(projects_state);
     let shell_registry = Arc::new(ShellClientRegistry::default());
+    let tool_runtime = Arc::new(tool_runtime::ToolRuntime::new(
+        projects_state.clone(),
+        shell_registry.clone(),
+    ));
 
-    let api_router = Router::with_path("api")
-        .push(Router::with_path("health").get(health))
-        .push(
-            Router::new()
-                .hoop(AuthMiddleware)
-                .push(Router::with_path("channels").get(list_channels))
-                .push(
-                    Router::with_path("messages")
-                        .get(list_messages)
-                        .post(create_message),
-                )
-                .push(
-                    Router::with_path("messages/{id}")
-                        .get(get_message)
-                        .delete(delete_message),
-                )
-                .push(Router::with_path("files/{file_id}").get(download_file))
-                .push(Router::with_path("files").post(upload_file))
-                .push(
-                    Router::with_path("codex/action_sessions")
-                        .post(action_sessions::codex_action_sessions),
-                )
-                .push(Router::with_path("shell/run").post(shell_run))
-                .push(Router::with_path("shell/file").post(shell_file_op))
-                .push(Router::with_path("shell/job").post(shell_job))
-                .push(Router::with_path("shell/jobs/status").post(shell_job_status))
-                .push(Router::with_path("shell/jobs/log").post(shell_job_log))
-                .push(Router::with_path("shell/jobs/stop").post(shell_job_stop))
-                .push(Router::with_path("shell/jobs/list").post(shell_jobs_list))
-                .push(Router::with_path("shell/agent/register").post(shell_agent_register))
-                .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
-                .push(Router::with_path("shell/agent/result").post(shell_agent_result))
-                .push(Router::with_path("shell/agent/job_update").post(shell_agent_job_update))
-                .push(Router::with_path("agent/run").post(agent::run_agent))
-                .push(
-                    Router::with_path("agent/specs")
-                        .get(agent::list_agent_specs)
-                        .post(agent::save_agent_spec),
-                )
-                .push(
-                    Router::with_path("agent/specs/{id}")
-                        .get(agent::get_agent_spec)
-                        .delete(agent::delete_agent_spec),
-                ),
-        );
-
-    let assets_router = Router::with_path("assets")
-        .push(Router::with_path("app.js").get(frontend_app_js))
-        .push(Router::with_path("styles.css").get(frontend_styles_css));
-
-    let web_router = Router::new()
-        .push(Router::with_path("login").get(login_page))
-        .push(Router::with_path("channels").get(channels_page))
-        .push(Router::with_path("send").get(send_page))
-        .push(Router::with_path("actions/sessions").get(action_sessions_page))
-        .push(Router::with_path("actions/sessions/{id}").get(action_session_detail_page))
-        .push(Router::with_path("agent/playground").get(agent_playground_page))
-        .push(Router::with_path("c/{channel}").get(channel_page))
-        .push(Router::with_path("m/{id}").get(message_page))
-        .push(Router::with_path("").get(home_page));
+    let api_router = Router::with_path("api").push(
+        Router::new()
+            .hoop(AuthMiddleware)
+            .push(Router::with_path("tools/list").post(runtime_http::tools_list))
+            .push(Router::with_path("tools/call").post(runtime_http::tools_call))
+            .push(Router::with_path("codex/run").post(runtime_http::codex_run))
+            .push(Router::with_path("jobs/status").post(runtime_http::job_status))
+            .push(Router::with_path("jobs/log").post(runtime_http::job_log))
+            .push(Router::with_path("shell/run").post(shell_run))
+            .push(Router::with_path("shell/file").post(shell_file_op))
+            .push(Router::with_path("shell/job").post(shell_job))
+            .push(Router::with_path("shell/jobs/status").post(shell_job_status))
+            .push(Router::with_path("shell/jobs/log").post(shell_job_log))
+            .push(Router::with_path("shell/jobs/stop").post(shell_job_stop))
+            .push(Router::with_path("shell/jobs/list").post(shell_jobs_list))
+            .push(Router::with_path("shell/agent/register").post(shell_agent_register))
+            .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
+            .push(Router::with_path("shell/agent/result").post(shell_agent_result))
+            .push(Router::with_path("shell/agent/job_update").post(shell_agent_job_update)),
+    );
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
 
@@ -187,11 +139,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .hoop(affix_state::inject(db.clone()))
         .hoop(affix_state::inject(projects_state.clone()))
         .hoop(affix_state::inject(shell_registry.clone()))
+        .hoop(affix_state::inject(tool_runtime.clone()))
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)
-        .push(assets_router)
-        .push(web_router);
+        .push(
+            Router::with_path("mcp")
+                .hoop(AuthMiddleware)
+                .get(mcp::mcp_info)
+                .post(mcp::mcp_post),
+        );
 
     // Codex API routes are always mounted. If projects.toml failed to load,
     // handlers return structured errors instead of disappearing with 404.

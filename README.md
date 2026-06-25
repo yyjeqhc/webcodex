@@ -1,1155 +1,218 @@
-# Private Drop
+# Private Drop Runtime
 
-> **v2 direction:** Private Drop is evolving into a **Remote MCP Tool Runtime** — exposing shell, git, file, patch, and job capabilities as standardized tool endpoints, consumable by both MCP clients and GPT Actions. See [V2_SCOPE.md](V2_SCOPE.md).
+Private Drop is now a self-hosted tool runtime for ChatGPT:
 
-A self-hosted private long-text/file drop box. Replace QQ/WeChat's "File Transfer Assistant" with your own service.
+- GPT Actions import `/openapi.json`.
+- ChatGPT MCP clients connect to `/mcp`.
+- Both surfaces call the same `ToolRuntime`.
+- Local or remote execution is handled by configured projects and optional `private-drop-agent` clients.
 
-## Features
+The old file-drop/web UI direction has been removed from the active server surface.
 
-- Token authentication (Bearer token or query param)
-- 6 default channels: inbox, xline, thesis, packfix, omo, files
-- Send long text (up to 2MB per message)
-- Upload files (up to 100MB)
-- Mobile-friendly web UI (server-rendered HTML)
-- REST API with OpenAPI 3.0 spec
-- SQLite storage (bundled, no system dependency)
-- GPT Actions compatible
-- File download with Content-Disposition header
-- Path traversal protection
+## Current Shape
 
-## Quick Start
+```text
+ChatGPT GPT Action      ChatGPT MCP client
+        |                       |
+        v                       v
+   /openapi.json              /mcp
+        \                       /
+         v                     v
+              ToolRuntime
+        shell | git | patch | jobs | codex
+              |
+    local project or private-drop-agent
+```
 
-### 1. Build
+## Build
 
 ```bash
 cargo build --release
 ```
 
-### 2. Run
-
-For local development you can still pass environment variables directly:
+## Run
 
 ```bash
-DROP_TOKEN="your-secret-token" ./target/release/private-drop
+DROP_TOKEN="change-me" \
+PROJECTS_CONFIG="./projects.toml" \
+DROP_ADDR="127.0.0.1:8080" \
+cargo run --bin private-drop
 ```
 
-For deployment, put settings in an env file so startup does not require a long inline command:
+OpenAPI for GPT Actions:
 
-```bash
-cat > /opt/private-drop/private-drop.env << 'EOF'
-RUST_LOG=info,codex.metrics=info
-DROP_TOKEN=your-secret-token
-DROP_ADDR=127.0.0.1:8080
-DROP_DATA=/var/lib/private-drop
-PROJECTS_CONFIG=/opt/private-drop/projects.toml
-DROP_PUBLIC_URL=https://example.com
-EOF
-
-./private-drop
+```text
+http://127.0.0.1:8080/openapi.json
 ```
 
-By default private-drop loads env files from:
+MCP endpoint:
 
-1. `./private-drop.env`
-2. `/opt/private-drop/private-drop.env`
-3. `/etc/private-drop/private-drop.env`
-
-Set `DROP_ENV_FILE=/path/to/file` to load one explicit file instead.
-Existing process environment variables take precedence over env-file values.
-
-### 3. Access
-
-- Web UI: http://localhost:8080
-- API: http://localhost:8080/api
-- OpenAPI: http://localhost:8080/openapi.json
-
-## Environment Variables
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DROP_ADDR` | `0.0.0.0:8080` | Listen address |
-| `DROP_DATA` | `./data` | Data directory (SQLite DB + uploads) |
-| `DROP_TOKEN` | (none) | Auth token. **Required for production.** If unset, runs in dev mode with warning. |
-| `DROP_ENV_FILE` | (none) | Optional explicit env file to load before reading other settings. |
-
-## API Examples
-
-### Health Check (no auth)
-
-```bash
-curl http://localhost:8080/api/health
+```text
+http://127.0.0.1:8080/mcp
 ```
 
-### Send Text Message
+Use Bearer auth for protected endpoints:
 
 ```bash
-curl -X POST http://localhost:8080/api/messages \
-  -H "Authorization: Bearer your-secret-token" \
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/api/tools/list \
   -H "Content-Type: application/json" \
-  -d '{"channel": "inbox", "title": "My Note", "text": "Hello, this is a long text..."}'
+  -d '{}'
 ```
 
-### Send 10K Text
+## Project Config
+
+`PROJECTS_CONFIG` points to a TOML file:
+
+```toml
+[projects.private-drop]
+path = "/root/git/private-drop"
+executor = "local"
+allow_patch = true
+
+[projects.remote-demo]
+path = "/root/git/remote-demo"
+executor = "agent"
+client_id = "workstation-1"
+allow_patch = true
+```
+
+`executor = "local"` runs on the server host. `executor = "agent"` queues work for a registered `private-drop-agent`.
+
+## Runtime Tools
+
+The active tool list is returned by:
 
 ```bash
-python3 -c "print('A' * 10240)" | \
-curl -X POST http://localhost:8080/api/messages \
-  -H "Authorization: Bearer your-secret-token" \
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/api/tools/list \
   -H "Content-Type: application/json" \
-  -d @- --json '{"channel":"inbox","title":"Long","text":"PLACEHOLDER"}'
+  -d '{}'
 ```
 
-Or inline:
+Current tools:
+
+- `list_tools`
+- `list_projects`
+- `list_agents`
+- `run_shell`
+- `run_job`
+- `run_codex`
+- `job_status`
+- `job_log`
+- `read_file`
+- `git_status`
+- `git_diff`
+- `apply_patch`
+
+Generic tool call:
 
 ```bash
-LONG=$(python3 -c "print('A' * 10240)")
-curl -X POST http://localhost:8080/api/messages \
-  -H "Authorization: Bearer your-secret-token" \
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/api/tools/call \
   -H "Content-Type: application/json" \
-  -d "{\"channel\":\"inbox\",\"title\":\"10K Text\",\"text\":\"$LONG\"}"
+  -d '{"tool":"git_status","params":{"project":"private-drop"}}'
 ```
 
-### List Messages
+## Codex CLI Jobs
+
+`run_codex` starts Codex CLI asynchronously and returns a `job_id`.
 
 ```bash
-curl -H "Authorization: Bearer your-secret-token" \
-  "http://localhost:8080/api/messages?channel=inbox&limit=10"
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/api/codex/run \
+  -H "Content-Type: application/json" \
+  -d '{"project":"private-drop","prompt":"Inspect the codebase and summarize the runtime architecture."}'
 ```
 
-### Get Message
+Defaults:
+
+- `CODEX_BIN=codex`
+- `CODEX_APPROVAL_MODE=full-auto`
+
+Poll status:
 
 ```bash
-curl -H "Authorization: Bearer your-secret-token" \
-  http://localhost:8080/api/messages/{id}
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/api/jobs/status \
+  -H "Content-Type: application/json" \
+  -d '{"job_id":"<job-id>"}'
 ```
 
-### Delete Message
+Read logs:
 
 ```bash
-curl -X DELETE -H "Authorization: Bearer your-secret-token" \
-  http://localhost:8080/api/messages/{id}
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/api/jobs/log \
+  -H "Content-Type: application/json" \
+  -d '{"job_id":"<job-id>"}'
 ```
 
-### Upload File
+## MCP
+
+Minimal JSON-RPC methods:
+
+- `initialize`
+- `ping`
+- `tools/list`
+- `tools/call`
+
+Example:
 
 ```bash
-curl -X POST \
-  -H "Authorization: Bearer your-secret-token" \
-  -F "file=@myfile.pdf" \
-  "http://localhost:8080/api/files?channel=files"
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
 ```
 
-### Download File
+Tool call:
 
 ```bash
-curl -H "Authorization: Bearer your-secret-token" \
-  http://localhost:8080/api/files/{id} -o downloaded.file
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}'
 ```
 
-## Web UI
+## Agent
 
-The web UI is server-rendered HTML with shared frontend assets in `frontend/`, mobile-friendly, no JavaScript framework required. Common browser helpers and styles live in TypeScript/CSS (`frontend/src/app.ts`, `frontend/src/styles.css`) and are served from built assets under `/assets/app.js` and `/assets/styles.css`.
-
-When changing `frontend/src/*`, regenerate and verify committed assets before building Rust:
+The agent is still a polling execution client:
 
 ```bash
-npm --prefix frontend run build
-npm --prefix frontend run check:dist
+cargo run --bin private-drop-agent -- --config /etc/private-drop-agent/agent.toml
 ```
 
-`check:dist` fails when `frontend/dist/*` has drifted from `frontend/src/*`, which protects the Rust `include_str!` assets from going stale.
+Example config:
 
-- `GET /` - Home page with channel list and recent messages
-- `GET /c/{channel}` - Channel messages (e.g., `/c/inbox`)
-- `GET /m/{id}` - Message detail
-- `GET /send` - Send text / upload file form
+```toml
+server_url = "https://your-server.example"
+token = "change-me"
+client_id = "workstation-1"
+display_name = "Workstation"
+owner = "you"
+poll_interval_ms = 1000
 
-Web UI auth: pass `?token=your-secret-token` in the URL, or use the login page which stores the token in localStorage.
+[capabilities]
+shell = true
+file_read = true
+file_write = true
+git = true
+jobs = true
+async_jobs = true
+async_shell_jobs = true
 
-## GPT Actions Setup
-
-1. Deploy Private Drop with HTTPS (see Deployment section below)
-2. In ChatGPT, create a GPT with Actions
-3. Import your OpenAPI spec URL: `https://your-server/openapi.json`
-4. Set authentication to "API Key" / "Bearer" with your `DROP_TOKEN`
-5. Key operations for GPT:
-   - `createMessage` - Send text to any channel
-   - `listMessages` - Read messages from channels
-   - `getMessage` - Get specific message details
-   - `deleteMessage` - Delete a message
-
-## Project workflows
-
-For Codex project doctor, hook, and workflow usage, see:
-
-- `docs/WORKFLOWS.md`
-- `docs/CODEX_USAGE.md`
-- `examples/projects.toml.example`
-- `scripts/pdctl.py`
-
-## Channels
-
-Default channels for organizing messages:
-
-- **inbox** - General inbox
-- **xline** - Xline related
-- **thesis** - Thesis work
-- **packfix** - Packfix tasks
-- **omo** - OMO items
-- **files** - File uploads
-
-## Deployment
-
-### Systemd Service
-
-Example service file: `deploy/private-drop.service.example`
-
-```bash
-# Create user
-sudo useradd -r -s /usr/sbin/nologin private-drop
-
-# Copy binary
-sudo mkdir -p /opt/private-drop
-sudo cp target/release/private-drop /opt/private-drop/
-sudo chown -R private-drop:private-drop /opt/private-drop
-
-# Install service
-sudo cp deploy/private-drop.service.example /etc/systemd/system/private-drop.service
-# Edit DROP_TOKEN in the service file
-sudo systemctl daemon-reload
-sudo systemctl enable --now private-drop
+[policy]
+allow_raw_shell = true
+allow_cwd_anywhere = false
+allowed_roots = ["/root/git"]
+max_timeout_secs = 3600
+max_output_bytes = 262144
 ```
 
-### Nginx Reverse Proxy
-
-Example config: `deploy/nginx.example.conf`
+## Verification
 
 ```bash
-# Install nginx and certbot
-sudo apt install nginx certbot python3-certbot-nginx
-
-# Copy config
-sudo cp deploy/nginx.example.conf /etc/nginx/sites-available/private-drop
-# Edit server_name
-sudo ln -s /etc/nginx/sites-available/private-drop /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-
-# Get SSL cert
-sudo certbot --nginx -d drop.example.com
-```
-
-## E2E Testing
-
-Run the automated end-to-end smoke test:
-
-```bash
-bash scripts/e2e_test.sh
-```
-
-This script:
-- Builds the project (`cargo fmt`, `cargo test`, `cargo build --release`)
-- Starts the server on a random free port with a temporary data directory
-- Runs 47+ test cases covering:
-  - Health check endpoint
-  - Token authentication (401 on missing/wrong token)
-  - Create, list, get, delete text messages
-  - 10K and 100K long text messages
-  - File upload and download with content verification
-  - Content-Disposition header on file download
-  - OpenAPI spec validation
-  - Channel listing
-  - Web UI pages: home, channel, message detail, send
-- Cleans up the server and temporary data on exit
-
-## Unit Tests
-
-```bash
+cargo check
 cargo test
 ```
-
-37 unit tests covering UUID generation, config defaults, token validation, filename sanitization, message serialization, SSH path validation, edit path validation, replace_nth, replace_line_range, shell escape safety, and remote edit script execution.
-
-## Codex-like GPT Actions API
-
-Private Drop includes a set of coarse-grained APIs designed for ChatGPT GPT Actions to operate on whitelisted projects. These APIs enable GPT to act as a "Codex brain" — observing projects, generating patches, running checks, and writing reports.
-
-### Why 4 Coarse Interfaces?
-
-Instead of exposing fine-grained dangerous APIs (readFile, writeFile, runShell, deleteFile), we expose 4 coarse operations:
-
-1. **getProjectContext** — Read-only observation (overview, tree, search, read_file, git_status, git_diff)
-2. **applyProjectPatch** — Apply a unified diff to a whitelisted project
-3. **listProjects** — Discover runtime projects, instance identity, executors, checks, configured commands, and capabilities
-4. **runProjectCheck** — Run pre-configured check commands (fmt, test, build, e2e, full)
-5. **writeProjectReport** — Write operation reports and post messages to channels
-
-This design prevents arbitrary shell access, arbitrary file I/O, and git push while still giving GPT enough capability to complete code review and fix workflows.
-
-### Configuration
-
-Create `projects.toml` (or set `PROJECTS_CONFIG` env var to its path):
-
-```toml
-[projects.private-drop]
-path = "/root/git/private-drop"
-# allow_patch defaults to true for listed projects.
-# allowed_checks is inferred from configured checks when omitted.
-
-[projects.private-drop.checks]
-fmt = "cargo fmt --check"
-test = "cargo test"
-build = "cargo build --release"
-e2e = "bash scripts/e2e_test.sh"
-full = "cargo fmt --check && cargo test && cargo build --release && bash scripts/e2e_test.sh"
-```
-
-If `projects.toml` is missing, the Codex API returns clear errors but the original message/file APIs remain fully functional.
-
-### SSH Executor (Remote Projects)
-
-When private-drop is deployed on a gateway machine (e.g., SG4 as a public HTTPS entry point) but the actual project lives on a different machine (reachable via Tailscale), use the SSH executor:
-
-```toml
-[projects.private-drop]
-executor = "ssh"
-host = "msi"
-user = "root"
-path = "/root/git/private-drop"
-# allow_patch defaults to true. Add allowed_checks only when narrowing checks.
-
-[projects.private-drop.checks]
-fmt = "cargo fmt --check"
-test = "cargo test"
-build = "cargo build --release"
-e2e = "bash scripts/e2e_test.sh"
-```
-
-**Architecture:**
-- SG4 runs private-drop with HTTPS (public entry point)
-- SSH commands go to the remote machine (e.g., `msi` via Tailscale)
-- All Codex API operations (context, apply_patch, check) execute on the remote machine
-- Reports are written locally on SG4
-
-**How it works:**
-- `executor = "ssh"`: Commands run via `ssh <host> -- <remote command>`
-- `host`: SSH hostname (from `projects.toml`, not user input)
-- `user`: SSH user (optional, defaults to current user)
-- `path`: Project root on the remote machine
-- All path safety checks (no `..`, no absolute paths, no sensitive files) are enforced before SSH commands are constructed
-- Patches are piped via SSH stdin to a temp file on the remote machine
-- **Edit operations** (`applyProjectEdit`) are executed via an embedded Python3 script on the remote host. Edit JSON is piped via stdin; the remote python3 script validates paths and performs edits. Requires `python3` on the remote host.
-
-**Before using SSH executor, verify connectivity:**
-```bash
-ssh msi 'cd /root/git/private-drop && cargo test'
-```
-
-### API Examples
-
-```bash
-# Discover runtime projects and capabilities
-curl -X POST http://localhost:8080/api/codex/projects \
-  -H "Authorization: Bearer your-secret-token"
-
-# Get project overview
-curl -X POST http://localhost:8080/api/codex/context \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","mode":"overview"}'
-
-# Search for code
-curl -X POST http://localhost:8080/api/codex/context \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","mode":"search","query":"fn main"}'
-
-# Apply a patch
-curl -X POST http://localhost:8080/api/codex/apply_patch \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","patch":"diff --git a/...","reason":"fix bug"}'
-
-# Run checks
-curl -X POST http://localhost:8080/api/codex/check \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","suite":"test"}'
-
-# Write a report
-curl -X POST http://localhost:8080/api/codex/report \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","status":"completed","title":"Fix X","summary":"Changed Y, tests pass","channel":"omo"}'
-```
-
-### GPT Actions Setup
-
-1. Import `https://your-server/openapi.json` into your GPT Actions
-2. Set authentication to API Key / Bearer with your `DROP_TOKEN`
-3. GPT can use the `codex` operationIds: `getProjectContext`, `applyProjectEdit`, `applyProjectPatch`, `runProjectCheck`, `writeProjectReport`
-
-### Codex Edit API (applyProjectEdit)
-
-`applyProjectEdit` is the recommended way for GPT to make small, targeted file changes. Unlike `applyProjectPatch` (which requires a full unified diff), `applyProjectEdit` accepts structured JSON edit operations that are easier for GPT to generate correctly.
-
-**Why use applyProjectEdit over applyProjectPatch?**
-
-| Feature | applyProjectEdit | applyProjectPatch |
-|---------|------------------|-------------------|
-| Input format | Structured JSON operations | Unified diff text |
-| Error-prone? | Low — field names are explicit | High — diff format is fragile |
-| Supports dry_run | Yes | No |
-| Best for | Small targeted changes (1-10 files) | Large refactors, bulk changes |
-| GPT Actions friendly | Yes — explicit schema with oneOf | Requires diff generation skill |
-
-**Edit operation types:**
-
-#### Quick examples
-
-Preview a change without writing files by setting `dry_run=true`:
-
-```json
-{
-  "project": "private-drop-v4",
-  "dry_run": true,
-  "edits": [{
-    "type": "replace_text",
-    "path": "README.md",
-    "old_text": "old text",
-    "new_text": "new text"
-  }]
-}
-```
-
-Replace a unique text snippet in an existing file:
-
-```json
-{
-  "project": "private-drop-v4",
-  "edits": [{
-    "type": "replace_text",
-    "path": "src/main.rs",
-    "old_text": "Router::new()",
-    "new_text": "Router::new().hoop(logging)"
-  }]
-}
-```
-
-Append text to an existing file:
-
-```json
-{
-  "project": "private-drop-v4",
-  "edits": [{
-    "type": "append_file",
-    "path": "README.md",
-    "text": "\n## Notes\n\nNew note added by GPT.\n"
-  }]
-}
-```
-
-#### replace_text — Find and replace text in an existing file
-
-```bash
-curl -X POST http://localhost:8080/api/codex/edit \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "my-project",
-    "reason": "fix typo",
-    "edits": [{
-      "type": "replace_text",
-      "path": "src/main.rs",
-      "old_text": "println!(\"hello\");",
-      "new_text": "println!(\"Hello, world!\");"
-    }]
-  }'
-```
-
-If `old_text` appears multiple times, specify `occurrence` (1-based):
-
-```json
-{
-  "type": "replace_text",
-  "path": "config.toml",
-  "old_text": "localhost",
-  "new_text": "0.0.0.0",
-  "occurrence": 2
-}
-```
-
-#### replace_range — Replace a range of lines
-
-Replace lines 5-10 (inclusive, 1-based) with new content:
-
-```bash
-curl -X POST http://localhost:8080/api/codex/edit \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "my-project",
-    "edits": [{
-      "type": "replace_range",
-      "path": "src/lib.rs",
-      "start_line": 5,
-      "end_line": 10,
-      "new_text": "fn new_function() -> i32 {\n    42\n}\n"
-    }]
-  }'
-```
-
-#### append_file — Append text to an existing file
-
-```bash
-curl -X POST http://localhost:8080/api/codex/edit \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "my-project",
-    "edits": [{
-      "type": "append_file",
-      "path": "TODO.md",
-      "text": "\n- [ ] New task added by GPT\n"
-    }]
-  }'
-```
-
-#### create_file — Create a new file (fails if it already exists)
-
-```bash
-curl -X POST http://localhost:8080/api/codex/edit \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "my-project",
-    "edits": [{
-      "type": "create_file",
-      "path": "src/utils.rs",
-      "content": "pub fn add(a: i32, b: i32) -> i32 { a + b }\n"
-    }]
-  }'
-```
-
-#### write_file — Write full file content (use sparingly)
-
-```bash
-curl -X POST http://localhost:8080/api/codex/edit \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "my-project",
-    "edits": [{
-      "type": "write_file",
-      "path": "config.json",
-      "content": "{\"key\": \"value\"}\n",
-      "allow_overwrite": true
-    }]
-  }'
-```
-
-> **Note:** `write_file` with `allow_overwrite=true` replaces the entire file. Prefer `replace_text` or `replace_range` for partial edits.
-
-#### dry_run — Preview changes without writing
-
-```bash
-curl -X POST http://localhost:8080/api/codex/edit \
-  -H "Authorization: Bearer your-secret-token" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "project": "my-project",
-    "dry_run": true,
-    "edits": [{
-      "type": "replace_text",
-      "path": "src/main.rs",
-      "old_text": "old_code()",
-      "new_text": "new_code()"
-    }]
-  }'
-```
-
-Returns the same response with a `diff` field showing what would change, but does not modify any files.
-
-#### Security limits
-
-- **Path validation**: No absolute paths, no `..` traversal, no `.git/`, `.env`, `*.pem`, `*.key`, `id_rsa`, `target/`, `node_modules/`
-- **File size**: Max 2MB per file (read), max 200KB per edit text
-- **Project whitelist**: Only projects in `projects.toml` with `allow_patch = true`
-- **UTF-8 only**: Binary files are rejected
-
-#### GPT Actions recommendation
-
-**Prefer `applyProjectEdit` for most code changes.** Use `applyProjectPatch` only when:
-- You need to change many files in a coordinated way
-- The change is a large refactor that's easier expressed as a diff
-- You're applying an externally generated patch
-
-For simple edits (fix a bug, add a function, update a config value), `applyProjectEdit` with `replace_text` or `replace_range` is more reliable and less error-prone.
-
-### Security Boundaries
-
-- **No arbitrary shell**: Only pre-configured check commands from `projects.toml`
-- **No git push**: Only `git apply` for patches, no commit or push
-- **No arbitrary path access**: All paths are canonicalized and verified to be within project root
-- **Sensitive files blocked**: `.git/`, `.env`, `*.pem`, `*.key`, `id_rsa`, `target/`, `node_modules/` cannot be modified
-- **Output truncated**: All outputs capped at 50K characters to avoid overwhelming GPT Actions
-- **Project whitelist only**: Only projects listed in `projects.toml` are accessible
-
-## Security Notes
-
-- Always set `DROP_TOKEN` in production
-- Use HTTPS in production (via nginx reverse proxy)
-- Token is required for all API and file download operations
-- File paths are randomized (UUID) to prevent guessing
-- Path traversal is prevented (canonicalized paths checked against uploads dir)
-- Filename in Content-Disposition is sanitized (no path separators)
-- Request body size limited to 2MB for text, 100MB for files
-
-## License
-
-MIT
-
-
-## SSH executor performance tuning
-
-Projects using `executor = "ssh"` can optionally enable SSH connection reuse in `projects.toml`.
-This reduces the repeated SSH handshake cost for Codex API calls such as `overview`, `read_file`,
-`search`, `check`, and `edit`.
-
-Example global SSH configuration:
-
-```toml
-[ssh]
-batch_mode = true
-connect_timeout_secs = 10
-control_master = true
-control_persist = "10m"
-control_path = "/tmp/private-drop-ssh-%C"
-server_alive_interval = 30
-server_alive_count_max = 3
-```
-
-When `control_master = true`, private-drop adds SSH options equivalent to:
-
-```text
--o BatchMode=yes
--o ConnectTimeout=10
--o ControlMaster=auto
--o ControlPersist=10m
--o ControlPath=/tmp/private-drop-ssh-%C
--o ServerAliveInterval=30
--o ServerAliveCountMax=3
-```
-
-`BatchMode=yes` is also added when `batch_mode = true`, even if ControlMaster is disabled.
-All SSH options are passed as separate `std::process::Command` arguments; user request text is
-not interpolated into SSH options.
-
-If reused SSH connections behave unexpectedly, remove stale sockets with:
-
-```sh
-rm -f /tmp/private-drop-ssh-*
-```
-
-Alternatively set `control_master = false` or remove the `[ssh]` section to return to the
-previous one-SSH-process-per-call behavior.
-
-For SSH projects, `getProjectContext(mode="overview")` is batched into one SSH call that gathers
-the branch, `git status --short`, allowed checks, and important-file presence in a single remote
-command.
-
-
-## Codex API performance tracing
-
-Codex operations emit lightweight structured tracing logs under the `codex.metrics` target. These logs are intended to help compare SSH executor latency before and after connection reuse or batching changes without changing the public JSON response schema.
-
-Examples of logged fields include:
-
-- `operation`: `getProjectContext`, `runProjectCheck`, or `applyProjectEdit`
-- `project`
-- `mode` or `suite` where applicable
-- `executor`: `local` or `ssh`
-- `success`
-- `duration_ms`
-- `ssh_calls`
-- `control_master`
-
-For SSH projects, `getProjectContext(mode="overview")` should report `ssh_calls=1` because overview is batched into a single remote command. `read_file`, `search`, `git_status`, `git_diff`, `check`, and `edit` also log their per-request duration so you can identify remaining slow operations.
-
-
-## Codex context batch API
-
-`POST /api/codex/context_batch` runs multiple read-only context observations for one project in a single authenticated Codex API call.
-
-Example:
-
-```json
-{
-  "project": "private-drop-v4",
-  "requests": [
-    {"mode": "overview"},
-    {"mode": "git_status"},
-    {"mode": "read_file", "path": "README.md", "start_line": 1, "limit": 40}
-  ]
-}
-```
-
-The response contains `results`, one normal context response per request, plus `duration_ms`, `ssh_calls`, and GPT-facing hints such as `recommended_next_action` and `action_budget_hint`. Batches are designed to reduce GPT Action round trips; SSH projects use a single aggregated remote command for supported modes and reuse ControlMaster connections when configured.
-
-For `read_file` batch items, local and SSH responses include `result_metadata` entries with an opaque `fingerprint`. On repeated reads, pass that value back as `if_fingerprint`; if the file is unchanged, the server returns `unchanged=true`, increments `cache_hits`, and omits file content for that item. This keeps GPT from rereading the same file content across planning/check/edit loops.
-
-Use `mode="agent_context"` at the start of a new GPT/Codex chat to load project alignment rules. It reads these fixed files when present and marks missing ones without failing:
-
-- `AGENTS.md`
-- `.codex/memory/project.md`
-- `.codex/memory/pitfalls.md`
-- `.codex/memory/workflows.md`
-- `.codex/memory/decisions.md`
-- `.codex/memory/user_preferences.md`
-
-A good startup batch for project work is `agent_context + overview + git_status`, then targeted `read_file` calls for the files relevant to the user's goal. When `search` finds a symbol or phrase but the surrounding code matters, use `grep_context` with `query` and optional `path`; it returns matching lines with three nearby context lines, which avoids a second manual line-range lookup.
-
-For large Markdown projects such as thesis chapters, prefer these lighter modes before reading large line ranges:
-
-- `markdown_outline`: returns Markdown headings with line numbers for one file.
-- `read_section`: returns the Markdown section whose heading contains `query`, stopping before the next same-or-higher-level heading.
-
-Example:
-
-```json
-{
-  "project": "paper",
-  "requests": [
-    {"mode": "agent_context"},
-    {"mode": "markdown_outline", "path": "ch3.md", "limit": 80},
-    {"mode": "read_section", "path": "ch3.md", "query": "3.2", "limit": 160}
-  ],
-  "max_total_chars": 40000
-}
-```
-
-`max_total_chars` is a best-effort total character budget for context batch responses. The default is 80,000 characters, the recommended upper range is 120,000, and the server hard limit is 180,000. Later results are truncated if needed, which helps avoid large-response gateway failures while still reducing follow-up requests.
-
-Large repositories should avoid unscoped `tree` calls. Use `tree` with `path`, `limit`, and `max_depth` to inspect a specific directory, for example `{ "mode": "tree", "path": "paper_rebuild_strict", "limit": 80, "max_depth": 2 }`. Context `git_status` uses `--untracked-files=no` so large data directories do not block status checks. `read_file` truncates very long individual lines, which makes CSV/JSONL audit files safer to inspect.
-
-
-## Codex controlled Git API
-
-`POST /api/codex/git` exposes a small fixed set of Git operations without opening an arbitrary shell. It is intended for safe Codex maintenance tasks such as checking status or amending the current commit after tests pass.
-
-Supported operations:
-
-- `status`: runs `git status --short`
-- `diff`: runs `git diff`, optionally restricted to `paths`
-- `log`: runs `git log --oneline -n 20`
-- `add`: runs `git add -- <paths>`; requires project patch permission
-- `commit_amend_no_edit`: runs `git add -- <paths> && git commit --amend --no-edit --no-verify`; requires project patch permission
-
-Example:
-
-```json
-{
-  "project": "private-drop-v4",
-  "operation": "commit_amend_no_edit",
-  "paths": ["src/codex.rs"]
-}
-```
-
-Paths are relative to the project root and use the same sensitive path checks as the edit API. `.env`, `.git`, `target`, `node_modules`, private key paths, absolute paths, and `..` traversal are rejected. The API does not accept arbitrary Git subcommands or shell snippets.
-
-
-## Codex whitelisted command API
-
-`POST /api/codex/command` runs a project-level command configured in `projects.toml` under `[projects.<name>.commands]`.
-The request only supplies a command id; it cannot submit arbitrary shell text.
-
-Example configuration:
-
-```toml
-[projects.private-drop-v4.commands]
-clippy = "cargo clippy --all-targets -- -D warnings"
-doc = "cargo doc --no-deps"
-```
-
-Example request:
-
-```json
-{
-  "project": "private-drop-v4",
-  "command": "clippy"
-}
-```
-
-The response includes `success`, `exit_code`, `duration_ms`, `stdout_tail`, `stderr_tail`, and `truncated`. SSH projects use the existing SSH executor path and therefore benefit from configured ControlMaster reuse.
-
-Command ids may only contain ASCII letters, digits, `_`, `-`, and `.` and must be configured in `projects.toml`. This endpoint is intended for project-specific checks such as `clippy`, `doc`, `pytest`, `lint`, or smoke tests while avoiding arbitrary command execution from API requests.
-
-
-## Codex chat-approved command requests
-
-`POST /api/codex/command_request` creates an audited pending command request for a command id configured in `[projects.<name>.commands]`. It does not execute the command.
-
-Project opt-in is required:
-
-```toml
-[projects.private-drop-v4]
-allow_command_requests = true
-
-[projects.private-drop-v4.commands]
-smoke = "cargo test smoke"
-```
-
-Create a request:
-
-```json
-{
-  "project": "private-drop-v4",
-  "command": "smoke",
-  "reason": "Need to verify smoke tests before deploy"
-}
-```
-
-The response contains a `request_id` and an audit `record` with `status = "pending"`. After approval in chat, execute the exact configured command id with:
-
-```json
-{
-  "request_id": "<id from command_request>"
-}
-```
-
-sent to `POST /api/codex/command_approve`.
-
-The server records status, timestamps, exit code, stdout/stderr tails, and error in SQLite. A request can only be approved while pending, so repeated approval attempts do not re-run the command. Approval atomically claims a pending request by moving it to `running` before execution, preventing concurrent double execution. Approval executes the stored `command_text` snapshot captured when the request was created, not a later value from a changed `projects.toml`. `reason` is limited to 2000 characters. Pending requests expire after 2 hours.
-
-Additional approval helpers:
-
-- `POST /api/codex/command_requests` lists audit records and supports optional `project`, `status`, and `limit` filters.
-- `POST /api/codex/command_request_batch` creates 1-20 pending requests for one project in a single call, which is useful when GPT wants to ask for approval for several checks at once.
-- `POST /api/codex/command_reject` rejects a pending request and records the rejection reason.
-
-This is a chat-friendly approval flow with server-side audit records, not an arbitrary shell endpoint.
-
-
-## Controlled Git commit operation
-
-`POST /api/codex/git` supports a fixed `commit` operation for creating a normal commit without exposing arbitrary shell.
-
-Example:
-
-```json
-{
-  "project": "private-drop-v4",
-  "operation": "commit",
-  "paths": ["README.md", "src/main.rs"],
-  "message": "Update deployment workflow"
-}
-```
-
-The generated command is fixed: it stages only the provided validated paths, checks that the staged diff is non-empty, and then runs `git commit -m <message> --no-verify`. The commit message is limited to 200 characters and cannot contain newlines or NUL bytes.
-
-## Raw command requests with chat approval
-
-`POST /api/codex/command_request_raw` creates a pending audited request for a single-line command text. It is intended for development situations where a one-off command is useful, but it still requires explicit chat approval before execution.
-
-Project opt-in is required:
-
-```toml
-[projects.private-drop-v4]
-allow_raw_command_requests = true
-```
-
-Example request:
-
-```json
-{
-  "project": "private-drop-v4",
-  "command_text": "git commit -m 'Complete workflow'",
-  "reason": "Create a one-off commit after review"
-}
-```
-
-The command is stored as the audited `command_text` snapshot and is not executed until `approveCommandRequest` is called for the returned `request_id`. Raw commands are limited to 2000 characters, must be a single line, and are rejected if they contain blocked high-risk tokens such as `sudo`, `apt`, `systemctl`, `docker`, `rm -rf`, `git push`, `git fetch`, `git checkout`, `git restore`, `git clean`, `curl`, `wget`, `scp`, or `rsync`.
-
-
-## Aggregated command request operation
-
-`POST /api/codex/command_request_op` is a compact, enum-style wrapper around the command request workflow. It is intended for GPT Actions where the action count is limited: one endpoint can list, create, approve, reject, and batch-operate command requests.
-
-Supported `op` values:
-
-- `list`: list audit records using optional `project`, `status`, and `limit`
-- `create`: create one configured-command request using `project`, `command`, and optional `reason`
-- `create_raw`: create one raw command request using `project`, either `command_text` or `script_path`, optional `script_args`, and optional `reason`
-- `create_batch`: create 1-20 configured-command requests using `project` and `requests`
-- `approve`: approve one request using `request_id`
-- `approve_batch`: approve 1-20 requests using `request_ids`
-- `reject`: reject one request using `request_id` and optional `reason`
-- `reject_batch`: reject 1-20 requests using `request_ids` and optional `reason`
-- `create_goal`: create a pending development goal with `project`, `title`, optional `summary`, and optional `ttl_secs`
-- `create_goal_and_approve`: create an active development goal in one audited operation when the user has already approved the bounded task in chat
-- `approve_goal`: activate a pending goal after explicit user approval
-- `reject_goal`: reject a pending goal
-- `list_goals`: list goals with optional `project`, `status`, and `limit`
-- `close_goal`: close an active goal with `goal_id`
-- `create_raw_and_approve`: under an active `goal_id`, create and immediately approve one raw command request using either `command_text` or `script_path`
-- `create_and_approve`: under an active `goal_id`, create and immediately approve one configured-command request
-
-Examples:
-
-```json
-{"op":"create_raw","project":"private-drop-v4","command_text":"git status --short","reason":"inspect status"}
-```
-
-```json
-{"op":"approve_batch","request_ids":["id-1","id-2"]}
-```
-
-```json
-{"op":"create_goal","project":"private-drop-v4","title":"Implement compact API cleanup","ttl_secs":7200}
-```
-
-```json
-{"op":"approve_goal","goal_id":"<goal-id>"}
-```
-
-```json
-{"op":"create_raw_and_approve","project":"private-drop-v4","goal_id":"<goal-id>","command_text":"git status --short","reason":"inspect current state"}
-```
-
-For complex raw commands with multiline logic, many quotes, or pipes, write a project-local script and use `script_path` instead of packing the shell into JSON:
-
-```json
-{"op":"create_raw_and_approve","project":"private-drop-v4","goal_id":"<goal-id>","script_path":"scripts/codex_jobs/inspect.sh","script_args":["--tail","80"],"reason":"run scripted inspection"}
-```
-
-Recommended flow: GPT calls `create_goal` to propose a bounded task, the goal starts as `pending`, the user explicitly approves the `goal_id` in chat, GPT calls `approve_goal` to activate it, then GPT may use `create_and_approve` or `create_raw_and_approve` within that active goal. When the user has already approved a bounded task in chat, GPT may use `create_goal_and_approve` to create the active goal in one audited operation. `close_goal` ends the permission window.
-
-`create_goal` does not grant execution rights. `create_goal_and_approve` should only be used after explicit user approval for the bounded task. Only an `active`, unexpired goal grants bounded auto-approve permission. Goal-scoped `*_and_approve` operations are intended to reduce repeated manual approval during a bounded development task, and still create normal `command_requests` audit records before execution.
-
-This endpoint does not bypass existing safety checks. Raw commands still require `allow_raw_command_requests = true`, configured command requests still require `allow_command_requests = true`, approval remains atomic, and all executions use the stored `command_text` snapshot with SQLite audit records. `script_path` is converted into an audited single-line `bash <script_path> <script_args...>` command after the same project-relative path and sensitive-path checks used by `runJobOp`.
-
-
-## Trusted async shell jobs
-
-`POST /api/codex/job` (`runJobOp`) provides trusted, active-goal-scoped async shell jobs for experiments, training scripts, and longer reproduction tasks.
-
-Supported ops:
-
-- `create`: start one shell command in the background and return `job_id` immediately. Provide either `command` or `script_path`. Optional `client_request_id` makes retries idempotent.
-- `create_batch`: start up to 20 shell commands under the same active goal. The server validates all commands first so ordinary input validation errors do not partially start a batch. Optional `client_request_id` groups retries and created jobs.
-- `check`: start a configured project check suite, such as `fmt`, `test`, `build`, `e2e`, or `full`, as an async job under an active goal. This is preferred for long checks that may exceed Action/nginx timeouts.
-- `list`: list jobs for a project, optionally filtered by `goal_id`, `status`, or `client_request_id`.
-- `status`: refresh and return one job status by `job_id`, or recover one by `client_request_id`.
-- `log`: return stdout/stderr tails by `job_id`, or recover one job by `client_request_id`.
-- `stop`: best-effort stop for the recorded job by `job_id` or `client_request_id`. On Linux it first tries the job process group, then falls back to the recorded PID, and marks the job stopped.
-- `summarize`: return a Markdown summary of jobs, commands, status, exit code, duration, and log tails; it can be filtered by `client_request_id`.
-
-Permission model:
-
-- `create` and `create_batch` require `project` and `goal_id`.
-- The goal must belong to the same project.
-- The goal must be `active` and unexpired.
-- Within that active goal scope, job commands are trusted shell commands; they are not matched against configured command IDs and are not individually approved. `check` is narrower: it can only run suites configured in `projects.toml` and allowed by `allowed_checks`.
-- Every job is audited on disk under `.codex/jobs/<job_id>/` with `metadata.json`, `command.sh`, `stdout.log`, `stderr.log`, `pid`, `exit_code`, `status`, and `finished_at` when the job ends.
-- Job responses expose structured `JobInfo` fields, including `kind` (`command`, `script`, or `check`), `suite` for async checks, and `script_path` for script jobs.
-- When `client_request_id` is supplied, retrying the same `create` within the same goal returns the existing job instead of starting a duplicate. After an HTTP 504 or client disconnect, call `status` or `list` with the same `client_request_id` to recover the job id.
-- `script_path` must be project-relative, cannot use traversal or sensitive paths, and is executed as `bash <script_path> <script_args...>` from the project root.
-- Add `.codex/jobs/` to the project `.gitignore`; job audit logs are runtime artifacts and should not be committed.
-
-Example:
-
-```json
-{
-  "project": "paper",
-  "op": "create",
-  "goal_id": "...",
-  "command": "python scripts/run_exp.py --seed 0",
-  "client_request_id": "seed-0-20260101T000000Z",
-  "reason": "run seed 0",
-  "max_runtime_secs": 7200
-}
-```
-
-For long commands with quoting, pipes, or many arguments, prefer `script_path`:
-
-```json
-{
-  "project": "paper",
-  "op": "create",
-  "goal_id": "...",
-  "script_path": "scripts/codex_jobs/run_seed_extension_overnight_45_46.sh",
-  "script_args": ["--seed", "45"],
-  "reason": "run scripted seed extension",
-  "max_runtime_secs": 7200
-}
-```
-
-For long checks, prefer async `check` over synchronous `runProjectCheck`:
-
-```json
-{
-  "project": "paper",
-  "op": "check",
-  "goal_id": "...",
-  "suite": "e2e",
-  "client_request_id": "e2e-20260101T000000Z",
-  "max_runtime_secs": 1800
-}
-```
-
-This endpoint supports both local and SSH executors. SSH jobs are created in the remote project directory and use the existing SSH/ControlMaster configuration. Stop/timeout handling is best-effort and optimized for the current Linux deployment target.
-
-`listProjects` also returns `instance` identity fields (`service`, `api`, `schema`, `package_version`, `server_time`, `pid`, `hostname`, `data_dir`, `projects_config_path`, and optional `public_url`) so agents can distinguish sg4/v4/oe deployments and confirm which schema/service instance they are using.
-
-## OpenAPI schema variants
-
-Private Drop exposes five OpenAPI schema variants:
-
-- `/openapi.json`: the full API schema, including message, file, channel, web-adjacent, and Codex project APIs.
-- `/codex-openapi.json`: the full Codex-only schema. It keeps the detailed command request endpoints such as `createCommandRequest`, `createRawCommandRequest`, `listCommandRequests`, `createCommandRequestBatch`, `approveCommandRequest`, and `rejectCommandRequest`. This is useful for debugging or clients that prefer fine-grained operations.
-- `/codex-openapi-compact.json`: the recommended schema for GPT Actions. It exposes a smaller set of core Codex operations and uses `runCommandRequestOp` for command request create/list/approve/reject/batch workflows, reducing the total Action count.
-- `/codex-openapi-gpt.json`: the slimmer online-GPT schema. It omits direct command and desktop task actions, keeping the core project loop smaller and harder to misuse.
-- `/agent-runtime-openapi.json`: an agent project/file/async-job profile for GPT Actions. It includes single and batch async shell jobs, async project workflow jobs, job status/log/stop/list, project listing/creation/workflow, and `shellFileOp`.
-
-For GPT Builder, prefer importing:
-
-```text
-https://<your-domain>/codex-openapi-gpt.json
-```
-
-The compact and GPT schemas keep the same `servers[0].url` behavior as the other schemas: they use `DROP_PUBLIC_URL` when set, otherwise they fall back to `http://localhost:8080`.
-
-For long agent commands, use the async job APIs instead of blocking a GPT
-Action request on `runShell` or `runShellClientProjectWorkflow`. The server
-returns `job_id` immediately, then stores bounded stdout/stderr tails, status,
-and final structured result as the agent reports updates.
-
-Use `createShellClientShellJobBatch` when one GPT Action window needs to start
-several independent shell commands. It returns `job_ids` immediately; poll or
-stop each job independently.
-
-Agent async jobs use `job_id` as the isolation unit. They do not use sessions,
-cookies, GPT-window affinity, or one-window-one-process routing. A single agent
-client can run multiple background jobs; `private-drop-agent` defaults to
-`max_concurrent_jobs = 2` and queues the rest FIFO. Stop is best-effort, and
-concurrent jobs against the same project directory are not protected by a
-project lock. The agent does not call any LLM API.
-
-
-## GPT workflow and diagram assets
-
-This repository includes version-controlled visual documentation for the compact Codex/GPT workflow:
-
-- `docs/GPT_WORKFLOW.md`: recommended GPT development loop and goal-scoped command workflow.
-- `docs/diagrams/goal-workflow.svg`: browser-friendly static diagram.
-- `docs/diagrams/goal-workflow.mmd`: Mermaid source for Markdown renderers.
-- `docs/diagrams/goal-workflow.html`: standalone HTML diagram.
-- `docs/diagrams/goal-workflow.excalidraw.json`: editable Excalidraw scene.
-
-Use SVG for stable documentation, Mermaid for quick text edits, HTML for standalone sharing, and Excalidraw JSON for manual visual editing.
-
-Binary diagram or document artifacts can also be saved through `applyProjectEdit` without adding a new GPT Action. For generated images, the recommended base64 path is `create_binary_artifact` for new PNG/JPG/WebP/GIF/PDF files and `write_binary_artifact` for overwrites. These are semantic aliases of `create_binary_file` / `write_binary_file`, but they make the “generate image → base64 → save to project” workflow clearer:
-
-```json
-{
-  "project": "private-drop-v4",
-  "edits": [
-    {
-      "type": "create_binary_artifact",
-      "path": "docs/diagrams/example.png",
-      "base64_content": "..."
-    }
-  ]
-}
-```
-
-Base64 artifact writes keep the same project path safety checks as text edits, reject sensitive paths, default to no overwrite, and limit decoded content to 5MB. Use base64 when the image bytes are already available to the GPT workflow; use `source_file` only when the file exists on the Private Drop server, and use `source_url` only when the artifact is available at a public HTTP/HTTPS URL.
-
-### Save generated artifacts with `saveProjectArtifact`
-
-For generated images and other binary outputs, the higher-level Codex artifact endpoint is the recommended bridge. GPT Actions should prefer the unified `save_generated` mode and provide whichever source is available:
-
-```json
-{
-  "project": "private-drop-v4",
-  "op": "save_generated",
-  "path": "docs/diagrams/generated.png",
-  "base64_content": "...",
-  "mime_type": "image/png",
-  "alt_text": "Generated diagram",
-  "companion_markdown_path": "docs/diagrams/generated.md",
-  "allow_overwrite": true
-}
-```
-
-`save_generated` automatically picks the best source in this order:
-
-1. `file_id`: best when bytes were uploaded through `/api/files`; the server resolves the upload through the messages table to `DROP_DATA/uploads`.
-2. `base64_content`: best when GPT or a sandbox can access image bytes directly.
-3. `chatgpt_estuary_url`: compatibility fallback for copied ChatGPT content links that match the narrow allowlist.
-4. `source_url`: external HTTP/HTTPS URL with SSRF protection.
-5. `source_file`: low-level compatibility fallback for server-local temporary files.
-
-Legacy explicit modes remain supported:
-
-- `save_base64`: force base64 artifact save.
-- `save_upload`: force upload/local-file artifact save; prefers `file_id`, falls back to `source_file`.
-- `save_url`: force URL import.
-
-Recommended stable flow for ChatGPT/sandbox/client-generated bytes:
-
-```text
-client has bytes -> POST /api/files -> saveProjectArtifact(op=save_generated, file_id=...) -> project artifact path
-```
-
-`source_file` remains available as a low-level compatibility fallback for server-local temporary files, but `file_id` is preferred because callers do not need to know absolute server paths. The response includes `saved_path`, `relative_path`, optional `file_size`, `mime_type`, `selected_source`, and a reusable `markdown_snippet` such as `![Alt](./generated.png)`. When `companion_markdown_path` is provided, `saveProjectArtifact` also writes a markdown companion file that can be referenced by papers, READMEs, and reports.
-
-GPT callers should normally provide only one artifact source. If multiple sources are provided to `save_generated`, the server keeps the priority order above, does not fail, and returns a warning such as `Multiple artifact sources provided; using file_id by priority.` The warning names only the selected source and never echoes base64 content or credentials.
-
-For ChatGPT-generated images, the copied image content link can be saved with `save_url` when it has this exact shape:
-
-```text
-https://chatgpt.com/backend-api/estuary/content?id=file_...&sig=...
-```
-
-That allowlist is intentionally narrow: it requires HTTPS, host `chatgpt.com`, path `/backend-api/estuary/content`, an `id` beginning with `file_`, and a non-empty `sig` query parameter. Other URL imports still use the normal SSRF checks. ChatGPT estuary links are a compatibility fallback and are not guaranteed to be fetchable by the server.
-
-Set `allow_overwrite=true` to replace an existing artifact. Internally this endpoint reuses the same binary edit implementation and safety checks as `applyProjectEdit`, including project path validation, sensitive path blocking, no-overwrite defaults, URL SSRF protections, and a 5MB decoded/downloaded size limit.
-
-
-### Import generated or uploaded binary artifacts
-
-`applyProjectEdit` can also import binary artifacts without manually embedding base64 in the request.
-
-Use `create_binary_file_from_upload` when a generated image or uploaded file already exists on the Private Drop server in an allowed upload/temp location, or as a relative file inside the project:
-
-```json
-{
-  "project": "private-drop-v4",
-  "edits": [
-    {
-      "type": "create_binary_file_from_upload",
-      "path": "data/tmp_images/smart-anime-meme.png",
-      "source_file": "/mnt/data/smart-anime-meme.png"
-    }
-  ]
-}
-```
-
-Use `write_binary_file_from_upload` with `allow_overwrite=true` to replace an existing binary artifact.
-
-Use `create_binary_file_from_url` or `write_binary_file_from_url` to import from an external HTTP/HTTPS URL:
-
-```json
-{
-  "project": "private-drop-v4",
-  "edits": [
-    {
-      "type": "create_binary_file_from_url",
-      "path": "docs/diagrams/logo.png",
-      "source_url": "https://example.com/logo.png"
-    }
-  ]
-}
-```
-
-URL imports are intentionally constrained: only `http` and `https` are allowed, redirects are rejected, credentials in URLs are rejected, downloads time out after 10 seconds, and the decoded/downloaded content is limited to 5MB. Localhost/private/link-local addresses are rejected by default; set `DROP_ALLOW_PRIVATE_SOURCE_URLS=1` only for trusted intranet deployments that need internal artifact imports. Upload imports are limited to project-relative files or server-side upload/temp roots such as `/tmp`, `/var/tmp`, `/mnt/data`, and `DROP_DATA/uploads`; sensitive source paths are rejected.

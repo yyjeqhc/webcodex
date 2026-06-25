@@ -30,10 +30,8 @@ pub const AUDITED_ACTION_ROUTES: &[&str] = &[
     "/api/shell/jobs/shell_batch",
 ];
 
-/// Audit query/analysis surface. Not yet mounted as an HTTP route (planned for
-/// a later phase). Retained with test coverage; suppress dead_code until the
-/// query endpoint is wired up.
-#[allow(dead_code)]
+/// Aggregate audit statistics over a set of decoded action events. Returned by
+/// the read-only `POST /api/audit/stats` endpoint.
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionSessionStats {
     pub by_endpoint: BTreeMap<String, i64>,
@@ -51,7 +49,6 @@ pub struct ActionSessionStats {
     pub job_ids_distinct_count: usize,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionEventView {
     pub event_id: String,
@@ -121,11 +118,26 @@ pub fn sanitize_error_summary(value: Option<&str>) -> Option<String> {
 }
 
 pub fn sanitize_value(value: &Value) -> Value {
+    sanitize_value_inner(value, false)
+}
+
+/// Stricter read-time sanitization used by the audit query API. Unlike
+/// [`sanitize_value`], secret-like keys are dropped entirely (not kept with a
+/// `[redacted]` placeholder) so an audit response never echoes sensitive field
+/// names.
+pub fn sanitize_value_for_read(value: &Value) -> Value {
+    sanitize_value_inner(value, true)
+}
+
+fn sanitize_value_inner(value: &Value, drop_secrets: bool) -> Value {
     match value {
         Value::Object(map) => {
             let mut out = serde_json::Map::new();
             for (key, val) in map {
                 if secret_like_key(key) {
+                    if drop_secrets {
+                        continue;
+                    }
                     out.insert(key.clone(), Value::String("[redacted]".to_string()));
                     continue;
                 }
@@ -146,15 +158,20 @@ pub fn sanitize_value(value: &Value) -> Value {
                     if let Some(text) = val.as_str() {
                         out.insert(key.clone(), summarize_command_text(key, text));
                     } else {
-                        out.insert(key.clone(), sanitize_value(val));
+                        out.insert(key.clone(), sanitize_value_inner(val, drop_secrets));
                     }
                     continue;
                 }
-                out.insert(key.clone(), sanitize_value(val));
+                out.insert(key.clone(), sanitize_value_inner(val, drop_secrets));
             }
             Value::Object(out)
         }
-        Value::Array(items) => Value::Array(items.iter().map(sanitize_value).collect()),
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|v| sanitize_value_inner(v, drop_secrets))
+                .collect(),
+        ),
         Value::String(text) => Value::String(redact_text(text)),
         _ => value.clone(),
     }
@@ -356,7 +373,6 @@ fn count_job_ids(ids: &Value) -> usize {
     out.len()
 }
 
-#[allow(dead_code)]
 pub fn decode_event(record: ActionEventRecord) -> ActionEventView {
     let changed_files =
         serde_json::from_str::<Vec<String>>(&record.changed_files_json).unwrap_or_default();
@@ -384,7 +400,6 @@ pub fn decode_event(record: ActionEventRecord) -> ActionEventView {
     }
 }
 
-#[allow(dead_code)]
 pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
     let mut by_endpoint = BTreeMap::new();
     let mut by_project = BTreeMap::new();

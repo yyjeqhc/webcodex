@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 mod action_audit;
 mod action_sessions;
+mod audit_http;
 mod auth;
 mod codex;
 mod config;
@@ -173,6 +174,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("job").post(codex::codex_job))
             .push(Router::with_path("report").post(codex::codex_report)),
     );
+
+    // Read-only audit query API. Admin/debug surface only: NOT part of the
+    // GPT Actions OpenAPI schema. All endpoints are POST + Bearer auth.
+    router = router.push(
+        Router::with_path("api/audit")
+            .hoop(AuthMiddleware)
+            .push(Router::with_path("sessions").post(audit_http::audit_sessions))
+            .push(Router::with_path("session").post(audit_http::audit_session))
+            .push(Router::with_path("stats").post(audit_http::audit_stats)),
+    );
     let acceptor = TcpListener::new(addr.clone()).bind().await;
     tracing::info!("Server started successfully!");
     let port = addr.split(':').last().unwrap_or("8080");
@@ -181,6 +192,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("MCP endpoint: {}/mcp", base);
     tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);
+    tracing::info!("Audit API (read-only): {}/api/audit/sessions", base);
     Server::new(acceptor).serve(router).await;
     Ok(())
 }

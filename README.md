@@ -149,6 +149,24 @@ full import guide and recommended call flow, and
 4. `runCodexTask` — start a Codex task in a project.
 5. `getRuntimeJobStatus` / `getRuntimeJobLog` — poll the returned `job_id`.
 
+## Audit API (read-only)
+
+A small admin/debug surface for inspecting the action-session audit trail. It is
+**not** a GPT Action and is not included in `/openapi.json`. All endpoints are
+`POST` + Bearer auth and perform no write operations.
+
+- `POST /api/audit/sessions` — list recent sessions (default 50, max 200;
+  optional `status` filter).
+- `POST /api/audit/session` — fetch one session summary + decoded events
+  (`session_id` required; `events_limit` default 50, max 200).
+- `POST /api/audit/stats` — aggregate `ActionSessionStats`, optionally scoped to
+  a `session_id`.
+
+Event payloads are passed through a strict read-time sanitizer that drops
+secret-like keys entirely (token/api_key/password/etc.) and strips raw
+stdout/stderr/diff; no full prompts or secrets are ever returned. See
+[docs/AUDIT_API.md](docs/AUDIT_API.md) for full details.
+
 ## Codex CLI Jobs
 
 `run_codex` starts Codex CLI asynchronously and returns a `job_id`. It is the

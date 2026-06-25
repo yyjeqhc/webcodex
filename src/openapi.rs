@@ -63,6 +63,9 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/shell/agent/poll",
     "/api/shell/agent/result",
     "/api/shell/agent/job_update",
+    "/api/audit/sessions",
+    "/api/audit/session",
+    "/api/audit/stats",
     "/mcp",
     "/openapi.json",
 ];

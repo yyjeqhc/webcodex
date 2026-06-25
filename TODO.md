@@ -23,6 +23,10 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       `getProjectGitStatus`
 - [x] Documentation cleanup (Phase 8): deprecated legacy docs, aligned
       V2_SCOPE / TODO / README with the real API surface
+- [x] Read-only Audit API (Phase 10): `POST /api/audit/sessions`,
+      `/api/audit/session`, `/api/audit/stats` — admin/debug only, not a GPT
+      Action, with strict read-time secret sanitization. See
+      [docs/AUDIT_API.md](docs/AUDIT_API.md).
 
 ### Deprecated (not active features)
 
@@ -44,7 +48,5 @@ removed. They are intentionally not tracked as future work.
       jobs; currently in-memory)
 - [ ] Deployment hardening: reverse proxy / HTTPS guide, systemd notes
 - [ ] Rate limiting
-- [ ] Audit viewer or read-only action session query endpoint (current audit is
-      internal-only; no query route is mounted)
 - [ ] Docs cleanup ongoing (keep README + docs aligned with `src/main.rs` and
       `src/openapi.rs` as the runtime evolves)

@@ -13,7 +13,10 @@ surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
 4. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — the polling agent wire protocol
    (`polling-v1`): register / poll / result / job_update, capabilities, owner
    boundary, and known limitations.
-5. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — the historical
+5. [AUDIT_API.md](AUDIT_API.md) — the read-only admin/debug audit query API
+   (`/api/audit/sessions`, `/api/audit/session`, `/api/audit/stats`): endpoints,
+   limit bounds, and secret-sanitization guarantees. Not a GPT Action.
+6. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — the historical
    phase-by-phase development plan (Phases 1–7 complete; Phase 8 in progress).
 
 ## Scope and architecture
@@ -38,8 +41,9 @@ These describe removed endpoints and must not be used as integration guides:
   / `project_hook` routes and SSH executor.
 - [CODEX_USAGE.md](CODEX_USAGE.md) — removed `pdctl.py` workflow/doctor/hook
   commands.
-- [action_sessions.md](action_sessions.md) — removed action session dashboard /
-  query API.
+- [action_sessions.md](action_sessions.md) — removed action session dashboard;
+  documents the internal audit storage layer and links to the new read-only
+  Audit API.
 - [action_session_coverage.md](action_session_coverage.md) — audits removed
   routes.
 - [job_recovery_notes.md](job_recovery_notes.md) — removed `runJobOp` recovery.

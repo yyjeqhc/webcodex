@@ -11,7 +11,8 @@
 The action session storage code (`src/action_sessions.rs`,
 `src/action_audit.rs`) remains in the tree as an internal metadata-only audit
 trail for the legacy `/api/codex/*` routes that are still mounted. It is **not**
-part of the GPT Actions or MCP surface, and there is no query endpoint exposed.
+part of the GPT Actions or MCP surface. A read-only admin/debug query API is
+now mounted at `/api/audit/*` — see [AUDIT_API.md](AUDIT_API.md).
 
 What is still true and useful:
 
@@ -23,5 +24,5 @@ What is still true and useful:
 
 For supported runtime observability, use `runtime_status`
 (`POST /api/runtime/status`, operation id `getRuntimeStatus`). See
-[RUNTIME_STATUS.md](RUNTIME_STATUS.md). A read-only audit viewer / action
-session query endpoint is a possible future addition (see [TODO.md](../TODO.md)).
+[RUNTIME_STATUS.md](RUNTIME_STATUS.md). For read-only audit queries over the
+action-session trail, see [AUDIT_API.md](AUDIT_API.md).

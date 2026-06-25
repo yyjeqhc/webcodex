@@ -8,7 +8,6 @@ mod edit;
 mod git;
 mod jobs;
 mod patch;
-mod remote_edit;
 mod report;
 mod security;
 mod shell;
@@ -121,7 +120,6 @@ pub(super) fn agent_context_shell_fragment() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::remote_edit::REMOTE_EDIT_SCRIPT;
     use super::security::is_sensitive_path;
     use super::*;
     use std::collections::HashMap;
@@ -542,147 +540,6 @@ mod tests {
         // The escaped form should be: '\''  '; rm -rf /; echo '  '\''
         // which is safe because the dangerous content is inside single quotes
     }
-
-    // =========================================================================
-    // Remote python3 script local run test
-    // =========================================================================
-
-    #[test]
-    fn test_remote_edit_script_replace_text_local() {
-        // Run the embedded python3 script locally to verify it works
-        let tmp = tempfile::tempdir().unwrap_or_else(|_| {
-            // fallback if tempfile not available
-            let d = std::path::PathBuf::from("/tmp/private-drop-test-script");
-            let _ = std::fs::create_dir_all(&d);
-            // Return a wrapper
-            tempfile::TempDir::new_in(&d).unwrap()
-        });
-        let root = tmp.path();
-        std::fs::write(root.join("test.txt"), "hello world\n").unwrap();
-
-        let request = serde_json::json!({
-            "dry_run": false,
-            "edits": [{
-                "type": "replace_text",
-                "path": "test.txt",
-                "old_text": "world",
-                "new_text": "rust"
-            }]
-        });
-
-        let mut child = std::process::Command::new("python3")
-            .arg("-c")
-            .arg(REMOTE_EDIT_SCRIPT)
-            .arg(root.to_str().unwrap())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("Failed to spawn python3");
-
-        if let Some(ref mut stdin) = child.stdin {
-            use std::io::Write;
-            stdin.write_all(request.to_string().as_bytes()).unwrap();
-        }
-        let output = child.wait_with_output().unwrap();
-        assert!(
-            output.status.success(),
-            "Script failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(result["success"], true);
-        assert_eq!(result["changed_files"][0], "test.txt");
-        assert!(result["diff"].as_str().unwrap().contains("-hello world"));
-        assert!(result["diff"].as_str().unwrap().contains("+hello rust"));
-        // Verify the file was actually modified
-        let content = std::fs::read_to_string(root.join("test.txt")).unwrap();
-        assert_eq!(content, "hello rust\n");
-    }
-
-    #[test]
-    fn test_remote_edit_script_dry_run_local() {
-        use std::io::Write;
-        let tmp = tempfile::tempdir().unwrap_or_else(|_| {
-            let d = std::path::PathBuf::from("/tmp/private-drop-test-dry");
-            let _ = std::fs::create_dir_all(&d);
-            tempfile::TempDir::new_in(&d).unwrap()
-        });
-        let root = tmp.path();
-        std::fs::write(root.join("test.txt"), "original content\n").unwrap();
-
-        let request = serde_json::json!({
-            "dry_run": true,
-            "edits": [{
-                "type": "replace_text",
-                "path": "test.txt",
-                "old_text": "original",
-                "new_text": "changed"
-            }]
-        });
-
-        let mut child = std::process::Command::new("python3")
-            .arg("-c")
-            .arg(REMOTE_EDIT_SCRIPT)
-            .arg(root.to_str().unwrap())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("Failed to spawn python3");
-
-        if let Some(ref mut stdin) = child.stdin {
-            stdin.write_all(request.to_string().as_bytes()).unwrap();
-        }
-        let output = child.wait_with_output().unwrap();
-        assert!(output.status.success());
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(result["success"], true);
-        assert!(result["diff"].as_str().unwrap().contains("-original"));
-        assert!(result["diff"].as_str().unwrap().contains("+changed"));
-        // Verify the file was NOT modified (dry_run)
-        let content = std::fs::read_to_string(root.join("test.txt")).unwrap();
-        assert_eq!(content, "original content\n");
-    }
-
-    #[test]
-    fn test_remote_edit_script_rejects_env() {
-        use std::io::Write;
-        let tmp = tempfile::tempdir().unwrap_or_else(|_| {
-            let d = std::path::PathBuf::from("/tmp/private-drop-test-env");
-            let _ = std::fs::create_dir_all(&d);
-            tempfile::TempDir::new_in(&d).unwrap()
-        });
-        let root = tmp.path();
-
-        let request = serde_json::json!({
-            "dry_run": false,
-            "edits": [{
-                "type": "replace_text",
-                "path": ".env",
-                "old_text": "x",
-                "new_text": "y"
-            }]
-        });
-
-        let mut child = std::process::Command::new("python3")
-            .arg("-c")
-            .arg(REMOTE_EDIT_SCRIPT)
-            .arg(root.to_str().unwrap())
-            .stdin(std::process::Stdio::piped())
-            .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .expect("Failed to spawn python3");
-
-        if let Some(ref mut stdin) = child.stdin {
-            stdin.write_all(request.to_string().as_bytes()).unwrap();
-        }
-        let output = child.wait_with_output().unwrap();
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-        assert_eq!(result["success"], false);
-        assert!(result["error"].as_str().unwrap().contains("sensitive"));
-    }
 }
 
 pub(super) fn apply_edit_request_with_metrics(
@@ -952,49 +809,6 @@ mod trusted_command_tests {
     };
     use std::collections::HashMap;
 
-    fn make_local_proj() -> ProjectConfig {
-        ProjectConfig {
-            path: std::env::temp_dir().to_string_lossy().to_string(),
-            executor: crate::projects::Executor::Local,
-            client_id: None,
-            allow_patch: true,
-            allow_command_requests: true,
-            allow_raw_command_requests: true,
-            default_apply_patch_backend: None,
-            allowed_checks: vec![],
-            checks: None,
-            commands: HashMap::new(),
-            hooks: HashMap::new(),
-        }
-    }
-
-    // --- Test 1: create_trusted_raw_and_approve still works for multi-line ---
-
-    #[test]
-    fn trusted_raw_multiline_script_executes() {
-        let proj = make_local_proj();
-        let script = "echo hello\necho world";
-        let wrapped = build_trusted_wrapper(script);
-        let (code, stdout, stderr, _duration) = run_project_cmd(&proj, &wrapped, 30);
-        assert_eq!(code, 0, "stderr: {}", stderr);
-        assert!(stdout.contains("hello"), "stdout: {}", stdout);
-        assert!(stdout.contains("world"), "stdout: {}", stdout);
-    }
-
-    #[test]
-    fn trusted_raw_cwd_is_project_root() {
-        let proj = make_local_proj();
-        let script = "pwd";
-        let wrapped = build_trusted_wrapper(script);
-        let (code, stdout, stderr, _duration) = run_project_cmd(&proj, &wrapped, 30);
-        assert_eq!(code, 0, "stderr: {}", stderr);
-        assert!(
-            stdout.contains(&proj.path),
-            "stdout should contain project root, got: {}",
-            stdout
-        );
-    }
-
     // --- Test 2: trusted script command does NOT produce the old broken pattern ---
 
     #[test]
@@ -1136,25 +950,6 @@ mod trusted_command_tests {
             "job command should reference script.sh, got: {}",
             job.command
         );
-    }
-
-    // --- Test 5: script_text without trusted=true is rejected ---
-    // (This is tested at the handler level, but we test the validation function)
-
-    #[test]
-    fn trusted_raw_stdout_is_truncated() {
-        let result = build_trusted_result(
-            0,
-            100,
-            "/tmp",
-            &"a".repeat(100_000),
-            &"b".repeat(50_000),
-            "summary",
-            None,
-            false,
-        );
-        assert!(result.stdout_truncated);
-        assert!(result.stderr_truncated);
     }
 
     // --- Test 6: Denylist / secret / background checks still work ---

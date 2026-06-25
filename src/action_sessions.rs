@@ -30,6 +30,10 @@ pub const AUDITED_ACTION_ROUTES: &[&str] = &[
     "/api/shell/jobs/shell_batch",
 ];
 
+/// Audit query/analysis surface. Not yet mounted as an HTTP route (planned for
+/// a later phase). Retained with test coverage; suppress dead_code until the
+/// query endpoint is wired up.
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionSessionStats {
     pub by_endpoint: BTreeMap<String, i64>,
@@ -47,6 +51,7 @@ pub struct ActionSessionStats {
     pub job_ids_distinct_count: usize,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize)]
 pub struct ActionEventView {
     pub event_id: String,
@@ -351,6 +356,7 @@ fn count_job_ids(ids: &Value) -> usize {
     out.len()
 }
 
+#[allow(dead_code)]
 pub fn decode_event(record: ActionEventRecord) -> ActionEventView {
     let changed_files =
         serde_json::from_str::<Vec<String>>(&record.changed_files_json).unwrap_or_default();
@@ -378,6 +384,7 @@ pub fn decode_event(record: ActionEventRecord) -> ActionEventView {
     }
 }
 
+#[allow(dead_code)]
 pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
     let mut by_endpoint = BTreeMap::new();
     let mut by_project = BTreeMap::new();

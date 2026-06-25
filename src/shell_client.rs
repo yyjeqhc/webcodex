@@ -523,6 +523,9 @@ impl ShellClientRegistry {
         })
     }
 
+    /// List the projects registered for a given shell client. Currently only
+    /// exercised by tests; kept as a public accessor of the registry API.
+    #[allow(dead_code)]
     pub async fn list_client_projects(
         &self,
         client_id: &str,

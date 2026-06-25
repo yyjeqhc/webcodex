@@ -421,27 +421,6 @@ pub struct GitResponse {
     pub error: Option<String>,
 }
 
-/// Result of a trusted raw command execution.
-#[derive(Debug, Clone, Serialize)]
-pub struct TrustedRawCommandResult {
-    pub exit_code: i32,
-    pub duration_ms: u64,
-    /// CWD that was used for execution.
-    pub cwd: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stdout_tail: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub stderr_tail: Option<String>,
-    pub stdout_truncated: bool,
-    pub stderr_truncated: bool,
-    /// Path to the audit log on disk.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub audit_log_path: Option<String>,
-    /// Whether the command was blocked by the denylist before execution.
-    #[serde(skip_serializing_if = "std::ops::Not::not")]
-    pub blocked_by_denylist: bool,
-}
-
 fn default_edit_rollback_on_check_failure() -> bool {
     true
 }

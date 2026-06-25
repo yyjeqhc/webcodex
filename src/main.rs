@@ -176,12 +176,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let acceptor = TcpListener::new(addr.clone()).bind().await;
     tracing::info!("Server started successfully!");
     let port = addr.split(':').last().unwrap_or("8080");
-    tracing::info!("Web UI: http://localhost:{}", port);
-    tracing::info!("API: http://localhost:{}/api", port);
-    tracing::info!(
-        "OpenAPI (GPT Actions): http://localhost:{}/openapi.json",
-        port
-    );
+    let base = format!("http://localhost:{}", port);
+    tracing::info!("Runtime base: {}", base);
+    tracing::info!("MCP endpoint: {}/mcp", base);
+    tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
+    tracing::info!("Runtime status: {}/api/runtime/status", base);
     Server::new(acceptor).serve(router).await;
     Ok(())
 }

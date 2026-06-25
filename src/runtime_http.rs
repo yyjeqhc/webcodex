@@ -37,6 +37,8 @@ struct JobLogRequest {
     pub job_id: String,
     #[serde(default)]
     pub offset: Option<usize>,
+    #[serde(default)]
+    pub tail_lines: Option<usize>,
 }
 
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
@@ -209,6 +211,7 @@ pub async fn job_log(req: &mut Request, depot: &mut Depot, res: &mut Response) {
         .dispatch(ToolCall::JobLog {
             job_id: body.job_id,
             offset: body.offset,
+            tail_lines: body.tail_lines,
         })
         .await;
     render_result(res, &audit, "job_log", None, result);

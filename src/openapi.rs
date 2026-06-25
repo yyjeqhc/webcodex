@@ -229,7 +229,11 @@ fn schemas() -> Value {
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Optional stdout line cursor returned as next_stdout_line."
+                    "description": "Optional 1-based stdout line cursor returned as next_stdout_line."
+                },
+                "tail_lines": {
+                    "type": "integer",
+                    "description": "Optional number of trailing stdout lines to return. Logs are always bounded."
                 }
             }
         },
@@ -282,6 +286,38 @@ fn schemas() -> Value {
 mod tests {
     use super::*;
 
+    /// Recursively collect every `$ref` string found anywhere in a JSON value.
+    fn collect_refs(value: &Value, out: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                for (k, v) in map {
+                    if k == "$ref" {
+                        if let Some(s) = v.as_str() {
+                            out.push(s.to_string());
+                        }
+                    }
+                    collect_refs(v, out);
+                }
+            }
+            Value::Array(arr) => {
+                for v in arr {
+                    collect_refs(v, out);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Resolve a local `#/components/schemas/<Name>` ref against the spec.
+    fn resolve_local_ref<'a>(spec: &'a Value, reference: &str) -> Option<&'a Value> {
+        let rest = reference.strip_prefix("#/")?;
+        let mut current = spec;
+        for segment in rest.split('/') {
+            current = current.get(segment)?;
+        }
+        Some(current)
+    }
+
     #[test]
     fn openapi_operation_ids_are_minimal() {
         let spec = build_openapi_spec();
@@ -317,5 +353,114 @@ mod tests {
         assert!(!paths.contains_key("/api/files"));
         assert!(!paths.contains_key("/api/desktop/task_op"));
         assert!(!paths.contains_key("/api/codex/command_request_op"));
+    }
+
+    #[test]
+    fn openapi_does_not_expose_legacy_openapi_variants() {
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        // Legacy endpoints that must not reappear in the GPT Actions schema.
+        for legacy in [
+            "/api/codex/job",
+            "/api/codex/git",
+            "/api/codex/edit",
+            "/api/codex/apply_patch",
+            "/api/codex/context",
+            "/api/codex/context_batch",
+            "/api/codex/artifact",
+            "/api/codex/report",
+            "/api/codex/projects",
+            "/api/shell/run",
+            "/api/shell/job",
+            "/api/shell/file",
+        ] {
+            assert!(
+                !paths.contains_key(legacy),
+                "legacy path '{}' must not appear in openapi.json",
+                legacy
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_all_local_refs_resolve() {
+        let spec = build_openapi_spec();
+        let mut refs = Vec::new();
+        collect_refs(&spec, &mut refs);
+        assert!(!refs.is_empty(), "expected at least one $ref in the spec");
+        for reference in &refs {
+            assert!(
+                reference.starts_with("#/"),
+                "only local refs are allowed, found: {}",
+                reference
+            );
+            let resolved = resolve_local_ref(&spec, reference)
+                .unwrap_or_else(|| panic!("unresolved $ref target: {}", reference));
+            assert!(
+                resolved.is_object(),
+                "$ref target '{}' should resolve to a schema object",
+                reference
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_operation_ids_match_expected_set_exactly() {
+        let spec = build_openapi_spec();
+        let mut ids: Vec<String> = Vec::new();
+        for methods in spec["paths"].as_object().unwrap().values() {
+            for op in methods.as_object().unwrap().values() {
+                ids.push(op["operationId"].as_str().unwrap().to_string());
+            }
+        }
+        let expected: Vec<String> = GPT_ACTION_OPS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(ids.len(), expected.len());
+        for id in &expected {
+            assert!(ids.contains(id), "missing operation id: {}", id);
+        }
+    }
+
+    #[test]
+    fn openapi_paths_only_use_post_method() {
+        // GPT Actions surface is POST-only.
+        let spec = build_openapi_spec();
+        for (path, methods) in spec["paths"].as_object().unwrap() {
+            let method_keys: Vec<&String> = methods.as_object().unwrap().keys().collect();
+            assert_eq!(
+                method_keys,
+                vec!["post"],
+                "path '{}' should only expose POST, got {:?}",
+                path,
+                method_keys
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_top_level_security_uses_bearer() {
+        let spec = build_openapi_spec();
+        let security = spec["security"].as_array().expect("security array");
+        assert!(!security.is_empty());
+        assert!(security[0]["bearerAuth"].is_array());
+    }
+
+    #[test]
+    fn openapi_schemas_define_all_referenced_names() {
+        let spec = build_openapi_spec();
+        let schemas = spec["components"]["schemas"]
+            .as_object()
+            .expect("schemas object");
+        // Every referenced schema name must exist as a key.
+        let mut refs = Vec::new();
+        collect_refs(&spec, &mut refs);
+        for reference in &refs {
+            if let Some(name) = reference.strip_prefix("#/components/schemas/") {
+                assert!(
+                    schemas.contains_key(name),
+                    "referenced schema '{}' is not defined in components/schemas",
+                    name
+                );
+            }
+        }
     }
 }

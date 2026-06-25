@@ -89,6 +89,8 @@ pub enum ToolCall {
         job_id: String,
         #[serde(default)]
         offset: Option<usize>,
+        #[serde(default)]
+        tail_lines: Option<usize>,
     },
 
     /// List all configured projects.
@@ -245,7 +247,11 @@ impl ToolRuntime {
 
             ToolCall::JobStatus { job_id } => self.job_status(job_id).await,
 
-            ToolCall::JobLog { job_id, offset } => self.job_log(job_id, offset).await,
+            ToolCall::JobLog {
+                job_id,
+                offset,
+                tail_lines,
+            } => self.job_log(job_id, offset, tail_lines).await,
         }
     }
 
@@ -359,7 +365,18 @@ impl ToolRuntime {
                 description: "Read stdout/stderr for a runtime job.".to_string(),
                 input_schema: object_schema(vec![
                     ("job_id", "string", "Job id.", true),
-                    ("offset", "integer", "Optional stdout line cursor.", false),
+                    (
+                        "offset",
+                        "integer",
+                        "Optional 1-based stdout line cursor.",
+                        false,
+                    ),
+                    (
+                        "tail_lines",
+                        "integer",
+                        "Optional number of trailing stdout lines to return.",
+                        false,
+                    ),
                 ]),
             },
             ToolSpec {
@@ -1013,6 +1030,15 @@ impl ToolRuntime {
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
             return local_job_status(&job_id, &record);
         }
+        // Fall through to agent-backed jobs. If the agent registry does not
+        // know this job either, attempt local recovery from on-disk metadata
+        // so jobs started before a server restart remain queryable.
+        if self.shell_clients.get_job(&job_id).await.is_err() {
+            if let Some(record) = self.recover_local_job(&job_id).await {
+                return local_job_status(&job_id, &record);
+            }
+            return ToolResult::err(format!("unknown job: {}", job_id));
+        }
         match self.shell_clients.get_job(&job_id).await {
             Ok(job) => ToolResult::ok(json!({
                 "job_id": job.job_id,
@@ -1030,13 +1056,24 @@ impl ToolRuntime {
         }
     }
 
-    async fn job_log(&self, job_id: String, offset: Option<usize>) -> ToolResult {
+    async fn job_log(
+        &self,
+        job_id: String,
+        offset: Option<usize>,
+        tail_lines: Option<usize>,
+    ) -> ToolResult {
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
-            return local_job_log(&job_id, &record, offset);
+            return local_job_log(&job_id, &record, offset, tail_lines);
+        }
+        if self.shell_clients.get_job(&job_id).await.is_err() {
+            if let Some(record) = self.recover_local_job(&job_id).await {
+                return local_job_log(&job_id, &record, offset, tail_lines);
+            }
+            return ToolResult::err(format!("unknown job: {}", job_id));
         }
         match self
             .shell_clients
-            .job_log(&job_id, offset, None, Some(500))
+            .job_log(&job_id, offset, None, tail_lines.or(Some(500)))
             .await
         {
             Ok((job, stdout, stderr, next_stdout_line, next_stderr_line)) => {
@@ -1051,6 +1088,56 @@ impl ToolRuntime {
             }
             Err(e) => ToolResult::err(e),
         }
+    }
+
+    /// Recover a local job from on-disk `.codex/jobs/<job_id>/metadata.json`
+    /// under any configured project root. Rejects job ids that could escape
+    /// the project directory and verifies the metadata matches the configured
+    /// project before caching the record in memory.
+    async fn recover_local_job(&self, job_id: &str) -> Option<LocalJobRecord> {
+        if !is_safe_job_id(job_id) {
+            return None;
+        }
+        let projects = self.projects.config.as_ref()?;
+        for (id, proj) in &projects.projects {
+            let root = proj.root();
+            let job_dir = root.join(format!(".codex/jobs/{}", job_id));
+            let meta_path = job_dir.join("metadata.json");
+            if !meta_path.exists() {
+                continue;
+            }
+            // Path safety: canonicalize both and verify the job dir is under
+            // the configured project root.
+            let canonical_root = match root.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let canonical_job_dir = match job_dir.canonicalize() {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            if !canonical_job_dir.starts_with(&canonical_root) {
+                continue;
+            }
+            // Verify metadata belongs to this configured project. This stops a
+            // recovered job from one project being mistaken for another.
+            let meta = read_json(meta_path);
+            let meta_project = meta.get("project").and_then(Value::as_str).unwrap_or("");
+            let meta_path_str = meta.get("path").and_then(Value::as_str).unwrap_or("");
+            if meta_project != id || meta_path_str != proj.path {
+                continue;
+            }
+            let record = LocalJobRecord {
+                project: id.clone(),
+                dir: job_dir.clone(),
+            };
+            self.local_jobs
+                .lock()
+                .await
+                .insert(job_id.to_string(), record.clone());
+            return Some(record);
+        }
+        None
     }
 }
 
@@ -1268,7 +1355,8 @@ fn read_file_content_result(
 
 fn local_job_status(job_id: &str, record: &LocalJobRecord) -> ToolResult {
     let meta = read_json(record.dir.join("metadata.json"));
-    let status = read_trim(record.dir.join("status")).unwrap_or_else(|| "running".to_string());
+    let raw_status = read_trim(record.dir.join("status")).unwrap_or_default();
+    let mut status = normalize_local_status(&raw_status);
     let exit_code = read_trim(record.dir.join("exit_code")).and_then(|v| v.parse::<i32>().ok());
     let created_at = meta
         .get("created_at")
@@ -1276,6 +1364,19 @@ fn local_job_status(job_id: &str, record: &LocalJobRecord) -> ToolResult {
         .unwrap_or_default();
     let started_at = meta.get("started_at").and_then(Value::as_i64);
     let finished_at = read_trim(record.dir.join("finished_at")).and_then(|v| v.parse::<i64>().ok());
+    let max_runtime_secs = meta.get("max_runtime_secs").and_then(Value::as_i64);
+    // Detect over-time running jobs and mark them lost. The process itself is
+    // not killed here; this normalizes status so callers see a terminal state.
+    if status == "running" {
+        if let (Some(started), Some(max_rt)) = (started_at, max_runtime_secs) {
+            if finished_at.is_none() {
+                let now = chrono::Utc::now().timestamp();
+                if now.saturating_sub(started) > max_rt {
+                    status = "lost".to_string();
+                }
+            }
+        }
+    }
     let elapsed_secs = started_at.map(|started| {
         finished_at
             .unwrap_or_else(|| chrono::Utc::now().timestamp())
@@ -1290,15 +1391,22 @@ fn local_job_status(job_id: &str, record: &LocalJobRecord) -> ToolResult {
         "started_at": started_at,
         "ended_at": finished_at,
         "elapsed_secs": elapsed_secs,
+        "max_runtime_secs": max_runtime_secs,
         "executor": "local",
         "kind": meta.get("kind").cloned().unwrap_or_else(|| Value::String("shell".to_string())),
     }))
 }
 
-fn local_job_log(job_id: &str, record: &LocalJobRecord, offset: Option<usize>) -> ToolResult {
-    let stdout = read_lines_from(record.dir.join("stdout.log"), offset, Some(500));
-    let stderr = read_lines_from(record.dir.join("stderr.log"), None, Some(500));
-    let status = read_trim(record.dir.join("status")).unwrap_or_else(|| "running".to_string());
+fn local_job_log(
+    job_id: &str,
+    record: &LocalJobRecord,
+    offset: Option<usize>,
+    tail_lines: Option<usize>,
+) -> ToolResult {
+    let stdout = read_lines_from(record.dir.join("stdout.log"), offset, tail_lines);
+    let stderr = read_lines_from(record.dir.join("stderr.log"), offset, tail_lines);
+    let raw_status = read_trim(record.dir.join("status")).unwrap_or_default();
+    let status = normalize_local_status(&raw_status);
     ToolResult::ok(json!({
         "job_id": job_id,
         "status": status,
@@ -1307,6 +1415,29 @@ fn local_job_log(job_id: &str, record: &LocalJobRecord, offset: Option<usize>) -
         "next_stdout_line": stdout.1,
         "next_stderr_line": stderr.1,
     }))
+}
+
+/// Validate a job id before using it to construct a filesystem path. Rejects
+/// path separators, traversal sequences, and overly long ids.
+fn is_safe_job_id(job_id: &str) -> bool {
+    if job_id.is_empty() || job_id.len() > 80 || job_id.contains("..") {
+        return false;
+    }
+    job_id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+}
+
+/// Normalize an on-disk local job status into the canonical status set:
+/// `queued`, `running`, `completed`, `failed`, `stopped`, `lost`. An empty
+/// status (job just started, file not written yet) defaults to `running`;
+/// any unrecognized value is treated as `lost`.
+fn normalize_local_status(raw: &str) -> String {
+    match raw.trim() {
+        "queued" | "running" | "completed" | "failed" | "stopped" => raw.trim().to_string(),
+        "" => "running".to_string(),
+        _ => "lost".to_string(),
+    }
 }
 
 fn read_json(path: PathBuf) -> Value {
@@ -1323,26 +1454,35 @@ fn read_trim(path: PathBuf) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+const MAX_LOCAL_LOG_LINES: usize = 500;
+
 fn read_lines_from(
     path: PathBuf,
     offset: Option<usize>,
     tail_lines: Option<usize>,
 ) -> (String, usize) {
     let content = std::fs::read_to_string(path).unwrap_or_default();
-    let lines = content.lines().collect::<Vec<_>>();
-    let start = offset.unwrap_or_else(|| {
-        tail_lines
-            .map(|tail| lines.len().saturating_sub(tail))
-            .unwrap_or(0)
-    });
-    let selected = lines
-        .iter()
-        .skip(start)
-        .copied()
-        .collect::<Vec<_>>()
-        .join("\n");
-    let next = lines.len() + 1;
-    (selected, next)
+    let lines: Vec<&str> = content.lines().collect();
+    let total = lines.len();
+    // `offset` is a 1-based line cursor (matching agent `since_stdout_line`).
+    // When provided, read forward from that line, bounded to MAX_LOCAL_LOG_LINES.
+    // Otherwise return the last `tail_lines` (bounded), defaulting to the last
+    // MAX_LOCAL_LOG_LINES lines. Output is always bounded.
+    let (start_idx, limit) = if let Some(off) = offset {
+        let s = off.saturating_sub(1).min(total);
+        (s, MAX_LOCAL_LOG_LINES)
+    } else {
+        let tail = tail_lines
+            .filter(|t| *t > 0)
+            .map(|t| t.min(MAX_LOCAL_LOG_LINES))
+            .unwrap_or(MAX_LOCAL_LOG_LINES);
+        (total.saturating_sub(tail), tail)
+    };
+    let end_idx = (start_idx + limit).min(total);
+    let selected = lines[start_idx..end_idx].join("\n");
+    // 1-based line number to request for the next chunk.
+    let next_line = end_idx + 1;
+    (selected, next_line)
 }
 
 fn shell_escape_simple(s: &str) -> String {
@@ -1427,4 +1567,797 @@ fn apply_patch_local(root: &Path, patch: &str) -> Result<(bool, String, String),
     );
     let _ = std::fs::remove_file(&patch_file);
     Ok((apply.0 == 0, apply.1, apply.2))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
+    use crate::shell_client::ShellClientRegistry;
+    use std::collections::HashMap;
+    use std::fs;
+    use std::sync::Arc;
+
+    fn test_runtime() -> ToolRuntime {
+        let projects = Arc::new(ProjectsState::failed(
+            "projects not configured for test".to_string(),
+            "test".to_string(),
+        ));
+        let shell_clients = Arc::new(ShellClientRegistry::default());
+        ToolRuntime::new(projects, shell_clients)
+    }
+
+    // =========================================================================
+    // Phase 1.1: ToolCall::from_tool_name
+    // =========================================================================
+
+    #[test]
+    fn from_tool_name_parses_unit_tools_without_arguments() {
+        for name in ["list_tools", "list_projects", "list_agents"] {
+            let call =
+                ToolCall::from_tool_name(name, Value::Null).unwrap_or_else(|e| panic!("{}", e));
+            assert!(
+                matches!(
+                    call,
+                    ToolCall::ListTools | ToolCall::ListProjects | ToolCall::ListAgents
+                ),
+                "unit tool {} should parse",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn from_tool_name_parses_unit_tools_with_empty_object() {
+        let call = ToolCall::from_tool_name("list_tools", json!({})).unwrap();
+        assert!(matches!(call, ToolCall::ListTools));
+    }
+
+    #[test]
+    fn from_tool_name_parses_run_shell_with_required_fields() {
+        let call = ToolCall::from_tool_name(
+            "run_shell",
+            json!({"project": "demo", "command": "echo hi"}),
+        )
+        .unwrap();
+        match call {
+            ToolCall::RunShell {
+                project,
+                command,
+                timeout_secs,
+                cwd,
+            } => {
+                assert_eq!(project, "demo");
+                assert_eq!(command, "echo hi");
+                assert_eq!(timeout_secs, None);
+                assert_eq!(cwd, None);
+            }
+            other => panic!("expected RunShell, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn from_tool_name_parses_run_shell_with_optional_fields() {
+        let call = ToolCall::from_tool_name(
+            "run_shell",
+            json!({"project": "demo", "command": "ls", "timeout_secs": 5, "cwd": "sub"}),
+        )
+        .unwrap();
+        match call {
+            ToolCall::RunShell {
+                project,
+                command,
+                timeout_secs,
+                cwd,
+            } => {
+                assert_eq!(project, "demo");
+                assert_eq!(command, "ls");
+                assert_eq!(timeout_secs, Some(5));
+                assert_eq!(cwd, Some("sub".to_string()));
+            }
+            other => panic!("expected RunShell, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn from_tool_name_parses_run_codex_with_all_fields() {
+        let call = ToolCall::from_tool_name(
+            "run_codex",
+            json!({
+                "project": "demo",
+                "prompt": "fix tests",
+                "approval_mode": "suggest",
+                "timeout_secs": 120,
+                "cwd": "src",
+                "extra_args": ["--verbose"]
+            }),
+        )
+        .unwrap();
+        match call {
+            ToolCall::RunCodex {
+                project,
+                prompt,
+                approval_mode,
+                timeout_secs,
+                cwd,
+                extra_args,
+            } => {
+                assert_eq!(project, "demo");
+                assert_eq!(prompt, "fix tests");
+                assert_eq!(approval_mode.as_deref(), Some("suggest"));
+                assert_eq!(timeout_secs, Some(120));
+                assert_eq!(cwd.as_deref(), Some("src"));
+                assert_eq!(extra_args.unwrap(), vec!["--verbose".to_string()]);
+            }
+            other => panic!("expected RunCodex, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn from_tool_name_parses_job_status_and_job_log() {
+        let call = ToolCall::from_tool_name("job_status", json!({"job_id": "abc"})).unwrap();
+        assert!(matches!(call, ToolCall::JobStatus { ref job_id } if job_id == "abc"));
+
+        let call =
+            ToolCall::from_tool_name("job_log", json!({"job_id": "abc", "offset": 10})).unwrap();
+        match call {
+            ToolCall::JobLog {
+                job_id,
+                offset,
+                tail_lines,
+            } => {
+                assert_eq!(job_id, "abc");
+                assert_eq!(offset, Some(10));
+                assert_eq!(tail_lines, None);
+            }
+            other => panic!("expected JobLog, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn from_tool_name_parses_read_file_and_git_tools() {
+        let call =
+            ToolCall::from_tool_name("read_file", json!({"project": "demo", "path": "README.md"}))
+                .unwrap();
+        assert!(matches!(call, ToolCall::ReadFile { .. }));
+
+        let call = ToolCall::from_tool_name("git_status", json!({"project": "demo"})).unwrap();
+        assert!(matches!(call, ToolCall::GitStatus { .. }));
+
+        let call =
+            ToolCall::from_tool_name("git_diff", json!({"project": "demo", "args": ["--stat"]}))
+                .unwrap();
+        assert!(matches!(call, ToolCall::GitDiff { .. }));
+
+        let call =
+            ToolCall::from_tool_name("apply_patch", json!({"project": "demo", "patch": "diff"}))
+                .unwrap();
+        assert!(matches!(call, ToolCall::ApplyPatch { .. }));
+
+        let call =
+            ToolCall::from_tool_name("run_job", json!({"project": "demo", "command": "make"}))
+                .unwrap();
+        assert!(matches!(call, ToolCall::RunJob { .. }));
+    }
+
+    #[test]
+    fn from_tool_name_rejects_unknown_tool_name() {
+        let err = ToolCall::from_tool_name("not_a_tool", Value::Null).unwrap_err();
+        assert!(err.contains("not_a_tool"));
+    }
+
+    #[test]
+    fn from_tool_name_rejects_missing_required_field() {
+        let err = ToolCall::from_tool_name("run_shell", json!({"command": "echo"})).unwrap_err();
+        assert!(
+            err.contains("project"),
+            "error should mention missing field: {}",
+            err
+        );
+
+        let err = ToolCall::from_tool_name("job_status", json!({})).unwrap_err();
+        assert!(err.contains("job_id"));
+    }
+
+    #[test]
+    fn from_tool_name_rejects_wrong_field_type() {
+        let err = ToolCall::from_tool_name("run_shell", json!({"project": 123, "command": "echo"}))
+            .unwrap_err();
+        assert!(!err.is_empty());
+
+        let err = ToolCall::from_tool_name("run_codex", json!({"project": "demo", "prompt": 42}))
+            .unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn from_tool_name_rejects_unknown_variant_field() {
+        // extra_args must be an array, not a string.
+        let err = ToolCall::from_tool_name(
+            "run_codex",
+            json!({"project": "demo", "prompt": "x", "extra_args": "--verbose"}),
+        )
+        .unwrap_err();
+        assert!(!err.is_empty());
+    }
+
+    #[test]
+    fn from_tool_name_error_includes_tool_name() {
+        let err = ToolCall::from_tool_name("run_shell", json!({})).unwrap_err();
+        assert!(err.contains("run_shell"));
+    }
+
+    // =========================================================================
+    // Phase 1.2: tool_specs() shape
+    // =========================================================================
+
+    #[test]
+    fn tool_specs_names_are_unique() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let mut names = specs.iter().map(|s| s.name.clone()).collect::<Vec<_>>();
+        names.sort();
+        let mut deduped = names.clone();
+        deduped.dedup();
+        assert_eq!(names, deduped, "tool names must be unique");
+    }
+
+    #[test]
+    fn tool_specs_names_are_snake_case() {
+        let runtime = test_runtime();
+        for spec in runtime.tool_specs() {
+            assert!(
+                !spec.name.contains('-'),
+                "tool name '{}' should use snake_case (no hyphens)",
+                spec.name
+            );
+            assert!(
+                spec.name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
+                "tool name '{}' should be snake_case",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_specs_input_schemas_are_objects() {
+        let runtime = test_runtime();
+        for spec in runtime.tool_specs() {
+            let schema = &spec.input_schema;
+            assert_eq!(
+                schema["type"].as_str(),
+                Some("object"),
+                "tool '{}' input schema must be type object",
+                spec.name
+            );
+            assert!(
+                schema["properties"].is_object(),
+                "tool '{}' input schema must have properties object",
+                spec.name
+            );
+            assert!(
+                schema["required"].is_array(),
+                "tool '{}' input schema must have required array",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_specs_required_fields_match_deserialization() {
+        // For every tool spec, building arguments with only the required
+        // fields must deserialize successfully, and omitting any required
+        // field must fail.
+        let runtime = test_runtime();
+        for spec in runtime.tool_specs() {
+            let required: Vec<String> = spec.input_schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|v| v.as_str().unwrap().to_string())
+                .collect();
+
+            // Build a minimal valid args object using a placeholder for each
+            // required field based on its declared type.
+            let mut minimal = serde_json::Map::new();
+            let properties = spec.input_schema["properties"].as_object().unwrap();
+            for field in &required {
+                let prop = &properties[field.as_str()];
+                let kind = prop["type"].as_str().unwrap_or("string");
+                let placeholder = match kind {
+                    "integer" => json!(1),
+                    "array" => json!([]),
+                    "boolean" => json!(true),
+                    _ => json!("value"),
+                };
+                minimal.insert(field.clone(), placeholder);
+            }
+            let args = Value::Object(minimal);
+            ToolCall::from_tool_name(&spec.name, args)
+                .unwrap_or_else(|e| panic!("tool '{}' minimal args failed: {}", spec.name, e));
+
+            // Omitting each required field should fail.
+            for field in &required {
+                let mut partial = serde_json::Map::new();
+                for f in &required {
+                    if f != field {
+                        let prop = &properties[f.as_str()];
+                        let kind = prop["type"].as_str().unwrap_or("string");
+                        let placeholder = match kind {
+                            "integer" => json!(1),
+                            "array" => json!([]),
+                            "boolean" => json!(true),
+                            _ => json!("value"),
+                        };
+                        partial.insert(f.clone(), placeholder);
+                    }
+                }
+                let err = ToolCall::from_tool_name(&spec.name, Value::Object(partial))
+                    .err()
+                    .unwrap_or_else(|| {
+                        panic!(
+                            "tool '{}' should reject missing required field '{}'",
+                            spec.name, field
+                        )
+                    });
+                assert!(
+                    err.contains(field),
+                    "tool '{}' error for missing '{}' should mention field: {}",
+                    spec.name,
+                    field,
+                    err
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn tool_specs_optional_fields_are_not_required() {
+        // Optional fields (e.g. timeout_secs, cwd) must not appear in required.
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let run_shell = specs.iter().find(|s| s.name == "run_shell").unwrap();
+        let required: Vec<String> = run_shell.input_schema["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|v| v.as_str().unwrap().to_string())
+            .collect();
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"command".to_string()));
+        assert!(!required.contains(&"timeout_secs".to_string()));
+        assert!(!required.contains(&"cwd".to_string()));
+    }
+
+    #[test]
+    fn tool_specs_covers_expected_tool_set() {
+        let runtime = test_runtime();
+        let names: Vec<String> = runtime
+            .tool_specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        for expected in [
+            "list_tools",
+            "list_projects",
+            "list_agents",
+            "run_shell",
+            "run_job",
+            "run_codex",
+            "job_status",
+            "job_log",
+            "read_file",
+            "git_status",
+            "git_diff",
+            "apply_patch",
+        ] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "expected tool '{}' in specs: {:?}",
+                expected,
+                names
+            );
+        }
+    }
+
+    // =========================================================================
+    // Phase 2: local job recovery, path safety, status normalization, bounded logs
+    // =========================================================================
+
+    fn local_project_config(path: &str) -> ProjectConfig {
+        ProjectConfig {
+            path: path.to_string(),
+            executor: Executor::Local,
+            client_id: None,
+            allow_patch: true,
+            allow_command_requests: false,
+            allow_raw_command_requests: false,
+            default_apply_patch_backend: None,
+            allowed_checks: vec![],
+            checks: None,
+            commands: HashMap::new(),
+            hooks: HashMap::new(),
+        }
+    }
+
+    fn runtime_with_project(root: &Path, project_id: &str) -> ToolRuntime {
+        let mut projects = HashMap::new();
+        projects.insert(
+            project_id.to_string(),
+            local_project_config(&root.to_string_lossy()),
+        );
+        let config = ProjectsConfig { projects };
+        let state = ProjectsState::loaded(config, "test".to_string());
+        ToolRuntime::new(Arc::new(state), Arc::new(ShellClientRegistry::default()))
+    }
+
+    /// Write a fake on-disk local job simulating a job that survived a restart.
+    fn write_fake_job(
+        root: &Path,
+        job_id: &str,
+        project: &str,
+        path: &str,
+        status: &str,
+        stdout: &str,
+        stderr: &str,
+        meta_extra: Value,
+    ) -> PathBuf {
+        let dir = root.join(format!(".codex/jobs/{}", job_id));
+        fs::create_dir_all(&dir).unwrap();
+        let mut meta = json!({
+            "job_id": job_id,
+            "project": project,
+            "path": path,
+            "command": "echo test",
+            "status": "running",
+            "created_at": 1000,
+            "started_at": 1000,
+            "max_runtime_secs": 3600,
+            "executor": "local",
+            "kind": "shell",
+        });
+        if let (Value::Object(ref mut m), Value::Object(extra)) = (&mut meta, meta_extra) {
+            for (k, v) in extra {
+                m.insert(k, v);
+            }
+        }
+        fs::write(
+            dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta).unwrap(),
+        )
+        .unwrap();
+        fs::write(dir.join("status"), status).unwrap();
+        fs::write(dir.join("stdout.log"), stdout).unwrap();
+        fs::write(dir.join("stderr.log"), stderr).unwrap();
+        dir
+    }
+
+    #[test]
+    fn is_safe_job_id_rejects_path_traversal_and_separators() {
+        assert!(is_safe_job_id("11111111-2222-3333-4444-555555555555"));
+        assert!(is_safe_job_id("job.1_2-3"));
+        assert!(!is_safe_job_id("../escape"));
+        assert!(!is_safe_job_id("a/b"));
+        assert!(!is_safe_job_id("a\\b"));
+        assert!(!is_safe_job_id(".."));
+        assert!(!is_safe_job_id("a..b/../c"));
+        assert!(!is_safe_job_id(""));
+        assert!(!is_safe_job_id("a\0b"));
+    }
+
+    #[test]
+    fn normalize_local_status_maps_known_and_unknown_values() {
+        assert_eq!(normalize_local_status("running"), "running");
+        assert_eq!(normalize_local_status("completed"), "completed");
+        assert_eq!(normalize_local_status("failed"), "failed");
+        assert_eq!(normalize_local_status("stopped"), "stopped");
+        assert_eq!(normalize_local_status("queued"), "queued");
+        assert_eq!(normalize_local_status("  failed  "), "failed");
+        assert_eq!(normalize_local_status(""), "running");
+        assert_eq!(normalize_local_status("weird-state"), "lost");
+    }
+
+    #[test]
+    fn read_lines_from_is_bounded_by_default() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("stdout.log");
+        let content = (1..=1000)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, &content).unwrap();
+        let (text, next) = read_lines_from(path, None, None);
+        let lines: Vec<&str> = text.lines().collect();
+        assert!(lines.len() <= MAX_LOCAL_LOG_LINES);
+        assert_eq!(lines.len(), MAX_LOCAL_LOG_LINES);
+        // Default is tail: last 500 lines.
+        assert_eq!(lines[0], "line 501");
+        assert_eq!(lines.last().unwrap(), &"line 1000");
+        assert_eq!(next, 1001);
+    }
+
+    #[test]
+    fn read_lines_from_supports_offset_pagination() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("stdout.log");
+        let content = (1..=600)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, &content).unwrap();
+        let (text, next) = read_lines_from(path.clone(), Some(1), None);
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), MAX_LOCAL_LOG_LINES);
+        assert_eq!(lines[0], "line 1");
+        assert_eq!(lines.last().unwrap(), &"line 500");
+        assert_eq!(next, 501);
+
+        let (text2, next2) = read_lines_from(path, Some(501), None);
+        let lines2: Vec<&str> = text2.lines().collect();
+        assert_eq!(lines2.len(), 100);
+        assert_eq!(lines2[0], "line 501");
+        assert_eq!(lines2.last().unwrap(), &"line 600");
+        assert_eq!(next2, 601);
+    }
+
+    #[test]
+    fn read_lines_from_supports_tail_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("stdout.log");
+        let content = (1..=1000)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, &content).unwrap();
+        let (text, _next) = read_lines_from(path, None, Some(10));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 10);
+        assert_eq!(lines[0], "line 991");
+        assert_eq!(lines.last().unwrap(), &"line 1000");
+    }
+
+    #[test]
+    fn read_lines_from_tail_is_capped_to_max() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("stdout.log");
+        let content = (1..=1000)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        fs::write(&path, &content).unwrap();
+        // Requesting more than MAX returns at most MAX.
+        let (text, _) = read_lines_from(path, None, Some(5000));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), MAX_LOCAL_LOG_LINES);
+    }
+
+    #[tokio::test]
+    async fn recover_local_job_status_after_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let project_id = "demo";
+        let runtime = runtime_with_project(root, project_id);
+        let job_id = "11111111-2222-3333-4444-555555555555";
+        write_fake_job(
+            root,
+            job_id,
+            project_id,
+            &root.to_string_lossy(),
+            "completed",
+            "hello\n",
+            "",
+            json!({}),
+        );
+        // local_jobs is empty (simulating restart); recovery should find it.
+        assert!(runtime.local_jobs.lock().await.is_empty());
+        let result = runtime.job_status(job_id.to_string()).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["status"], "completed");
+        assert_eq!(result.output["project"], project_id);
+        assert_eq!(result.output["executor"], "local");
+        assert_eq!(result.output["kind"], "shell");
+        // Recovered job is now cached in memory.
+        assert!(runtime.local_jobs.lock().await.contains_key(job_id));
+    }
+
+    #[tokio::test]
+    async fn recover_local_job_log_after_restart() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        let job_id = "22222222-3333-4444-5555-666666666666";
+        write_fake_job(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "running",
+            "stdout line\n",
+            "stderr line\n",
+            json!({}),
+        );
+        let result = runtime.job_log(job_id.to_string(), None, None).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["stdout"], "stdout line");
+        assert_eq!(result.output["stderr"], "stderr line");
+        assert!(result.output["next_stdout_line"].is_number());
+    }
+
+    #[tokio::test]
+    async fn recover_local_job_rejects_unsafe_job_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_project(tmp.path(), "demo");
+        // Path-traversal job ids must not reach the filesystem.
+        let result = runtime.job_status("../escape".to_string()).await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("unknown job"));
+    }
+
+    #[tokio::test]
+    async fn recover_local_job_rejects_metadata_project_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        let job_id = "33333333-4444-5555-6666-777777777777";
+        // Metadata claims project "other"; configured project is "demo".
+        write_fake_job(
+            root,
+            job_id,
+            "other",
+            &root.to_string_lossy(),
+            "running",
+            "",
+            "",
+            json!({}),
+        );
+        let result = runtime.job_status(job_id.to_string()).await;
+        assert!(!result.success, "mismatched metadata must not be recovered");
+    }
+
+    #[tokio::test]
+    async fn recover_local_job_rejects_metadata_path_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        let job_id = "44444444-5555-6666-7777-888888888888";
+        // Metadata path points elsewhere even though project id matches.
+        write_fake_job(
+            root,
+            job_id,
+            "demo",
+            "/some/other/path",
+            "running",
+            "",
+            "",
+            json!({}),
+        );
+        let result = runtime.job_status(job_id.to_string()).await;
+        assert!(
+            !result.success,
+            "mismatched metadata path must not be recovered"
+        );
+    }
+
+    #[tokio::test]
+    async fn recover_local_job_unknown_when_no_metadata_anywhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_project(tmp.path(), "demo");
+        let result = runtime
+            .job_status("55555555-6666-7777-8888-999999999999".to_string())
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("unknown job"));
+    }
+
+    #[tokio::test]
+    async fn local_job_status_marks_over_time_running_job_lost() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        let job_id = "66666666-7777-8888-9999-000000000000";
+        let past = chrono::Utc::now().timestamp() - 100_000;
+        write_fake_job(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "running",
+            "",
+            "",
+            json!({ "started_at": past, "max_runtime_secs": 60 }),
+        );
+        let result = runtime.job_status(job_id.to_string()).await;
+        assert!(result.success);
+        assert_eq!(result.output["status"], "lost");
+    }
+
+    #[tokio::test]
+    async fn local_job_status_keeps_completed_job_completed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        let job_id = "77777777-8888-9999-0000-111111111111";
+        let past = chrono::Utc::now().timestamp() - 100_000;
+        // Completed jobs stay completed even if max_runtime would have passed.
+        write_fake_job(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "completed",
+            "",
+            "",
+            json!({ "started_at": past, "max_runtime_secs": 60 }),
+        );
+        let result = runtime.job_status(job_id.to_string()).await;
+        assert!(result.success);
+        assert_eq!(result.output["status"], "completed");
+    }
+
+    #[tokio::test]
+    async fn job_log_recovery_returns_bounded_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        let job_id = "88888888-9999-0000-1111-222222222222";
+        let stdout = (1..=1000)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        write_fake_job(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "running",
+            &stdout,
+            "",
+            json!({}),
+        );
+        let result = runtime.job_log(job_id.to_string(), None, None).await;
+        assert!(result.success);
+        let out = result.output["stdout"].as_str().unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert!(lines.len() <= MAX_LOCAL_LOG_LINES);
+        assert!(out.contains("line 1000"));
+        assert!(!out.contains("line 1\n"));
+    }
+
+    #[tokio::test]
+    async fn job_log_recovery_paginates_with_offset() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        let job_id = "99999999-0000-1111-2222-333333333333";
+        let stdout = (1..=600)
+            .map(|i| format!("line {}", i))
+            .collect::<Vec<_>>()
+            .join("\n");
+        write_fake_job(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "running",
+            &stdout,
+            "",
+            json!({}),
+        );
+        let first = runtime.job_log(job_id.to_string(), Some(1), None).await;
+        assert!(first.success);
+        let out = first.output["stdout"].as_str().unwrap();
+        assert!(out.contains("line 1"));
+        assert!(out.contains("line 500"));
+        assert!(!out.contains("line 501"));
+        assert_eq!(first.output["next_stdout_line"], 501);
+
+        let second = runtime.job_log(job_id.to_string(), Some(501), None).await;
+        assert!(second.success);
+        let out2 = second.output["stdout"].as_str().unwrap();
+        assert!(out2.contains("line 501"));
+        assert!(out2.contains("line 600"));
+        assert_eq!(second.output["next_stdout_line"], 601);
+    }
 }

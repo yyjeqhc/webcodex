@@ -3,6 +3,7 @@
 //! Both protocol adapters call `ToolRuntime::dispatch()`.
 //! No HTTP framework types here — pure Rust input/output.
 
+use crate::auth::AuthContext;
 use crate::config::CodexConfig;
 use crate::projects::ProjectsState;
 use crate::shell_client::ShellClientRegistry;
@@ -161,6 +162,22 @@ struct LocalJobRecord {
     dir: PathBuf,
 }
 
+/// Capability an agent-backed tool requires. Kept private to the runtime;
+/// only used by `authorize_agent_tool` to map a `ToolCall` variant to the
+/// capability flag it needs on the agent client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentCapability {
+    /// `run_shell`, `apply_patch` (agent path runs `git apply` via shell).
+    Shell,
+    /// `read_file` (agent path uses the file_read request kind).
+    FileRead,
+    /// `git_status` / `git_diff` (agent path runs git via shell; accept either
+    /// an explicit `git` capability or `shell`).
+    GitOrShell,
+    /// `run_job` / `run_codex` (agent path starts an async job).
+    AsyncJobs,
+}
+
 // =============================================================================
 // Runtime
 // =============================================================================
@@ -197,8 +214,136 @@ impl ToolRuntime {
         projects.get_project(project)
     }
 
+    /// The capability an agent-backed tool variant requires from the agent
+    /// client. Non-agent tools (and tools without a project) require nothing.
+    fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
+        match call {
+            ToolCall::RunShell { .. } | ToolCall::ApplyPatch { .. } => Some(AgentCapability::Shell),
+            ToolCall::ReadFile { .. } => Some(AgentCapability::FileRead),
+            ToolCall::GitStatus { .. } | ToolCall::GitDiff { .. } => {
+                Some(AgentCapability::GitOrShell)
+            }
+            ToolCall::RunJob { .. } | ToolCall::RunCodex { .. } => Some(AgentCapability::AsyncJobs),
+            ToolCall::ListTools
+            | ToolCall::ListProjects
+            | ToolCall::ListAgents
+            | ToolCall::JobStatus { .. }
+            | ToolCall::JobLog { .. } => None,
+        }
+    }
+
+    /// Enforce the owner boundary and capability requirements for agent-backed
+    /// runtime tools before dispatching. This is the single place where the
+    /// runtime paths (`/api/tools/call`, `/api/codex/run`, `/api/projects/*`,
+    /// `/mcp`) check that the caller is allowed to drive an agent. Legacy
+    /// `/api/shell/*` handlers keep their own `assert_shell_client_owner`
+    /// checks; this method closes the gap for the runtime paths.
+    ///
+    /// Returns `Ok(())` for local-executor projects and project-less tools so
+    /// they are unaffected.
+    async fn authorize_agent_tool(
+        &self,
+        call: &ToolCall,
+        auth: Option<&AuthContext>,
+    ) -> Result<(), String> {
+        let project = match call {
+            ToolCall::RunShell { project, .. }
+            | ToolCall::ApplyPatch { project, .. }
+            | ToolCall::GitStatus { project }
+            | ToolCall::GitDiff { project, .. }
+            | ToolCall::ReadFile { project, .. }
+            | ToolCall::RunJob { project, .. }
+            | ToolCall::RunCodex { project, .. } => project,
+            _ => return Ok(()),
+        };
+        let required = match Self::required_agent_capability(call) {
+            Some(cap) => cap,
+            None => return Ok(()),
+        };
+        let proj = self.resolve_project(project)?;
+        if !proj.is_agent() {
+            return Ok(());
+        }
+        let client_id = proj.agent_client_id()?.to_string();
+        let view = self
+            .shell_clients
+            .get_client_view(&client_id)
+            .await
+            .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
+        // Owner boundary: bootstrap tokens and dev mode (auth disabled) pass.
+        // Otherwise the API key username must match the agent's declared owner.
+        crate::shell_client::assert_shell_client_owner(auth, &client_id, view.owner.as_deref())?;
+        // Capability check via the registry helper so the requirement is
+        // expressed as a named capability, not a raw struct field access.
+        let supported = match required {
+            AgentCapability::Shell => {
+                self.shell_clients
+                    .client_supports(&client_id, "shell")
+                    .await?
+            }
+            AgentCapability::FileRead => {
+                self.shell_clients
+                    .client_supports(&client_id, "file_read")
+                    .await?
+            }
+            AgentCapability::GitOrShell => {
+                self.shell_clients
+                    .client_supports(&client_id, "shell")
+                    .await?
+                    || self
+                        .shell_clients
+                        .client_supports(&client_id, "git")
+                        .await?
+            }
+            AgentCapability::AsyncJobs => {
+                self.shell_clients
+                    .client_supports(&client_id, "async_jobs")
+                    .await?
+                    || self
+                        .shell_clients
+                        .client_supports(&client_id, "async_shell_jobs")
+                        .await?
+            }
+        };
+        if !supported {
+            let label = match required {
+                AgentCapability::Shell => "shell",
+                AgentCapability::FileRead => "file_read",
+                AgentCapability::GitOrShell => "shell or git",
+                AgentCapability::AsyncJobs => "async shell jobs",
+            };
+            return Err(format!(
+                "agent client {} does not support {}",
+                client_id, label
+            ));
+        }
+        Ok(())
+    }
+
     /// Main dispatch — call from MCP handler or GPT Actions handler.
+    ///
+    /// This no-auth convenience defaults the caller context to `None`, which
+    /// means agent-backed tools are rejected (no owner can be proven). HTTP
+    /// wrappers should prefer `dispatch_with_auth` so the depot `AuthContext`
+    /// is forwarded. `dispatch` is kept for internal/tests callers that only
+    /// use local-executor projects.
+    #[allow(dead_code)]
     pub async fn dispatch(&self, call: ToolCall) -> ToolResult {
+        self.dispatch_with_auth(call, None).await
+    }
+
+    /// Dispatch carrying the caller's auth context. Agent-backed tools enforce
+    /// the owner boundary and capability requirements through
+    /// `authorize_agent_tool`; local-executor tools are unaffected. Wrappers
+    /// stay thin: they only forward the depot `AuthContext` here.
+    pub async fn dispatch_with_auth(
+        &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        if let Err(err) = self.authorize_agent_tool(&call, auth).await {
+            return ToolResult::err(err);
+        }
         match call {
             ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
 
@@ -2712,5 +2857,300 @@ mod tests {
             .unwrap();
         let meta = read_json(record.dir.join("metadata.json"));
         assert_eq!(meta["max_runtime_secs"], 42);
+    }
+
+    // =========================================================================
+    // Phase 6: agent capability checks, owner boundary, structured errors
+    // =========================================================================
+
+    use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
+
+    fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
+        crate::auth::AuthContext {
+            user_id: username.map(|u| format!("user-{}", u)),
+            username: username.map(str::to_string),
+            api_key_id: username.map(|u| format!("key-{}", u)),
+            api_key_name: username.map(|u| format!("{} key", u)),
+            is_bootstrap,
+        }
+    }
+
+    fn agent_project_config(path: &str, client_id: &str) -> ProjectConfig {
+        ProjectConfig {
+            path: path.to_string(),
+            executor: Executor::Agent,
+            client_id: Some(client_id.to_string()),
+            allow_patch: true,
+            allow_command_requests: false,
+            allow_raw_command_requests: false,
+            default_apply_patch_backend: None,
+            allowed_checks: vec![],
+            checks: None,
+            commands: HashMap::new(),
+            hooks: HashMap::new(),
+        }
+    }
+
+    fn runtime_with_agent_project(client_id: &str) -> ToolRuntime {
+        let mut projects = HashMap::new();
+        projects.insert(
+            "agent-proj".to_string(),
+            agent_project_config("/tmp/agent-proj", client_id),
+        );
+        let config = ProjectsConfig { projects };
+        let state = ProjectsState::loaded(config, "test".to_string());
+        ToolRuntime::new(
+            Arc::new(state),
+            Arc::new(ShellClientRegistry::default()),
+            Arc::new(CodexConfig::default()),
+        )
+    }
+
+    async fn register_agent(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        owner: Option<&str>,
+        caps: ShellClientCapabilities,
+    ) {
+        runtime
+            .shell_clients
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                display_name: None,
+                owner: owner.map(str::to_string),
+                hostname: None,
+                capabilities: Some(caps),
+                projects: None,
+                agent_protocol_version: Some("polling-v1".to_string()),
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn agent_run_shell_without_shell_capability_is_rejected() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = false;
+        register_agent(&runtime, "oe", None, caps).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunShell {
+                    project: "agent-proj".to_string(),
+                    command: "echo hi".to_string(),
+                    timeout_secs: None,
+                    cwd: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("does not support shell"), "{}", err);
+        assert!(err.contains("agent client oe"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn agent_read_file_without_file_read_capability_is_rejected() {
+        let runtime = runtime_with_agent_project("oe");
+        // Default caps: shell=true, file_read=false.
+        register_agent(&runtime, "oe", None, ShellClientCapabilities::default()).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ReadFile {
+                    project: "agent-proj".to_string(),
+                    path: "README.md".to_string(),
+                    start_line: None,
+                    limit: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("does not support file_read"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn agent_run_job_without_async_capability_is_rejected() {
+        let runtime = runtime_with_agent_project("oe");
+        // Default caps: async_jobs=false, async_shell_jobs=false.
+        register_agent(&runtime, "oe", None, ShellClientCapabilities::default()).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunJob {
+                    project: "agent-proj".to_string(),
+                    command: "echo hi".to_string(),
+                    timeout_secs: None,
+                    cwd: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("does not support async shell jobs"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn agent_git_status_without_shell_or_git_is_rejected() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = false; // git stays false by default
+        register_agent(&runtime, "oe", None, caps).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::GitStatus {
+                    project: "agent-proj".to_string(),
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("does not support shell or git"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn agent_tool_unknown_client_returns_unknown_shell_client_error() {
+        // Project points at client "ghost" which never registered.
+        let runtime = runtime_with_agent_project("ghost");
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunShell {
+                    project: "agent-proj".to_string(),
+                    command: "echo hi".to_string(),
+                    timeout_secs: None,
+                    cwd: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("unknown shell client"), "{}", err);
+        assert!(err.contains("ghost"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn agent_tool_rejects_non_owner_api_key() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.async_shell_jobs = true;
+        register_agent(&runtime, "oe", Some("alice"), caps).await;
+        let bob = auth_context(Some("bob"), false);
+        // Use run_job (async) so the test does not hang if owner check leaked.
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunJob {
+                    project: "agent-proj".to_string(),
+                    command: "echo hi".to_string(),
+                    timeout_secs: None,
+                    cwd: None,
+                },
+                Some(&bob),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("owned by alice"), "{}", err);
+        assert!(err.contains("belongs to bob"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn agent_tool_rejects_missing_auth_context() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "oe", Some("alice"), caps).await;
+        // dispatch_with_auth(None): no owner can be proven for an owned agent.
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunShell {
+                    project: "agent-proj".to_string(),
+                    command: "echo hi".to_string(),
+                    timeout_secs: None,
+                    cwd: None,
+                },
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(
+            err.contains("owned by alice") || err.contains("belongs to anonymous"),
+            "{}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn agent_tool_allows_owner_api_key_for_run_job() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.async_shell_jobs = true;
+        register_agent(&runtime, "oe", Some("alice"), caps).await;
+        let alice = auth_context(Some("alice"), false);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunJob {
+                    project: "agent-proj".to_string(),
+                    command: "echo hi".to_string(),
+                    timeout_secs: None,
+                    cwd: None,
+                },
+                Some(&alice),
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        assert!(result.output["job_id"].is_string());
+    }
+
+    #[tokio::test]
+    async fn agent_tool_allows_bootstrap_token_for_run_job() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.async_shell_jobs = true;
+        register_agent(&runtime, "oe", Some("alice"), caps).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunJob {
+                    project: "agent-proj".to_string(),
+                    command: "echo hi".to_string(),
+                    timeout_secs: None,
+                    cwd: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+    }
+
+    #[tokio::test]
+    async fn local_project_unaffected_by_agent_auth_checks() {
+        // Local-executor projects must still work when no auth context is
+        // supplied (e.g. internal callers using dispatch_with_auth(None)).
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_codex(tmp.path(), CodexConfig::default());
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunCodex {
+                    project: "demo".to_string(),
+                    prompt: "echo hi".to_string(),
+                    approval_mode: None,
+                    timeout_secs: Some(10),
+                    cwd: None,
+                    extra_args: None,
+                },
+                None,
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
     }
 }

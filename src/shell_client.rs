@@ -38,6 +38,7 @@ struct ShellClientRecord {
     capabilities: ShellClientCapabilities,
     projects: Vec<ShellAgentProjectSummary>,
     last_seen: i64,
+    agent_protocol_version: String,
 }
 
 #[derive(Debug)]
@@ -464,6 +465,11 @@ impl ShellClientRegistry {
             capabilities: body.capabilities.unwrap_or_default(),
             projects: normalize_project_summaries(body.projects),
             last_seen: now_ts(),
+            agent_protocol_version: body
+                .agent_protocol_version
+                .map(|v| v.trim().to_string())
+                .filter(|v| !v.is_empty())
+                .unwrap_or_else(|| "unknown".to_string()),
         };
         let mut inner = self.inner.lock().await;
         inner.clients.insert(client_id.clone(), record);
@@ -482,6 +488,39 @@ impl ShellClientRegistry {
     pub async fn get_client_view(&self, client_id: &str) -> Option<ShellClientView> {
         let inner = self.inner.lock().await;
         Self::client_view_locked(&inner, client_id)
+    }
+
+    /// Return the capabilities advertised by a registered agent client.
+    /// Errors with a structured `unknown shell client` message when the
+    /// client is not registered.
+    pub async fn get_client_capabilities(
+        &self,
+        client_id: &str,
+    ) -> Result<ShellClientCapabilities, String> {
+        let inner = self.inner.lock().await;
+        let client = inner
+            .clients
+            .get(client_id)
+            .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
+        Ok(client.capabilities.clone())
+    }
+
+    /// Check whether a registered agent client supports a named capability.
+    /// Recognized capability names: `shell`, `file_read`, `file_write`,
+    /// `git`, `jobs`, `async_jobs`, `async_shell_jobs`. Unknown capability
+    /// names return `false`.
+    pub async fn client_supports(&self, client_id: &str, capability: &str) -> Result<bool, String> {
+        let caps = self.get_client_capabilities(client_id).await?;
+        Ok(match capability {
+            "shell" => caps.shell,
+            "file_read" => caps.file_read,
+            "file_write" => caps.file_write,
+            "git" => caps.git,
+            "jobs" => caps.jobs,
+            "async_jobs" => caps.async_jobs,
+            "async_shell_jobs" => caps.async_shell_jobs,
+            _ => false,
+        })
     }
 
     pub async fn list_client_projects(
@@ -1021,6 +1060,7 @@ impl ShellClientRegistry {
             capabilities: client.capabilities.clone(),
             pending_requests,
             projects: client.projects.clone(),
+            agent_protocol_version: client.agent_protocol_version.clone(),
         })
     }
 }
@@ -2416,6 +2456,7 @@ mod tests {
                 hostname: Some("fineserver".to_string()),
                 capabilities: None,
                 projects: None,
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2440,6 +2481,7 @@ mod tests {
                     "private-drop",
                     "/root/git/private-drop",
                 )]),
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2463,6 +2505,7 @@ mod tests {
                 hostname: None,
                 capabilities: None,
                 projects: Some(vec![project_summary("one", "/tmp/one")]),
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2498,6 +2541,7 @@ mod tests {
                     "private-drop",
                     "/root/git/private-drop",
                 )]),
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2509,6 +2553,7 @@ mod tests {
                 hostname: None,
                 capabilities: None,
                 projects: Some(vec![project_summary("secret", "/tmp/secret")]),
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2558,6 +2603,122 @@ mod tests {
         .unwrap();
         assert_eq!(request.client_id, "oe");
         assert!(request.projects.is_none());
+        // Old agents omit agent_protocol_version; the field deserializes as None.
+        assert!(request.agent_protocol_version.is_none());
+    }
+
+    #[test]
+    fn protocol_serde_parses_agent_protocol_version() {
+        let request: ShellClientRegisterRequest = serde_json::from_str(
+            r#"{
+                "client_id": "oe",
+                "agent_protocol_version": "polling-v1"
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            request.agent_protocol_version.as_deref(),
+            Some("polling-v1")
+        );
+    }
+
+    #[tokio::test]
+    async fn register_without_protocol_version_defaults_to_unknown() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: None,
+            })
+            .await
+            .unwrap();
+        let clients = registry.list_clients().await;
+        assert_eq!(clients[0].agent_protocol_version, "unknown");
+    }
+
+    #[tokio::test]
+    async fn register_with_protocol_version_is_exposed_in_view() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "xrh".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: Some("polling-v1".to_string()),
+            })
+            .await
+            .unwrap();
+        let clients = registry.list_clients().await;
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0].client_id, "xrh");
+        assert_eq!(clients[0].agent_protocol_version, "polling-v1");
+        let view = registry.get_client_view("xrh").await.unwrap();
+        assert_eq!(view.agent_protocol_version, "polling-v1");
+    }
+
+    #[tokio::test]
+    async fn register_blank_protocol_version_falls_back_to_unknown() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: Some("   ".to_string()),
+            })
+            .await
+            .unwrap();
+        let clients = registry.list_clients().await;
+        assert_eq!(clients[0].agent_protocol_version, "unknown");
+    }
+
+    #[tokio::test]
+    async fn client_supports_reflects_registered_capabilities() {
+        let registry = ShellClientRegistry::default();
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        caps.file_read = true;
+        caps.async_shell_jobs = true;
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(caps),
+                projects: None,
+                agent_protocol_version: None,
+            })
+            .await
+            .unwrap();
+        assert!(registry.client_supports("oe", "shell").await.unwrap());
+        assert!(registry.client_supports("oe", "file_read").await.unwrap());
+        assert!(registry
+            .client_supports("oe", "async_shell_jobs")
+            .await
+            .unwrap());
+        assert!(!registry.client_supports("oe", "git").await.unwrap());
+        // Unknown capability name is false, not an error.
+        assert!(!registry.client_supports("oe", "teleport").await.unwrap());
+        // Unknown client is a structured error.
+        let err = registry
+            .client_supports("ghost", "shell")
+            .await
+            .unwrap_err();
+        assert!(err.contains("unknown shell client"));
+        let err = registry.get_client_capabilities("ghost").await.unwrap_err();
+        assert!(err.contains("unknown shell client"));
     }
 
     #[tokio::test]
@@ -2571,6 +2732,7 @@ mod tests {
                 hostname: None,
                 capabilities: None,
                 projects: None,
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2644,6 +2806,7 @@ mod tests {
                 hostname: None,
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2745,6 +2908,7 @@ mod tests {
                 hostname: None,
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2793,6 +2957,7 @@ mod tests {
                 hostname: None,
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
+                agent_protocol_version: None,
             })
             .await
             .unwrap();
@@ -2853,6 +3018,7 @@ mod tests {
                 hostname: None,
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
+                agent_protocol_version: None,
             })
             .await
             .unwrap();

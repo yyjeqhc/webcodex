@@ -130,7 +130,8 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
         }
     };
     let project = tool_project(&call);
-    let result = runtime.dispatch(call).await;
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime.dispatch_with_auth(call, auth.as_ref()).await;
     render_result(res, &audit, &body.tool, project, result);
 }
 
@@ -157,15 +158,19 @@ pub async fn codex_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
         }
     };
     let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
-        .dispatch(ToolCall::RunCodex {
-            project: body.project,
-            prompt: body.prompt,
-            approval_mode: body.approval_mode,
-            timeout_secs: body.timeout_secs,
-            cwd: body.cwd,
-            extra_args: body.extra_args,
-        })
+        .dispatch_with_auth(
+            ToolCall::RunCodex {
+                project: body.project,
+                prompt: body.prompt,
+                approval_mode: body.approval_mode,
+                timeout_secs: body.timeout_secs,
+                cwd: body.cwd,
+                extra_args: body.extra_args,
+            },
+            auth.as_ref(),
+        )
         .await;
     render_result(res, &audit, "run_codex", project, result);
 }
@@ -192,10 +197,14 @@ pub async fn job_status(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
-        .dispatch(ToolCall::JobStatus {
-            job_id: body.job_id,
-        })
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id: body.job_id,
+            },
+            auth.as_ref(),
+        )
         .await;
     render_result(res, &audit, "job_status", None, result);
 }
@@ -222,12 +231,16 @@ pub async fn job_log(req: &mut Request, depot: &mut Depot, res: &mut Response) {
             return;
         }
     };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
-        .dispatch(ToolCall::JobLog {
-            job_id: body.job_id,
-            offset: body.offset,
-            tail_lines: body.tail_lines,
-        })
+        .dispatch_with_auth(
+            ToolCall::JobLog {
+                job_id: body.job_id,
+                offset: body.offset,
+                tail_lines: body.tail_lines,
+            },
+            auth.as_ref(),
+        )
         .await;
     render_result(res, &audit, "job_log", None, result);
 }
@@ -250,7 +263,10 @@ pub async fn projects_list(req: &mut Request, depot: &mut Depot, res: &mut Respo
         Err(_) => Value::Null,
     };
     let _ = body;
-    let result = runtime.dispatch(ToolCall::ListProjects).await;
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(ToolCall::ListProjects, auth.as_ref())
+        .await;
     render_result(res, &audit, "list_projects", None, result);
 }
 
@@ -277,13 +293,17 @@ pub async fn projects_read_file(req: &mut Request, depot: &mut Depot, res: &mut 
         }
     };
     let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
-        .dispatch(ToolCall::ReadFile {
-            project: body.project,
-            path: body.path,
-            start_line: body.start_line,
-            limit: body.limit,
-        })
+        .dispatch_with_auth(
+            ToolCall::ReadFile {
+                project: body.project,
+                path: body.path,
+                start_line: body.start_line,
+                limit: body.limit,
+            },
+            auth.as_ref(),
+        )
         .await;
     render_result(res, &audit, "read_file", project, result);
 }
@@ -316,10 +336,14 @@ pub async fn projects_git_status(req: &mut Request, depot: &mut Depot, res: &mut
         }
     };
     let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime
-        .dispatch(ToolCall::GitStatus {
-            project: body.project,
-        })
+        .dispatch_with_auth(
+            ToolCall::GitStatus {
+                project: body.project,
+            },
+            auth.as_ref(),
+        )
         .await;
     render_result(res, &audit, "git_status", project, result);
 }

@@ -20,6 +20,20 @@ fn default_shell_job_kind() -> String {
     "shell".to_string()
 }
 
+/// Default `agent_protocol_version` used when a client registers without
+/// declaring one. Old agents that predate the version field show up as
+/// `"unknown"` so operators can distinguish them from agents that explicitly
+/// announce `"polling-v1"`.
+fn default_agent_protocol_version() -> String {
+    "unknown".to_string()
+}
+
+/// Protocol version announced by current `private-drop-agent` builds. Used by
+/// the `private-drop-agent` binary target; allowed dead-code here because the
+/// main server binary does not reference it directly.
+#[allow(dead_code)]
+pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
     #[serde(default = "default_shell_true")]
@@ -88,6 +102,10 @@ pub struct ShellClientRegisterRequest {
     pub capabilities: Option<ShellClientCapabilities>,
     #[serde(default)]
     pub projects: Option<Vec<ShellAgentProjectSummary>>,
+    /// Protocol version announced by the agent during registration. Older
+    /// agents that omit this field are treated as `"unknown"` by the server.
+    #[serde(default)]
+    pub agent_protocol_version: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,6 +121,10 @@ pub struct ShellClientView {
     pub pending_requests: usize,
     #[serde(default)]
     pub projects: Vec<ShellAgentProjectSummary>,
+    /// Agent-announced protocol version. Defaults to `"unknown"` for agents
+    /// that registered before this field existed.
+    #[serde(default = "default_agent_protocol_version")]
+    pub agent_protocol_version: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

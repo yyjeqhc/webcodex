@@ -1,3 +1,4 @@
+use crate::auth::AuthContext;
 use crate::json_error;
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use salvo::prelude::*;
@@ -92,7 +93,8 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             return;
         }
     };
-    match handle_mcp_request(&runtime, request).await {
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    match handle_mcp_request(&runtime, request, auth.as_ref()).await {
         McpOutcome::Ok(body) => res.render(Json(body)),
         McpOutcome::BadRequest(body) => {
             res.status_code(StatusCode::BAD_REQUEST);
@@ -110,7 +112,11 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
 ///
 /// Business logic stays in `ToolRuntime`; this function only frames the
 /// JSON-RPC envelope and translates tool results into MCP content blocks.
-async fn handle_mcp_request(runtime: &ToolRuntime, request: JsonRpcRequest) -> McpOutcome {
+async fn handle_mcp_request(
+    runtime: &ToolRuntime,
+    request: JsonRpcRequest,
+    auth: Option<&AuthContext>,
+) -> McpOutcome {
     // A JSON-RPC request without an `id` member is a notification. Per the
     // JSON-RPC 2.0 and MCP specs the server MUST NOT reply with a JSON-RPC
     // response body, even if the method is unknown or malformed. We accept
@@ -165,7 +171,7 @@ async fn handle_mcp_request(runtime: &ToolRuntime, request: JsonRpcRequest) -> M
                     return McpOutcome::BadRequest(rpc_error(id, -32602, e));
                 }
             };
-            let result = runtime.dispatch(call).await;
+            let result = runtime.dispatch_with_auth(call, auth).await;
             let text = serde_json::to_string_pretty(&json!({
                 "success": result.success,
                 "output": result.output.clone(),
@@ -270,8 +276,12 @@ mod tests {
     #[tokio::test]
     async fn mcp_initialize_returns_protocol_and_server_info() {
         let runtime = test_runtime();
-        let outcome =
-            handle_mcp_request(&runtime, rpc("initialize", Some(Value::from(1)), json!({}))).await;
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("initialize", Some(Value::from(1)), json!({})),
+            None,
+        )
+        .await;
         match outcome {
             McpOutcome::Ok(value) => {
                 assert_eq!(value["jsonrpc"], "2.0");
@@ -292,7 +302,7 @@ mod tests {
     async fn mcp_ping_returns_empty_result() {
         let runtime = test_runtime();
         let outcome =
-            handle_mcp_request(&runtime, rpc("ping", Some(Value::from(2)), json!({}))).await;
+            handle_mcp_request(&runtime, rpc("ping", Some(Value::from(2)), json!({})), None).await;
         match outcome {
             McpOutcome::Ok(value) => {
                 assert_eq!(value["id"], 2);
@@ -306,8 +316,12 @@ mod tests {
     #[tokio::test]
     async fn mcp_tools_list_returns_same_names_as_runtime() {
         let runtime = test_runtime();
-        let outcome =
-            handle_mcp_request(&runtime, rpc("tools/list", Some(Value::from(3)), json!({}))).await;
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(3)), json!({})),
+            None,
+        )
+        .await;
         let value = match outcome {
             McpOutcome::Ok(v) => v,
             other => panic!("expected Ok, got {:?}", other),
@@ -341,6 +355,7 @@ mod tests {
                 Some(Value::from(4)),
                 json!({"name": "list_projects", "arguments": {}}),
             ),
+            None,
         )
         .await;
         let value = match outcome {
@@ -366,6 +381,7 @@ mod tests {
                 Some(Value::from(5)),
                 json!({"name": "no_such_tool", "arguments": {}}),
             ),
+            None,
         )
         .await;
         match outcome {
@@ -386,6 +402,7 @@ mod tests {
         let outcome = handle_mcp_request(
             &runtime,
             rpc("resources/list", Some(Value::from(6)), json!({})),
+            None,
         )
         .await;
         match outcome {
@@ -409,7 +426,7 @@ mod tests {
             params: json!({}),
             id: Some(Value::from(7)),
         };
-        let outcome = handle_mcp_request(&runtime, request).await;
+        let outcome = handle_mcp_request(&runtime, request, None).await;
         match outcome {
             McpOutcome::BadRequest(value) => {
                 assert_eq!(value["error"]["code"], -32600);
@@ -431,7 +448,7 @@ mod tests {
             params: json!({}),
             id: None,
         };
-        let outcome = handle_mcp_request(&runtime, request).await;
+        let outcome = handle_mcp_request(&runtime, request, None).await;
         assert!(
             matches!(outcome, McpOutcome::Notification),
             "expected Notification, got {:?}",
@@ -450,7 +467,7 @@ mod tests {
             params: json!({}),
             id: None,
         };
-        let outcome = handle_mcp_request(&runtime, request).await;
+        let outcome = handle_mcp_request(&runtime, request, None).await;
         assert!(matches!(outcome, McpOutcome::Notification));
     }
 
@@ -462,6 +479,7 @@ mod tests {
         let outcome = handle_mcp_request(
             &runtime,
             rpc("notifications/initialized", Some(Value::from(9)), json!({})),
+            None,
         )
         .await;
         match outcome {
@@ -478,8 +496,12 @@ mod tests {
         // MCP tools/list and REST /api/tools/list both expose the exact same
         // tool names because both call ToolRuntime::tool_specs().
         let runtime = test_runtime();
-        let mcp_outcome =
-            handle_mcp_request(&runtime, rpc("tools/list", Some(Value::from(8)), json!({}))).await;
+        let mcp_outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(8)), json!({})),
+            None,
+        )
+        .await;
         let mcp_value = match mcp_outcome {
             McpOutcome::Ok(v) => v,
             other => panic!("expected Ok, got {:?}", other),

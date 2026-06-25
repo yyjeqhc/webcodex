@@ -17,7 +17,7 @@ use shell_protocol::{
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
     ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
     ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
-    ShellClientRegisterRequest, ShellClientRegisterResponse,
+    ShellClientRegisterRequest, ShellClientRegisterResponse, AGENT_PROTOCOL_VERSION_POLLING_V1,
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
@@ -466,20 +466,28 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
     capabilities
 }
 
-fn register(
-    client: &Client,
+fn build_register_request(
     cfg: &AgentConfig,
-    project_cache: &mut AgentProjectCache,
-) -> Result<(), String> {
+    projects: Vec<ShellAgentProjectSummary>,
+) -> ShellClientRegisterRequest {
     let capabilities = agent_register_capabilities(cfg);
-    let body = ShellClientRegisterRequest {
+    ShellClientRegisterRequest {
         client_id: cfg.client_id.clone(),
         display_name: cfg.display_name.clone(),
         owner: cfg.owner.clone(),
         hostname: cfg.hostname.clone().or_else(hostname),
         capabilities: Some(capabilities),
-        projects: Some(project_cache.get(cfg)),
-    };
+        projects: Some(projects),
+        agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string()),
+    }
+}
+
+fn register(
+    client: &Client,
+    cfg: &AgentConfig,
+    project_cache: &mut AgentProjectCache,
+) -> Result<(), String> {
+    let body = build_register_request(cfg, project_cache.get(cfg));
     let response: ShellClientRegisterResponse =
         post_json(client, cfg, "/api/shell/agent/register", &body)?;
     if response.success {
@@ -1629,5 +1637,25 @@ path = "/tmp/private-drop"
         assert!(stdout.ends_with("23456789"));
         assert!(stderr.contains("[output truncated to last 8 bytes]"));
         assert!(stderr.ends_with("cdefghij"));
+    }
+
+    #[test]
+    fn register_request_announces_polling_v1_protocol_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let body = build_register_request(&cfg, Vec::new());
+        assert_eq!(body.client_id, "oe");
+        assert_eq!(
+            body.agent_protocol_version.as_deref(),
+            Some(AGENT_PROTOCOL_VERSION_POLLING_V1)
+        );
+        assert_eq!(body.agent_protocol_version.as_deref(), Some("polling-v1"));
+        // Capabilities advertised by the agent include async + file access.
+        let caps = body.capabilities.expect("agent registers capabilities");
+        assert!(caps.shell);
+        assert!(caps.file_read);
+        assert!(caps.file_write);
+        assert!(caps.async_jobs);
+        assert!(caps.async_shell_jobs);
     }
 }

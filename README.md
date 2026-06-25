@@ -116,7 +116,9 @@ curl -H "Authorization: Bearer change-me" \
 
 ## Codex CLI Jobs
 
-`run_codex` starts Codex CLI asynchronously and returns a `job_id`.
+`run_codex` starts Codex CLI asynchronously and returns a `job_id`. It is the
+recommended high-level action for ChatGPT-driven Codex tasks. It constructs the
+Codex command for the caller — GPT should not assemble raw shell to run Codex.
 
 ```bash
 curl -H "Authorization: Bearer change-me" \
@@ -125,10 +127,41 @@ curl -H "Authorization: Bearer change-me" \
   -d '{"project":"private-drop","prompt":"Inspect the codebase and summarize the runtime architecture."}'
 ```
 
-Defaults:
+The response includes:
 
-- `CODEX_BIN=codex`
-- `CODEX_APPROVAL_MODE=full-auto`
+- `job_id` — use this to poll status and logs.
+- `kind` — always `"codex"`.
+- `project` — the project the job runs in.
+- `status_endpoint` — `"/api/jobs/status"`.
+- `log_endpoint` — `"/api/jobs/log"`.
+
+### Codex configuration
+
+Codex behavior is controlled by `CODEX_*` environment variables:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CODEX_BIN` | `codex` | Codex CLI binary name or path. |
+| `CODEX_APPROVAL_MODE` | `full-auto` | Approval mode passed via `--approval-mode`. |
+| `CODEX_DEFAULT_TIMEOUT_SECS` | `3600` | Default job timeout when the request omits `timeout_secs`. |
+| `CODEX_MAX_PROMPT_BYTES` | `100000` | Maximum prompt size in bytes. Larger prompts are rejected. |
+| `CODEX_ALLOWED_EXTRA_ARGS` | _(empty)_ | Comma-separated allowlist of accepted `extra_args`. |
+
+`extra_args` defaults to **not allowed**. To permit additional Codex CLI flags,
+set `CODEX_ALLOWED_EXTRA_ARGS` to a comma-separated list, for example:
+
+```bash
+CODEX_ALLOWED_EXTRA_ARGS="--verbose,--json,--no-color"
+```
+
+Any `extra_args` element not present in the allowlist is rejected. Empty or
+whitespace-only entries in the list are ignored.
+
+Prompt validation:
+
+- Empty prompts are rejected.
+- Prompts containing NUL bytes are rejected.
+- Prompts exceeding `CODEX_MAX_PROMPT_BYTES` are rejected.
 
 Poll status:
 
@@ -139,7 +172,7 @@ curl -H "Authorization: Bearer change-me" \
   -d '{"job_id":"<job-id>"}'
 ```
 
-Read logs:
+Read logs (bounded; supports `offset` and `tail_lines`):
 
 ```bash
 curl -H "Authorization: Bearer change-me" \

@@ -3,6 +3,7 @@
 //! Both protocol adapters call `ToolRuntime::dispatch()`.
 //! No HTTP framework types here — pure Rust input/output.
 
+use crate::config::CodexConfig;
 use crate::projects::ProjectsState;
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{ShellFileOpRequest, ShellJobOpRequest, ShellRunRequest};
@@ -168,14 +169,20 @@ struct LocalJobRecord {
 pub struct ToolRuntime {
     pub projects: Arc<ProjectsState>,
     pub shell_clients: Arc<ShellClientRegistry>,
+    pub codex: Arc<CodexConfig>,
     local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
 }
 
 impl ToolRuntime {
-    pub fn new(projects: Arc<ProjectsState>, shell_clients: Arc<ShellClientRegistry>) -> Self {
+    pub fn new(
+        projects: Arc<ProjectsState>,
+        shell_clients: Arc<ShellClientRegistry>,
+        codex: Arc<CodexConfig>,
+    ) -> Self {
         Self {
             projects,
             shell_clients,
+            codex,
             local_jobs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -994,15 +1001,33 @@ impl ToolRuntime {
         if prompt.trim().is_empty() {
             return ToolResult::err("prompt cannot be empty");
         }
-        if prompt.len() > 100_000 {
-            return ToolResult::err("prompt is too large; maximum is 100000 bytes");
+        if prompt.contains('\0') {
+            return ToolResult::err("prompt cannot contain NUL bytes");
         }
-        let command = match build_codex_command(&prompt, approval_mode.as_deref(), extra_args) {
-            Ok(command) => command,
-            Err(e) => return ToolResult::err(e),
-        };
+        if prompt.len() > self.codex.max_prompt_bytes {
+            return ToolResult::err(format!(
+                "prompt is too large; maximum is {} bytes",
+                self.codex.max_prompt_bytes
+            ));
+        }
+        if let Some(mode) = approval_mode.as_deref() {
+            if mode.contains('\0') {
+                return ToolResult::err("approval_mode cannot contain NUL bytes");
+            }
+        }
+        let project_for_output = project.clone();
+        let command =
+            match build_codex_command(&self.codex, &prompt, approval_mode.as_deref(), extra_args) {
+                Ok(command) => command,
+                Err(e) => return ToolResult::err(e),
+            };
         let result = self
-            .run_job(project, command, timeout_secs.or(Some(3600)), cwd)
+            .run_job(
+                project,
+                command,
+                timeout_secs.or(Some(self.codex.default_timeout_secs)),
+                cwd,
+            )
             .await;
         if !result.success {
             return result;
@@ -1010,6 +1035,15 @@ impl ToolRuntime {
         let mut output = result.output;
         if let Some(obj) = output.as_object_mut() {
             obj.insert("kind".to_string(), Value::String("codex".to_string()));
+            obj.insert("project".to_string(), Value::String(project_for_output));
+            obj.insert(
+                "status_endpoint".to_string(),
+                Value::String("/api/jobs/status".to_string()),
+            );
+            obj.insert(
+                "log_endpoint".to_string(),
+                Value::String("/api/jobs/log".to_string()),
+            );
             if let Some(job_id) = obj.get("job_id").and_then(Value::as_str) {
                 if let Some(record) = self.local_jobs.lock().await.get(job_id).cloned() {
                     let mut meta = read_json(record.dir.join("metadata.json"));
@@ -1285,30 +1319,37 @@ fn resolve_local_cwd(
 }
 
 fn build_codex_command(
+    codex: &CodexConfig,
     prompt: &str,
     approval_mode: Option<&str>,
     extra_args: Option<Vec<String>>,
 ) -> Result<String, String> {
-    let codex_bin = std::env::var("CODEX_BIN").unwrap_or_else(|_| "codex".to_string());
-    validate_cli_arg(&codex_bin, "CODEX_BIN")?;
+    validate_cli_arg(&codex.bin, "CODEX_BIN")?;
     let approval_mode = approval_mode
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(str::to_string)
-        .or_else(|| std::env::var("CODEX_APPROVAL_MODE").ok())
-        .unwrap_or_else(|| "full-auto".to_string());
+        .unwrap_or_else(|| codex.approval_mode.clone());
     validate_cli_arg(&approval_mode, "approval_mode")?;
     let extra_args = extra_args.unwrap_or_default();
     if extra_args.len() > 32 {
         return Err("extra_args may contain at most 32 arguments".to_string());
     }
+    for (idx, arg) in extra_args.iter().enumerate() {
+        validate_cli_arg(arg, &format!("extra_args[{}]", idx))?;
+        if !codex.is_extra_arg_allowed(arg) {
+            return Err(format!(
+                "extra_args[{}] '{}' is not in CODEX_ALLOWED_EXTRA_ARGS allowlist",
+                idx, arg
+            ));
+        }
+    }
     let mut parts = vec![
-        shell_escape_simple(&codex_bin),
+        shell_escape_simple(&codex.bin),
         "--approval-mode".to_string(),
         shell_escape_simple(&approval_mode),
     ];
-    for (idx, arg) in extra_args.iter().enumerate() {
-        validate_cli_arg(arg, &format!("extra_args[{}]", idx))?;
+    for arg in &extra_args {
         parts.push(shell_escape_simple(arg));
     }
     parts.push(shell_escape_simple(prompt));
@@ -1584,7 +1625,7 @@ mod tests {
             "test".to_string(),
         ));
         let shell_clients = Arc::new(ShellClientRegistry::default());
-        ToolRuntime::new(projects, shell_clients)
+        ToolRuntime::new(projects, shell_clients, Arc::new(CodexConfig::default()))
     }
 
     // =========================================================================
@@ -1990,7 +2031,11 @@ mod tests {
         );
         let config = ProjectsConfig { projects };
         let state = ProjectsState::loaded(config, "test".to_string());
-        ToolRuntime::new(Arc::new(state), Arc::new(ShellClientRegistry::default()))
+        ToolRuntime::new(
+            Arc::new(state),
+            Arc::new(ShellClientRegistry::default()),
+            Arc::new(CodexConfig::default()),
+        )
     }
 
     /// Write a fake on-disk local job simulating a job that survived a restart.
@@ -2359,5 +2404,313 @@ mod tests {
         assert!(out2.contains("line 501"));
         assert!(out2.contains("line 600"));
         assert_eq!(second.output["next_stdout_line"], 601);
+    }
+
+    // =========================================================================
+    // Phase 3: harden run_codex — command construction, validation, output
+    // =========================================================================
+
+    fn codex_config_with_allowlist(allowlist: &[&str]) -> CodexConfig {
+        CodexConfig {
+            bin: "codex".to_string(),
+            approval_mode: "full-auto".to_string(),
+            default_timeout_secs: 3600,
+            max_prompt_bytes: 100_000,
+            allowed_extra_args: allowlist.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    fn runtime_with_codex(root: &Path, codex: CodexConfig) -> ToolRuntime {
+        let mut projects = HashMap::new();
+        projects.insert(
+            "demo".to_string(),
+            local_project_config(&root.to_string_lossy()),
+        );
+        let config = ProjectsConfig { projects };
+        let state = ProjectsState::loaded(config, "test".to_string());
+        ToolRuntime::new(
+            Arc::new(state),
+            Arc::new(ShellClientRegistry::default()),
+            Arc::new(codex),
+        )
+    }
+
+    #[test]
+    fn build_codex_command_uses_default_bin_and_approval_mode() {
+        let codex = CodexConfig::default();
+        let cmd = build_codex_command(&codex, "fix tests", None, None).unwrap();
+        // Expected: 'codex' --approval-mode 'full-auto' 'fix tests'
+        assert!(cmd.starts_with("'codex' --approval-mode 'full-auto' "));
+        assert!(cmd.ends_with("'fix tests'"));
+    }
+
+    #[test]
+    fn build_codex_command_uses_configured_bin_and_approval_mode() {
+        let codex = CodexConfig {
+            bin: "/usr/local/bin/codex".to_string(),
+            approval_mode: "suggest".to_string(),
+            default_timeout_secs: 3600,
+            max_prompt_bytes: 100_000,
+            allowed_extra_args: vec![],
+        };
+        let cmd = build_codex_command(&codex, "hello", None, None).unwrap();
+        assert!(cmd.starts_with("'/usr/local/bin/codex' --approval-mode 'suggest' "));
+    }
+
+    #[test]
+    fn build_codex_command_request_approval_mode_overrides_config() {
+        let codex = CodexConfig::default();
+        let cmd = build_codex_command(&codex, "hi", Some("suggest"), None).unwrap();
+        assert!(cmd.contains("--approval-mode 'suggest'"));
+        assert!(!cmd.contains("full-auto"));
+    }
+
+    #[test]
+    fn build_codex_command_shell_escapes_prompt() {
+        let codex = CodexConfig::default();
+        let cmd = build_codex_command(&codex, "rm -rf /'; echo pwned", None, None).unwrap();
+        // The single quote in the prompt must be escaped with '\'\'',
+        // preventing the trailing "; echo pwned" from running as a command.
+        assert!(cmd.contains("'\\''"));
+        // The whole prompt is wrapped in single quotes, so the semicolon is
+        // literal, not a command separator.
+        assert!(cmd.contains("'; echo pwned'"));
+    }
+
+    #[test]
+    fn build_codex_command_rejects_empty_prompt_via_validate() {
+        // build_codex_command itself does not check emptiness (run_codex does),
+        // but an empty prompt still gets escaped. Verify it doesn't panic.
+        let codex = CodexConfig::default();
+        let cmd = build_codex_command(&codex, "", None, None).unwrap();
+        // Empty prompt produces a trailing ''.
+        assert!(cmd.ends_with(" ''"));
+    }
+
+    #[test]
+    fn build_codex_command_rejects_extra_args_by_default() {
+        let codex = CodexConfig::default(); // empty allowlist
+        let err = build_codex_command(&codex, "hi", None, Some(vec!["--verbose".to_string()]))
+            .unwrap_err();
+        assert!(err.contains("allowlist"));
+        assert!(err.contains("--verbose"));
+    }
+
+    #[test]
+    fn build_codex_command_allows_allowlisted_extra_args() {
+        let codex = codex_config_with_allowlist(&["--verbose", "--json"]);
+        let cmd = build_codex_command(
+            &codex,
+            "hi",
+            None,
+            Some(vec!["--verbose".to_string(), "--json".to_string()]),
+        )
+        .unwrap();
+        assert!(cmd.contains("'--verbose'"));
+        assert!(cmd.contains("'--json'"));
+    }
+
+    #[test]
+    fn build_codex_command_rejects_non_allowlisted_extra_args() {
+        let codex = codex_config_with_allowlist(&["--verbose"]);
+        let err = build_codex_command(&codex, "hi", None, Some(vec!["--danger".to_string()]))
+            .unwrap_err();
+        assert!(err.contains("allowlist"));
+        assert!(err.contains("--danger"));
+    }
+
+    #[test]
+    fn build_codex_command_rejects_nul_in_extra_arg() {
+        let codex = codex_config_with_allowlist(&["--verbose"]);
+        let err = build_codex_command(&codex, "hi", None, Some(vec!["--ver\0bose".to_string()]))
+            .unwrap_err();
+        assert!(err.contains("NUL"));
+    }
+
+    #[test]
+    fn build_codex_command_rejects_too_many_extra_args() {
+        let allowed: Vec<String> = (0..40).map(|i| format!("--a{}", i)).collect();
+        let codex = CodexConfig {
+            allowed_extra_args: allowed.clone(),
+            ..CodexConfig::default()
+        };
+        let too_many: Vec<String> = allowed;
+        let err = build_codex_command(&codex, "hi", None, Some(too_many)).unwrap_err();
+        assert!(err.contains("at most 32"));
+    }
+
+    #[tokio::test]
+    async fn run_codex_rejects_empty_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_codex(tmp.path(), CodexConfig::default());
+        let result = runtime
+            .run_codex(
+                "demo".to_string(),
+                "   ".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn run_codex_rejects_nul_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_codex(tmp.path(), CodexConfig::default());
+        let result = runtime
+            .run_codex(
+                "demo".to_string(),
+                "fix\0tests".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("NUL"));
+    }
+
+    #[tokio::test]
+    async fn run_codex_rejects_oversized_prompt() {
+        let tmp = tempfile::tempdir().unwrap();
+        let codex = CodexConfig {
+            max_prompt_bytes: 16,
+            ..CodexConfig::default()
+        };
+        let runtime = runtime_with_codex(tmp.path(), codex);
+        let big = "x".repeat(100);
+        let result = runtime
+            .run_codex("demo".to_string(), big, None, None, None, None)
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("too large"));
+        assert!(err.contains("16"));
+    }
+
+    #[tokio::test]
+    async fn run_codex_rejects_nul_approval_mode() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_codex(tmp.path(), CodexConfig::default());
+        let result = runtime
+            .run_codex(
+                "demo".to_string(),
+                "fix tests".to_string(),
+                Some("full\0auto".to_string()),
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("NUL"));
+    }
+
+    #[tokio::test]
+    async fn run_codex_rejects_extra_args_without_allowlist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_codex(tmp.path(), CodexConfig::default());
+        let result = runtime
+            .run_codex(
+                "demo".to_string(),
+                "fix tests".to_string(),
+                None,
+                None,
+                None,
+                Some(vec!["--verbose".to_string()]),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("allowlist"));
+    }
+
+    #[tokio::test]
+    async fn run_codex_output_contains_structured_fields() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        // Initialize a git repo so run_job's wrapper (git apply etc.) is not
+        // needed — run_job only spawns a shell wrapper, no git required.
+        std::fs::create_dir_all(root).unwrap();
+        let runtime = runtime_with_codex(root, CodexConfig::default());
+        let result = runtime
+            .run_codex(
+                "demo".to_string(),
+                "echo hello".to_string(),
+                None,
+                Some(10),
+                None,
+                None,
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        assert!(result.output["job_id"].is_string());
+        assert_eq!(result.output["kind"], "codex");
+        assert_eq!(result.output["project"], "demo");
+        assert_eq!(result.output["status_endpoint"], "/api/jobs/status");
+        assert_eq!(result.output["log_endpoint"], "/api/jobs/log");
+    }
+
+    #[tokio::test]
+    async fn run_codex_metadata_kind_is_codex() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_codex(root, CodexConfig::default());
+        let result = runtime
+            .run_codex(
+                "demo".to_string(),
+                "echo hello".to_string(),
+                None,
+                Some(10),
+                None,
+                None,
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        let job_id = result.output["job_id"].as_str().unwrap().to_string();
+        // The job dir metadata.json should record kind = codex.
+        let record = runtime.local_jobs.lock().await.get(&job_id).cloned();
+        assert!(record.is_some(), "job should be cached in local_jobs");
+        let meta = read_json(record.unwrap().dir.join("metadata.json"));
+        assert_eq!(meta["kind"], "codex");
+        assert_eq!(meta["project"], "demo");
+    }
+
+    #[tokio::test]
+    async fn run_codex_uses_default_timeout_from_config() {
+        // When timeout_secs is None, run_codex uses codex.default_timeout_secs.
+        // We verify by checking metadata.json max_runtime_secs matches config.
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let codex = CodexConfig {
+            default_timeout_secs: 42,
+            ..CodexConfig::default()
+        };
+        let runtime = runtime_with_codex(root, codex);
+        let result = runtime
+            .run_codex(
+                "demo".to_string(),
+                "echo hi".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        let job_id = result.output["job_id"].as_str().unwrap().to_string();
+        let record = runtime
+            .local_jobs
+            .lock()
+            .await
+            .get(&job_id)
+            .cloned()
+            .unwrap();
+        let meta = read_json(record.dir.join("metadata.json"));
+        assert_eq!(meta["max_runtime_secs"], 42);
     }
 }

@@ -197,7 +197,11 @@ mod tests {
             "test".to_string(),
         ));
         let shell_clients = Arc::new(ShellClientRegistry::default());
-        ToolRuntime::new(projects, shell_clients)
+        ToolRuntime::new(
+            projects,
+            shell_clients,
+            Arc::new(crate::config::CodexConfig::default()),
+        )
     }
 
     fn rpc(method: &str, id: Option<Value>, params: Value) -> JsonRpcRequest {

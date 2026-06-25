@@ -8,6 +8,74 @@ pub struct Config {
     pub enable_ssh: bool,
     pub max_text_size: usize,
     pub max_file_size: usize,
+    pub codex: CodexConfig,
+}
+
+/// Codex CLI execution configuration, sourced from `CODEX_*` env vars.
+#[derive(Debug, Clone)]
+pub struct CodexConfig {
+    /// Path/name of the Codex CLI binary. Default `codex`.
+    pub bin: String,
+    /// Approval mode passed via `--approval-mode`. Default `full-auto`.
+    pub approval_mode: String,
+    /// Default job timeout in seconds. Default `3600`.
+    pub default_timeout_secs: i64,
+    /// Maximum prompt size in bytes. Default `100000`.
+    pub max_prompt_bytes: usize,
+    /// Allowlist of accepted `extra_args`. Empty means no extra args allowed.
+    pub allowed_extra_args: Vec<String>,
+}
+
+impl Default for CodexConfig {
+    fn default() -> Self {
+        Self {
+            bin: "codex".to_string(),
+            approval_mode: "full-auto".to_string(),
+            default_timeout_secs: 3600,
+            max_prompt_bytes: 100_000,
+            allowed_extra_args: Vec::new(),
+        }
+    }
+}
+
+impl CodexConfig {
+    pub fn from_env() -> Self {
+        let bin = std::env::var("CODEX_BIN").unwrap_or_else(|_| "codex".to_string());
+        let approval_mode =
+            std::env::var("CODEX_APPROVAL_MODE").unwrap_or_else(|_| "full-auto".to_string());
+        let default_timeout_secs = std::env::var("CODEX_DEFAULT_TIMEOUT_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(3600);
+        let max_prompt_bytes = std::env::var("CODEX_MAX_PROMPT_BYTES")
+            .ok()
+            .and_then(|v| v.trim().parse::<usize>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(100_000);
+        let allowed_extra_args = std::env::var("CODEX_ALLOWED_EXTRA_ARGS")
+            .ok()
+            .map(|v| {
+                v.split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .collect()
+            })
+            .unwrap_or_default();
+        Self {
+            bin,
+            approval_mode,
+            default_timeout_secs,
+            max_prompt_bytes,
+            allowed_extra_args,
+        }
+    }
+
+    /// Returns true if `arg` is in the configured allowlist.
+    pub fn is_extra_arg_allowed(&self, arg: &str) -> bool {
+        self.allowed_extra_args.iter().any(|allowed| allowed == arg)
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +168,7 @@ impl Config {
             enable_ssh: env_flag("DROP_ENABLE_SSH").unwrap_or(false),
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
+            codex: CodexConfig::from_env(),
         }
     }
 
@@ -130,5 +199,89 @@ fn env_flag(key: &str) -> Option<bool> {
         "1" | "true" | "yes" | "on" => Some(true),
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn codex_config_defaults() {
+        let cfg = CodexConfig::default();
+        assert_eq!(cfg.bin, "codex");
+        assert_eq!(cfg.approval_mode, "full-auto");
+        assert_eq!(cfg.default_timeout_secs, 3600);
+        assert_eq!(cfg.max_prompt_bytes, 100_000);
+        assert!(cfg.allowed_extra_args.is_empty());
+    }
+
+    #[test]
+    fn codex_config_from_env_uses_defaults_when_unset() {
+        // Clear CODEX_* env vars so we get deterministic defaults.
+        std::env::remove_var("CODEX_BIN");
+        std::env::remove_var("CODEX_APPROVAL_MODE");
+        std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
+        std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
+        std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
+
+        let cfg = CodexConfig::from_env();
+        assert_eq!(cfg.bin, "codex");
+        assert_eq!(cfg.approval_mode, "full-auto");
+        assert_eq!(cfg.default_timeout_secs, 3600);
+        assert_eq!(cfg.max_prompt_bytes, 100_000);
+        assert!(cfg.allowed_extra_args.is_empty());
+    }
+
+    #[test]
+    fn codex_config_from_env_parses_overrides() {
+        std::env::set_var("CODEX_BIN", "/usr/local/bin/codex");
+        std::env::set_var("CODEX_APPROVAL_MODE", "suggest");
+        std::env::set_var("CODEX_DEFAULT_TIMEOUT_SECS", "600");
+        std::env::set_var("CODEX_MAX_PROMPT_BYTES", "2048");
+        std::env::set_var("CODEX_ALLOWED_EXTRA_ARGS", "--verbose, --json, --no-color");
+
+        let cfg = CodexConfig::from_env();
+        assert_eq!(cfg.bin, "/usr/local/bin/codex");
+        assert_eq!(cfg.approval_mode, "suggest");
+        assert_eq!(cfg.default_timeout_secs, 600);
+        assert_eq!(cfg.max_prompt_bytes, 2048);
+        assert_eq!(
+            cfg.allowed_extra_args,
+            vec!["--verbose", "--json", "--no-color"]
+        );
+        assert!(cfg.is_extra_arg_allowed("--verbose"));
+        assert!(cfg.is_extra_arg_allowed("--json"));
+        assert!(!cfg.is_extra_arg_allowed("--danger"));
+
+        // Restore defaults.
+        std::env::remove_var("CODEX_BIN");
+        std::env::remove_var("CODEX_APPROVAL_MODE");
+        std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
+        std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
+        std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
+    }
+
+    #[test]
+    fn codex_config_from_env_ignores_invalid_numeric_values() {
+        std::env::set_var("CODEX_DEFAULT_TIMEOUT_SECS", "not-a-number");
+        std::env::set_var("CODEX_MAX_PROMPT_BYTES", "-5");
+
+        let cfg = CodexConfig::from_env();
+        assert_eq!(cfg.default_timeout_secs, 3600);
+        assert_eq!(cfg.max_prompt_bytes, 100_000);
+
+        std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
+        std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
+    }
+
+    #[test]
+    fn codex_config_allowed_extra_args_ignores_empty_entries() {
+        std::env::set_var("CODEX_ALLOWED_EXTRA_ARGS", " --verbose , , --json ");
+
+        let cfg = CodexConfig::from_env();
+        assert_eq!(cfg.allowed_extra_args, vec!["--verbose", "--json"]);
+
+        std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
     }
 }

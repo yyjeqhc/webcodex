@@ -28,6 +28,7 @@ pub(crate) use auth::{get_db, json_error, AuthMiddleware};
 pub(crate) use config::load_startup_env_files;
 #[cfg(test)]
 pub(crate) use config::parse_env_file_line;
+pub use config::CodexConfig;
 pub use config::Config;
 pub use db::Database;
 pub use models::{
@@ -109,6 +110,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let tool_runtime = Arc::new(tool_runtime::ToolRuntime::new(
         projects_state.clone(),
         shell_registry.clone(),
+        Arc::new(config.codex.clone()),
     ));
 
     let api_router = Router::with_path("api").push(
@@ -234,6 +236,11 @@ mod tests {
         std::env::remove_var("DROP_DATA");
         std::env::remove_var("DROP_TOKEN");
         std::env::remove_var("DROP_ENABLE_SSH");
+        std::env::remove_var("CODEX_BIN");
+        std::env::remove_var("CODEX_APPROVAL_MODE");
+        std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
+        std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
+        std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
 
         let config = Config::from_env();
         assert_eq!(config.addr, "0.0.0.0:8080");
@@ -243,6 +250,11 @@ mod tests {
         assert!(!config.is_ssh_enabled());
         assert_eq!(config.max_text_size, 2 * 1024 * 1024);
         assert_eq!(config.max_file_size, 100 * 1024 * 1024);
+        assert_eq!(config.codex.bin, "codex");
+        assert_eq!(config.codex.approval_mode, "full-auto");
+        assert_eq!(config.codex.default_timeout_secs, 3600);
+        assert_eq!(config.codex.max_prompt_bytes, 100_000);
+        assert!(config.codex.allowed_extra_args.is_empty());
     }
 
     #[test]
@@ -254,6 +266,7 @@ mod tests {
             enable_ssh: false,
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
+            codex: CodexConfig::default(),
         };
         assert!(config.is_auth_enabled());
         assert!(config.validate_token("secret123"));
@@ -270,6 +283,7 @@ mod tests {
             enable_ssh: false,
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
+            codex: CodexConfig::default(),
         };
         assert!(!config.is_auth_enabled());
         // When no token is set, validation always returns false

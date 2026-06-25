@@ -183,29 +183,90 @@ curl -H "Authorization: Bearer change-me" \
 
 ## MCP
 
-Minimal JSON-RPC methods:
+`/mcp` speaks JSON-RPC 2.0 over HTTP (streamable-http-jsonrpc transport). It is
+protected by the same Bearer token as the REST API (`DROP_TOKEN`). When
+`DROP_TOKEN` is set, every request to `/mcp` must carry
+`Authorization: Bearer <token>`; requests without a valid token are rejected
+with `401 Unauthorized`.
 
-- `initialize`
-- `ping`
-- `tools/list`
-- `tools/call`
+MCP and GPT Actions share a single `ToolRuntime` — there is no separate
+business logic for either surface. The MCP wrapper only frames the JSON-RPC
+envelope and translates tool results into MCP content blocks.
 
-Example:
+Supported methods:
+
+- `initialize` — returns `protocolVersion`, `serverInfo`, and capabilities.
+- `ping` — returns an empty result.
+- `tools/list` — returns the same tool list as `POST /api/tools/list`.
+- `tools/call` — calls a tool by `name` with `arguments`.
+- `notifications/initialized` — a notification (no `id`). The server replies
+  with `HTTP 202 Accepted` and an empty body, per the JSON-RPC notification
+  convention. Any request without an `id` member is treated as a notification.
+
+`GET /mcp` returns discovery metadata: server name, version, protocol version,
+endpoint, supported methods, and an auth hint.
+
+### Tool result shape
+
+`tools/call` always returns a normal JSON-RPC `result` (never a protocol
+`error`) containing:
+
+- `content` — array of `{ "type": "text", "text": "..." }` blocks.
+- `structuredContent` — `{ "success", "output", "error" }`.
+- `isError` — `true` when the tool failed, `false` otherwise.
+
+A business failure (e.g. unknown project, command exit code != 0) is reported
+as `isError: true` inside a normal result. JSON-RPC protocol errors are only
+used for:
+
+- invalid `jsonrpc` version (`-32600`),
+- unknown method (`-32601`),
+- invalid params shape (`-32602`),
+- unknown tool name / deserialization failure (`-32602`).
+
+### Examples
+
+Initialize:
 
 ```bash
 curl -H "Authorization: Bearer change-me" \
   -X POST http://127.0.0.1:8080/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}'
 ```
 
-Tool call:
+List tools:
 
 ```bash
 curl -H "Authorization: Bearer change-me" \
   -X POST http://127.0.0.1:8080/mcp \
   -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}'
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+```
+
+Call a tool:
+
+```bash
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}'
+```
+
+Send `notifications/initialized` (no `id`, server replies `202` with empty body):
+
+```bash
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/mcp \
+  -H "Content-Type: application/json" \
+  -d '{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}'
+```
+
+Discovery (`GET /mcp`):
+
+```bash
+curl -H "Authorization: Bearer change-me" \
+  http://127.0.0.1:8080/mcp
 ```
 
 ## Agent

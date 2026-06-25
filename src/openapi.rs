@@ -9,13 +9,61 @@ fn public_url() -> String {
         .unwrap_or_else(|| "http://localhost:8080".to_string())
 }
 
+/// The exact, ordered set of GPT Actions operation ids exposed by
+/// `/openapi.json`. Tests assert this set matches the generated schema.
+///
+/// Order is grouped by recommended GPT call flow:
+/// 1. discovery (`listRuntimeTools`, `listProjects`)
+/// 2. code tasks (`runCodexTask`, `getRuntimeJobStatus`, `getRuntimeJobLog`)
+/// 3. project inspection (`readProjectFile`, `getProjectGitStatus`)
+/// 4. advanced/generic entry point (`callRuntimeTool`)
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
-    "callRuntimeTool",
+    "listProjects",
     "runCodexTask",
     "getRuntimeJobStatus",
     "getRuntimeJobLog",
+    "readProjectFile",
+    "getProjectGitStatus",
+    "callRuntimeTool",
+];
+
+/// Legacy and non-GPT-Actions paths that must never appear in
+/// `/openapi.json`. The GPT Actions surface is intentionally small and
+/// POST-only; raw shell, file transfer, desktop, and the old codex
+/// command/context endpoints belong to other internal routers, not to
+/// the GPT-importable schema.
+#[cfg(test)]
+const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
+    "/api/messages",
+    "/api/files",
+    "/api/desktop/task_op",
+    "/api/desktop/task",
+    "/api/codex/command_request_op",
+    "/api/codex/command_request",
+    "/api/codex/context",
+    "/api/codex/context_batch",
+    "/api/codex/apply_patch",
+    "/api/codex/edit",
+    "/api/codex/artifact",
+    "/api/codex/git",
+    "/api/codex/job",
+    "/api/codex/report",
+    "/api/codex/projects",
+    "/api/shell/run",
+    "/api/shell/job",
+    "/api/shell/file",
+    "/api/shell/jobs/status",
+    "/api/shell/jobs/log",
+    "/api/shell/jobs/stop",
+    "/api/shell/jobs/list",
+    "/api/shell/agent/register",
+    "/api/shell/agent/poll",
+    "/api/shell/agent/result",
+    "/api/shell/agent/job_update",
+    "/mcp",
+    "/openapi.json",
 ];
 
 #[handler]
@@ -29,7 +77,7 @@ fn build_openapi_spec() -> Value {
         "info": {
             "title": "Private Drop Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Minimal GPT Actions API for invoking Private Drop runtime tools, Codex CLI jobs, and job inspection."
+            "description": "Self-hosted tool runtime for ChatGPT. Recommended flow: call listProjects (or listRuntimeTools) to discover available projects, then runCodexTask to start a Codex CLI task, then getRuntimeJobStatus / getRuntimeJobLog to poll the returned job_id. Use readProjectFile and getProjectGitStatus for safe project inspection. callRuntimeTool is an advanced generic entry point for any runtime tool; prefer the dedicated actions when available. All endpoints require Bearer auth (DROP_TOKEN). MCP and GPT Actions share the same ToolRuntime."
         },
         "servers": [
             {
@@ -42,45 +90,159 @@ fn build_openapi_spec() -> Value {
                 "post": operation(
                     "listRuntimeTools",
                     "List runtime tools",
-                    "Returns the MCP-compatible tool list exposed by the server.",
+                    "Returns the MCP-compatible tool list exposed by the server. Useful for discovering every tool name accepted by callRuntimeTool. GPT Actions normally do not need this if the dedicated actions cover the task.",
                     "EmptyRequest",
                     "ToolsListResponse"
                 )
             },
-            "/api/tools/call": {
+            "/api/projects/list": {
                 "post": operation(
-                    "callRuntimeTool",
-                    "Call runtime tool",
-                    "Calls one tool by name. Use listRuntimeTools first when the available tools are unknown.",
-                    "ToolCallRequest",
+                    "listProjects",
+                    "List configured projects",
+                    "Returns the list of configured projects with their id, path, executor (local or agent), and whether patching is allowed. Call this first to learn the project ids required by runCodexTask, readProjectFile, and getProjectGitStatus.",
+                    "EmptyRequest",
                     "ToolResult"
                 )
             },
             "/api/codex/run": {
-                "post": operation(
+                "post": operation_with_examples(
                     "runCodexTask",
                     "Run Codex CLI task",
-                    "Starts Codex CLI asynchronously inside a configured project and returns a job_id. Poll with getRuntimeJobStatus and getRuntimeJobLog.",
+                    "Recommended primary action for code tasks. Starts Codex CLI asynchronously inside a configured project and returns a job_id plus status/log endpoint hints. The runtime constructs the Codex command for the caller; GPT should NOT assemble raw shell to run Codex. After calling this, poll the returned job_id with getRuntimeJobStatus and read output with getRuntimeJobLog.",
                     "CodexRunRequest",
-                    "ToolResult"
+                    "ToolResult",
+                    json!({
+                        "projectAndPrompt": {
+                            "summary": "Start a Codex task in a project",
+                            "value": {
+                                "project": "private-drop",
+                                "prompt": "Inspect the codebase and summarize the runtime architecture."
+                            }
+                        },
+                        "withTimeout": {
+                            "summary": "Start a Codex task with an explicit timeout",
+                            "value": {
+                                "project": "private-drop",
+                                "prompt": "Run the test suite and report failures.",
+                                "timeout_secs": 600
+                            }
+                        }
+                    })
                 )
             },
             "/api/jobs/status": {
-                "post": operation(
+                "post": operation_with_examples(
                     "getRuntimeJobStatus",
                     "Get job status",
-                    "Returns status, timing, and exit metadata for a runtime job.",
+                    "Returns status, timing, and exit metadata for a runtime job. Use this to poll the job_id returned by runCodexTask until status is completed, failed, stopped, or lost.",
                     "JobStatusRequest",
-                    "ToolResult"
+                    "ToolResult",
+                    json!({
+                        "byJobId": {
+                            "summary": "Poll a job by id",
+                            "value": {
+                                "job_id": "11111111-2222-3333-4444-555555555555"
+                            }
+                        }
+                    })
                 )
             },
             "/api/jobs/log": {
-                "post": operation(
+                "post": operation_with_examples(
                     "getRuntimeJobLog",
                     "Get job log",
-                    "Returns stdout/stderr text for a runtime job.",
+                    "Returns bounded stdout/stderr text for a runtime job. Use the job_id returned by runCodexTask. Output is always bounded; use tail_lines to limit the trailing stdout window and offset (next_stdout_line) for pagination.",
                     "JobLogRequest",
-                    "ToolResult"
+                    "ToolResult",
+                    json!({
+                        "byJobId": {
+                            "summary": "Read the tail of a job log",
+                            "value": {
+                                "job_id": "11111111-2222-3333-4444-555555555555"
+                            }
+                        },
+                        "withTailLines": {
+                            "summary": "Read the last N stdout lines",
+                            "value": {
+                                "job_id": "11111111-2222-3333-4444-555555555555",
+                                "tail_lines": 200
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/read_file": {
+                "post": operation_with_examples(
+                    "readProjectFile",
+                    "Read a project file",
+                    "Reads a UTF-8 file from a configured project. Paths are confined to the project root; traversal and absolute paths are rejected. Output is bounded; use start_line and limit for pagination. This is the safe, dedicated alternative to callRuntimeTool for file inspection.",
+                    "ReadProjectFileRequest",
+                    "ToolResult",
+                    json!({
+                        "readme": {
+                            "summary": "Read a project README",
+                            "value": {
+                                "project": "private-drop",
+                                "path": "README.md"
+                            }
+                        },
+                        "paginated": {
+                            "summary": "Read a slice of a source file",
+                            "value": {
+                                "project": "private-drop",
+                                "path": "src/main.rs",
+                                "start_line": 1,
+                                "limit": 100
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/git_status": {
+                "post": operation_with_examples(
+                    "getProjectGitStatus",
+                    "Get project git status",
+                    "Runs `git status --porcelain` in a configured project and returns stdout, stderr, and exit_code. Safe read-only project inspection. Use this before proposing changes via runCodexTask.",
+                    "ProjectIdRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Check git status of a project",
+                            "value": {
+                                "project": "private-drop"
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/tools/call": {
+                "post": operation_with_examples(
+                    "callRuntimeTool",
+                    "Call runtime tool (advanced)",
+                    "Advanced/generic entry point: calls one runtime tool by name with a params object. Prefer the dedicated actions (listProjects, runCodexTask, readProjectFile, getProjectGitStatus, getRuntimeJobStatus, getRuntimeJobLog) when they cover the task. Use listRuntimeTools to discover every accepted tool name. Accepted tool names include: list_tools, list_projects, list_agents, run_shell, run_job, run_codex, job_status, job_log, read_file, git_status, git_diff, apply_patch.",
+                    "ToolCallRequest",
+                    "ToolResult",
+                    json!({
+                        "gitStatus": {
+                            "summary": "Call git_status via the generic entry point",
+                            "value": {
+                                "tool": "git_status",
+                                "params": {
+                                    "project": "private-drop"
+                                }
+                            }
+                        },
+                        "readFile": {
+                            "summary": "Call read_file via the generic entry point",
+                            "value": {
+                                "tool": "read_file",
+                                "params": {
+                                    "project": "private-drop",
+                                    "path": "README.md"
+                                }
+                            }
+                        }
+                    })
                 )
             }
         },
@@ -88,7 +250,8 @@ fn build_openapi_spec() -> Value {
             "securitySchemes": {
                 "bearerAuth": {
                     "type": "http",
-                    "scheme": "bearer"
+                    "scheme": "bearer",
+                    "description": "Bearer token. Set DROP_TOKEN on the server and send Authorization: Bearer <DROP_TOKEN>."
                 }
             },
             "schemas": schemas()
@@ -108,6 +271,34 @@ fn operation(
     request_schema: &str,
     response_schema: &str,
 ) -> Value {
+    operation_with_examples(
+        operation_id,
+        summary,
+        description,
+        request_schema,
+        response_schema,
+        Value::Null,
+    )
+}
+
+fn operation_with_examples(
+    operation_id: &str,
+    summary: &str,
+    description: &str,
+    request_schema: &str,
+    response_schema: &str,
+    examples: Value,
+) -> Value {
+    let mut media_type = json!({
+        "schema": {
+            "$ref": format!("#/components/schemas/{}", request_schema)
+        }
+    });
+    if let Value::Object(examples_obj) = examples {
+        if !examples_obj.is_empty() {
+            media_type["examples"] = Value::Object(examples_obj);
+        }
+    }
     json!({
         "operationId": operation_id,
         "summary": summary,
@@ -115,11 +306,7 @@ fn operation(
         "requestBody": {
             "required": true,
             "content": {
-                "application/json": {
-                    "schema": {
-                        "$ref": format!("#/components/schemas/{}", request_schema)
-                    }
-                }
+                "application/json": media_type
             }
         },
         "responses": {
@@ -155,20 +342,22 @@ fn schemas() -> Value {
         "EmptyRequest": {
             "type": "object",
             "additionalProperties": false,
-            "properties": {}
+            "properties": {},
+            "description": "Empty request body. Send {} for actions that take no arguments (listRuntimeTools, listProjects)."
         },
         "ToolCallRequest": {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
+            "description": "Generic runtime tool call. `tool` is the runtime tool name; `params` is the tool-specific arguments object.",
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name, for example run_shell, run_job, run_codex, read_file, git_status, git_diff, apply_patch, job_status, or job_log."
+                    "description": "Runtime tool name. Accepted values: list_tools, list_projects, list_agents, run_shell, run_job, run_codex, job_status, job_log, read_file, git_status, git_diff, apply_patch."
                 },
                 "params": {
                     "type": "object",
-                    "description": "Tool-specific arguments object.",
+                    "description": "Tool-specific arguments object. Omit or send {} for tools that take no arguments (list_tools, list_projects, list_agents).",
                     "additionalProperties": true
                 }
             }
@@ -177,33 +366,34 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "prompt"],
+            "description": "Start a Codex CLI task. `project` must be a configured project id (see listProjects). `prompt` is the instruction passed to Codex CLI.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Configured project id from projects.toml."
+                    "description": "Configured project id from projects.toml. Use listProjects to discover available ids."
                 },
                 "prompt": {
                     "type": "string",
-                    "description": "Instruction prompt passed to Codex CLI."
+                    "description": "Instruction prompt passed to Codex CLI. Must be non-empty and within CODEX_MAX_PROMPT_BYTES."
                 },
                 "approval_mode": {
                     "type": "string",
-                    "description": "Codex approval mode. Defaults to CODEX_APPROVAL_MODE or full-auto."
+                    "description": "Codex approval mode. Defaults to CODEX_APPROVAL_MODE or full-auto. Common values: full-auto, suggest."
                 },
                 "timeout_secs": {
                     "type": "integer",
-                    "description": "Maximum runtime in seconds."
+                    "description": "Maximum runtime in seconds. Defaults to CODEX_DEFAULT_TIMEOUT_SECS (3600)."
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional project-relative working directory."
+                    "description": "Optional project-relative working directory. Must stay within the project root."
                 },
                 "extra_args": {
                     "type": "array",
                     "items": {
                         "type": "string"
                     },
-                    "description": "Optional additional Codex CLI arguments."
+                    "description": "Optional additional Codex CLI arguments. Each entry must be present in CODEX_ALLOWED_EXTRA_ARGS (empty by default)."
                 }
             }
         },
@@ -211,10 +401,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["job_id"],
+            "description": "Poll a runtime job by id.",
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "Runtime job id."
+                    "description": "Runtime job id returned by runCodexTask or run_job."
                 }
             }
         },
@@ -222,18 +413,55 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["job_id"],
+            "description": "Read bounded stdout/stderr for a runtime job.",
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "Runtime job id."
+                    "description": "Runtime job id returned by runCodexTask or run_job."
                 },
                 "offset": {
                     "type": "integer",
-                    "description": "Optional 1-based stdout line cursor returned as next_stdout_line."
+                    "description": "Optional 1-based stdout line cursor. Use the next_stdout_line value from a previous response for pagination."
                 },
                 "tail_lines": {
                     "type": "integer",
-                    "description": "Optional number of trailing stdout lines to return. Logs are always bounded."
+                    "description": "Optional number of trailing stdout lines to return. Logs are always bounded; large values are capped server-side."
+                }
+            }
+        },
+        "ReadProjectFileRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "path"],
+            "description": "Read a UTF-8 file from a configured project. Paths are confined to the project root.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Configured project id from projects.toml. Use listProjects to discover available ids."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Project-relative file path. Absolute paths and traversal (..) are rejected."
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "Optional 1-based line offset for pagination."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional maximum line count (bounded server-side)."
+                }
+            }
+        },
+        "ProjectIdRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project"],
+            "description": "Identify a project by id.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Configured project id from projects.toml. Use listProjects to discover available ids."
                 }
             }
         },
@@ -318,9 +546,8 @@ mod tests {
         Some(current)
     }
 
-    #[test]
-    fn openapi_operation_ids_are_minimal() {
-        let spec = build_openapi_spec();
+    /// Collect all operation ids in the spec (sorted, deduplicated).
+    fn operation_ids(spec: &Value) -> Vec<String> {
         let mut ids = Vec::new();
         for methods in spec["paths"].as_object().unwrap().values() {
             for op in methods.as_object().unwrap().values() {
@@ -328,12 +555,65 @@ mod tests {
             }
         }
         ids.sort();
+        ids
+    }
+
+    #[test]
+    fn openapi_operation_ids_are_minimal() {
+        let spec = build_openapi_spec();
+        let ids = operation_ids(&spec);
         let mut expected = GPT_ACTION_OPS
             .iter()
             .map(|s| s.to_string())
             .collect::<Vec<_>>();
         expected.sort();
         assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn openapi_operation_ids_match_expected_set_exactly() {
+        let spec = build_openapi_spec();
+        let ids = operation_ids(&spec);
+        let expected: Vec<String> = GPT_ACTION_OPS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(ids.len(), expected.len());
+        for id in &expected {
+            assert!(ids.contains(id), "missing operation id: {}", id);
+        }
+    }
+
+    #[test]
+    fn openapi_does_not_expose_any_legacy_or_non_gpt_action_paths() {
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        for legacy in LEGACY_FORBIDDEN_PATHS {
+            assert!(
+                !paths.contains_key(*legacy),
+                "legacy/non-GPT-Actions path '{}' must not appear in openapi.json",
+                legacy
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_exposes_expected_gpt_action_paths() {
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        for expected in [
+            "/api/tools/list",
+            "/api/projects/list",
+            "/api/codex/run",
+            "/api/jobs/status",
+            "/api/jobs/log",
+            "/api/projects/read_file",
+            "/api/projects/git_status",
+            "/api/tools/call",
+        ] {
+            assert!(
+                paths.contains_key(expected),
+                "expected GPT Actions path '{}' missing from openapi.json",
+                expected
+            );
+        }
     }
 
     #[test]
@@ -346,40 +626,11 @@ mod tests {
     }
 
     #[test]
-    fn openapi_does_not_expose_legacy_drop_routes() {
+    fn openapi_top_level_security_uses_bearer() {
         let spec = build_openapi_spec();
-        let paths = spec["paths"].as_object().unwrap();
-        assert!(!paths.contains_key("/api/messages"));
-        assert!(!paths.contains_key("/api/files"));
-        assert!(!paths.contains_key("/api/desktop/task_op"));
-        assert!(!paths.contains_key("/api/codex/command_request_op"));
-    }
-
-    #[test]
-    fn openapi_does_not_expose_legacy_openapi_variants() {
-        let spec = build_openapi_spec();
-        let paths = spec["paths"].as_object().unwrap();
-        // Legacy endpoints that must not reappear in the GPT Actions schema.
-        for legacy in [
-            "/api/codex/job",
-            "/api/codex/git",
-            "/api/codex/edit",
-            "/api/codex/apply_patch",
-            "/api/codex/context",
-            "/api/codex/context_batch",
-            "/api/codex/artifact",
-            "/api/codex/report",
-            "/api/codex/projects",
-            "/api/shell/run",
-            "/api/shell/job",
-            "/api/shell/file",
-        ] {
-            assert!(
-                !paths.contains_key(legacy),
-                "legacy path '{}' must not appear in openapi.json",
-                legacy
-            );
-        }
+        let security = spec["security"].as_array().expect("security array");
+        assert!(!security.is_empty());
+        assert!(security[0]["bearerAuth"].is_array());
     }
 
     #[test]
@@ -405,46 +656,6 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_ids_match_expected_set_exactly() {
-        let spec = build_openapi_spec();
-        let mut ids: Vec<String> = Vec::new();
-        for methods in spec["paths"].as_object().unwrap().values() {
-            for op in methods.as_object().unwrap().values() {
-                ids.push(op["operationId"].as_str().unwrap().to_string());
-            }
-        }
-        let expected: Vec<String> = GPT_ACTION_OPS.iter().map(|s| s.to_string()).collect();
-        assert_eq!(ids.len(), expected.len());
-        for id in &expected {
-            assert!(ids.contains(id), "missing operation id: {}", id);
-        }
-    }
-
-    #[test]
-    fn openapi_paths_only_use_post_method() {
-        // GPT Actions surface is POST-only.
-        let spec = build_openapi_spec();
-        for (path, methods) in spec["paths"].as_object().unwrap() {
-            let method_keys: Vec<&String> = methods.as_object().unwrap().keys().collect();
-            assert_eq!(
-                method_keys,
-                vec!["post"],
-                "path '{}' should only expose POST, got {:?}",
-                path,
-                method_keys
-            );
-        }
-    }
-
-    #[test]
-    fn openapi_top_level_security_uses_bearer() {
-        let spec = build_openapi_spec();
-        let security = spec["security"].as_array().expect("security array");
-        assert!(!security.is_empty());
-        assert!(security[0]["bearerAuth"].is_array());
-    }
-
-    #[test]
     fn openapi_schemas_define_all_referenced_names() {
         let spec = build_openapi_spec();
         let schemas = spec["components"]["schemas"]
@@ -462,5 +673,154 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn openapi_paths_only_use_post_method() {
+        // GPT Actions surface is POST-only. /openapi.json itself is served by
+        // a separate GET route and must NOT appear inside the schema paths.
+        let spec = build_openapi_spec();
+        for (path, methods) in spec["paths"].as_object().unwrap() {
+            let method_keys: Vec<&String> = methods.as_object().unwrap().keys().collect();
+            assert_eq!(
+                method_keys,
+                vec!["post"],
+                "path '{}' should only expose POST, got {:?}",
+                path,
+                method_keys
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_has_no_duplicate_operation_ids() {
+        let spec = build_openapi_spec();
+        let mut ids = Vec::new();
+        for methods in spec["paths"].as_object().unwrap().values() {
+            for op in methods.as_object().unwrap().values() {
+                ids.push(op["operationId"].as_str().unwrap().to_string());
+            }
+        }
+        let mut sorted = ids.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            ids.len(),
+            sorted.len(),
+            "duplicate operation ids detected: {:?}",
+            ids
+        );
+    }
+
+    #[test]
+    fn openapi_recommended_actions_have_run_codex_first_guidance() {
+        let spec = build_openapi_spec();
+        // runCodexTask description should recommend it as the primary action.
+        let run_codex = &spec["paths"]["/api/codex/run"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            run_codex.contains("Recommended"),
+            "runCodexTask description should mark it as recommended"
+        );
+        // callRuntimeTool should be marked advanced/generic.
+        let call_tool = &spec["paths"]["/api/tools/call"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            call_tool.contains("Advanced"),
+            "callRuntimeTool description should mark it as advanced"
+        );
+        // getRuntimeJobStatus / getRuntimeJobLog should mention job_id polling.
+        let status_desc = &spec["paths"]["/api/jobs/status"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(status_desc.contains("job_id"));
+        let log_desc = &spec["paths"]["/api/jobs/log"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(log_desc.contains("job_id"));
+    }
+
+    #[test]
+    fn openapi_call_runtime_tool_lists_accepted_tool_names() {
+        let spec = build_openapi_spec();
+        let tool_desc = &spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
+            ["description"]
+            .as_str()
+            .unwrap();
+        for name in [
+            "git_status",
+            "read_file",
+            "run_codex",
+            "job_status",
+            "job_log",
+        ] {
+            assert!(
+                tool_desc.contains(name),
+                "ToolCallRequest.tool description should list accepted tool name '{}'",
+                name
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_key_actions_have_examples() {
+        let spec = build_openapi_spec();
+        // runCodexTask, getRuntimeJobStatus, getRuntimeJobLog, and
+        // callRuntimeTool must ship with at least one request example so GPT
+        // has a concrete template to follow.
+        for (path, label) in [
+            ("/api/codex/run", "runCodexTask"),
+            ("/api/jobs/status", "getRuntimeJobStatus"),
+            ("/api/jobs/log", "getRuntimeJobLog"),
+            ("/api/projects/read_file", "readProjectFile"),
+            ("/api/projects/git_status", "getProjectGitStatus"),
+            ("/api/tools/call", "callRuntimeTool"),
+        ] {
+            let examples = &spec["paths"][path]["post"]["requestBody"]["content"]
+                ["application/json"]["examples"];
+            assert!(
+                examples.is_object(),
+                "{} request should declare examples",
+                label
+            );
+            assert!(
+                !examples.as_object().unwrap().is_empty(),
+                "{} request should declare at least one example",
+                label
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_dedicated_actions_have_expected_routes_and_operation_ids() {
+        let spec = build_openapi_spec();
+        assert_eq!(
+            spec["paths"]["/api/projects/list"]["post"]["operationId"],
+            "listProjects"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/read_file"]["post"]["operationId"],
+            "readProjectFile"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/git_status"]["post"]["operationId"],
+            "getProjectGitStatus"
+        );
+    }
+
+    #[test]
+    fn openapi_spec_serializes_as_valid_json() {
+        // Building the spec must not panic and must produce a JSON object with
+        // the top-level OpenAPI 3.1 keys ChatGPT expects.
+        let spec = build_openapi_spec();
+        assert_eq!(spec["openapi"], "3.1.0");
+        assert!(spec["info"]["title"].is_string());
+        assert!(spec["info"]["version"].is_string());
+        assert!(spec["servers"].is_array());
+        assert!(spec["paths"].is_object());
+        assert!(spec["components"]["schemas"].is_object());
+        assert!(spec["security"].is_array());
     }
 }

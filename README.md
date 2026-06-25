@@ -24,6 +24,10 @@ ChatGPT GPT Action      ChatGPT MCP client
     local project or private-drop-agent
 ```
 
+GPT Actions and MCP share a single `ToolRuntime`. See
+[docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the ChatGPT import guide
+(import URL, Bearer auth, recommended call flow, and operation list).
+
 ## Build
 
 ```bash
@@ -113,6 +117,22 @@ curl -H "Authorization: Bearer change-me" \
   -H "Content-Type: application/json" \
   -d '{"tool":"git_status","params":{"project":"private-drop"}}'
 ```
+
+## GPT Actions (dedicated endpoints)
+
+`/openapi.json` exposes a small, stable set of GPT Actions. Beyond the generic
+`callRuntimeTool`, three dedicated read-only actions give ChatGPT named
+operations without guessing tool names:
+
+- `POST /api/projects/list` → `listProjects`: list configured project ids.
+- `POST /api/projects/read_file` → `readProjectFile`: read a UTF-8 file from a
+  project (paths confined to the project root).
+- `POST /api/projects/git_status` → `getProjectGitStatus`: run
+  `git status --porcelain` in a project.
+
+All three are thin HTTP wrappers that dispatch to the same `ToolRuntime`
+variants used by MCP. See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the
+full import guide and recommended call flow.
 
 ## Codex CLI Jobs
 

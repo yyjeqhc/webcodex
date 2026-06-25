@@ -244,6 +244,7 @@ mod tests {
             projects,
             shell_clients,
             Arc::new(crate::config::CodexConfig::default()),
+            Arc::new(crate::tool_runtime::RuntimeInfo::default()),
         )
     }
 
@@ -849,5 +850,67 @@ mod tests {
         assert!(method_names.contains(&"notifications/initialized".to_string()));
         assert_eq!(body["auth"]["type"], "bearer");
         assert_eq!(body["auth"]["required"], true);
+    }
+
+    // =========================================================================
+    // runtime_status via MCP tools/list and tools/call
+    // =========================================================================
+
+    #[tokio::test]
+    async fn mcp_tools_list_includes_runtime_status() {
+        let runtime = test_runtime();
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(10)), json!({})),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(v) => v,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        let tools = value["result"]["tools"].as_array().unwrap();
+        let names: Vec<String> = tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "runtime_status"),
+            "MCP tools/list must include runtime_status: {:?}",
+            names
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_call_runtime_status_returns_content() {
+        let runtime = test_runtime();
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(Value::from(11)),
+                json!({"name": "runtime_status", "arguments": {}}),
+            ),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(v) => v,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        assert_eq!(value["id"], 11);
+        // content blocks
+        assert!(value["result"]["content"].is_array());
+        assert_eq!(value["result"]["content"][0]["type"], "text");
+        assert!(value["result"]["content"][0]["text"].is_string());
+        // structuredContent carries the ToolResult shape
+        assert!(value["result"]["structuredContent"].is_object());
+        assert_eq!(value["result"]["structuredContent"]["success"], true);
+        let out = &value["result"]["structuredContent"]["output"];
+        assert_eq!(out["service"], "private-drop");
+        assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
+        // runtime_status never errors on a failed-projects runtime — it
+        // reports configured=false instead.
+        assert_eq!(value["result"]["isError"], false);
     }
 }

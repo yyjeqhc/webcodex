@@ -348,6 +348,31 @@ pub async fn projects_git_status(req: &mut Request, depot: &mut Depot, res: &mut
     render_result(res, &audit, "git_status", project, result);
 }
 
+#[handler]
+pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/runtime/status", "getRuntimeStatus");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    // Body is optional; tolerate an empty/missing body since this call takes
+    // no arguments.
+    let body: Value = match req.parse_json().await {
+        Ok(body) => body,
+        Err(_) => Value::Null,
+    };
+    let _ = body;
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(ToolCall::RuntimeStatus, auth.as_ref())
+        .await;
+    render_result(res, &audit, "runtime_status", None, result);
+}
+
 fn tool_project(call: &ToolCall) -> Option<String> {
     match call {
         ToolCall::RunShell { project, .. }
@@ -419,6 +444,7 @@ mod tests {
             Arc::new(state),
             Arc::new(ShellClientRegistry::default()),
             Arc::new(CodexConfig::default()),
+            Arc::new(crate::tool_runtime::RuntimeInfo::default()),
         )
     }
 
@@ -440,7 +466,8 @@ mod tests {
                     .hoop(crate::AuthMiddleware)
                     .push(Router::with_path("projects/list").post(projects_list))
                     .push(Router::with_path("projects/read_file").post(projects_read_file))
-                    .push(Router::with_path("projects/git_status").post(projects_git_status)),
+                    .push(Router::with_path("projects/git_status").post(projects_git_status))
+                    .push(Router::with_path("runtime/status").post(runtime_status)),
             )
     }
 
@@ -613,5 +640,77 @@ mod tests {
         // git status --porcelain lists untracked files with "?? " prefix.
         let stdout = body["output"]["stdout"].as_str().unwrap_or("");
         assert!(stdout.contains("tracked.txt"), "stdout was: {}", stdout);
+    }
+
+    // =========================================================================
+    // getRuntimeStatus / /api/runtime/status
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_runtime_status_requires_bearer_auth() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let resp = TestClient::post("http://localhost/api/runtime/status")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn http_runtime_status_rejects_wrong_bearer() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let resp = TestClient::post("http://localhost/api/runtime/status")
+            .bearer_auth("wrong")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn http_runtime_status_correct_bearer_returns_summary() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/runtime/status")
+            .bearer_auth("secret")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        let out = &body["output"];
+        assert_eq!(out["service"], "private-drop");
+        assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
+        assert_eq!(out["projects"]["configured"], true);
+        assert_eq!(out["projects"]["count"], 1);
+        assert!(out["agents"]["count"].is_i64());
+        assert!(out["jobs"]["active_count"].is_i64());
+        assert!(out["tools"]["count"].is_i64());
+        // No secrets in the HTTP response either.
+        let serialized = serde_json::to_string(&body).unwrap();
+        for forbidden in ["token", "api_key", "secret", "password"] {
+            assert!(
+                !serialized
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "runtime_status HTTP response must not contain '{}'",
+                forbidden
+            );
+        }
     }
 }

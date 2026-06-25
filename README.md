@@ -99,6 +99,7 @@ Current tools:
 - `list_tools`
 - `list_projects`
 - `list_agents`
+- `runtime_status`
 - `run_shell`
 - `run_job`
 - `run_codex`
@@ -121,18 +122,31 @@ curl -H "Authorization: Bearer change-me" \
 ## GPT Actions (dedicated endpoints)
 
 `/openapi.json` exposes a small, stable set of GPT Actions. Beyond the generic
-`callRuntimeTool`, three dedicated read-only actions give ChatGPT named
+`callRuntimeTool`, dedicated read-only actions give ChatGPT named
 operations without guessing tool names:
 
+- `POST /api/runtime/status` → `getRuntimeStatus`: structured runtime
+  health/observability summary (service metadata, projects config status, agent
+  client summaries, job counts). Read-only; never exposes tokens or secrets.
 - `POST /api/projects/list` → `listProjects`: list configured project ids.
 - `POST /api/projects/read_file` → `readProjectFile`: read a UTF-8 file from a
   project (paths confined to the project root).
 - `POST /api/projects/git_status` → `getProjectGitStatus`: run
   `git status --porcelain` in a project.
 
-All three are thin HTTP wrappers that dispatch to the same `ToolRuntime`
+All are thin HTTP wrappers that dispatch to the same `ToolRuntime`
 variants used by MCP. See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the
-full import guide and recommended call flow.
+full import guide and recommended call flow, and
+[docs/RUNTIME_STATUS.md](docs/RUNTIME_STATUS.md) for the observability guide.
+
+### Recommended troubleshooting flow
+
+1. `getRuntimeStatus` — is the runtime healthy? Are projects configured? Are
+   agents online?
+2. `listProjects` — which project ids are available?
+3. `listRuntimeTools` — which tools are exposed?
+4. `runCodexTask` — start a Codex task in a project.
+5. `getRuntimeJobStatus` / `getRuntimeJobLog` — poll the returned `job_id`.
 
 ## Codex CLI Jobs
 

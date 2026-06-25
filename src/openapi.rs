@@ -13,7 +13,7 @@ fn public_url() -> String {
 /// `/openapi.json`. Tests assert this set matches the generated schema.
 ///
 /// Order is grouped by recommended GPT call flow:
-/// 1. discovery (`listRuntimeTools`, `listProjects`)
+/// 1. discovery (`listRuntimeTools`, `listProjects`, `getRuntimeStatus`)
 /// 2. code tasks (`runCodexTask`, `getRuntimeJobStatus`, `getRuntimeJobLog`)
 /// 3. project inspection (`readProjectFile`, `getProjectGitStatus`)
 /// 4. advanced/generic entry point (`callRuntimeTool`)
@@ -21,6 +21,7 @@ fn public_url() -> String {
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
     "listProjects",
+    "getRuntimeStatus",
     "runCodexTask",
     "getRuntimeJobStatus",
     "getRuntimeJobLog",
@@ -100,6 +101,15 @@ fn build_openapi_spec() -> Value {
                     "listProjects",
                     "List configured projects",
                     "Returns the list of configured projects with their id, path, executor (local or agent), and whether patching is allowed. Call this first to learn the project ids required by runCodexTask, readProjectFile, and getProjectGitStatus.",
+                    "EmptyRequest",
+                    "ToolResult"
+                )
+            },
+            "/api/runtime/status": {
+                "post": operation(
+                    "getRuntimeStatus",
+                    "Get runtime status",
+                    "Returns a structured runtime health/observability summary: service metadata, projects config status, agent client summaries, and job counts. Read-only; never exposes tokens, secrets, full env, or stdout/stderr. Recommended first call when troubleshooting whether the runtime is healthy and correctly configured.",
                     "EmptyRequest",
                     "ToolResult"
                 )
@@ -219,7 +229,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced/generic entry point: calls one runtime tool by name with a params object. Prefer the dedicated actions (listProjects, runCodexTask, readProjectFile, getProjectGitStatus, getRuntimeJobStatus, getRuntimeJobLog) when they cover the task. Use listRuntimeTools to discover every accepted tool name. Accepted tool names include: list_tools, list_projects, list_agents, run_shell, run_job, run_codex, job_status, job_log, read_file, git_status, git_diff, apply_patch.",
+                    "Advanced/generic entry point: calls one runtime tool by name with a params object. Prefer the dedicated actions (listProjects, runCodexTask, readProjectFile, getProjectGitStatus, getRuntimeJobStatus, getRuntimeJobLog) when they cover the task. Use listRuntimeTools to discover every accepted tool name. Accepted tool names include: list_tools, list_projects, list_agents, runtime_status, run_shell, run_job, run_codex, job_status, job_log, read_file, git_status, git_diff, apply_patch.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
@@ -353,7 +363,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Accepted values: list_tools, list_projects, list_agents, run_shell, run_job, run_codex, job_status, job_log, read_file, git_status, git_diff, apply_patch."
+                    "description": "Runtime tool name. Accepted values: list_tools, list_projects, list_agents, runtime_status, run_shell, run_job, run_codex, job_status, job_log, read_file, git_status, git_diff, apply_patch."
                 },
                 "params": {
                     "type": "object",
@@ -601,6 +611,7 @@ mod tests {
         for expected in [
             "/api/tools/list",
             "/api/projects/list",
+            "/api/runtime/status",
             "/api/codex/run",
             "/api/jobs/status",
             "/api/jobs/log",
@@ -822,5 +833,18 @@ mod tests {
         assert!(spec["paths"].is_object());
         assert!(spec["components"]["schemas"].is_object());
         assert!(spec["security"].is_array());
+    }
+
+    #[test]
+    fn openapi_exposes_get_runtime_status_action() {
+        let spec = build_openapi_spec();
+        assert_eq!(
+            spec["paths"]["/api/runtime/status"]["post"]["operationId"],
+            "getRuntimeStatus"
+        );
+        assert!(spec["paths"]["/api/runtime/status"]["post"]["description"]
+            .as_str()
+            .unwrap()
+            .contains("observability"));
     }
 }

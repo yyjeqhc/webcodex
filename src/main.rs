@@ -107,10 +107,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(db);
     let projects_state = Arc::new(projects_state);
     let shell_registry = Arc::new(ShellClientRegistry::default());
+    let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_env());
     let tool_runtime = Arc::new(tool_runtime::ToolRuntime::new(
         projects_state.clone(),
         shell_registry.clone(),
         Arc::new(config.codex.clone()),
+        runtime_info.clone(),
     ));
 
     let api_router = Router::with_path("api").push(
@@ -124,6 +126,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("projects/list").post(runtime_http::projects_list))
             .push(Router::with_path("projects/read_file").post(runtime_http::projects_read_file))
             .push(Router::with_path("projects/git_status").post(runtime_http::projects_git_status))
+            .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
             .push(Router::with_path("shell/run").post(shell_run))
             .push(Router::with_path("shell/file").post(shell_file_op))
             .push(Router::with_path("shell/job").post(shell_job))

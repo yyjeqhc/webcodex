@@ -100,13 +100,23 @@ pub enum ToolCall {
 
     /// List connected shell/agent clients.
     ListAgents,
+
+    /// Return a structured runtime health/observability summary.
+    ///
+    /// This is a read-only observability tool: it never exposes tokens,
+    /// secrets, full env, or stdout/stderr. It returns service metadata,
+    /// project config status, agent client summaries, and job counts.
+    RuntimeStatus,
 }
 
 impl ToolCall {
     pub fn from_tool_name(name: &str, arguments: Value) -> Result<Self, String> {
         let mut wrapped = serde_json::Map::new();
         wrapped.insert("tool".to_string(), Value::String(name.to_string()));
-        let unit_tool = matches!(name, "list_tools" | "list_projects" | "list_agents");
+        let unit_tool = matches!(
+            name,
+            "list_tools" | "list_projects" | "list_agents" | "runtime_status"
+        );
         if !unit_tool && !arguments.is_null() {
             wrapped.insert("params".to_string(), arguments);
         }
@@ -182,11 +192,57 @@ enum AgentCapability {
 // Runtime
 // =============================================================================
 
+/// Lightweight runtime metadata injected into `ToolRuntime` so observability
+/// tools (e.g. `runtime_status`) can report auth/public-url state without the
+/// runtime holding a full `Config` (which would couple it to HTTP/fs details).
+///
+/// `configured_public_url` is `None` when `DROP_PUBLIC_URL` is unset; the
+/// observability output reports this as `null` so a deployer can immediately
+/// see that the public URL has not been configured.
+#[derive(Debug, Clone)]
+pub struct RuntimeInfo {
+    pub auth_enabled: bool,
+    pub configured_public_url: Option<String>,
+}
+
+impl RuntimeInfo {
+    /// Build `RuntimeInfo` from the process environment. Reads `DROP_TOKEN`
+    /// (presence) and `DROP_PUBLIC_URL`.
+    pub fn from_env() -> Self {
+        let auth_enabled = std::env::var("DROP_TOKEN")
+            .map(|v| !v.trim().is_empty())
+            .unwrap_or(false);
+        let configured_public_url = std::env::var("DROP_PUBLIC_URL")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty());
+        Self {
+            auth_enabled,
+            configured_public_url,
+        }
+    }
+}
+
+impl Default for RuntimeInfo {
+    fn default() -> Self {
+        Self {
+            auth_enabled: false,
+            configured_public_url: None,
+        }
+    }
+}
+
+/// Statuses counted as "active" by the runtime_status observability summary.
+/// A job is active when it is still in flight: queued for an agent, running,
+/// or has been asked to stop but has not terminated yet.
+const ACTIVE_JOB_STATUSES: &[&str] = &["running", "queued", "agent_queued", "stop_requested"];
+
 #[derive(Clone)]
 pub struct ToolRuntime {
     pub projects: Arc<ProjectsState>,
     pub shell_clients: Arc<ShellClientRegistry>,
     pub codex: Arc<CodexConfig>,
+    pub runtime_info: Arc<RuntimeInfo>,
     local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
 }
 
@@ -195,11 +251,13 @@ impl ToolRuntime {
         projects: Arc<ProjectsState>,
         shell_clients: Arc<ShellClientRegistry>,
         codex: Arc<CodexConfig>,
+        runtime_info: Arc<RuntimeInfo>,
     ) -> Self {
         Self {
             projects,
             shell_clients,
             codex,
+            runtime_info,
             local_jobs: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -227,6 +285,7 @@ impl ToolRuntime {
             ToolCall::ListTools
             | ToolCall::ListProjects
             | ToolCall::ListAgents
+            | ToolCall::RuntimeStatus
             | ToolCall::JobStatus { .. }
             | ToolCall::JobLog { .. } => None,
         }
@@ -351,6 +410,8 @@ impl ToolRuntime {
 
             ToolCall::ListAgents => self.list_agents().await,
 
+            ToolCall::RuntimeStatus => self.runtime_status().await,
+
             ToolCall::RunShell {
                 project,
                 command,
@@ -422,6 +483,14 @@ impl ToolRuntime {
             ToolSpec {
                 name: "list_agents".to_string(),
                 description: "List connected local/remote execution agents.".to_string(),
+                input_schema: object_schema(vec![]),
+            },
+            ToolSpec {
+                name: "runtime_status".to_string(),
+                description: "Return a structured runtime health/observability summary (service "
+                    .to_string()
+                    + "metadata, projects config status, agent client summaries, and job counts). "
+                    + "Read-only; never exposes tokens, secrets, full env, or stdout/stderr.",
                 input_schema: object_schema(vec![]),
             },
             ToolSpec {
@@ -606,6 +675,116 @@ impl ToolRuntime {
     async fn list_agents(&self) -> ToolResult {
         ToolResult::ok(json!({
             "agents": self.shell_clients.list_clients().await
+        }))
+    }
+
+    /// Build the runtime observability summary. Read-only; never exposes
+    /// tokens, api keys, full env, complete project path lists, or
+    /// stdout/stderr. Returns a structured JSON object with service metadata,
+    /// project config status, agent client summaries, and job counts.
+    async fn runtime_status(&self) -> ToolResult {
+        // -- projects summary -------------------------------------------------
+        let (projects_configured, projects_count, projects_load_error) =
+            match self.projects.config.as_ref() {
+                Some(cfg) => (true, cfg.projects.len(), None),
+                None => (
+                    false,
+                    0,
+                    self.projects
+                        .load_error
+                        .clone()
+                        .or_else(|| Some("Projects not configured".to_string())),
+                ),
+            };
+        let projects = json!({
+            "configured": projects_configured,
+            "count": projects_count,
+            "config_path": self.projects.config_path,
+            "load_error": projects_load_error,
+        });
+
+        // -- agents summary ---------------------------------------------------
+        // Build a trimmed client list so the summary never leaks per-request
+        // state. Only carry fields useful for observability.
+        let clients = self.shell_clients.list_clients().await;
+        let agent_count = clients.len();
+        let online_count = clients.iter().filter(|c| c.connected).count();
+        let offline_count = agent_count.saturating_sub(online_count);
+        let clients_summary: Vec<Value> = clients
+            .iter()
+            .map(|c| {
+                json!({
+                    "client_id": c.client_id,
+                    "display_name": c.display_name,
+                    "owner": c.owner,
+                    "status": c.status,
+                    "connected": c.connected,
+                    "agent_protocol_version": c.agent_protocol_version,
+                    "capabilities": c.capabilities,
+                    "projects_count": c.projects.len(),
+                })
+            })
+            .collect();
+        let agents = json!({
+            "count": agent_count,
+            "online_count": online_count,
+            "offline_count": offline_count,
+            "clients": clients_summary,
+        });
+
+        // -- jobs summary -----------------------------------------------------
+        // Agent-known jobs come from the registry; local jobs come from the
+        // in-memory map. Active = running/queued/agent_queued/stop_requested.
+        let agent_jobs = self.shell_clients.list_jobs(None).await;
+        let agent_known_count = agent_jobs.len();
+        let local_jobs_map = self.local_jobs.lock().await;
+        let local_known_count = local_jobs_map.len();
+        // Avoid double-counting: agent jobs are tracked separately from local
+        // jobs (local jobs are only in the in-memory map; agent jobs are only
+        // in the registry). Count active across both.
+        let agent_active = agent_jobs
+            .iter()
+            .filter(|j| ACTIVE_JOB_STATUSES.contains(&j.status.as_str()))
+            .count();
+        let mut local_active = 0usize;
+        for record in local_jobs_map.values() {
+            if let Some(status) = std::fs::read_to_string(record.dir.join("status"))
+                .ok()
+                .map(|s| s.trim().to_string())
+            {
+                let normalized = normalize_local_status(&status);
+                if ACTIVE_JOB_STATUSES.contains(&normalized.as_str()) {
+                    local_active += 1;
+                }
+            }
+        }
+        let active_count = agent_active + local_active;
+        let jobs = json!({
+            "agent_known_count": agent_known_count,
+            "local_known_count": local_known_count,
+            "active_count": active_count,
+        });
+
+        // -- tools summary ----------------------------------------------------
+        let specs = self.tool_specs();
+        let tools_count = specs.len();
+        let tools_names: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
+        let tools = json!({
+            "count": tools_count,
+            "names": tools_names,
+        });
+
+        ToolResult::ok(json!({
+            "service": "private-drop",
+            "version": env!("CARGO_PKG_VERSION"),
+            "server_time": chrono::Utc::now().timestamp(),
+            "pid": std::process::id(),
+            "auth_enabled": self.runtime_info.auth_enabled,
+            "configured_public_url": self.runtime_info.configured_public_url,
+            "projects": projects,
+            "agents": agents,
+            "jobs": jobs,
+            "tools": tools,
         }))
     }
 
@@ -1770,7 +1949,12 @@ mod tests {
             "test".to_string(),
         ));
         let shell_clients = Arc::new(ShellClientRegistry::default());
-        ToolRuntime::new(projects, shell_clients, Arc::new(CodexConfig::default()))
+        ToolRuntime::new(
+            projects,
+            shell_clients,
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        )
     }
 
     // =========================================================================
@@ -1779,13 +1963,21 @@ mod tests {
 
     #[test]
     fn from_tool_name_parses_unit_tools_without_arguments() {
-        for name in ["list_tools", "list_projects", "list_agents"] {
+        for name in [
+            "list_tools",
+            "list_projects",
+            "list_agents",
+            "runtime_status",
+        ] {
             let call =
                 ToolCall::from_tool_name(name, Value::Null).unwrap_or_else(|e| panic!("{}", e));
             assert!(
                 matches!(
                     call,
-                    ToolCall::ListTools | ToolCall::ListProjects | ToolCall::ListAgents
+                    ToolCall::ListTools
+                        | ToolCall::ListProjects
+                        | ToolCall::ListAgents
+                        | ToolCall::RuntimeStatus
                 ),
                 "unit tool {} should parse",
                 name
@@ -2129,6 +2321,7 @@ mod tests {
             "list_tools",
             "list_projects",
             "list_agents",
+            "runtime_status",
             "run_shell",
             "run_job",
             "run_codex",
@@ -2180,6 +2373,7 @@ mod tests {
             Arc::new(state),
             Arc::new(ShellClientRegistry::default()),
             Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
         )
     }
 
@@ -2577,6 +2771,7 @@ mod tests {
             Arc::new(state),
             Arc::new(ShellClientRegistry::default()),
             Arc::new(codex),
+            Arc::new(RuntimeInfo::default()),
         )
     }
 
@@ -2903,6 +3098,7 @@ mod tests {
             Arc::new(state),
             Arc::new(ShellClientRegistry::default()),
             Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
         )
     }
 
@@ -3152,5 +3348,259 @@ mod tests {
             )
             .await;
         assert!(result.success, "{:?}", result.error);
+    }
+
+    // =========================================================================
+    // Phase 7: runtime_status observability tool
+    // =========================================================================
+
+    fn runtime_with_info(info: RuntimeInfo) -> ToolRuntime {
+        let projects = Arc::new(ProjectsState::failed(
+            "projects not configured for test".to_string(),
+            "test".to_string(),
+        ));
+        ToolRuntime::new(
+            projects,
+            Arc::new(ShellClientRegistry::default()),
+            Arc::new(CodexConfig::default()),
+            Arc::new(info),
+        )
+    }
+
+    #[test]
+    fn runtime_status_is_in_tool_specs() {
+        let runtime = test_runtime();
+        let names: Vec<String> = runtime
+            .tool_specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "runtime_status"),
+            "runtime_status must be in tool_specs: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn from_tool_name_parses_runtime_status() {
+        let call = ToolCall::from_tool_name("runtime_status", Value::Null).unwrap();
+        assert!(matches!(call, ToolCall::RuntimeStatus));
+        // Also accepts an empty object.
+        let call = ToolCall::from_tool_name("runtime_status", json!({})).unwrap();
+        assert!(matches!(call, ToolCall::RuntimeStatus));
+    }
+
+    #[tokio::test]
+    async fn runtime_status_with_no_projects_returns_configured_false() {
+        let runtime = test_runtime();
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success, "{:?}", result.error);
+        let out = &result.output;
+        assert_eq!(out["service"], "private-drop");
+        assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
+        assert!(out["server_time"].is_i64());
+        assert!(out["pid"].is_i64());
+        // No projects.toml -> configured false, load_error present.
+        assert_eq!(out["projects"]["configured"], false);
+        assert_eq!(out["projects"]["count"], 0);
+        assert!(out["projects"]["load_error"].is_string());
+    }
+
+    #[tokio::test]
+    async fn runtime_status_with_loaded_project_returns_configured_true() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_project(tmp.path(), "demo");
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success, "{:?}", result.error);
+        let out = &result.output;
+        assert_eq!(out["projects"]["configured"], true);
+        assert_eq!(out["projects"]["count"], 1);
+        assert!(out["projects"]["load_error"].is_null());
+    }
+
+    #[tokio::test]
+    async fn runtime_status_does_not_expose_tokens_or_secrets() {
+        let info = RuntimeInfo {
+            auth_enabled: true,
+            configured_public_url: Some("https://example.com".to_string()),
+        };
+        let runtime = runtime_with_info(info);
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        let serialized = serde_json::to_string(&result.output).unwrap();
+        // The summary must never contain secret-like field names.
+        for forbidden in [
+            "token",
+            "DROP_TOKEN",
+            "api_key",
+            "apikey",
+            "secret",
+            "password",
+            "authorization",
+            "bearer",
+        ] {
+            assert!(
+                !serialized
+                    .to_lowercase()
+                    .contains(&forbidden.to_lowercase()),
+                "runtime_status output must not contain '{}': {}",
+                forbidden,
+                serialized
+            );
+        }
+        // auth_enabled is a bool, not the token value.
+        assert_eq!(result.output["auth_enabled"], true);
+    }
+
+    #[tokio::test]
+    async fn runtime_status_auth_enabled_reflects_runtime_info() {
+        let runtime = runtime_with_info(RuntimeInfo {
+            auth_enabled: false,
+            configured_public_url: None,
+        });
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        assert_eq!(result.output["auth_enabled"], false);
+        assert!(result.output["configured_public_url"].is_null());
+
+        let runtime = runtime_with_info(RuntimeInfo {
+            auth_enabled: true,
+            configured_public_url: Some("https://drop.example.com".to_string()),
+        });
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        assert_eq!(result.output["auth_enabled"], true);
+        assert_eq!(
+            result.output["configured_public_url"],
+            "https://drop.example.com"
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_status_agent_summary_includes_protocol_version() {
+        use crate::shell_protocol::ShellClientRegisterRequest;
+        let registry = Arc::new(ShellClientRegistry::default());
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "agent-1".to_string(),
+                display_name: Some("Workstation".to_string()),
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: Some(vec![]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+            })
+            .await
+            .unwrap();
+        let runtime = ToolRuntime::new(
+            Arc::new(ProjectsState::failed(
+                "none".to_string(),
+                "test".to_string(),
+            )),
+            registry,
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        );
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        let agents = &result.output["agents"];
+        assert_eq!(agents["count"], 1);
+        assert_eq!(agents["online_count"], 1);
+        assert_eq!(agents["offline_count"], 0);
+        let clients = agents["clients"].as_array().unwrap();
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0]["client_id"], "agent-1");
+        assert_eq!(clients[0]["agent_protocol_version"], "polling-v1");
+        assert_eq!(clients[0]["connected"], true);
+        assert!(clients[0]["capabilities"].is_object());
+        assert_eq!(clients[0]["projects_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn runtime_status_counts_local_jobs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        // Write a fake local job in "running" state and register it in the
+        // in-memory map so runtime_status counts it.
+        let job_dir = root.join(".codex/jobs/job-active");
+        fs::create_dir_all(&job_dir).unwrap();
+        fs::write(job_dir.join("status"), "running").unwrap();
+        let meta_json = json!({
+            "job_id": "job-active",
+            "project": "demo",
+            "command": "sleep 10",
+            "status": "running",
+            "created_at": 1,
+            "started_at": 1,
+            "max_runtime_secs": 600,
+            "executor": "local",
+            "path": root.to_string_lossy(),
+            "kind": "shell",
+        });
+        fs::write(
+            job_dir.join("metadata.json"),
+            serde_json::to_string_pretty(&meta_json).unwrap(),
+        )
+        .unwrap();
+        runtime.local_jobs.lock().await.insert(
+            "job-active".to_string(),
+            LocalJobRecord {
+                project: "demo".to_string(),
+                dir: job_dir,
+            },
+        );
+        // Also write a completed job to verify it's not counted as active.
+        let done_dir = root.join(".codex/jobs/job-done");
+        fs::create_dir_all(&done_dir).unwrap();
+        fs::write(done_dir.join("status"), "completed").unwrap();
+        fs::write(
+            done_dir.join("metadata.json"),
+            serde_json::to_string(&json!({
+                "job_id": "job-done",
+                "project": "demo",
+                "command": "true",
+                "status": "completed",
+                "created_at": 1,
+                "started_at": 1,
+                "executor": "local",
+                "path": root.to_string_lossy(),
+                "kind": "shell",
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        runtime.local_jobs.lock().await.insert(
+            "job-done".to_string(),
+            LocalJobRecord {
+                project: "demo".to_string(),
+                dir: done_dir,
+            },
+        );
+
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success, "{:?}", result.error);
+        let jobs = &result.output["jobs"];
+        assert_eq!(jobs["local_known_count"], 2);
+        // Only the running job is active.
+        assert_eq!(jobs["active_count"], 1);
+        assert_eq!(jobs["agent_known_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn runtime_status_tools_summary_lists_names() {
+        let runtime = test_runtime();
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        let tools = &result.output["tools"];
+        let names = tools["names"].as_array().unwrap();
+        assert!(names.len() > 0);
+        assert!(
+            names.iter().any(|n| n == "runtime_status"),
+            "tools.names must include runtime_status: {:?}",
+            names
+        );
+        assert_eq!(tools["count"], names.len() as i64);
     }
 }

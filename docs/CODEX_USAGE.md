@@ -1,96 +1,37 @@
-# Codex Usage Workflow
+# Codex Usage Workflow (Deprecated)
 
-Use this as the default evidence loop for Codex or GPT Actions work on this
-repository.
+> **This document is deprecated.** It was built around `pdctl.py workflow`,
+> `snapshot`, `doctor`, `hook`, and `precommit` commands, which call the
+> removed `/api/codex/project_workflow` and `/api/codex/project_doctor` routes.
+> **Those routes are not mounted in the current runtime**, and `pdctl.py` itself
+> is a legacy helper (see `scripts/pdctl.py` deprecation notice).
 
-## Start With Evidence
+## Current Codex task workflow
 
-Before changing code, run:
+The current runtime runs Codex CLI tasks through the shared `ToolRuntime`. The
+recommended evidence loop:
 
-```bash
-python3 scripts/pdctl.py workflow private-drop --mode snapshot --json
-```
+1. `getRuntimeStatus` — confirm the runtime is healthy and projects are
+   configured (`POST /api/runtime/status`).
+2. `listProjects` — get the `project` id (`POST /api/projects/list`).
+3. `runCodexTask` — start the task; capture `job_id`
+   (`POST /api/codex/run`). The runtime constructs the Codex command; do not
+   assemble raw shell to run Codex.
+4. `getRuntimeJobStatus` — poll `job_id` until terminal
+   (`POST /api/jobs/status`).
+5. `getRuntimeJobLog` — read bounded stdout/stderr
+   (`POST /api/jobs/log`).
+6. `getProjectGitStatus` / `readProjectFile` — inspect the result
+   (`POST /api/projects/git_status`, `POST /api/projects/read_file`).
 
-Use the response to anchor the task:
-
-- `git_before`
-- `git_after`
-- `warnings`
-- `recommended_next_action`
-
-Do not treat a plan as a result. If the task requires code changes, make the
-changes and then gather new evidence.
-
-## After Modifying Code
-
-Run the project precommit hook:
-
-```bash
-python3 scripts/pdctl.py precommit private-drop --json
-```
-
-When reporting, cite the response fields that matter:
-
-- commit hash, when a commit was created
-- `git_before` and `git_after`
-- `hook_result`
-- `warnings`
-- `recommended_next_action`
-
-## Final Report For Code Changes
-
-Use this shape:
-
-```text
-changed files:
-tests run:
-final git status:
-commit hash:
-```
-
-If no commit was requested or created, say so directly.
-
-## Review-Only Report
-
-Use this shape:
-
-```text
-checked commit:
-checked files:
-grep/test evidence:
-concrete risks:
-```
-
-Keep findings tied to file paths, line numbers, command output, or API evidence.
-
-## Useful Commands
-
-Snapshot:
+Run verification with:
 
 ```bash
-python3 scripts/pdctl.py snapshot private-drop --json
+cargo fmt --check
+cargo check
+cargo test
 ```
 
-Doctor without running hooks:
-
-```bash
-python3 scripts/pdctl.py doctor private-drop --json
-```
-
-Doctor with its configured hook:
-
-```bash
-python3 scripts/pdctl.py doctor private-drop --run-hook --json
-```
-
-Specific hook:
-
-```bash
-python3 scripts/pdctl.py hook private-drop doctor --json
-```
-
-Precommit:
-
-```bash
-python3 scripts/pdctl.py precommit private-drop --json
-```
+See [GPT_ACTIONS.md](GPT_ACTIONS.md) and [README.md](../README.md) for the full
+endpoint reference. There is no `recommended_next_action` / `action_budget_hint`
+/ `hook_result` field in the current runtime.

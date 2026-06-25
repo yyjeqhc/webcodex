@@ -1,6 +1,13 @@
 #!/usr/bin/env python3
 """End-to-end smoke test for the real private-drop-agent binary.
 
+DEPRECATED. This script exercises a mix of current and removed routes. It still
+uses /api/shell/run, /api/shell/file, /api/shell/job (mounted), but also calls
+removed routes such as /api/health, /api/shell/clients, /api/codex/command,
+/api/codex/check, and /api/codex/action_sessions. Expect failures against the
+current runtime. It is kept only as a historical reference. For the current
+agent protocol, see docs/AGENT_PROTOCOL.md.
+
 Starts a temporary private-drop server and a real private-drop-agent process,
 then submits runShell and verifies the agent executes the command and returns
 stdout/stderr/exit_code.

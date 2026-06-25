@@ -1,59 +1,50 @@
 # TODO
 
-## v2 Direction: Remote MCP Tool Runtime
+## Direction: Self-hosted Tool Runtime for ChatGPT
 
-See [V2_SCOPE.md](V2_SCOPE.md) for full scope.
-
-**In progress:** Stripping legacy code to prepare for MCP over HTTP + GPT Actions as parallel access layers over a shared tool runtime.
+See [V2_SCOPE.md](V2_SCOPE.md) for the full scope. The runtime exposes local
+capabilities through a single `ToolRuntime` consumed by both GPT Actions
+(`/openapi.json`) and MCP (`/mcp`).
 
 ## Done
 
-- [x] Core API: create, list, get, delete messages
-- [x] File upload/download with Content-Disposition
-- [x] Token authentication (API + Web UI)
-- [x] 6 default channels
-- [x] SQLite storage (rusqlite bundled)
-- [x] Web UI: home, channel, message detail, send
-- [x] OpenAPI 3.0 spec for GPT Actions
-- [x] E2E test script (31 tests)
-- [x] Unit tests (8 tests)
-- [x] Systemd service example
-- [x] Nginx reverse proxy example
-- [x] Long text support (10K, 100K tested)
+- [x] Shared `ToolRuntime` as the single execution layer for GPT Actions + MCP
+- [x] GPT Actions OpenAPI schema (`/openapi.json`, POST-only, Bearer auth)
+- [x] MCP over HTTP (`/mcp`): `initialize`, `ping`, `tools/list`, `tools/call`,
+      `notifications/initialized`, GET discovery
+- [x] Codex CLI async jobs (`run_codex`) with prompt validation and
+      `CODEX_ALLOWED_EXTRA_ARGS` allowlist
+- [x] Local job recovery from `.codex/jobs/<id>/metadata.json` after restart
+- [x] Bounded job logs with `offset` / `tail_lines`
+- [x] Agent protocol cleanup: `agent_protocol_version`, capability checks,
+      owner boundary, structured agent errors
+- [x] `runtime_status` observability tool + `POST /api/runtime/status` GPT Action
+- [x] Dedicated GPT Actions: `listProjects`, `readProjectFile`,
+      `getProjectGitStatus`
+- [x] Documentation cleanup (Phase 8): deprecated legacy docs, aligned
+      V2_SCOPE / TODO / README with the real API surface
 
-## Done (Codex API)
+### Deprecated (not active features)
 
-- [x] Codex-like Project API: context, apply_patch, check, report
-- [x] projects.toml whitelist configuration
-- [x] Unified diff patch application via git apply
-- [x] Pre-configured check suite execution
-- [x] Report writing with channel message integration
-- [x] Security: path traversal prevention, sensitive path blocking
-- [x] OpenAPI spec updated with 4 new operationIds
+The old file-drop / message / channel / Web UI product surface, desktop task
+orchestration, SSH executor, `command_request` / goal workflow, and
+`project_workflow` / `project_doctor` / `project_hook` routes have been
+removed. They are intentionally not tracked as future work.
 
-## Future Enhancements
+## Backlog
 
-- [ ] Stronger command timeout control (per-command timeout from config)
-- [ ] Audit logging for all Codex API operations
-- [ ] Diff preview before applying patches
-- [ ] GPT Actions real-world integration testing
-- [ ] Private Drop report UI optimization
-- [ ] Multi-project permission levels (read-only, patch, check, admin)
-- [ ] Nginx HTTPS deployment guide (example exists in deploy/)
-- [ ] ntfy notifications for new messages
-- [ ] Message expiration cleanup task (expires_at field exists, no cron)
-- [ ] Complete GPT Actions integration testing with real ChatGPT
-- [ ] Better mobile UI with progressive enhancement
-- [ ] Logging and audit trail
+- [ ] Real ChatGPT GPT Actions import test (import `/openapi.json` and run the
+      recommended call flow against a live deployment)
+- [ ] Real ChatGPT MCP connection test (connect a ChatGPT MCP client to `/mcp`)
+- [ ] Local job process termination on timeout (detect over-time running local
+      jobs and terminate the process group when possible)
+- [ ] Optional WebSocket/SSE agent transport as a second transport (not a
+      rewrite of runtime tools)
+- [ ] Persistent agent job queue (survive server restart for in-flight agent
+      jobs; currently in-memory)
+- [ ] Deployment hardening: reverse proxy / HTTPS guide, systemd notes
 - [ ] Rate limiting
-- [ ] Database backup utility
-- [ ] Message search functionality
-- [ ] Bulk delete operations
-- [ ] Custom channel management (CRUD)
-- [ ] Webhook support
-- [ ] Dark mode for web UI
-- [ ] Message pinning
-- [ ] File preview (images, PDF)
-- [ ] Multi-file upload
-- [ ] Message editing
-- [ ] API pagination cursor (currently uses before timestamp)
+- [ ] Audit viewer or read-only action session query endpoint (current audit is
+      internal-only; no query route is mounted)
+- [ ] Docs cleanup ongoing (keep README + docs aligned with `src/main.rs` and
+      `src/openapi.rs` as the runtime evolves)

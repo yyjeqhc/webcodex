@@ -1,27 +1,38 @@
 # Example config for private-drop-agent.
 # Copy to /etc/private-drop-agent/agent.toml and edit token/client_id.
 
-server_url = "https://v4.yyjeqhc.cn"
+server_url = "https://your-server.example"
 token = "REPLACE_WITH_DROP_TOKEN_OR_AGENT_TOKEN"
-client_id = "xrh"
-display_name = "XRH"
-owner = "yyjeqhc"
+client_id = "workstation-1"
+display_name = "Workstation"
+owner = "you"
 poll_interval_ms = 1000
 
+# The agent announces agent_protocol_version = "polling-v1" automatically during
+# registration. There is no config field for it; it is reported back by
+# list_agents and runtime_status for observability and future capability
+# negotiation.
+
 [capabilities]
+# These must match what the agent host is allowed to do. The current
+# private-drop-agent build registers shell=true by default; enable the rest as
+# needed. ToolRuntime::authorize_agent_tool enforces these before any
+# agent-backed tool runs.
 shell = true
-file_read = false
-file_write = false
-git = false
-jobs = false
+file_read = true
+file_write = true
+git = true
+jobs = true
+async_jobs = true
+async_shell_jobs = true
 
 [policy]
-# First MVP is a shell executor. Keep this true only on trusted machines.
+# Allow raw sh -c commands. Keep this true only on trusted machines.
 allow_raw_shell = true
 
 # If false, cwd must be under one of allowed_roots.
-allow_cwd_anywhere = true
-allowed_roots = []
+allow_cwd_anywhere = false
+allowed_roots = ["/root/git"]
 
 max_timeout_secs = 3600
 max_output_bytes = 262144

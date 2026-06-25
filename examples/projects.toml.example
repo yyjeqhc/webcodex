@@ -1,52 +1,37 @@
-# Example projects.toml entries for project workflows and hooks.
+# Example projects.toml for the Private Drop runtime.
 #
-# SSH executor is disabled by default. Prefer the agent executor for day-to-day
-# workflow, doctor, and hook runs. Hooks are project-specific command lists;
-# they are not Cargo-specific.
+# PROJECTS_CONFIG points here. Each project maps a stable id to a local path
+# and an executor. `executor = "local"` runs on the server host;
+# `executor = "agent"` queues work for a registered private-drop-agent
+# (identified by `client_id`).
 
 [projects.private-drop]
 path = "/root/git/private-drop"
+executor = "local"
+allow_patch = true
+
+[projects.remote-demo]
+path = "/root/git/remote-demo"
 executor = "agent"
-client_id = "oe"
+client_id = "workstation-1"
+allow_patch = true
 
-[projects.private-drop.hooks]
-doctor = [
-  "git status --short",
-  "git log --oneline -5"
-]
-precommit = [
-  ". /root/.cargo/env && cargo fmt --check",
-  ". /root/.cargo/env && cargo test",
-  ". /root/.cargo/env && cargo build --release"
-]
-
-[projects.python-demo]
-path = "/path/to/python-project"
-executor = "agent"
-client_id = "oe"
-
-[projects.python-demo.hooks]
-doctor = [
-  "git status --short",
-  "python3 --version"
-]
-precommit = [
-  "python3 -m compileall .",
-  "python3 -m unittest"
-]
-
-[projects.android-demo]
-path = "/path/to/android-project"
-executor = "agent"
-client_id = "oe"
-
-[projects.android-demo.hooks]
-doctor = [
-  "git status --short",
-  "./gradlew --version"
-]
-precommit = [
-  "./gradlew test",
-  "./gradlew lint",
-  "./gradlew assembleDebug"
-]
+# ---------------------------------------------------------------------------
+# Legacy fields (parsed but not used by current runtime routes)
+# ---------------------------------------------------------------------------
+# The following fields are still deserialized for backwards compatibility, but
+# no current runtime HTTP route invokes them. They are documented here only so
+# existing config files keep loading:
+#
+#   allow_command_requests       - old command_request workflow (removed)
+#   allow_raw_command_requests   - old trusted raw command workflow (removed)
+#   checks / allowed_checks      - old runProjectCheck suite (removed)
+#   commands                     - old named command map (removed)
+#   hooks                        - old project_doctor / project_hook (removed)
+#   default_apply_patch_backend  - old patch backend selector (unused)
+#
+# To run checks or long work, use the current runtime surface:
+#   runCodexTask          POST /api/codex/run
+#   getRuntimeJobStatus   POST /api/jobs/status
+#   getRuntimeJobLog      POST /api/jobs/log
+#   callRuntimeTool       POST /api/tools/call  (run_shell, run_job, ...)

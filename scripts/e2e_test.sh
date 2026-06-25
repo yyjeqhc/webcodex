@@ -3,6 +3,14 @@ set -euo pipefail
 
 # ============================================================================
 # Private Drop E2E Smoke Test
+#
+# DEPRECATED. This script tests the removed file-drop / message / channel /
+# desktop-task / command_request / Web UI surface (/api/messages, /api/files,
+# /api/channels, /api/desktop/*, /api/codex/command*). None of those routes
+# are mounted in the current runtime, so this script will fail. It is kept only
+# as a historical reference. The current runtime is verified with:
+#   cargo fmt --check && cargo check && cargo test
+# and the GPT Actions / MCP surface documented in README.md and docs/.
 # ============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"

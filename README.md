@@ -26,7 +26,8 @@ ChatGPT GPT Action      ChatGPT MCP client
 
 GPT Actions and MCP share a single `ToolRuntime`. See
 [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the ChatGPT import guide
-(import URL, Bearer auth, recommended call flow, and operation list).
+(import URL, Bearer auth, recommended call flow, and operation list), and
+[docs/INDEX.md](docs/INDEX.md) for the full documentation reading order.
 
 ## Build
 

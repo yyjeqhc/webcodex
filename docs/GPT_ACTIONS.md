@@ -132,7 +132,7 @@ duplicated.
 
 Tests in `src/openapi.rs` assert:
 
-- The operation-id set matches the documented 8 ids exactly (no more, no less).
+- The operation-id set matches the documented 9 ids exactly (no more, no less).
 - Every `$ref` resolves to a defined schema.
 - Every path is POST-only.
 - Bearer auth is present and globally enabled.

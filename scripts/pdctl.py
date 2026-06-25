@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
-"""Small Private Drop Codex workflow helper."""
+"""Small Private Drop Codex workflow helper.
+
+DEPRECATED. This helper targets the removed project_workflow / project_doctor /
+project_hook / shell-job routes (/api/codex/project_workflow,
+/api/codex/project_doctor, /api/shell/projects/*, /api/shell/jobs/shell*,
+/api/shell/clients, /api/shell/projects). None of those routes are mounted in
+the current runtime, so most subcommands will fail. It is kept only as a
+historical reference. For the current runtime surface, see README.md,
+docs/GPT_ACTIONS.md, and docs/AGENT_PROTOCOL.md.
+"""
 
 import argparse
 import json
@@ -561,7 +570,7 @@ def build_parser():
     parser = argparse.ArgumentParser(
         prog="pdctl.py",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        description="Call Private Drop project doctor, workflow, and hook APIs.",
+        description="DEPRECATED. Calls removed project workflow/doctor/hook/shell-job routes. Most subcommands will fail against the current runtime.",
         epilog=textwrap.dedent(
             """\
             Examples:

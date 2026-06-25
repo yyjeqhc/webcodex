@@ -1,7 +1,0 @@
-{
-  "client_id": "oe",
-  "project_id": "foo",
-  "mode": "precommit",
-  "timeout_secs": 120,
-  "wait_timeout_secs": 30
-}

@@ -1,50 +1,58 @@
-# Private Drop v2 — Remote MCP Tool Runtime
+# Private Drop v2 — Remote Tool Runtime
 
 ## Vision
 
-Private Drop v2 is a **Remote MCP Tool Runtime**: a self-hosted server that exposes
-local machine capabilities (shell, git, file, patch, jobs) as standardized tool
-endpoints, consumable by both MCP clients and GPT Actions.
+Private Drop v2 is a **self-hosted tool runtime for ChatGPT**: a server that
+exposes local machine capabilities (shell, git, file, patch, jobs, Codex CLI)
+as standardized tool endpoints, consumable by both **MCP clients** and
+**GPT Actions**. Both access layers call the same `ToolRuntime` — there is no
+separate business logic per surface.
 
-## External Access Layers (parallel)
+## External Access Layers (parallel, both implemented)
 
 | Layer | Endpoint | Protocol | Status |
 |-------|----------|----------|--------|
-| **MCP over HTTP** | `/mcp` | MCP (Model Context Protocol) | TODO — future |
-| **GPT Actions** | `/openapi.json` | OpenAPI 3.0 + Bearer auth | Preserved |
+| **MCP over HTTP** | `/mcp` | MCP (JSON-RPC 2.0 over streamable-http) | Implemented |
+| **GPT Actions** | `/openapi.json` | OpenAPI 3.1 + Bearer auth | Implemented |
 
-Both layers call the **same tool runtime** underneath. No separate business logic
-per access layer.
+Both layers dispatch to the **same `ToolRuntime`** underneath. The MCP wrapper
+only frames the JSON-RPC envelope; the GPT Actions wrapper only maps HTTP to
+`ToolCall` variants. No business logic is duplicated.
 
 ## Core Architecture
 
 ```
 ┌──────────────┐   ┌──────────────┐
 │  MCP Client  │   │ GPT Actions  │
-│  (future)    │   │ (OpenAPI)    │
+│              │   │ (OpenAPI)    │
 └──────┬───────┘   └──────┬───────┘
        │                  │
        ▼                  ▼
-  /mcp (TODO)       /openapi.json
+     /mcp            /openapi.json
        │                  │
        └────────┬─────────┘
                 │
         ┌───────▼────────┐
         │  Tool Runtime   │  ← shared execution layer
-        │  - shell        │
-        │  - apply_patch  │
-        │  - git status   │
-        │  - git diff     │
-        │  - read_file    │
+        │  - list_tools   │
+        │  - list_projects│
+        │  - list_agents  │
+        │  - runtime_status│
+        │  - run_shell    │
         │  - run_job      │
+        │  - run_codex    │
         │  - job_status   │
         │  - job_log      │
+        │  - read_file    │
+        │  - git_status   │
+        │  - git_diff     │
+        │  - apply_patch  │
         └───────┬────────┘
                 │
         ┌───────▼────────┐
         │ Agent Transport │  ← local or remote execution
         │ - local (now)   │
-        │ - WebSocket (v2)│
+        │ - polling-v1    │
         └────────────────┘
 ```
 
@@ -53,47 +61,60 @@ per access layer.
 | Capability | Module | Notes |
 |-----------|--------|-------|
 | HTTP server | `main.rs`, Salvo | Lightweight, async |
-| Token auth | `auth.rs`, `config.rs` | Bearer token for all API |
+| Token auth | `auth.rs`, `config.rs` | Bearer token for all API + `/mcp` |
 | Config loading | `config.rs` | Env files, env vars |
-| Project registry | `projects.rs` | Simplified — local + agent only |
-| Agent connection | `shell_client.rs` | Will migrate to WebSocket |
-| Shell tool | `codex/shell.rs`, `shell_client.rs` | `run_shell` |
-| Apply patch | `codex/patch.rs` | `apply_patch` / `applyProjectEdit` |
-| Git status/diff | `codex/git.rs` | `gitStatus`, `gitDiff` |
-| Run job / job log | `codex/jobs.rs`, `shell_client.rs` | Async job execution |
-| Action sessions | `action_sessions.rs` | Audit trail for tool calls |
-| GPT Actions OpenAPI | `openapi.rs` (rebuild) | Minimal, clean schema |
-| Web UI (minimal) | `web.rs` | Debug/status pages only |
-| Core message/file API | `drop_api.rs` | Retained as utility |
+| Project registry | `projects.rs` | Local + agent executors |
+| Shared tool runtime | `tool_runtime.rs` | Single execution layer for GPT Actions + MCP |
+| GPT Actions OpenAPI | `openapi.rs` | Minimal, POST-only, Bearer auth |
+| MCP JSON-RPC | `mcp.rs` | `initialize`, `ping`, `tools/list`, `tools/call`, notifications |
+| REST/GPT Actions wrappers | `runtime_http.rs` | Thin dispatch to `ToolRuntime` |
+| Codex CLI jobs | `tool_runtime.rs`, `codex` | `run_codex` async jobs with bounded logs |
+| Local job recovery | `tool_runtime.rs` | `.codex/jobs/<id>/metadata.json` recovery |
+| Agent connection | `shell_client.rs`, `shell_protocol.rs` | Polling (`polling-v1`) |
+| Agent binary | `bin/private-drop-agent.rs` | Polling execution client |
+| Runtime observability | `tool_runtime.rs`, `runtime_http.rs` | `runtime_status` tool + `POST /api/runtime/status` |
+| Action audit (internal) | `action_sessions.rs`, `action_audit.rs` | Metadata-only audit for legacy codex routes |
 
-## Deleted / Deprecated
+## Removed / Not part of v2
+
+These are **not** retained capabilities and must not be reintroduced:
 
 | Feature | Reason |
 |---------|--------|
-| Desktop tasks | Not part of v2 direction |
-| Multiple OpenAPI variants | One clean GPT Actions endpoint only |
-| SSH executor | Agent + future WebSocket replaces it |
-| command_request / goal workflow | Old chat-approved flow, not needed |
+| File-drop / message / channel / Web UI | Old product direction, removed from active server surface |
+| `drop_api.rs` / `web.rs` message/file API | Replaced by the tool runtime |
+| Desktop task orchestration | Not part of v2 direction |
+| SSH executor | Removed; use the polling agent instead |
+| `command_request` / goal workflow | Old chat-approved flow, not needed |
+| `project_workflow` / `project_doctor` / `project_hook` routes | Old orchestration, not mounted |
 | Codex doctor / hooks / workflow runner | Old orchestration, not needed |
-| Complex file-transfer Web UI | Not part of v2 |
-| Old polling agent as primary path | Will be replaced by WebSocket transport |
+| Multiple OpenAPI variants (`/codex-openapi*.json`) | One clean GPT Actions endpoint (`/openapi.json`) only |
 
 ## GPT Actions — Required operationIds
 
-These must exist in the OpenAPI spec and map to working endpoints:
+These are the exact operation ids exposed by `/openapi.json` (see
+`src/openapi.rs`). Tests assert this set matches the generated schema exactly:
 
-- `listProjects` — list configured projects
-- `getProjectContext` / `getProjectContextBatch` — read project context
-- `readFile` — read a file from a project
-- `applyPatch` / `applyProjectEdit` — apply unified diff
-- `gitStatus` — git status of a project
-- `gitDiff` — git diff of a project
-- `runShell` — execute a shell command
-- `runJob` — start an async job
-- `jobStatus` — check job status
-- `jobLog` — get job stdout/stderr
+- `listRuntimeTools` — `POST /api/tools/list`
+- `listProjects` — `POST /api/projects/list`
+- `getRuntimeStatus` — `POST /api/runtime/status`
+- `runCodexTask` — `POST /api/codex/run`
+- `getRuntimeJobStatus` — `POST /api/jobs/status`
+- `getRuntimeJobLog` — `POST /api/jobs/log`
+- `readProjectFile` — `POST /api/projects/read_file`
+- `getProjectGitStatus` — `POST /api/projects/git_status`
+- `callRuntimeTool` — `POST /api/tools/call` (advanced generic entry point)
 
-All backed by the same tool runtime as MCP. Bearer token auth. Clean JSON schemas.
+All backed by the same `ToolRuntime` as MCP. Bearer token auth. Clean JSON
+schemas. The GPT Actions surface is intentionally POST-only and does not expose
+raw shell, file transfer, desktop, or the internal agent protocol routes.
+
+## Agent Protocol
+
+The server-to-agent transport is currently **polling-v1** (JSON over HTTP under
+`/api/shell/agent/*`). It is an internal execution transport, not part of the
+GPT Actions or MCP surface. See `docs/AGENT_PROTOCOL.md`. A WebSocket/SSE
+transport is a possible future addition, not a current requirement.
 
 ## Non-Goals
 
@@ -102,3 +123,4 @@ All backed by the same tool runtime as MCP. Bearer token auth. Clean JSON schema
 - Complex file transfer / cloud storage replacement
 - Browser automation / desktop task orchestration
 - Real-time collaborative editing
+- Restoring the old file-drop / Web UI product surface

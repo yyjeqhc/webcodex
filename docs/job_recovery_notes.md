@@ -1,31 +1,35 @@
-# Job 504 Recovery Guide for GPT Actions
+# Job 504 Recovery (Deprecated)
 
-When a `runJobOp create` or `runJobOp status` call times out (504), the job may
-already exist or have completed. Do **not** re-run the job. Follow this flow:
+> **This document is deprecated.** It describes `runJobOp` with
+> `op=recover`/`status`/`log`/`summarize`, `client_request_id` job
+> deduplication, and SSH process probes. **`runJobOp` and the SSH executor no
+> longer exist in the current runtime.**
 
-1. **Recover**: Call `runJobOp` with `op=recover` and the same `client_request_id`
-   used in the original `create`. This reads only metadata (no logs, no process
-   checks) and returns the job's ID, status, and exit_code if available.
+## Current job lifecycle
 
-2. **Lightweight status**: If `recover` shows the job exists, call
-   `runJobOp op=status detail=basic` for a slightly richer status check.
-   `detail=basic` skips OOM detection and SSH process probes, reducing 504 risk.
-   Note: basic is metadata/status-file based and may be stale for SSH jobs;
-   use `detail=logs`, `log`, or `summarize` for deeper inspection.
+The current runtime uses dedicated, named job endpoints backed by the shared
+`ToolRuntime`:
 
-3. **Read logs only when needed**: Call `runJobOp op=status detail=logs` or
-   `op=log` to read stdout/stderr tails. `tail_lines` only affects
-   `detail=logs` or `op=log`; the default `detail=basic` never reads logs.
+- Start a Codex task: `POST /api/codex/run` (`runCodexTask`) → returns
+  `job_id`.
+- Poll status: `POST /api/jobs/status` (`getRuntimeJobStatus`).
+- Read logs: `POST /api/jobs/log` (`getRuntimeJobLog`), with `tail_lines` and
+  `offset` (`next_stdout_line`) for bounded pagination.
 
-4. **Idempotent create**: Always pass `client_request_id` when creating jobs.
-   If `create` is retried with the same ID, the existing job is returned instead
-   of creating a duplicate.
+Recovery behavior:
 
-## Summary of detail levels
+- **Local jobs** write metadata under `.codex/jobs/<job_id>/`. When
+  `job_status` / `job_log` receive an unknown local-looking `job_id`, the
+  runtime searches configured projects for
+  `.codex/jobs/<job_id>/metadata.json`, verifies the job belongs to a
+  configured project, and rejects paths outside project roots. So a server
+  restart does not lose local job history.
+- **Agent jobs** are tracked in memory by `ShellClientRegistry`. A server
+  restart loses in-flight agent jobs (a known limitation; see
+  [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md)).
 
-| Op | Detail | SSH calls | Logs | OOM | Process check |
-|----|--------|-----------|------|-----|---------------|
-| recover | — | 1-2 | No | No | No |
-| status | basic | 1-2 | No | No | No |
-| status | logs | 2-3 | Yes | No | No |
-| log | — | 1 | Yes | No | No |
+There is no `client_request_id` deduplication and no `runJobOp` aggregate op in
+the current runtime. Do not re-create a job blindly after a timeout; poll its
+`job_id` with `getRuntimeJobStatus` first.
+
+See [GPT_ACTIONS.md](GPT_ACTIONS.md) and [README.md](../README.md).

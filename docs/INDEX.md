@@ -25,8 +25,10 @@ API surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
    for WebSocket/polling agents, GPT Actions schema smoke, and MCP smoke.
 9. [ZERO_CONFIG_AGENT_RUNTIME.md](ZERO_CONFIG_AGENT_RUNTIME.md) — zero-server-
    project-config direction and agent-registered project model.
-10. [ROADMAP.md](ROADMAP.md) — current forward-looking roadmap.
-11. [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — compact handoff notes for future
+10. [MCP_APP_CONSOLE_PLAN.md](MCP_APP_CONSOLE_PLAN.md) — staged plan for the
+    MCP App visual console, approval flow, and supporting typed runtime tools.
+11. [ROADMAP.md](ROADMAP.md) — current forward-looking roadmap.
+12. [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — compact handoff notes for future
     coding agents after context compaction or a new window.
 
 ## Scope and backlog

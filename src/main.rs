@@ -126,10 +126,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("jobs/status").post(runtime_http::job_status))
             .push(Router::with_path("jobs/log").post(runtime_http::job_log))
             .push(Router::with_path("jobs/stop").post(runtime_http::job_stop))
+            .push(Router::with_path("jobs/list").post(runtime_http::jobs_list))
+            .push(Router::with_path("jobs/tail").post(runtime_http::job_tail))
             .push(Router::with_path("projects/list").post(runtime_http::projects_list))
             .push(Router::with_path("projects/read_file").post(runtime_http::projects_read_file))
             .push(Router::with_path("projects/git_status").post(runtime_http::projects_git_status))
             .push(Router::with_path("projects/git_diff").post(runtime_http::projects_git_diff))
+            .push(
+                Router::with_path("projects/git_diff_summary")
+                    .post(runtime_http::projects_git_diff_summary),
+            )
+            .push(Router::with_path("projects/list_files").post(runtime_http::projects_list_files))
+            .push(
+                Router::with_path("projects/search_text").post(runtime_http::projects_search_text),
+            )
             .push(
                 Router::with_path("projects/apply_patch").post(runtime_http::projects_apply_patch),
             )

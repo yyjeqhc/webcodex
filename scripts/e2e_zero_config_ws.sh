@@ -538,6 +538,7 @@ fi
 
 # tools/list
 body="$(api_post /mcp '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}')"
+TOOLS_LIST_BODY="$body"
 tools_count="$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("result",{}).get("tools",[])))' 2>/dev/null || echo 0)"
 if [ "${tools_count:-0}" -gt 0 ]; then
     pass "MCP tools/list returned $tools_count tools"
@@ -559,6 +560,96 @@ if echo "$sc_output" | grep -q "$RUNTIME_PROJECT_ID"; then
     pass "MCP list_projects sees agent project $RUNTIME_PROJECT_ID"
 else
     fail "MCP list_projects did not see $RUNTIME_PROJECT_ID (got: ${sc_output:0:200})"
+fi
+
+# ----------------------------------------------------------------------------
+# 6b. Phase A read-only console tools (REST + MCP) against the agent project
+# ----------------------------------------------------------------------------
+
+log "---- Phase A read-only console tools ----"
+
+# list_project_files via REST — must return a bounded entries array that
+# includes README.md (the smoke project always has one).
+body="$(api_post /api/projects/list_files "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "list_project_files returns success"
+else
+    fail "list_project_files did not return success (body: ${body:0:300})"
+fi
+lpf_entries="$(json_get "$body" output.entries)"
+if echo "$lpf_entries" | grep -q "README.md"; then
+    pass "list_project_files includes README.md"
+else
+    fail "list_project_files did not include README.md (got: ${lpf_entries:0:200})"
+fi
+
+# search_project_text via REST — must find a bounded match in README.md.
+body="$(api_post /api/projects/search_text "{\"project\":\"$RUNTIME_PROJECT_ID\",\"pattern\":\"smoke\",\"limit\":10}")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "search_project_text returns success"
+else
+    fail "search_project_text did not return success (body: ${body:0:300})"
+fi
+spt_count="$(json_get "$body" output.count)"
+if [ "${spt_count:-0}" -ge 1 ] 2>/dev/null; then
+    pass "search_project_text found $spt_count match(es)"
+else
+    fail "search_project_text found no matches (got: ${body:0:200})"
+fi
+
+# git_diff_summary via REST — read-only; must return porcelain + changed_files.
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "git_diff_summary returns success"
+else
+    fail "git_diff_summary did not return success (body: ${body:0:300})"
+fi
+gds_porcelain="$(json_get "$body" output.porcelain)"
+gds_changed="$(json_get "$body" output.changed_files)"
+if [ "$(json_get "$body" output.changed_files_count)" != "None" ]; then
+    pass "git_diff_summary returns changed_files_count"
+else
+    fail "git_diff_summary missing changed_files_count (got: ${body:0:200})"
+fi
+
+# list_jobs via REST — bounded summaries, never stdout/stderr bodies.
+body="$(api_post /api/jobs/list '{}')"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "list_jobs returns success"
+else
+    fail "list_jobs did not return success (body: ${body:0:300})"
+fi
+lj_serialized="$(json_get "$body" output.jobs)"
+if ! echo "$lj_serialized" | grep -qi "stdout\|stderr"; then
+    pass "list_jobs summaries omit stdout/stderr bodies"
+else
+    fail "list_jobs summaries leaked stdout/stderr (got: ${lj_serialized:0:200})"
+fi
+
+# job_tail via REST for the completed codex job — bounded tail.
+if [ -n "$JOB_ID" ]; then
+    body="$(api_post /api/jobs/tail "{\"job_id\":\"$JOB_ID\",\"tail_lines\":50}")"
+    if [ "$(json_get "$body" success)" = "True" ]; then
+        pass "job_tail returns success"
+    else
+        fail "job_tail did not return success (body: ${body:0:300})"
+    fi
+else
+    fail "job_tail skipped: no JOB_ID available"
+fi
+
+# MCP tools/list must now expose the Phase A tool names.
+phase_a_present=1
+for tname in list_project_files search_project_text git_diff_summary list_jobs job_tail; do
+    if echo "$TOOLS_LIST_BODY" | grep -q "\"$tname\""; then
+        :
+    else
+        phase_a_present=0
+        fail "MCP tools/list missing $tname"
+    fi
+done
+if [ "$phase_a_present" = "1" ]; then
+    pass "MCP tools/list exposes all Phase A console tools"
 fi
 
 # ----------------------------------------------------------------------------

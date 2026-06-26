@@ -48,6 +48,14 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       script (`scripts/smoke_deployment.sh`). The server is a zero-project-
       config relay; WebSocket is preferred, polling is fallback, QUIC is not
       implemented. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+- [x] MCP App console Phase A — read-only backend tools (Phase A):
+      `list_project_files`, `search_project_text`, `git_diff_summary`,
+      `list_jobs`, and `job_tail` added to `ToolRuntime` and exposed via MCP
+      `tools/list` + thin REST wrappers (`/api/projects/list_files`,
+      `/api/projects/search_text`, `/api/projects/git_diff_summary`,
+      `/api/jobs/list`, `/api/jobs/tail`). All are bounded and agent-backed;
+      `/openapi.json` stays at 12 GPT Actions. See
+      [docs/MCP_APP_CONSOLE_PLAN.md](docs/MCP_APP_CONSOLE_PLAN.md).
 
 ### Deprecated (not active features)
 
@@ -58,6 +66,11 @@ removed. They are intentionally not tracked as future work.
 
 ## Backlog
 
+- [ ] MCP App console and approval surface: visual runtime/agent status,
+      project browser, git diff viewer, patch validation/approval, command
+      panel, and job/log viewer. GPT Actions remain the stable machine
+      interface; the app is for human observation and approval. See
+      [docs/MCP_APP_CONSOLE_PLAN.md](docs/MCP_APP_CONSOLE_PLAN.md).
 - [ ] Finish zero-config agent runtime cleanup: remove remaining docs/tests that
       present `PROJECTS_CONFIG` as the normal runtime project source, and add
       agent-registered happy-path tests for read/git/Codex routing.

@@ -8,7 +8,7 @@ use crate::config::CodexConfig;
 use crate::projects::{Executor, ProjectConfig, ProjectsState};
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
-    ShellAgentProjectSummary, ShellFileOpRequest, ShellJobOpRequest, ShellRunRequest,
+    ShellAgentProjectSummary, ShellFileOpRequest, ShellJobInfo, ShellJobOpRequest, ShellRunRequest,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -97,6 +97,55 @@ pub enum ToolCall {
         tail_lines: Option<usize>,
     },
 
+    /// List files in an agent-registered project directory (bounded, read-only).
+    /// Returns project-relative paths plus a file/dir kind. Routed to the
+    /// owning registered agent via the `file_list` op; the server never reads
+    /// the agent project path directly.
+    ListProjectFiles {
+        project: String,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Search text inside an agent-registered project (bounded matches). Each
+    /// match carries a project-relative path, 1-based line number, and a
+    /// preview line. Sensitive/build directories (`.git`, `target`,
+    /// `node_modules`) are excluded by default. Routed to the owning agent via
+    /// a bounded `grep -rnI` shell call.
+    SearchProjectText {
+        project: String,
+        pattern: String,
+        #[serde(default)]
+        path: Option<String>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Read-only git diff summary for a project: `git status --porcelain`,
+    /// `git diff --stat`, and a parsed changed-file list. Does not modify the
+    /// worktree. Routed to the owning agent.
+    GitDiffSummary { project: String },
+
+    /// List bounded runtime job summaries across agent and local executors.
+    /// Never returns stdout/stderr bodies — only metadata (job_id, kind,
+    /// status, project, timestamps, exit_code).
+    ListJobs {
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        status: Option<String>,
+    },
+
+    /// Return bounded stdout/stderr tails for a job. Defaults to a bounded tail
+    /// so the console never reads full logs by default.
+    JobTail {
+        job_id: String,
+        #[serde(default)]
+        tail_lines: Option<usize>,
+    },
+
     /// List all agent-registered runtime projects.
     ListProjects,
 
@@ -119,8 +168,18 @@ impl ToolCall {
             name,
             "list_tools" | "list_projects" | "list_agents" | "runtime_status"
         );
-        if !unit_tool && !arguments.is_null() {
-            wrapped.insert("params".to_string(), arguments);
+        if !unit_tool {
+            // Non-unit tools always carry a `params` object so variants whose
+            // fields are all optional (e.g. `list_jobs`) still deserialize when
+            // a caller passes `null` arguments. A null argument is normalized
+            // to an empty object; required-field validation still fires for
+            // tools that need fields.
+            let params = if arguments.is_null() {
+                Value::Object(serde_json::Map::new())
+            } else {
+                arguments
+            };
+            wrapped.insert("params".to_string(), params);
         }
         serde_json::from_value(Value::Object(wrapped))
             .map_err(|e| format!("invalid arguments for tool '{}': {}", name, e))
@@ -431,17 +490,23 @@ impl ToolRuntime {
     fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
         match call {
             ToolCall::RunShell { .. } | ToolCall::ApplyPatch { .. } => Some(AgentCapability::Shell),
-            ToolCall::ReadFile { .. } => Some(AgentCapability::FileRead),
-            ToolCall::GitStatus { .. } | ToolCall::GitDiff { .. } => {
-                Some(AgentCapability::GitOrShell)
+            ToolCall::ReadFile { .. } | ToolCall::ListProjectFiles { .. } => {
+                Some(AgentCapability::FileRead)
             }
+            // Search runs a bounded `grep` via the agent shell path.
+            ToolCall::SearchProjectText { .. } => Some(AgentCapability::Shell),
+            ToolCall::GitStatus { .. }
+            | ToolCall::GitDiff { .. }
+            | ToolCall::GitDiffSummary { .. } => Some(AgentCapability::GitOrShell),
             ToolCall::RunJob { .. } | ToolCall::RunCodex { .. } => Some(AgentCapability::AsyncJobs),
             ToolCall::ListTools
             | ToolCall::ListProjects
             | ToolCall::ListAgents
             | ToolCall::RuntimeStatus
             | ToolCall::JobStatus { .. }
-            | ToolCall::JobLog { .. } => None,
+            | ToolCall::JobLog { .. }
+            | ToolCall::ListJobs { .. }
+            | ToolCall::JobTail { .. } => None,
         }
     }
 
@@ -464,7 +529,10 @@ impl ToolRuntime {
             | ToolCall::ApplyPatch { project, .. }
             | ToolCall::GitStatus { project }
             | ToolCall::GitDiff { project, .. }
+            | ToolCall::GitDiffSummary { project }
             | ToolCall::ReadFile { project, .. }
+            | ToolCall::ListProjectFiles { project, .. }
+            | ToolCall::SearchProjectText { project, .. }
             | ToolCall::RunJob { project, .. }
             | ToolCall::RunCodex { project, .. } => project,
             _ => return Ok(()),
@@ -619,6 +687,28 @@ impl ToolRuntime {
                 offset,
                 tail_lines,
             } => self.job_log(job_id, offset, tail_lines).await,
+
+            ToolCall::ListProjectFiles {
+                project,
+                path,
+                limit,
+            } => self.list_project_files(project, path, limit).await,
+
+            ToolCall::SearchProjectText {
+                project,
+                pattern,
+                path,
+                limit,
+            } => {
+                self.search_project_text(project, pattern, path, limit)
+                    .await
+            }
+
+            ToolCall::GitDiffSummary { project } => self.git_diff_summary(project).await,
+
+            ToolCall::ListJobs { limit, status } => self.list_jobs(limit, status).await,
+
+            ToolCall::JobTail { job_id, tail_lines } => self.job_tail(job_id, tail_lines).await,
         }
     }
 
@@ -752,6 +842,100 @@ impl ToolRuntime {
                         "tail_lines",
                         "integer",
                         "Optional number of trailing stdout lines to return.",
+                        false,
+                    ),
+                ]),
+            },
+            ToolSpec {
+                name: "list_project_files".to_string(),
+                description: "List files in an agent-registered project directory (bounded, "
+                    .to_string()
+                    + "read-only). Returns project-relative paths plus a file/dir kind. Routed "
+                    + "to the owning registered agent; the server never reads the agent project "
+                    + "path directly.",
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    (
+                        "path",
+                        "string",
+                        "Optional project-relative directory to list (default: project root).",
+                        false,
+                    ),
+                    (
+                        "limit",
+                        "integer",
+                        "Maximum number of entries to return.",
+                        false,
+                    ),
+                ]),
+            },
+            ToolSpec {
+                name: "search_project_text".to_string(),
+                description: "Search text inside an agent-registered project (bounded matches)."
+                    .to_string()
+                    + " Each match carries a project-relative path, 1-based line number, and a "
+                    + "preview line. Sensitive/build directories (.git, target, node_modules) are "
+                    + "excluded by default.",
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("pattern", "string", "Text pattern to search for.", true),
+                    (
+                        "path",
+                        "string",
+                        "Optional project-relative directory to scope the search (default: project root).",
+                        false,
+                    ),
+                    (
+                        "limit",
+                        "integer",
+                        "Maximum number of matches to return.",
+                        false,
+                    ),
+                ]),
+            },
+            ToolSpec {
+                name: "git_diff_summary".to_string(),
+                description: "Read-only git diff summary for a project: `git status --porcelain`, "
+                    .to_string()
+                    + "`git diff --stat`, and a parsed changed-file list. Does not modify the "
+                    + "worktree.",
+                input_schema: object_schema(vec![(
+                    "project",
+                    "string",
+                    "Agent-registered project id.",
+                    true,
+                )]),
+            },
+            ToolSpec {
+                name: "list_jobs".to_string(),
+                description: "List bounded runtime job summaries across agent and local executors. "
+                    .to_string()
+                    + "Never returns stdout/stderr bodies — only metadata (job_id, kind, status, "
+                    + "project, timestamps, exit_code).",
+                input_schema: object_schema(vec![
+                    (
+                        "limit",
+                        "integer",
+                        "Maximum number of job summaries to return.",
+                        false,
+                    ),
+                    (
+                        "status",
+                        "string",
+                        "Optional status filter (e.g. running, completed, failed).",
+                        false,
+                    ),
+                ]),
+            },
+            ToolSpec {
+                name: "job_tail".to_string(),
+                description: "Return bounded stdout/stderr tails for a job.".to_string(),
+                input_schema: object_schema(vec![
+                    ("job_id", "string", "Job id.", true),
+                    (
+                        "tail_lines",
+                        "integer",
+                        "Optional number of trailing lines to return per stream.",
                         false,
                     ),
                 ]),
@@ -1616,6 +1800,353 @@ impl ToolRuntime {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Phase A read-only console tools
+    // -------------------------------------------------------------------------
+
+    /// `list_project_files`: bounded, project-relative file listing routed to
+    /// the owning registered agent via the `file_list` op. The server never
+    /// reads the agent project path directly. Returns `path` + `kind`
+    /// (file/dir); size/mtime are not exposed by the current file op protocol.
+    async fn list_project_files(
+        &self,
+        project: String,
+        path: Option<String>,
+        limit: Option<usize>,
+    ) -> ToolResult {
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        let rel_path = path
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| ".".to_string());
+        if let Err(e) = validate_project_relative_path(&rel_path) {
+            return ToolResult::err(e);
+        }
+        let max_entries = limit.unwrap_or(200).clamp(1, 500);
+        if proj.is_agent() {
+            let client_id = match proj.agent_client_id() {
+                Ok(id) => id.to_string(),
+                Err(e) => return ToolResult::err(e),
+            };
+            let wait_timeout = 30;
+            let (request_id, rx) = match self
+                .shell_clients
+                .enqueue_file_op(
+                    ShellFileOpRequest {
+                        op: "list".to_string(),
+                        client_id,
+                        path: rel_path.clone(),
+                        cwd: Some(proj.path.clone()),
+                        content: None,
+                        max_bytes: None,
+                        expected_sha256: None,
+                        create_dirs: false,
+                        wait_timeout_secs: wait_timeout,
+                    },
+                    "tool_runtime".to_string(),
+                )
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return ToolResult::err(e),
+            };
+            return match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
+                Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
+                    let stdout = resp.stdout.unwrap_or_default();
+                    let (entries, truncated) =
+                        parse_file_list_entries(&stdout, &rel_path, max_entries);
+                    ToolResult::ok(json!({
+                        "project": project,
+                        "path": rel_path,
+                        "entries": entries,
+                        "truncated": truncated,
+                    }))
+                }
+                Ok(Ok(resp)) => ToolResult::err(
+                    resp.error
+                        .or(resp.stderr)
+                        .unwrap_or_else(|| "agent list_project_files failed".to_string()),
+                ),
+                Ok(Err(_)) => {
+                    self.shell_clients.cancel_request(&request_id).await;
+                    ToolResult::err("agent list_project_files waiter was dropped")
+                }
+                Err(_) => {
+                    self.shell_clients.cancel_request(&request_id).await;
+                    ToolResult::err("timed out waiting for agent list_project_files")
+                }
+            };
+        }
+        // Local-executor parity path (the runtime surface is agent-first; this
+        // branch mirrors read_file/git_status for structural consistency).
+        let root = proj.root();
+        let dir = if rel_path == "." {
+            root.to_path_buf()
+        } else {
+            root.join(&rel_path)
+        };
+        let canonical_root = match root.canonicalize() {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(format!("Project root does not exist: {}", e)),
+        };
+        let canonical_dir = match dir.canonicalize() {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(format!("Path does not exist: {}", e)),
+        };
+        if !canonical_dir.starts_with(&canonical_root) {
+            return ToolResult::err("Path is outside project directory");
+        }
+        let (entries, truncated) = match std::fs::read_dir(&canonical_dir) {
+            Ok(rd) => {
+                let mut all = Vec::new();
+                for entry in rd.flatten() {
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                    all.push(json!({
+                        "path": relative_entry_path(&rel_path, &name),
+                        "kind": if is_dir { "dir" } else { "file" },
+                    }));
+                }
+                all.sort_by(|a, b| {
+                    a["path"]
+                        .as_str()
+                        .unwrap_or("")
+                        .cmp(b["path"].as_str().unwrap_or(""))
+                });
+                let truncated = all.len() > max_entries;
+                all.truncate(max_entries);
+                (all, truncated)
+            }
+            Err(e) => return ToolResult::err(format!("Failed to list directory: {}", e)),
+        };
+        ToolResult::ok(json!({
+            "project": project,
+            "path": rel_path,
+            "entries": entries,
+            "truncated": truncated,
+        }))
+    }
+
+    /// `search_project_text`: bounded text search routed to the owning agent
+    /// via a bounded `grep -rnI` shell call. Excludes `.git`, `target`, and
+    /// `node_modules` by default. Each match carries a project-relative path,
+    /// 1-based line number, and a preview line.
+    async fn search_project_text(
+        &self,
+        project: String,
+        pattern: String,
+        path: Option<String>,
+        limit: Option<usize>,
+    ) -> ToolResult {
+        if pattern.trim().is_empty() {
+            return ToolResult::err("pattern cannot be empty");
+        }
+        if pattern.contains('\0') {
+            return ToolResult::err("pattern cannot contain NUL bytes");
+        }
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        let rel_path = path
+            .map(|p| p.trim().to_string())
+            .filter(|p| !p.is_empty())
+            .unwrap_or_else(|| ".".to_string());
+        if let Err(e) = validate_project_relative_path(&rel_path) {
+            return ToolResult::err(e);
+        }
+        let max_matches = limit.unwrap_or(50).clamp(1, 200);
+        let cmd = search_project_text_command(&pattern, &rel_path, max_matches);
+        if proj.is_agent() {
+            let client_id = match proj.agent_client_id() {
+                Ok(id) => id.to_string(),
+                Err(e) => return ToolResult::err(e),
+            };
+            let (req_id, rx) = match self
+                .shell_clients
+                .enqueue_run(
+                    ShellRunRequest {
+                        client_id,
+                        cwd: Some(proj.path.clone()),
+                        command: cmd,
+                        timeout_secs: 30,
+                        wait_timeout_secs: 32,
+                    },
+                    "tool_runtime".to_string(),
+                )
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return ToolResult::err(e),
+            };
+            return match tokio::time::timeout(Duration::from_secs(34), rx).await {
+                Ok(Ok(resp)) => {
+                    let stdout = resp.stdout.unwrap_or_default();
+                    let (matches, truncated) = parse_search_matches(&stdout, max_matches);
+                    ToolResult::ok(json!({
+                        "project": project,
+                        "pattern": pattern,
+                        "path": rel_path,
+                        "matches": matches,
+                        "count": matches.len(),
+                        "truncated": truncated,
+                        "exit_code": resp.exit_code,
+                    }))
+                }
+                Ok(Err(_)) => {
+                    self.shell_clients.cancel_request(&req_id).await;
+                    ToolResult::err("request dropped")
+                }
+                Err(_) => {
+                    self.shell_clients.cancel_request(&req_id).await;
+                    ToolResult::err("timed out")
+                }
+            };
+        }
+        let root = proj.root();
+        let result = tokio::task::spawn_blocking(move || run_command_sync(&cmd, &root, 30)).await;
+        match result {
+            Ok((exit_code, stdout, _stderr, _)) => {
+                let (matches, truncated) = parse_search_matches(&stdout, max_matches);
+                ToolResult::ok(json!({
+                    "project": project,
+                    "pattern": pattern,
+                    "path": rel_path,
+                    "matches": matches,
+                    "count": matches.len(),
+                    "truncated": truncated,
+                    "exit_code": exit_code,
+                }))
+            }
+            Err(e) => ToolResult::err(format!("task join error: {}", e)),
+        }
+    }
+
+    /// `git_diff_summary`: read-only inspection returning `git status
+    /// --porcelain`, `git diff --stat`, and a parsed changed-file list. Does
+    /// not modify the worktree.
+    async fn git_diff_summary(&self, project: String) -> ToolResult {
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        let cmd = git_diff_summary_command();
+        if proj.is_agent() {
+            let client_id = match proj.agent_client_id() {
+                Ok(id) => id.to_string(),
+                Err(e) => return ToolResult::err(e),
+            };
+            let (req_id, rx) = match self
+                .shell_clients
+                .enqueue_run(
+                    ShellRunRequest {
+                        client_id,
+                        cwd: Some(proj.path.clone()),
+                        command: cmd,
+                        timeout_secs: 30,
+                        wait_timeout_secs: 32,
+                    },
+                    "tool_runtime".to_string(),
+                )
+                .await
+            {
+                Ok(r) => r,
+                Err(e) => return ToolResult::err(e),
+            };
+            return match tokio::time::timeout(Duration::from_secs(34), rx).await {
+                Ok(Ok(resp)) => {
+                    let stdout = resp.stdout.unwrap_or_default();
+                    let (porcelain, diff_stat) = split_diff_summary(&stdout);
+                    let changed_files = parse_porcelain_files(&porcelain);
+                    ToolResult::ok(json!({
+                        "porcelain": porcelain,
+                        "diff_stat": diff_stat,
+                        "changed_files": changed_files,
+                        "changed_files_count": changed_files.len(),
+                        "exit_code": resp.exit_code,
+                    }))
+                }
+                Ok(Err(_)) => {
+                    self.shell_clients.cancel_request(&req_id).await;
+                    ToolResult::err("request dropped")
+                }
+                Err(_) => {
+                    self.shell_clients.cancel_request(&req_id).await;
+                    ToolResult::err("timed out")
+                }
+            };
+        }
+        let root = proj.root();
+        let result = tokio::task::spawn_blocking(move || run_command_sync(&cmd, &root, 30)).await;
+        match result {
+            Ok((exit_code, stdout, _stderr, _)) => {
+                let (porcelain, diff_stat) = split_diff_summary(&stdout);
+                let changed_files = parse_porcelain_files(&porcelain);
+                ToolResult::ok(json!({
+                    "porcelain": porcelain,
+                    "diff_stat": diff_stat,
+                    "changed_files": changed_files,
+                    "changed_files_count": changed_files.len(),
+                    "exit_code": exit_code,
+                }))
+            }
+            Err(e) => ToolResult::err(format!("task join error: {}", e)),
+        }
+    }
+
+    /// `list_jobs`: bounded job summaries across agent and local executors.
+    /// Never returns stdout/stderr bodies — only metadata.
+    async fn list_jobs(&self, limit: Option<usize>, status: Option<String>) -> ToolResult {
+        let max = limit.unwrap_or(20).clamp(1, 100);
+        let status_filter = status
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
+        // Agent jobs come pre-bounded to `max` by the registry. Local jobs are
+        // collected fully (the in-memory map is small) so truncation can be
+        // detected accurately for the common local-only case.
+        let agent_jobs = self.shell_clients.list_jobs(Some(max)).await;
+        let mut summaries: Vec<Value> = agent_jobs
+            .iter()
+            .filter(|j| {
+                status_filter
+                    .as_ref()
+                    .map(|s| s == &j.status)
+                    .unwrap_or(true)
+            })
+            .map(agent_job_summary_value)
+            .collect();
+        let local_jobs_map = self.local_jobs.lock().await;
+        for (job_id, record) in local_jobs_map.iter() {
+            if let Some(summary) = local_job_summary_value(job_id, record, &status_filter) {
+                summaries.push(summary);
+            }
+        }
+        summaries.sort_by(|a, b| {
+            b["created_at"]
+                .as_i64()
+                .unwrap_or(0)
+                .cmp(&a["created_at"].as_i64().unwrap_or(0))
+        });
+        let truncated = summaries.len() > max;
+        summaries.truncate(max);
+        ToolResult::ok(json!({
+            "jobs": summaries,
+            "count": summaries.len(),
+            "truncated": truncated,
+        }))
+    }
+
+    /// `job_tail`: bounded stdout/stderr tails for a job. Reuses the bounded
+    /// `job_log` path with a tail-focused default so the console never reads
+    /// full logs by default.
+    async fn job_tail(&self, job_id: String, tail_lines: Option<usize>) -> ToolResult {
+        let tail = tail_lines.unwrap_or(200).clamp(1, 500);
+        self.job_log(job_id, None, Some(tail)).await
+    }
+
     /// Stop a local job by terminating its process group and marking it
     /// `stopped`.
     ///
@@ -1924,6 +2455,242 @@ fn read_file_content_result(
         "total_lines": total_lines,
         "start_line": eff_start,
         "limit": eff_limit,
+    }))
+}
+
+// =============================================================================
+// Phase A read-only console helpers
+// =============================================================================
+
+/// Build the project-relative path for a single entry returned by an agent
+/// `file_list` op. `rel_path` is the project-relative directory the caller
+/// requested (`"."` for the project root); `name` is the bare entry name.
+fn relative_entry_path(rel_path: &str, name: &str) -> String {
+    let trimmed = rel_path.trim_end_matches('/');
+    if trimmed.is_empty() || trimmed == "." {
+        name.to_string()
+    } else {
+        format!("{}/{}", trimmed, name)
+    }
+}
+
+/// Validate a user-supplied project-relative path for console read-only tools.
+/// The owning agent still enforces its local root policy, but these tools
+/// promise project-relative behavior and should not intentionally target
+/// absolute paths or parent traversal.
+fn validate_project_relative_path(path: &str) -> Result<(), String> {
+    if path.contains('\0') {
+        return Err("path cannot contain NUL bytes".to_string());
+    }
+    let path = path.trim();
+    if path.is_empty() || path == "." {
+        return Ok(());
+    }
+    let p = Path::new(path);
+    if p.is_absolute() {
+        return Err("path must be project-relative".to_string());
+    }
+    if p.components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("path cannot contain parent traversal".to_string());
+    }
+    Ok(())
+}
+
+/// Parse agent `file_list` stdout (one entry per line, dirs suffixed with
+/// `/`) into bounded project-relative entries with a file/dir kind. Returns
+/// the entries and whether the source exceeded `max_entries`.
+fn parse_file_list_entries(stdout: &str, rel_path: &str, max_entries: usize) -> (Vec<Value>, bool) {
+    let mut all: Vec<Value> = Vec::new();
+    for line in stdout.lines() {
+        let line = line.trim_end_matches('\r');
+        if line.is_empty() {
+            continue;
+        }
+        let (name, is_dir) = if let Some(stripped) = line.strip_suffix('/') {
+            (stripped.to_string(), true)
+        } else {
+            (line.to_string(), false)
+        };
+        if name.is_empty() {
+            continue;
+        }
+        all.push(json!({
+            "path": relative_entry_path(rel_path, &name),
+            "kind": if is_dir { "dir" } else { "file" },
+        }));
+    }
+    all.sort_by(|a, b| {
+        a["path"]
+            .as_str()
+            .unwrap_or("")
+            .cmp(b["path"].as_str().unwrap_or(""))
+    });
+    let truncated = all.len() > max_entries;
+    all.truncate(max_entries);
+    (all, truncated)
+}
+
+/// Build a bounded `grep -rnI` command for `search_project_text`. Excludes
+/// sensitive/build directories (`.git`, `target`, `node_modules`) by default
+/// and caps output with `head -n (max_matches + 1)` so the runtime can detect
+/// truncation without requesting an unbounded stream.
+fn search_project_text_command(pattern: &str, rel_path: &str, max_matches: usize) -> String {
+    let escaped_pattern = shell_escape_simple(pattern);
+    let escaped_target = shell_escape_simple(rel_path);
+    // head -n N+1: one extra line lets the parser flag truncation.
+    let head = max_matches.saturating_add(1);
+    format!(
+        "grep -rnI --exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules -e {pattern} {target} 2>/dev/null | head -n {head}",
+        pattern = escaped_pattern,
+        target = escaped_target,
+        head = head,
+    )
+}
+
+/// Parse `grep -rnI` output lines (`path:lineno:content`) into bounded match
+/// objects. Strips a leading `./` so paths are project-relative. Returns the
+/// matches and whether the source exceeded `max_matches`.
+fn parse_search_matches(stdout: &str, max_matches: usize) -> (Vec<Value>, bool) {
+    let mut matches: Vec<Value> = Vec::new();
+    let mut truncated = false;
+    for line in stdout.lines() {
+        if matches.len() >= max_matches {
+            truncated = true;
+            break;
+        }
+        let mut parts = line.splitn(3, ':');
+        let (Some(path), Some(lineno), Some(content)) = (parts.next(), parts.next(), parts.next())
+        else {
+            continue;
+        };
+        let line_no: usize = match lineno.parse() {
+            Ok(n) => n,
+            Err(_) => continue,
+        };
+        let clean_path = path.strip_prefix("./").unwrap_or(path).to_string();
+        matches.push(json!({
+            "path": clean_path,
+            "line": line_no,
+            "preview": content,
+        }));
+    }
+    (matches, truncated)
+}
+
+/// Sentinel separating `git status --porcelain` from `git diff --stat` in the
+/// combined `git_diff_summary` command output. Chosen to be extremely unlikely
+/// to appear in real git output.
+const DIFF_SUMMARY_SENTINEL: &str = "@@PRIVATE_DROP_DIFF_SUMMARY_SEP@@";
+
+/// Build the read-only `git_diff_summary` command. Runs `git status
+/// --porcelain` and `git diff --stat` separated by a unique sentinel. No
+/// mutating git subcommand is emitted.
+fn git_diff_summary_command() -> String {
+    format!(
+        "git status --porcelain; printf '\\n{sentinel}\\n'; git diff --stat",
+        sentinel = DIFF_SUMMARY_SENTINEL,
+    )
+}
+
+/// Split the combined `git_diff_summary` stdout into the porcelain section and
+/// the `diff --stat` section. If the sentinel is absent, everything is treated
+/// as porcelain (defensive; should not happen in practice).
+fn split_diff_summary(stdout: &str) -> (String, String) {
+    if let Some((before, after)) = stdout.split_once(DIFF_SUMMARY_SENTINEL) {
+        (
+            before.trim_end_matches(['\n', '\r']).to_string(),
+            after
+                .trim_start_matches(['\n', '\r'])
+                .trim_end()
+                .to_string(),
+        )
+    } else {
+        (stdout.trim_end().to_string(), String::new())
+    }
+}
+
+/// Parse `git status --porcelain` output into a list of changed file paths.
+/// Handles renames (`R  old -> new` -> `new`) and quoted paths.
+fn parse_porcelain_files(porcelain: &str) -> Vec<String> {
+    let mut files = Vec::new();
+    for line in porcelain.lines() {
+        // Porcelain format: "XY <path>" (2 status chars + 1 space + path).
+        if line.len() < 4 {
+            continue;
+        }
+        let path_part = &line[3..];
+        let path = if let Some((_, dst)) = path_part.split_once(" -> ") {
+            dst
+        } else {
+            path_part
+        };
+        let path = path.trim().trim_matches('"');
+        if !path.is_empty() {
+            files.push(path.to_string());
+        }
+    }
+    files
+}
+
+/// Build a bounded job summary `Value` for an agent-known job. Never includes
+/// stdout/stderr bodies.
+fn agent_job_summary_value(job: &ShellJobInfo) -> Value {
+    json!({
+        "job_id": job.job_id,
+        "kind": job.kind,
+        "status": job.status,
+        "project": job.project_id,
+        "executor": "agent",
+        "client_id": job.client_id,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "ended_at": job.ended_at,
+        "duration_ms": job.duration_ms,
+        "elapsed_secs": job.elapsed_secs,
+        "exit_code": job.exit_code,
+    })
+}
+
+/// Build a bounded job summary `Value` for a local on-disk job by reading
+/// lightweight metadata/status files. Returns `None` when a status filter is
+/// set and the job does not match. Never includes stdout/stderr bodies.
+fn local_job_summary_value(
+    job_id: &str,
+    record: &LocalJobRecord,
+    status_filter: &Option<String>,
+) -> Option<Value> {
+    let meta = read_json(record.dir.join("metadata.json"));
+    let raw_status = read_trim(record.dir.join("status")).unwrap_or_default();
+    let status = normalize_local_status(&raw_status);
+    if let Some(filter) = status_filter {
+        if &status != filter {
+            return None;
+        }
+    }
+    let exit_code = read_trim(record.dir.join("exit_code")).and_then(|v| v.parse::<i32>().ok());
+    let created_at = meta
+        .get("created_at")
+        .and_then(Value::as_i64)
+        .unwrap_or_default();
+    let started_at = meta.get("started_at").and_then(Value::as_i64);
+    let ended_at = read_trim(record.dir.join("finished_at")).and_then(|v| v.parse::<i64>().ok());
+    let kind = meta
+        .get("kind")
+        .and_then(Value::as_str)
+        .unwrap_or("shell")
+        .to_string();
+    Some(json!({
+        "job_id": job_id,
+        "kind": kind,
+        "status": status,
+        "project": record.project,
+        "executor": "local",
+        "created_at": created_at,
+        "started_at": started_at,
+        "ended_at": ended_at,
+        "exit_code": exit_code,
     }))
 }
 
@@ -4431,5 +5198,574 @@ mod tests {
             names
         );
         assert_eq!(tools["count"], names.len() as i64);
+    }
+
+    // =========================================================================
+    // Phase A read-only console tools
+    // =========================================================================
+
+    #[test]
+    fn from_tool_name_parses_phase_a_tools() {
+        let call =
+            ToolCall::from_tool_name("list_project_files", json!({"project": "demo"})).unwrap();
+        match call {
+            ToolCall::ListProjectFiles {
+                project,
+                path,
+                limit,
+            } => {
+                assert_eq!(project, "demo");
+                assert_eq!(path, None);
+                assert_eq!(limit, None);
+            }
+            other => panic!("expected ListProjectFiles, got {:?}", other),
+        }
+
+        let call = ToolCall::from_tool_name(
+            "search_project_text",
+            json!({"project": "demo", "pattern": "fn main", "limit": 5}),
+        )
+        .unwrap();
+        match call {
+            ToolCall::SearchProjectText {
+                project,
+                pattern,
+                path,
+                limit,
+            } => {
+                assert_eq!(project, "demo");
+                assert_eq!(pattern, "fn main");
+                assert_eq!(path, None);
+                assert_eq!(limit, Some(5));
+            }
+            other => panic!("expected SearchProjectText, got {:?}", other),
+        }
+
+        let call =
+            ToolCall::from_tool_name("git_diff_summary", json!({"project": "demo"})).unwrap();
+        assert!(matches!(call, ToolCall::GitDiffSummary { project } if project == "demo"));
+
+        // list_jobs has only optional fields; null arguments must still parse.
+        let call = ToolCall::from_tool_name("list_jobs", Value::Null).unwrap();
+        assert!(matches!(
+            call,
+            ToolCall::ListJobs {
+                limit: None,
+                status: None
+            }
+        ));
+        let call = ToolCall::from_tool_name("list_jobs", json!({"limit": 3, "status": "running"}))
+            .unwrap();
+        match call {
+            ToolCall::ListJobs { limit, status } => {
+                assert_eq!(limit, Some(3));
+                assert_eq!(status.as_deref(), Some("running"));
+            }
+            other => panic!("expected ListJobs, got {:?}", other),
+        }
+
+        let call = ToolCall::from_tool_name("job_tail", json!({"job_id": "abc", "tail_lines": 10}))
+            .unwrap();
+        match call {
+            ToolCall::JobTail { job_id, tail_lines } => {
+                assert_eq!(job_id, "abc");
+                assert_eq!(tail_lines, Some(10));
+            }
+            other => panic!("expected JobTail, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn from_tool_name_list_jobs_with_null_arguments_parses() {
+        // Regression: a non-unit tool with all-optional fields must deserialize
+        // when a caller passes `null` arguments (normalized to an empty object).
+        let call = ToolCall::from_tool_name("list_jobs", Value::Null)
+            .unwrap_or_else(|e| panic!("list_jobs with null args should parse: {}", e));
+        assert!(matches!(call, ToolCall::ListJobs { .. }));
+    }
+
+    #[test]
+    fn tool_specs_include_phase_a_tools() {
+        let runtime = test_runtime();
+        let names: Vec<String> = runtime
+            .tool_specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        for expected in [
+            "list_project_files",
+            "search_project_text",
+            "git_diff_summary",
+            "list_jobs",
+            "job_tail",
+        ] {
+            assert!(
+                names.iter().any(|n| n == expected),
+                "tool_specs must include '{}': {:?}",
+                expected,
+                names
+            );
+        }
+    }
+
+    #[test]
+    fn parse_file_list_entries_is_bounded_and_marks_truncation() {
+        // Simulate agent file_list stdout: dirs suffixed with '/'.
+        let stdout = "Cargo.toml\nsrc/\nREADME.md\ntarget/\nCargo.lock\n";
+        // First, without truncation, verify kinds and project-relative paths.
+        let (all, truncated_full) = parse_file_list_entries(stdout, ".", 10);
+        assert!(!truncated_full);
+        assert_eq!(all.len(), 5);
+        let src = all.iter().find(|e| e["path"] == "src").expect("src entry");
+        assert_eq!(src["kind"], "dir");
+        let cargo = all
+            .iter()
+            .find(|e| e["path"] == "Cargo.toml")
+            .expect("Cargo.toml entry");
+        assert_eq!(cargo["kind"], "file");
+
+        // With a tight bound, output is truncated and sorted alphabetically.
+        let (bounded, truncated) = parse_file_list_entries(stdout, ".", 3);
+        assert_eq!(bounded.len(), 3);
+        assert!(truncated);
+        let paths: Vec<&str> = bounded
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        // Sorted: Cargo.lock, Cargo.toml, README.md come first.
+        assert_eq!(paths, vec!["Cargo.lock", "Cargo.toml", "README.md"]);
+    }
+
+    #[test]
+    fn parse_file_list_entries_prepends_subpath_for_relative_paths() {
+        let stdout = "main.rs\nlib.rs\n";
+        let (entries, truncated) = parse_file_list_entries(stdout, "src", 10);
+        assert!(!truncated);
+        let paths: Vec<&str> = entries
+            .iter()
+            .map(|e| e["path"].as_str().unwrap())
+            .collect();
+        assert_eq!(paths, vec!["src/lib.rs", "src/main.rs"]);
+    }
+
+    #[test]
+    fn validate_project_relative_path_rejects_absolute_and_parent_traversal() {
+        assert!(validate_project_relative_path(".").is_ok());
+        assert!(validate_project_relative_path("src").is_ok());
+        assert!(validate_project_relative_path("src/main.rs").is_ok());
+        assert!(validate_project_relative_path("/etc").is_err());
+        assert!(validate_project_relative_path("../outside").is_err());
+        assert!(validate_project_relative_path("src/../../outside").is_err());
+        assert!(validate_project_relative_path("src\0main.rs").is_err());
+    }
+
+    #[test]
+    fn parse_search_matches_is_bounded_and_strips_dot_slash() {
+        let stdout = "./src/main.rs:10:fn main() {}\n./src/lib.rs:3:pub fn x()\n./src/a:1:1\n";
+        let (matches, truncated) = parse_search_matches(stdout, 2);
+        assert_eq!(matches.len(), 2);
+        assert!(truncated);
+        assert_eq!(matches[0]["path"], "src/main.rs");
+        assert_eq!(matches[0]["line"], 10);
+        assert_eq!(matches[0]["preview"], "fn main() {}");
+        assert_eq!(matches[1]["path"], "src/lib.rs");
+    }
+
+    #[test]
+    fn parse_search_matches_skips_lines_without_line_number() {
+        // Binary file matches or malformed lines are skipped, not counted.
+        let stdout = "binary:file\nsrc/main.rs:5:hit\n";
+        let (matches, _truncated) = parse_search_matches(stdout, 10);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["path"], "src/main.rs");
+    }
+
+    #[test]
+    fn parse_porcelain_files_handles_basic_rename_and_quoted_paths() {
+        let porcelain =
+            " M src/main.rs\nA  new_file.rs\nR  old_name.rs -> new_name.rs\n?? \"quoted path.rs\"";
+        let files = parse_porcelain_files(porcelain);
+        assert_eq!(
+            files,
+            vec![
+                "src/main.rs",
+                "new_file.rs",
+                "new_name.rs",
+                "quoted path.rs",
+            ]
+        );
+    }
+
+    #[test]
+    fn split_diff_summary_separates_porcelain_and_stat() {
+        let stdout = format!(
+            " M src/a.rs\nA  src/b.rs\n\n{}\n src/a.rs | 2 +-\n 1 file changed",
+            DIFF_SUMMARY_SENTINEL,
+        );
+        let (porcelain, diff_stat) = split_diff_summary(&stdout);
+        assert!(porcelain.contains("src/a.rs"));
+        assert!(porcelain.contains("src/b.rs"));
+        assert!(!porcelain.contains(DIFF_SUMMARY_SENTINEL));
+        assert!(diff_stat.contains("1 file changed"));
+        assert!(!diff_stat.contains(DIFF_SUMMARY_SENTINEL));
+    }
+
+    #[test]
+    fn split_diff_summary_without_sentinel_returns_all_as_porcelain() {
+        let (porcelain, diff_stat) = split_diff_summary("just status lines");
+        assert_eq!(porcelain, "just status lines");
+        assert_eq!(diff_stat, "");
+    }
+
+    #[test]
+    fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
+        let cmd = search_project_text_command("fn main", "src", 25);
+        assert!(cmd.contains("--exclude-dir=.git"));
+        assert!(cmd.contains("--exclude-dir=target"));
+        assert!(cmd.contains("--exclude-dir=node_modules"));
+        assert!(cmd.contains("head -n 26"));
+        assert!(cmd.contains("grep -rnI"));
+    }
+
+    #[test]
+    fn git_diff_summary_command_is_read_only() {
+        let cmd = git_diff_summary_command();
+        // Must run only read-only git inspection subcommands.
+        assert!(cmd.contains("git status --porcelain"));
+        assert!(cmd.contains("git diff --stat"));
+        // No mutating subcommands may appear.
+        for forbidden in [
+            "apply", "commit", "checkout", "reset", "push", "stash", "merge", "rebase", "rm ",
+        ] {
+            assert!(
+                !cmd.contains(forbidden),
+                "git_diff_summary command must not contain '{}': {}",
+                forbidden,
+                cmd
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn list_jobs_returns_bounded_summaries_without_stdout_stderr() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        // Seed a local job whose on-disk logs contain sensitive-looking text.
+        let dir = write_fake_job(
+            root,
+            "job-secret",
+            "demo",
+            &root.to_string_lossy(),
+            "completed",
+            "DROP_TOKEN=supersecret\nline2",
+            "Authorization: Bearer xyz",
+            json!({}),
+        );
+        runtime.local_jobs.lock().await.insert(
+            "job-secret".to_string(),
+            LocalJobRecord {
+                project: "demo".to_string(),
+                dir,
+            },
+        );
+        let result = runtime
+            .dispatch(ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            })
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        let jobs = result.output["jobs"].as_array().unwrap();
+        assert_eq!(jobs.len(), 1);
+        let job = &jobs[0];
+        assert_eq!(job["job_id"], "job-secret");
+        assert_eq!(job["status"], "completed");
+        assert_eq!(job["executor"], "local");
+        // Summaries must never carry stdout/stderr bodies.
+        assert!(
+            job.get("stdout").is_none(),
+            "list_jobs summary must not include stdout"
+        );
+        assert!(
+            job.get("stderr").is_none(),
+            "list_jobs summary must not include stderr"
+        );
+        // And the serialized summary must not leak the secret log text.
+        let serialized = serde_json::to_string(job).unwrap();
+        assert!(
+            !serialized.contains("supersecret"),
+            "list_jobs summary leaked stdout secret: {}",
+            serialized
+        );
+        assert!(
+            !serialized.contains("Bearer xyz"),
+            "list_jobs summary leaked stderr secret: {}",
+            serialized
+        );
+    }
+
+    #[tokio::test]
+    async fn list_jobs_respects_limit_bound() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        for i in 0..5 {
+            let dir = write_fake_job(
+                root,
+                &format!("job-{}", i),
+                "demo",
+                &root.to_string_lossy(),
+                "completed",
+                "",
+                "",
+                json!({}),
+            );
+            runtime.local_jobs.lock().await.insert(
+                format!("job-{}", i),
+                LocalJobRecord {
+                    project: "demo".to_string(),
+                    dir,
+                },
+            );
+        }
+        let result = runtime
+            .dispatch(ToolCall::ListJobs {
+                limit: Some(2),
+                status: None,
+            })
+            .await;
+        assert!(result.success);
+        let jobs = result.output["jobs"].as_array().unwrap();
+        assert_eq!(jobs.len(), 2);
+        assert_eq!(result.output["truncated"], true);
+    }
+
+    #[tokio::test]
+    async fn list_jobs_requires_no_agent_capability() {
+        // list_jobs has no project and no agent capability requirement, so it
+        // succeeds even with no registered agent.
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            })
+            .await;
+        assert!(result.success);
+        assert!(result.output["jobs"].is_array());
+    }
+
+    #[tokio::test]
+    async fn job_tail_reaches_job_logic_without_agent_auth() {
+        // job_tail bypasses agent authorization (no project). An unknown job
+        // returns a structured "unknown job" error, proving it reached the job
+        // layer rather than an authorization gate.
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::JobTail {
+                job_id: "no-such-job".to_string(),
+                tail_lines: None,
+            })
+            .await;
+        assert!(!result.success);
+        assert!(
+            result.error.unwrap().contains("unknown job"),
+            "job_tail should report unknown job"
+        );
+    }
+
+    #[tokio::test]
+    async fn list_project_files_requires_file_read_capability() {
+        let runtime = runtime_with_agent_project("oe");
+        // Default capabilities have file_read = false.
+        register_agent(&runtime, "oe", None, ShellClientCapabilities::default()).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ListProjectFiles {
+                    project: agent_test_project_id("oe"),
+                    path: None,
+                    limit: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(
+            result.error.unwrap().contains("file_read"),
+            "list_project_files should require file_read capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn search_project_text_requires_shell_capability() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = false;
+        register_agent(&runtime, "oe", None, caps).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::SearchProjectText {
+                    project: agent_test_project_id("oe"),
+                    pattern: "fn".to_string(),
+                    path: None,
+                    limit: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(
+            result.error.unwrap().contains("shell"),
+            "search_project_text should require shell capability"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_diff_summary_requires_git_or_shell_capability() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = false;
+        register_agent(&runtime, "oe", None, caps).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::GitDiffSummary {
+                    project: agent_test_project_id("oe"),
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        // GitOrShell accepts `shell` or `git`; with both off it is rejected.
+        let err = result.error.unwrap();
+        assert!(
+            err.contains("shell") || err.contains("git"),
+            "git_diff_summary should require shell or git capability: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn list_project_files_rejects_non_agent_project_id() {
+        // A bare project id (not agent:<client>:<project>) is not resolved by
+        // the runtime surface — proving routing goes through the owning agent.
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::ListProjectFiles {
+                project: "some-local-id".to_string(),
+                path: None,
+                limit: None,
+            })
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("agent") || err.contains("projects.toml"));
+    }
+
+    #[tokio::test]
+    async fn list_project_files_rejects_absolute_or_parent_paths_before_agent_request() {
+        let runtime = runtime_with_agent_project("oe");
+        register_agent(
+            &runtime,
+            "oe",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let bootstrap = auth_context(None, true);
+        for path in ["/etc", "../outside"] {
+            let result = runtime
+                .dispatch_with_auth(
+                    ToolCall::ListProjectFiles {
+                        project: agent_test_project_id("oe"),
+                        path: Some(path.to_string()),
+                        limit: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await;
+            assert!(!result.success, "path {} should be rejected", path);
+            let err = result.error.unwrap();
+            assert!(
+                err.contains("project-relative") || err.contains("parent traversal"),
+                "unexpected error for {}: {}",
+                path,
+                err
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn search_project_text_rejects_empty_pattern() {
+        // Authorization runs before the tool body, so register an agent with
+        // shell capability to reach the empty-pattern validation.
+        let runtime = runtime_with_agent_project("oe");
+        register_agent(
+            &runtime,
+            "oe",
+            None,
+            ShellClientCapabilities {
+                shell: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::SearchProjectText {
+                    project: agent_test_project_id("oe"),
+                    pattern: "   ".to_string(),
+                    path: None,
+                    limit: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("pattern"));
+    }
+
+    #[tokio::test]
+    async fn search_project_text_rejects_absolute_or_parent_paths_before_agent_request() {
+        let runtime = runtime_with_agent_project("oe");
+        register_agent(
+            &runtime,
+            "oe",
+            None,
+            ShellClientCapabilities {
+                shell: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let bootstrap = auth_context(None, true);
+        for path in ["/etc", "../outside"] {
+            let result = runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectText {
+                        project: agent_test_project_id("oe"),
+                        pattern: "needle".to_string(),
+                        path: Some(path.to_string()),
+                        limit: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await;
+            assert!(!result.success, "path {} should be rejected", path);
+            let err = result.error.unwrap();
+            assert!(
+                err.contains("project-relative") || err.contains("parent traversal"),
+                "unexpected error for {}: {}",
+                path,
+                err
+            );
+        }
     }
 }

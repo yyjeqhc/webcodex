@@ -164,6 +164,39 @@ Acceptance:
 
 - Operators have a documented way to bound storage and request load.
 
+### Phase 18: MCP App Console And Approval Surface
+
+Goal: keep GPT Actions as the model-callable development interface while adding
+an MCP App console for human observation, diff review, and approval.
+
+Tasks:
+
+- Add structured read-only console tools for file listing/search, file ranges,
+  diff summaries, job listing, and job tails.
+- Build runtime/agent status panels that make WebSocket stale transitions,
+  transport, last heartbeat, pending requests, and project counts obvious.
+- Build project selection, file browser, and read-only file preview around
+  agent-registered runtime project ids.
+- Add patch validation and an explicit approval flow before
+  `applyProjectPatch`.
+- Add command and job/log panels with high-risk execution warnings and bounded
+  output.
+- Keep all business logic in `ToolRuntime`; MCP, GPT Actions, REST wrappers,
+  and the app remain protocol/UI layers.
+
+Acceptance:
+
+- A user can see runtime health, current project state, diffs, patch previews,
+  command output, and job tails without reading raw JSON.
+- Patch application and shell execution require clear human confirmation in the
+  app.
+- GPT Actions and MCP continue to share one runtime layer.
+- Removed legacy workflow, SSH, file-drop, and old dashboard surfaces are not
+  reintroduced.
+
+See [MCP_APP_CONSOLE_PLAN.md](MCP_APP_CONSOLE_PLAN.md) for the staged plan and
+copy/paste implementation prompts.
+
 ## Deferred Ideas
 
 - SSE agent transport. WebSocket is now the preferred long-lived transport;

@@ -84,6 +84,40 @@ struct RunShellRequest {
     pub cwd: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ListProjectFilesRequest {
+    pub project: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct SearchProjectTextRequest {
+    pub project: String,
+    pub pattern: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ListJobsRequest {
+    #[serde(default)]
+    pub limit: Option<usize>,
+    #[serde(default)]
+    pub status: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct JobTailRequest {
+    pub job_id: String,
+    #[serde(default)]
+    pub tail_lines: Option<usize>,
+}
+
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
     depot.obtain::<Arc<ToolRuntime>>().ok().cloned()
 }
@@ -555,13 +589,206 @@ pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Resp
     render_result(res, &audit, "runtime_status", None, result);
 }
 
+/// `ToolCall::ListProjectFiles`. Read-only, agent-backed file listing.
+#[handler]
+pub async fn projects_list_files(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/projects/list_files", "listProjectFiles");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: ListProjectFilesRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = body.project.clone();
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ListProjectFiles {
+                project: body.project,
+                path: body.path,
+                limit: body.limit,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "list_project_files", Some(project), result);
+}
+
+/// `ToolCall::SearchProjectText`. Read-only, agent-backed bounded text search.
+#[handler]
+pub async fn projects_search_text(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/projects/search_text", "searchProjectText");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: SearchProjectTextRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = body.project.clone();
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::SearchProjectText {
+                project: body.project,
+                pattern: body.pattern,
+                path: body.path,
+                limit: body.limit,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "search_project_text", Some(project), result);
+}
+
+/// `ToolCall::GitDiffSummary`. Read-only git inspection.
+#[handler]
+pub async fn projects_git_diff_summary(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/projects/git_diff_summary",
+        "getProjectGitDiffSummary",
+    );
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: ProjectIdRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = body.project.clone();
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::GitDiffSummary {
+                project: body.project,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "git_diff_summary", Some(project), result);
+}
+
+/// `ToolCall::ListJobs`. Bounded job summaries (no stdout/stderr bodies).
+#[handler]
+pub async fn jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/jobs/list", "listRuntimeJobs");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: ListJobsRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: body.limit,
+                status: body.status,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "list_jobs", None, result);
+}
+
+/// `ToolCall::JobTail`. Bounded stdout/stderr tails for a job.
+#[handler]
+pub async fn job_tail(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/jobs/tail", "getRuntimeJobTail");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: JobTailRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::JobTail {
+                job_id: body.job_id,
+                tail_lines: body.tail_lines,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "job_tail", None, result);
+}
+
 fn tool_project(call: &ToolCall) -> Option<String> {
     match call {
         ToolCall::RunShell { project, .. }
         | ToolCall::ApplyPatch { project, .. }
         | ToolCall::GitStatus { project }
         | ToolCall::GitDiff { project, .. }
+        | ToolCall::GitDiffSummary { project }
         | ToolCall::ReadFile { project, .. }
+        | ToolCall::ListProjectFiles { project, .. }
+        | ToolCall::SearchProjectText { project, .. }
         | ToolCall::RunJob { project, .. }
         | ToolCall::RunCodex { project, .. } => Some(project.clone()),
         _ => None,
@@ -652,6 +879,14 @@ mod tests {
                     .push(Router::with_path("projects/git_diff").post(projects_git_diff))
                     .push(Router::with_path("projects/apply_patch").post(projects_apply_patch))
                     .push(Router::with_path("projects/run_shell").post(projects_run_shell))
+                    .push(Router::with_path("projects/list_files").post(projects_list_files))
+                    .push(Router::with_path("projects/search_text").post(projects_search_text))
+                    .push(
+                        Router::with_path("projects/git_diff_summary")
+                            .post(projects_git_diff_summary),
+                    )
+                    .push(Router::with_path("jobs/list").post(jobs_list))
+                    .push(Router::with_path("jobs/tail").post(job_tail))
                     .push(Router::with_path("runtime/status").post(runtime_status)),
             )
     }
@@ -1015,5 +1250,80 @@ mod tests {
                 forbidden
             );
         }
+    }
+
+    // =========================================================================
+    // Phase A read-only console REST wrappers (wiring + auth gate)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_console_routes_require_bearer_auth() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        for (path, body) in [
+            ("/api/projects/list_files", json!({"project": "demo"})),
+            (
+                "/api/projects/search_text",
+                json!({"project": "demo", "pattern": "fn"}),
+            ),
+            ("/api/projects/git_diff_summary", json!({"project": "demo"})),
+            ("/api/jobs/list", json!({})),
+            ("/api/jobs/tail", json!({"job_id": "abc"})),
+        ] {
+            let resp = TestClient::post(&format!("http://localhost{}", path))
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::UNAUTHORIZED,
+                "{} should require auth",
+                path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_console_routes_accept_correct_bearer_and_route_to_runtime() {
+        // With a correct bearer token the routes reach the runtime. The
+        // project id below is not agent-registered, so the runtime returns a
+        // structured error (not a 401/404) — proving the request was
+        // authenticated, deserialized, and dispatched to ToolRuntime.
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/projects/list_files")
+            .bearer_auth("secret")
+            .json(&json!({"project": "agent:nope:nope"}))
+            .send(&service)
+            .await;
+        // Authenticated and dispatched to ToolRuntime: a structured error
+        // (BAD_REQUEST + success=false), not a 401/404.
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(
+            body["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "list_files should return a structured runtime error"
+        );
+
+        // list_jobs reaches the runtime and returns a bounded summary list
+        // even with no jobs present.
+        let mut resp = TestClient::post("http://localhost/api/jobs/list")
+            .bearer_auth("secret")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert!(body["output"]["jobs"].is_array());
     }
 }

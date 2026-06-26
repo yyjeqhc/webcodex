@@ -79,6 +79,16 @@ Important runtime endpoints:
 - `POST /api/tools/call`
 - `POST /mcp`
 
+MCP App console read-only tools (Phase A; thin REST wrappers over
+`ToolRuntime`, also exposed via MCP `tools/list`. Not GPT Actions —
+`/openapi.json` stays at 12 ops):
+
+- `POST /api/projects/list_files`
+- `POST /api/projects/search_text`
+- `POST /api/projects/git_diff_summary`
+- `POST /api/jobs/list`
+- `POST /api/jobs/tail`
+
 Admin/debug only:
 
 - `POST /api/audit/sessions`
@@ -158,7 +168,7 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 347 tests passing, agent binary 22 tests passing.
+- `cargo test`: main binary 373 tests passing, agent binary 22 tests passing.
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -180,8 +190,8 @@ bash -n scripts/smoke_deployment.sh
 
 Current E2E smoke result:
 
-- `bash scripts/e2e_zero_config_ws.sh`: 22 passed / 0 failed.
-- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 22 passed / 0
+- `bash scripts/e2e_zero_config_ws.sh`: 32 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 32 passed / 0
   failed.
 
 ## Documentation Map

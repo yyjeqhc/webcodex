@@ -16,13 +16,18 @@ fn public_url() -> String {
 /// 1. discovery (`listRuntimeTools`, `listProjects`, `getRuntimeStatus`)
 /// 2. code tasks (`runCodexTask`, `getRuntimeJobStatus`, `getRuntimeJobLog`)
 /// 3. project inspection (`readProjectFile`, `getProjectGitStatus`,
-///    `getProjectGitDiff`)
-/// 4. project mutation/execution (`applyProjectPatch`, `runProjectShellCommand`)
-/// 5. advanced/generic entry point (`callRuntimeTool`)
+///    `getProjectGitDiff`, `getProjectGitDiffSummary`, `listProjectFiles`,
+///    `searchProjectText`)
+/// 4. project mutation (`validateProjectPatch`, `applyProjectPatch`,
+///    `applyProjectPatchChecked`, `runProjectShellCommand`,
+///    `deleteProjectFiles`, `gitRestorePaths`, `discardUntrackedFiles`)
+/// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
+/// 6. advanced/generic entry point (`callRuntimeTool`)
 ///
-/// Codex is an optional advanced capability: the dedicated inspection /
-/// mutation / shell actions work without Codex installed. `callRuntimeTool` is
-/// kept as an advanced escape hatch; prefer the dedicated typed actions.
+/// Phase 3 promotes the core runtime tools to dedicated GPT Actions so a
+/// custom GPT can drive the full coding loop without `callRuntimeTool`.
+/// Codex is an optional advanced capability. `callRuntimeTool` remains as an
+/// advanced escape hatch; prefer the dedicated typed actions.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
@@ -34,8 +39,18 @@ const GPT_ACTION_OPS: &[&str] = &[
     "readProjectFile",
     "getProjectGitStatus",
     "getProjectGitDiff",
+    "getProjectGitDiffSummary",
+    "listProjectFiles",
+    "searchProjectText",
+    "validateProjectPatch",
     "applyProjectPatch",
+    "applyProjectPatchChecked",
     "runProjectShellCommand",
+    "deleteProjectFiles",
+    "gitRestorePaths",
+    "discardUntrackedFiles",
+    "listRuntimeJobs",
+    "getRuntimeJobTail",
     "callRuntimeTool",
 ];
 
@@ -84,10 +99,6 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/console",
     "/console/app.js",
     "/console/styles.css",
-    // validate_patch is a patch preflight / dry-run tool for full-auto coding
-    // agent loops. It is exposed via MCP tools/list and a thin REST wrapper,
-    // but is intentionally NOT a GPT Action (excluded from /openapi.json).
-    "/api/projects/validate_patch",
 ];
 
 #[handler]
@@ -204,6 +215,46 @@ fn build_openapi_spec() -> Value {
                     })
                 )
             },
+            "/api/jobs/list": {
+                "post": operation_with_examples(
+                    "listRuntimeJobs",
+                    "List runtime jobs",
+                    "Read-only bounded runtime job summaries across agent and local executors. Never returns stdout/stderr bodies — only metadata (job_id, kind, status, project, timestamps, exit_code). Optional `status` filter and `limit`.",
+                    "ListJobsRequest",
+                    "ToolResult",
+                    json!({
+                        "all": {
+                            "summary": "List recent jobs",
+                            "value": {}
+                        },
+                        "running": {
+                            "summary": "List running jobs",
+                            "value": {
+                                "status": "running",
+                                "limit": 20
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/jobs/tail": {
+                "post": operation_with_examples(
+                    "getRuntimeJobTail",
+                    "Get job tail",
+                    "Read-only bounded stdout/stderr tails for a runtime job. Defaults to a bounded tail so the caller never reads full logs by default. Use the job_id returned by runCodexTask.",
+                    "JobTailRequest",
+                    "ToolResult",
+                    json!({
+                        "byJobId": {
+                            "summary": "Read a bounded tail",
+                            "value": {
+                                "job_id": "11111111-2222-3333-4444-555555555555",
+                                "tail_lines": 50
+                            }
+                        }
+                    })
+                )
+            },
             "/api/projects/read_file": {
                 "post": operation_with_examples(
                     "readProjectFile",
@@ -272,11 +323,72 @@ fn build_openapi_spec() -> Value {
                     })
                 )
             },
+            "/api/projects/git_diff_summary": {
+                "post": operation_with_examples(
+                    "getProjectGitDiffSummary",
+                    "Get project git diff summary",
+                    "Read-only git diff summary for an agent-registered project: `git status --porcelain`, `git diff --stat`, and a parsed changed-file list. Does not modify the worktree. Routes to the owning agent.",
+                    "ProjectIdRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Diff summary of a project",
+                            "value": {
+                                "project": "private-drop"
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/list_files": {
+                "post": operation_with_examples(
+                    "listProjectFiles",
+                    "List project files",
+                    "Read-only bounded file listing of an agent-registered project directory. Returns project-relative paths plus a file/dir kind. Optional `path` scopes a subdirectory; `limit` bounds the entry count. Routes to the owning agent.",
+                    "ListProjectFilesRequest",
+                    "ToolResult",
+                    json!({
+                        "root": {
+                            "summary": "List project root",
+                            "value": {
+                                "project": "private-drop"
+                            }
+                        },
+                        "subdir": {
+                            "summary": "List a subdirectory",
+                            "value": {
+                                "project": "private-drop",
+                                "path": "src",
+                                "limit": 100
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/search_text": {
+                "post": operation_with_examples(
+                    "searchProjectText",
+                    "Search project text",
+                    "Read-only bounded text search inside an agent-registered project. Each match carries a project-relative path, 1-based line number, and a preview line. Sensitive/build dirs (.git, target, node_modules) are excluded. Routes to the owning agent.",
+                    "SearchProjectTextRequest",
+                    "ToolResult",
+                    json!({
+                        "byPattern": {
+                            "summary": "Search for a pattern",
+                            "value": {
+                                "project": "private-drop",
+                                "pattern": "fn main",
+                                "limit": 20
+                            }
+                        }
+                    })
+                )
+            },
             "/api/projects/apply_patch": {
                 "post": operation_with_examples(
                     "applyProjectPatch",
                     "Apply a patch to a project",
-                    "Applies a unified diff patch to an agent-registered project through the owning agent. Executable mutation with side effects; requires Bearer auth and the agent must allow patching. Prefer runCodexTask for exploratory edits.",
+                    "Applies a unified diff patch to an agent-registered project through the owning agent. Mutation with side effects; requires Bearer auth and the agent shell capability. Prefer runCodexTask for exploratory edits.",
                     "ApplyPatchRequest",
                     "ToolResult",
                     json!({
@@ -311,6 +423,96 @@ fn build_openapi_spec() -> Value {
                                 "project": "private-drop",
                                 "command": "ls",
                                 "cwd": "src"
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/validate_patch": {
+                "post": operation_with_examples(
+                    "validateProjectPatch",
+                    "Validate a project patch (dry-run)",
+                    "Read-only dry-run patch preflight. Runs `git apply --check` and `git apply --stat` through the owning agent without modifying the worktree. Returns can_apply, affected_files, stat, and warnings. Never writes files.",
+                    "ValidatePatchRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Dry-run a small patch",
+                            "value": {
+                                "project": "private-drop",
+                                "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/apply_patch_checked": {
+                "post": operation_with_examples(
+                    "applyProjectPatchChecked",
+                    "Apply a checked patch to a project",
+                    "Mutation with side effects. Runs the validate_patch preflight first and, only when can_apply=true, applies the patch and returns the post-apply diff summary. Requires Bearer auth and the agent shell capability.",
+                    "ApplyPatchCheckedRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Validate then apply a small patch",
+                            "value": {
+                                "project": "private-drop",
+                                "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/delete_files": {
+                "post": operation_with_examples(
+                    "deleteProjectFiles",
+                    "Delete project files",
+                    "Mutation with side effects. Deletes selected project-relative files only (not directories). Safer than ad hoc rm. Requires Bearer auth and the agent shell capability.",
+                    "DeleteProjectFilesRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Delete selected files",
+                            "value": {
+                                "project": "private-drop",
+                                "paths": ["tmp_probe.txt"]
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/git_restore_paths": {
+                "post": operation_with_examples(
+                    "gitRestorePaths",
+                    "Restore tracked project paths",
+                    "Mutation with side effects. Runs `git restore -- <paths>` on selected tracked project-relative paths. Does not remove untracked files. Requires Bearer auth and the agent shell capability.",
+                    "GitRestorePathsRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Restore selected tracked paths",
+                            "value": {
+                                "project": "private-drop",
+                                "paths": ["tmp_probe.txt"]
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/discard_untracked": {
+                "post": operation_with_examples(
+                    "discardUntrackedFiles",
+                    "Discard untracked project files",
+                    "Mutation with side effects. Runs `git clean -f -- <paths>` only for selected project-relative untracked paths. Requires Bearer auth and the agent shell capability.",
+                    "DiscardUntrackedRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Discard selected untracked files",
+                            "value": {
+                                "project": "private-drop",
+                                "paths": ["tmp_probe.txt"]
                             }
                         }
                     })
@@ -621,6 +823,172 @@ fn schemas() -> Value {
                 }
             }
         },
+        "ValidatePatchRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "patch"],
+            "description": "Dry-run a unified diff patch against an agent-registered project without applying it. Read-only preflight.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "patch": {
+                    "type": "string",
+                    "description": "Unified diff patch content to validate."
+                },
+                "deny_sensitive_paths": {
+                    "type": "boolean",
+                    "description": "Optional. When true, sensitive-path warnings become a hard policy block (can_apply=false)."
+                }
+            }
+        },
+        "ApplyPatchCheckedRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "patch"],
+            "description": "Validate then apply a unified diff patch. Mutation with side effects; applies only when the preflight passes.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "patch": {
+                    "type": "string",
+                    "description": "Unified diff patch content. Applied by the owning agent when the preflight passes."
+                },
+                "deny_sensitive_paths": {
+                    "type": "boolean",
+                    "description": "Optional. When true, sensitive-path warnings block the apply."
+                }
+            }
+        },
+        "DeleteProjectFilesRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "paths"],
+            "description": "Delete selected project-relative files only (not directories). Mutation with side effects.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Project-relative file paths to delete."
+                }
+            }
+        },
+        "GitRestorePathsRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "paths"],
+            "description": "Restore selected tracked project-relative paths with git restore. Mutation with side effects.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Project-relative tracked paths to restore."
+                }
+            }
+        },
+        "DiscardUntrackedRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "paths"],
+            "description": "Discard selected untracked project-relative files with git clean -f. Mutation with side effects.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "paths": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Project-relative untracked paths to remove."
+                }
+            }
+        },
+        "ListProjectFilesRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project"],
+            "description": "List files in an agent-registered project directory. Read-only bounded listing.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional project-relative directory to list (default: project root)."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional maximum number of entries to return."
+                }
+            }
+        },
+        "SearchProjectTextRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "pattern"],
+            "description": "Search text inside an agent-registered project. Read-only bounded matches.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Text pattern to search for."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Optional project-relative directory to scope the search (default: project root)."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional maximum number of matches to return."
+                }
+            }
+        },
+        "ListJobsRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "List bounded runtime job summaries. Read-only; never returns stdout/stderr bodies.",
+            "properties": {
+                "limit": {
+                    "type": "integer",
+                    "description": "Optional maximum number of job summaries to return."
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Optional status filter (e.g. running, completed, failed)."
+                }
+            }
+        },
+        "JobTailRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["job_id"],
+            "description": "Read bounded stdout/stderr tails for a runtime job. Read-only.",
+            "properties": {
+                "job_id": {
+                    "type": "string",
+                    "description": "Runtime job id returned by runCodexTask or run_job."
+                },
+                "tail_lines": {
+                    "type": "integer",
+                    "description": "Optional number of trailing lines to return per stream."
+                }
+            }
+        },
         "RunShellRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -798,31 +1166,29 @@ mod tests {
     }
 
     #[test]
-    fn openapi_does_not_expose_validate_patch() {
-        // validate_patch is a patch preflight / dry-run tool for full-auto
-        // coding agent loops. It is exposed via MCP tools/list and a thin
-        // REST wrapper, but is intentionally NOT a GPT Action. The GPT
-        // Actions schema must stay at 12 ops and must not include it.
+    fn openapi_phase3_exposes_validate_patch_as_dedicated_action() {
+        // Phase 3: validate_patch is now promoted to a dedicated GPT Action
+        // (validateProjectPatch) so a custom GPT can dry-run patches without
+        // callRuntimeTool. It is a read-only preflight that never modifies the
+        // worktree.
         let spec = build_openapi_spec();
         let paths = spec["paths"].as_object().unwrap();
         assert!(
-            !paths.contains_key("/api/projects/validate_patch"),
-            "validate_patch must not appear in /openapi.json (it is a preflight tool, not a GPT Action)"
+            paths.contains_key("/api/projects/validate_patch"),
+            "validate_patch must now appear in /openapi.json as a dedicated read-only action"
         );
-        // No operation id should mention validate_patch.
-        for methods in paths.values() {
-            for op in methods.as_object().unwrap().values() {
-                let id = op["operationId"].as_str().unwrap_or("");
-                assert!(
-                    !id.to_lowercase().contains("validate"),
-                    "validate_patch must not have a GPT Action operation id, found: {}",
-                    id
-                );
-            }
-        }
-        // The operation count must remain exactly 12.
-        let count: usize = paths.values().map(|m| m.as_object().unwrap().len()).sum();
-        assert_eq!(count, 12, "GPT Actions schema must stay at 12 operations");
+        assert_eq!(
+            spec["paths"]["/api/projects/validate_patch"]["post"]["operationId"],
+            "validateProjectPatch"
+        );
+        let desc = spec["paths"]["/api/projects/validate_patch"]["post"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            desc.to_lowercase().contains("read-only"),
+            "validateProjectPatch description must be marked read-only: {}",
+            desc
+        );
     }
 
     #[test]
@@ -836,11 +1202,21 @@ mod tests {
             "/api/codex/run",
             "/api/jobs/status",
             "/api/jobs/log",
+            "/api/jobs/list",
+            "/api/jobs/tail",
             "/api/projects/read_file",
             "/api/projects/git_status",
             "/api/projects/git_diff",
+            "/api/projects/git_diff_summary",
+            "/api/projects/list_files",
+            "/api/projects/search_text",
+            "/api/projects/validate_patch",
             "/api/projects/apply_patch",
+            "/api/projects/apply_patch_checked",
             "/api/projects/run_shell",
+            "/api/projects/delete_files",
+            "/api/projects/git_restore_paths",
+            "/api/projects/discard_untracked",
             "/api/tools/call",
         ] {
             assert!(
@@ -1023,7 +1399,8 @@ mod tests {
         let spec = build_openapi_spec();
         // runCodexTask, getRuntimeJobStatus, getRuntimeJobLog, and
         // callRuntimeTool must ship with at least one request example so GPT
-        // has a concrete template to follow.
+        // has a concrete template to follow. Phase 3 dedicated actions are
+        // also required to carry examples.
         for (path, label) in [
             ("/api/codex/run", "runCodexTask"),
             ("/api/jobs/status", "getRuntimeJobStatus"),
@@ -1031,8 +1408,21 @@ mod tests {
             ("/api/projects/read_file", "readProjectFile"),
             ("/api/projects/git_status", "getProjectGitStatus"),
             ("/api/projects/git_diff", "getProjectGitDiff"),
+            ("/api/projects/git_diff_summary", "getProjectGitDiffSummary"),
+            ("/api/projects/list_files", "listProjectFiles"),
+            ("/api/projects/search_text", "searchProjectText"),
+            ("/api/projects/validate_patch", "validateProjectPatch"),
             ("/api/projects/apply_patch", "applyProjectPatch"),
+            (
+                "/api/projects/apply_patch_checked",
+                "applyProjectPatchChecked",
+            ),
             ("/api/projects/run_shell", "runProjectShellCommand"),
+            ("/api/projects/delete_files", "deleteProjectFiles"),
+            ("/api/projects/git_restore_paths", "gitRestorePaths"),
+            ("/api/projects/discard_untracked", "discardUntrackedFiles"),
+            ("/api/jobs/list", "listRuntimeJobs"),
+            ("/api/jobs/tail", "getRuntimeJobTail"),
             ("/api/tools/call", "callRuntimeTool"),
         ] {
             let examples = &spec["paths"][path]["post"]["requestBody"]["content"]
@@ -1077,29 +1467,109 @@ mod tests {
             spec["paths"]["/api/projects/run_shell"]["post"]["operationId"],
             "runProjectShellCommand"
         );
+        // Phase 3 dedicated actions.
+        assert_eq!(
+            spec["paths"]["/api/projects/git_diff_summary"]["post"]["operationId"],
+            "getProjectGitDiffSummary"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/list_files"]["post"]["operationId"],
+            "listProjectFiles"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/search_text"]["post"]["operationId"],
+            "searchProjectText"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/validate_patch"]["post"]["operationId"],
+            "validateProjectPatch"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/apply_patch_checked"]["post"]["operationId"],
+            "applyProjectPatchChecked"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/delete_files"]["post"]["operationId"],
+            "deleteProjectFiles"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/git_restore_paths"]["post"]["operationId"],
+            "gitRestorePaths"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/discard_untracked"]["post"]["operationId"],
+            "discardUntrackedFiles"
+        );
+        assert_eq!(
+            spec["paths"]["/api/jobs/list"]["post"]["operationId"],
+            "listRuntimeJobs"
+        );
+        assert_eq!(
+            spec["paths"]["/api/jobs/tail"]["post"]["operationId"],
+            "getRuntimeJobTail"
+        );
     }
 
     #[test]
     fn openapi_mutation_actions_describe_execution_risk_and_auth() {
-        // applyProjectPatch and runProjectShellCommand are executable actions
-        // with side effects; their descriptions must call out the execution
-        // risk and the Bearer-auth requirement so GPT callers understand they
-        // are not read-only inspection.
+        // Phase 3 mutation actions (applyProjectPatch, applyProjectPatchChecked,
+        // runProjectShellCommand, deleteProjectFiles, gitRestorePaths,
+        // discardUntrackedFiles) are executable actions with side effects; their
+        // descriptions must call out the execution risk/side effects and the
+        // Bearer-auth requirement so GPT callers understand they are not
+        // read-only inspection.
         let spec = build_openapi_spec();
-        for path in ["/api/projects/apply_patch", "/api/projects/run_shell"] {
+        for path in [
+            "/api/projects/apply_patch",
+            "/api/projects/apply_patch_checked",
+            "/api/projects/run_shell",
+            "/api/projects/delete_files",
+            "/api/projects/git_restore_paths",
+            "/api/projects/discard_untracked",
+        ] {
             let desc = spec["paths"][path]["post"]["description"]
                 .as_str()
                 .unwrap_or("");
             assert!(
-                desc.to_lowercase().contains("executable")
-                    || desc.to_lowercase().contains("side effect"),
-                "{} description should mention execution risk/side effects, got: {}",
+                desc.to_lowercase().contains("side effect"),
+                "{} description should mention side effects, got: {}",
                 path,
                 desc
             );
             assert!(
-                desc.to_lowercase().contains("bearer auth") || desc.to_lowercase().contains("auth"),
+                desc.to_lowercase().contains("bearer auth"),
                 "{} description should mention Bearer auth, got: {}",
+                path,
+                desc
+            );
+            assert!(
+                desc.to_lowercase().contains("agent shell capability"),
+                "{} description should mention the agent shell capability, got: {}",
+                path,
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_readonly_actions_describe_readonly() {
+        // Phase 3 read-only dedicated actions must mark themselves read-only in
+        // their description so GPT callers can tell them apart from mutations.
+        let spec = build_openapi_spec();
+        for path in [
+            "/api/projects/git_diff_summary",
+            "/api/projects/list_files",
+            "/api/projects/search_text",
+            "/api/projects/validate_patch",
+            "/api/jobs/list",
+            "/api/jobs/tail",
+        ] {
+            let desc = spec["paths"][path]["post"]["description"]
+                .as_str()
+                .unwrap_or("");
+            assert!(
+                desc.to_lowercase().contains("read-only"),
+                "{} description should be marked read-only, got: {}",
                 path,
                 desc
             );
@@ -1180,8 +1650,9 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_remains_twelve() {
-        // Phase 2 must NOT add dedicated GPT Actions; the schema stays at 12.
+    fn openapi_operation_count_is_twenty_two() {
+        // Phase 3 promotes 10 core runtime tools to dedicated GPT Actions,
+        // bringing the schema from 12 to 22 ops. The surface must stay <= 30.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
             .as_object()
@@ -1189,7 +1660,8 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 12, "GPT Actions schema must stay at 12 operations");
+        assert_eq!(count, 22, "GPT Actions schema must be 22 operations");
+        assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
     }
 
     #[test]

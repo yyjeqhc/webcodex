@@ -787,7 +787,11 @@ expected_ops = {
     "listRuntimeTools", "listProjects", "getRuntimeStatus",
     "runCodexTask", "getRuntimeJobStatus", "getRuntimeJobLog",
     "readProjectFile", "getProjectGitStatus", "getProjectGitDiff",
-    "applyProjectPatch", "runProjectShellCommand", "callRuntimeTool",
+    "getProjectGitDiffSummary", "listProjectFiles", "searchProjectText",
+    "validateProjectPatch", "applyProjectPatch", "applyProjectPatchChecked",
+    "runProjectShellCommand", "deleteProjectFiles", "gitRestorePaths",
+    "discardUntrackedFiles", "listRuntimeJobs", "getRuntimeJobTail",
+    "callRuntimeTool",
 }
 missing = expected_ops - ops_set
 extra = ops_set - expected_ops
@@ -796,11 +800,11 @@ if missing:
 if extra:
     errors.append(f"unexpected operationIds: {sorted(extra)}")
 
-# Phase 2: operation count must stay small (<= 30) and exactly 12 this phase.
+# Phase 3: operation count must stay small (<= 30) and exactly 22 this phase.
 if len(ops_set) > 30:
     errors.append(f"too many operations: {len(ops_set)} (must be <= 30)")
-if len(ops_set) != 12:
-    errors.append(f"operation count must be 12 this phase, got {len(ops_set)}")
+if len(ops_set) != 22:
+    errors.append(f"operation count must be 22 this phase, got {len(ops_set)}")
 
 # Phase 2: each operation description must fit the <= 300 char budget.
 for path, methods in schema.get("paths", {}).items():
@@ -813,12 +817,12 @@ for path, methods in schema.get("paths", {}).items():
             )
 
 # Forbidden legacy/admin/internal paths must not appear in the schema paths.
-# validate_patch is a preflight/dry-run tool exposed via MCP + REST, NOT a
-# GPT Action, so it must not appear in /openapi.json.
+# Phase 3 promotes validate_patch, list_files, search_text, git_diff_summary,
+# jobs/list, and jobs/tail to dedicated GPT Actions, so they are no longer
+# forbidden. jobs/stop, audit, shell, codex legacy, console, and /mcp remain
+# forbidden.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
-             "/api/jobs/stop", "/api/projects/validate_patch",
-             "/api/projects/list_files", "/api/projects/search_text",
-             "/api/projects/git_diff_summary", "/api/jobs/list", "/api/jobs/tail",
+             "/api/jobs/stop",
              "/api/messages", "/api/files", "/api/desktop/task_op", "/api/desktop/task",
              "/api/shell/run", "/api/shell/job", "/api/shell/file",
              "/mcp", "/openapi.json", "/console", "/console/app.js", "/console/styles.css"]
@@ -990,6 +994,116 @@ if [ -n "$unk_err" ] && [ "$unk_err" != "None" ] && \
 else
     fail "callRuntimeTool(unknown tool) error not useful (got: ${unk_err:0:200})"
 fi
+
+# ----------------------------------------------------------------------------
+# 7d. Phase 3: dedicated mutation actions (apply_patch_checked, delete_files,
+#     git_restore_paths, discard_untracked) against probe files only
+# ----------------------------------------------------------------------------
+#
+# These are executable mutations with side effects. To avoid breaking the
+# smoke repo, every probe operates ONLY on throwaway probe files inside the
+# temporary TEST_REPO (never on README.md, src.rs, or any real project file).
+# Probe files are removed afterwards so the worktree returns to a clean state.
+
+log "---- Phase 3: dedicated mutation actions (probe files only) ----"
+
+# Build a JSON request body with python3 for safe escaping. The argument is a
+# JSON string that is parsed and re-serialized (validates + normalizes).
+build_body() {
+    python3 -c '
+import json, sys
+obj = json.loads(sys.argv[1])
+print(json.dumps(obj))
+' "$1"
+}
+
+# applyProjectPatchChecked — apply a probe patch that creates a new file,
+# then verify via git_diff_summary that the probe file appears as untracked.
+PROBE_PATCH='diff --git a/APPLY_CHECKED_PROBE.txt b/APPLY_CHECKED_PROBE.txt
+new file mode 100644
+--- /dev/null
++++ b/APPLY_CHECKED_PROBE.txt
+@@ -0,0 +1 @@
++probe
+'
+apc_body="$(python3 -c '
+import json, sys
+print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))
+' "$RUNTIME_PROJECT_ID" "$PROBE_PATCH")"
+body="$(api_post /api/projects/apply_patch_checked "$apc_body")"
+apc_success="$(json_get "$body" success)"
+if [ "$apc_success" = "True" ]; then
+    pass "applyProjectPatchChecked(probe) returns success"
+else
+    fail "applyProjectPatchChecked(probe) failed (body: ${body:0:300})"
+fi
+# Verify the probe file now shows up in the worktree via git_diff_summary.
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+gds_changed="$(json_get "$body" output.changed_files)"
+if echo "$gds_changed" | grep -q "APPLY_CHECKED_PROBE.txt"; then
+    pass "applyProjectPatchChecked probe file visible in git_diff_summary"
+else
+    fail "applyProjectPatchChecked probe file not in diff summary (got: ${gds_changed:0:200})"
+fi
+
+# deleteProjectFiles — delete the probe file created above.
+del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"APPLY_CHECKED_PROBE.txt\"]}")"
+body="$(api_post /api/projects/delete_files "$del_body")"
+del_success="$(json_get "$body" success)"
+if [ "$del_success" = "True" ]; then
+    pass "deleteProjectFiles(probe) returns success"
+else
+    fail "deleteProjectFiles(probe) failed (body: ${body:0:300})"
+fi
+# Verify the probe file is gone via list_files root listing.
+body="$(api_post /api/projects/list_files "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+lpf_entries="$(json_get "$body" output.entries)"
+if ! echo "$lpf_entries" | grep -q "APPLY_CHECKED_PROBE.txt"; then
+    pass "deleteProjectFiles removed probe file"
+else
+    fail "deleteProjectFiles did not remove probe file (got: ${lpf_entries:0:200})"
+fi
+
+# discardUntrackedFiles — create a fresh untracked probe file, then discard it.
+body="$(api_post /api/projects/run_shell "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"printf probe > UNTRACKED_PROBE.txt\"}")"
+disc_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"UNTRACKED_PROBE.txt\"]}")"
+body="$(api_post /api/projects/discard_untracked "$disc_body")"
+disc_success="$(json_get "$body" success)"
+if [ "$disc_success" = "True" ]; then
+    pass "discardUntrackedFiles(probe) returns success"
+else
+    fail "discardUntrackedFiles(probe) failed (body: ${body:0:300})"
+fi
+body="$(api_post /api/projects/list_files "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+lpf_entries="$(json_get "$body" output.entries)"
+if ! echo "$lpf_entries" | grep -q "UNTRACKED_PROBE.txt"; then
+    pass "discardUntrackedFiles removed untracked probe file"
+else
+    fail "discardUntrackedFiles did not remove probe file (got: ${lpf_entries:0:200})"
+fi
+
+# gitRestorePaths — create a tracked probe file, commit it, modify it, then
+# restore it. This verifies restore returns the file to its committed state.
+body="$(api_post /api/projects/run_shell "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"printf original > RESTORE_PROBE.txt && git add RESTORE_PROBE.txt && git commit -m probe >/dev/null 2>&1\"}")"
+body="$(api_post /api/projects/run_shell "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"printf modified > RESTORE_PROBE.txt\"}")"
+rest_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"RESTORE_PROBE.txt\"]}")"
+body="$(api_post /api/projects/git_restore_paths "$rest_body")"
+rest_success="$(json_get "$body" success)"
+if [ "$rest_success" = "True" ]; then
+    pass "gitRestorePaths(probe) returns success"
+else
+    fail "gitRestorePaths(probe) failed (body: ${body:0:300})"
+fi
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"RESTORE_PROBE.txt\"}")"
+restore_content="$(json_get "$body" output.content)"
+if echo "$restore_content" | grep -q "original"; then
+    pass "gitRestorePaths restored probe file to committed content"
+else
+    fail "gitRestorePaths did not restore content (got: ${restore_content:0:120})"
+fi
+
+# Clean up the tracked probe file so the worktree returns to a clean state.
+body="$(api_post /api/projects/run_shell "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"git rm -f RESTORE_PROBE.txt >/dev/null 2>&1 && git commit -m cleanup-probe >/dev/null 2>&1\"}")" || true
 
 # ----------------------------------------------------------------------------
 # 8. Summary

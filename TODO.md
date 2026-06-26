@@ -89,6 +89,21 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       `recommended_flows`). `/openapi.json` remains 12 ops; MCP tools remain
       23. Local E2E passes 53/53 over both transports; `cargo test` passes
       430 main + 23 agent tests.
+- [x] Promote core runtime tools to dedicated GPT Actions (Phase 3): the
+      OpenAPI surface grew from 12 to 22 operations so a custom GPT can drive
+      the full core coding loop without `callRuntimeTool`. New dedicated
+      actions: `validateProjectPatch`, `applyProjectPatchChecked`,
+      `getProjectGitDiffSummary`, `listProjectFiles`, `searchProjectText`,
+      `listRuntimeJobs`, `getRuntimeJobTail`, `deleteProjectFiles`,
+      `gitRestorePaths`, `discardUntrackedFiles`. New REST wrappers added for
+      `apply_patch_checked`, `delete_files`, `git_restore_paths`, and
+      `discard_untracked`; the other six reused existing REST endpoints and
+      only gained OpenAPI schemas. All remain thin wrappers dispatching to
+      `ToolRuntime`; no business logic duplicated. MCP tools remain 23.
+      `callRuntimeTool` retained as advanced escape hatch. Mutation actions
+      describe side effects + Bearer auth + agent shell capability;
+      read-only actions marked read-only. Local E2E passes 61/61 over both
+      transports; `cargo test` passes 433 main + 23 agent tests.
 
 ### Deprecated (not active features)
 

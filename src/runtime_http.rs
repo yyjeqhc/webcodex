@@ -108,6 +108,32 @@ struct RunShellRequest {
 }
 
 #[derive(Debug, Deserialize)]
+struct ApplyPatchCheckedRequest {
+    pub project: String,
+    pub patch: String,
+    #[serde(default)]
+    pub deny_sensitive_paths: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DeleteProjectFilesRequest {
+    pub project: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct GitRestorePathsRequest {
+    pub project: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct DiscardUntrackedRequest {
+    pub project: String,
+    pub paths: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 struct ListProjectFilesRequest {
     pub project: String,
     #[serde(default)]
@@ -644,6 +670,192 @@ pub async fn projects_validate_patch(req: &mut Request, depot: &mut Depot, res: 
     render_result(res, &audit, "validate_patch", project, result);
 }
 
+/// `POST /api/projects/apply_patch_checked` — thin GPT Actions wrapper over
+/// `ToolCall::ApplyPatchChecked`. Mutation with side effects: runs the
+/// `validate_patch` preflight first and, only when it passes, applies the
+/// patch and returns the post-apply diff summary. Requires Bearer auth and
+/// the agent shell capability.
+#[handler]
+pub async fn projects_apply_patch_checked(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/projects/apply_patch_checked",
+        "applyProjectPatchChecked",
+    );
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: ApplyPatchCheckedRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ApplyPatchChecked {
+                project: body.project,
+                patch: body.patch,
+                deny_sensitive_paths: body.deny_sensitive_paths,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "apply_patch_checked", project, result);
+}
+
+/// `POST /api/projects/delete_files` — thin GPT Actions wrapper over
+/// `ToolCall::DeleteProjectFiles`. Mutation with side effects: deletes the
+/// selected project-relative files only (not directories). Requires Bearer
+/// auth and the agent shell capability.
+#[handler]
+pub async fn projects_delete_files(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/projects/delete_files",
+        "deleteProjectFiles",
+    );
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: DeleteProjectFilesRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::DeleteProjectFiles {
+                project: body.project,
+                paths: body.paths,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "delete_project_files", project, result);
+}
+
+/// `POST /api/projects/git_restore_paths` — thin GPT Actions wrapper over
+/// `ToolCall::GitRestorePaths`. Mutation with side effects: runs
+/// `git restore -- <paths>` on selected tracked project-relative paths.
+/// Requires Bearer auth and the agent shell capability.
+#[handler]
+pub async fn projects_git_restore_paths(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/projects/git_restore_paths",
+        "gitRestorePaths",
+    );
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: GitRestorePathsRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::GitRestorePaths {
+                project: body.project,
+                paths: body.paths,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "git_restore_paths", project, result);
+}
+
+/// `POST /api/projects/discard_untracked` — thin GPT Actions wrapper over
+/// `ToolCall::DiscardUntracked`. Mutation with side effects: runs
+/// `git clean -f -- <paths>` only for selected project-relative untracked
+/// paths. Requires Bearer auth and the agent shell capability.
+#[handler]
+pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/projects/discard_untracked",
+        "discardUntrackedFiles",
+    );
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: DiscardUntrackedRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::DiscardUntracked {
+                project: body.project,
+                paths: body.paths,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "discard_untracked", project, result);
+}
+
 /// `POST /api/projects/run_shell` — thin GPT Actions wrapper over
 /// `ToolCall::RunShell`. Executable with side effects; requires the owning
 /// agent's shell capability and Bearer auth.
@@ -1015,6 +1227,19 @@ mod tests {
                         Router::with_path("projects/validate_patch").post(projects_validate_patch),
                     )
                     .push(Router::with_path("projects/run_shell").post(projects_run_shell))
+                    .push(
+                        Router::with_path("projects/apply_patch_checked")
+                            .post(projects_apply_patch_checked),
+                    )
+                    .push(Router::with_path("projects/delete_files").post(projects_delete_files))
+                    .push(
+                        Router::with_path("projects/git_restore_paths")
+                            .post(projects_git_restore_paths),
+                    )
+                    .push(
+                        Router::with_path("projects/discard_untracked")
+                            .post(projects_discard_untracked),
+                    )
                     .push(Router::with_path("projects/list_files").post(projects_list_files))
                     .push(Router::with_path("projects/search_text").post(projects_search_text))
                     .push(
@@ -1795,5 +2020,90 @@ mod tests {
             .send(&service)
             .await;
         assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    // =========================================================================
+    // Phase 3: dedicated mutation actions (apply_patch_checked, delete_files,
+    // git_restore_paths, discard_untracked) — auth gate + dispatch wiring
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_phase3_mutation_actions_require_bearer_auth() {
+        let (_tmp, service) = phase2_service();
+        for (path, body) in [
+            (
+                "/api/projects/apply_patch_checked",
+                json!({"project": "demo", "patch": "diff"}),
+            ),
+            (
+                "/api/projects/delete_files",
+                json!({"project": "demo", "paths": ["x.txt"]}),
+            ),
+            (
+                "/api/projects/git_restore_paths",
+                json!({"project": "demo", "paths": ["x.txt"]}),
+            ),
+            (
+                "/api/projects/discard_untracked",
+                json!({"project": "demo", "paths": ["x.txt"]}),
+            ),
+        ] {
+            let resp = TestClient::post(&format!("http://localhost{}", path))
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::UNAUTHORIZED,
+                "{} should require auth",
+                path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_phase3_mutation_actions_dispatch_to_runtime() {
+        // With a correct bearer token the mutation routes reach the runtime.
+        // The project id is not agent-registered, so the runtime returns a
+        // structured error (not a 401/404) — proving the request was
+        // authenticated, deserialized, and dispatched to ToolRuntime.
+        let (_tmp, service) = phase2_service();
+        for (path, body) in [
+            (
+                "/api/projects/apply_patch_checked",
+                json!({"project": "agent:nope:nope", "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"}),
+            ),
+            (
+                "/api/projects/delete_files",
+                json!({"project": "agent:nope:nope", "paths": ["x.txt"]}),
+            ),
+            (
+                "/api/projects/git_restore_paths",
+                json!({"project": "agent:nope:nope", "paths": ["x.txt"]}),
+            ),
+            (
+                "/api/projects/discard_untracked",
+                json!({"project": "agent:nope:nope", "paths": ["x.txt"]}),
+            ),
+        ] {
+            let mut resp = TestClient::post(&format!("http://localhost{}", path))
+                .bearer_auth("secret")
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::BAD_REQUEST,
+                "{} should reach runtime and return structured error",
+                path
+            );
+            let body: Value = resp.take_json().await.unwrap();
+            assert_eq!(body["success"], false);
+            assert!(
+                body["error"].as_str().is_some_and(|e| !e.is_empty()),
+                "{} should return a structured runtime error",
+                path
+            );
+        }
     }
 }

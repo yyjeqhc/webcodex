@@ -158,43 +158,59 @@ Actions expose a small typed OpenAPI surface with stable operation ids; MCP
 exposes the runtime tool set directly. The underlying project/agent execution
 path is the same.
 
-Dedicated GPT Actions:
+Dedicated GPT Actions (Phase 3, 22 operations). Read-only inspection first,
+then mutation/execution, then the advanced escape hatch:
 
 | operationId | Purpose |
 | --- | --- |
 | `getRuntimeStatus` | Runtime health, agents, project config state, and job counts. |
 | `listProjects` | List agent-registered runtime project ids. |
 | `readProjectFile` | Read a UTF-8 file from a project. |
+| `listProjectFiles` | Read-only bounded project file listing. |
+| `searchProjectText` | Read-only bounded text search inside a project. |
 | `getProjectGitStatus` | Run `git status --porcelain`. |
 | `getProjectGitDiff` | Run `git diff` with optional args/path scoping. |
-| `applyProjectPatch` | Apply a unified diff patch. Executable mutation. |
-| `runProjectShellCommand` | Run a bounded shell command in a project. Executable. |
+| `getProjectGitDiffSummary` | Read-only diff summary (porcelain + diffstat + changed files). |
+| `validateProjectPatch` | Read-only dry-run patch preflight; never writes files. |
+| `applyProjectPatch` | Apply a unified diff patch. Mutation with side effects. |
+| `applyProjectPatchChecked` | Validate then apply a patch; returns post-apply diff summary. |
+| `runProjectShellCommand` | Run a bounded shell command in a project. Mutation. |
+| `deleteProjectFiles` | Delete selected project files. Mutation. |
+| `gitRestorePaths` | `git restore` selected tracked paths. Mutation. |
+| `discardUntrackedFiles` | `git clean -f` selected untracked files. Mutation. |
 | `runCodexTask` | Optional Codex CLI task, returns a `job_id`. |
 | `getRuntimeJobStatus` | Poll an async job. |
 | `getRuntimeJobLog` | Read bounded job stdout/stderr. |
+| `listRuntimeJobs` | Read-only bounded job summaries (metadata only). |
+| `getRuntimeJobTail` | Read-only bounded job stdout/stderr tail. |
 | `listRuntimeTools` | Advanced runtime tool discovery. |
-| `callRuntimeTool` | Generic escape hatch; prefer typed actions above. |
+| `callRuntimeTool` | Advanced escape hatch; prefer typed actions above. |
 
-Recommended tool-driven development flow, whether driven through GPT Actions
-or MCP:
+Recommended tool-driven development flow. Prefer the dedicated GPT Actions;
+fall back to `callRuntimeTool` only for tools without a dedicated action:
 
 1. `getRuntimeStatus` / `runtime_status` — confirm the runtime is healthy and
    the agent is online.
 2. `listProjects` / `list_projects` — select the runtime project id.
-3. `getProjectGitStatus` / `git_status` and `getProjectGitDiff` / `git_diff` —
-   inspect repository state.
-4. `readProjectFile` / `read_file` — read focused source, config, and docs.
-5. `runProjectShellCommand` / `run_shell` — run diagnostics such as
+3. `getProjectGitStatus` / `git_status` and `getProjectGitDiffSummary` /
+   `git_diff_summary` — inspect repository state.
+4. `readProjectFile` / `read_file`, `listProjectFiles` / `list_project_files`,
+   and `searchProjectText` / `search_project_text` — read focused source,
+   config, and docs.
+5. `validateProjectPatch` / `validate_patch` — dry-run a generated patch
+   without modifying the worktree.
+6. `applyProjectPatchChecked` / `apply_patch_checked` — validate, apply, and
+   return the post-apply diff summary in one safer step.
+7. `runProjectShellCommand` / `run_shell` — run diagnostics such as
    `cargo check`, `cargo test`, or script syntax checks.
-6. `validate_patch` — MCP/runtime dry-run patch preflight; it does not modify
-   the worktree and is suitable for full-auto loops before `apply_patch`.
-7. `apply_patch_checked` — validate, apply, and return the post-apply diff
-   summary in one safer runtime/MCP step.
-8. `delete_project_files`, `git_restore_paths`, or `discard_untracked` — use
-   restricted cleanup tools instead of ad hoc `rm` when possible.
-9. `applyProjectPatch` / `apply_patch` — apply small patches directly when the
-   caller already performed preflight checks.
-10. `runCodexTask` / `run_codex` — optional advanced path when Codex CLI is
+8. `listRuntimeJobs` / `list_jobs` and `getRuntimeJobTail` / `job_tail` —
+   inspect async job summaries and bounded tails.
+9. For cleanup, prefer `deleteProjectFiles` / `delete_project_files`,
+   `gitRestorePaths` / `git_restore_paths`, and `discardUntrackedFiles` /
+   `discard_untracked` over ad hoc `rm`.
+10. `applyProjectPatch` / `apply_patch` — apply small patches directly when the
+    caller already performed preflight checks.
+11. `runCodexTask` / `run_codex` — optional advanced path when Codex CLI is
     installed.
 
 See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for examples, schema guarantees,

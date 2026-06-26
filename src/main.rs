@@ -149,6 +149,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .post(runtime_http::projects_validate_patch),
             )
             .push(Router::with_path("projects/run_shell").post(runtime_http::projects_run_shell))
+            .push(
+                Router::with_path("projects/apply_patch_checked")
+                    .post(runtime_http::projects_apply_patch_checked),
+            )
+            .push(
+                Router::with_path("projects/delete_files")
+                    .post(runtime_http::projects_delete_files),
+            )
+            .push(
+                Router::with_path("projects/git_restore_paths")
+                    .post(runtime_http::projects_git_restore_paths),
+            )
+            .push(
+                Router::with_path("projects/discard_untracked")
+                    .post(runtime_http::projects_discard_untracked),
+            )
             .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
             .push(Router::with_path("shell/run").post(shell_run))
             .push(Router::with_path("shell/file").post(shell_file_op))

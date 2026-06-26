@@ -37,54 +37,86 @@ DROP_PUBLIC_URL="https://drop.example.com" cargo run --bin private-drop
 
 ## Operations
 
-The schema exposes a small, stable set of operation ids, grouped by recommended
-call flow. GPT Actions and MCP are peer surfaces over the same `ToolRuntime`:
-GPT Actions expose selected typed OpenAPI operations, while MCP exposes the
-runtime tool set directly through `tools/list` and `tools/call`. Codex is an
-**optional advanced capability**: the inspection, mutation, and shell actions
-work without Codex installed — only `runCodexTask` requires the Codex CLI on the
-agent host.
+The schema exposes a small, stable set of operation ids (22 in Phase 3),
+grouped by recommended call flow. GPT Actions and MCP are peer surfaces over
+the same `ToolRuntime`: GPT Actions expose selected typed OpenAPI operations,
+while MCP exposes the runtime tool set directly through `tools/list` and
+`tools/call`. Codex is an **optional advanced capability**: the inspection,
+mutation, and shell actions work without Codex installed — only `runCodexTask`
+requires the Codex CLI on the agent host.
 
-| Flow step | operationId | Path | Purpose |
-|-----------|-------------|------|---------|
-| Discovery | `listRuntimeTools` | `POST /api/tools/list` | List every runtime tool name plus `names`, `count`, `categories`, and `recommended_flows` (advanced). |
-| Discovery | `listProjects` | `POST /api/projects/list` | List agent-registered project ids. **Call this first.** |
-| Discovery | `getRuntimeStatus` | `POST /api/runtime/status` | Structured runtime health/observability summary (agent client summaries, project counts, job counts). Read-only; never exposes tokens or secrets. |
-| Code task | `runCodexTask` | `POST /api/codex/run` | Start a Codex CLI task, returns `job_id`. **Optional advanced action; requires Codex CLI on the agent host.** |
-| Code task | `getRuntimeJobStatus` | `POST /api/jobs/status` | Poll the `job_id` returned by `runCodexTask`. |
-| Code task | `getRuntimeJobLog` | `POST /api/jobs/log` | Read bounded stdout/stderr for the `job_id`. |
-| Inspect | `readProjectFile` | `POST /api/projects/read_file` | Read a UTF-8 file from a project (paths confined to project root). |
-| Inspect | `getProjectGitStatus` | `POST /api/projects/git_status` | Run `git status --porcelain` in a project. |
-| Inspect | `getProjectGitDiff` | `POST /api/projects/git_diff` | Run `git diff` in a project (optional `args`). Read-only. |
-| Execute | `applyProjectPatch` | `POST /api/projects/apply_patch` | Apply a unified diff patch. **Executable mutation; Bearer auth + agent patch capability required.** |
-| Execute | `runProjectShellCommand` | `POST /api/projects/run_shell` | Run a shell command in a project. **Executable with side effects; Bearer auth + agent shell capability required.** |
-| Advanced | `callRuntimeTool` | `POST /api/tools/call` | Generic entry point for any runtime tool by name. Prefer the dedicated actions above. |
+### Read-only actions
+
+| operationId | Path | Purpose |
+|-------------|------|---------|
+| `listRuntimeTools` | `POST /api/tools/list` | List every runtime tool name plus `names`, `count`, `categories`, and `recommended_flows` (advanced). |
+| `listProjects` | `POST /api/projects/list` | List agent-registered project ids. **Call this first.** |
+| `getRuntimeStatus` | `POST /api/runtime/status` | Structured runtime health/observability summary. Read-only; never exposes tokens or secrets. |
+| `getRuntimeJobStatus` | `POST /api/jobs/status` | Poll the `job_id` returned by `runCodexTask`. |
+| `getRuntimeJobLog` | `POST /api/jobs/log` | Read bounded stdout/stderr for the `job_id`. |
+| `readProjectFile` | `POST /api/projects/read_file` | Read a UTF-8 file from a project (paths confined to project root). |
+| `getProjectGitStatus` | `POST /api/projects/git_status` | Run `git status --porcelain` in a project. |
+| `getProjectGitDiff` | `POST /api/projects/git_diff` | Run `git diff` in a project (optional `args`). Read-only. |
+| `getProjectGitDiffSummary` | `POST /api/projects/git_diff_summary` | Read-only diff summary: porcelain, diffstat, changed-file list. |
+| `listProjectFiles` | `POST /api/projects/list_files` | Read-only bounded project file listing. |
+| `searchProjectText` | `POST /api/projects/search_text` | Read-only bounded text search inside a project. |
+| `validateProjectPatch` | `POST /api/projects/validate_patch` | Read-only dry-run patch preflight (`git apply --check`/`--stat`); never writes files. |
+| `listRuntimeJobs` | `POST /api/jobs/list` | Read-only bounded job summaries (metadata only, no stdout/stderr). |
+| `getRuntimeJobTail` | `POST /api/jobs/tail` | Read-only bounded stdout/stderr tail for a job. |
+
+### Mutation / execution actions
+
+| operationId | Path | Purpose |
+|-------------|------|---------|
+| `runCodexTask` | `POST /api/codex/run` | Start a Codex CLI task, returns `job_id`. **Optional advanced action; requires Codex CLI on the agent host.** |
+| `applyProjectPatch` | `POST /api/projects/apply_patch` | Apply a unified diff patch. **Mutation with side effects; Bearer auth + agent shell capability required.** |
+| `applyProjectPatchChecked` | `POST /api/projects/apply_patch_checked` | Validate then apply a patch; returns post-apply diff summary. **Mutation with side effects; Bearer auth + agent shell capability required.** |
+| `runProjectShellCommand` | `POST /api/projects/run_shell` | Run a shell command in a project. **Mutation with side effects; Bearer auth + agent shell capability required.** |
+| `deleteProjectFiles` | `POST /api/projects/delete_files` | Delete selected project-relative files. **Mutation with side effects; Bearer auth + agent shell capability required.** |
+| `gitRestorePaths` | `POST /api/projects/git_restore_paths` | `git restore` selected tracked paths. **Mutation with side effects; Bearer auth + agent shell capability required.** |
+| `discardUntrackedFiles` | `POST /api/projects/discard_untracked` | `git clean -f` selected untracked files. **Mutation with side effects; Bearer auth + agent shell capability required.** |
+
+### Advanced escape hatch
+
+| operationId | Path | Purpose |
+|-------------|------|---------|
+| `callRuntimeTool` | `POST /api/tools/call` | Generic entry point for any runtime tool by name. Prefer the dedicated actions above. |
 
 ### Recommended call flow
 
 1. `getRuntimeStatus` — is the runtime healthy? Are agents registered and
    online? (See [docs/RUNTIME_STATUS.md](RUNTIME_STATUS.md).)
 2. `listProjects` — learn the available `project` ids.
-3. `getProjectGitStatus` / `getProjectGitDiff` — inspect repository state before
-   making changes.
-4. `readProjectFile` — read the focused files needed for the task.
-5. `runProjectShellCommand` — run bounded diagnostics such as `cargo check`,
+3. `getProjectGitStatus` / `getProjectGitDiffSummary` — inspect repository
+   state before making changes.
+4. `readProjectFile` / `listProjectFiles` / `searchProjectText` — read the
+   focused files needed for the task.
+5. `validateProjectPatch` — dry-run a generated patch without modifying the
+   worktree.
+6. `applyProjectPatchChecked` — apply the patch only when the preflight passes
+   and get the post-apply diff summary.
+7. `runProjectShellCommand` — run bounded diagnostics such as `cargo check`,
    `cargo test`, or script syntax checks when needed.
-6. `applyProjectPatch` — apply small reviewed patches through the owning agent.
-7. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
-   `getRuntimeJobLog`, when Codex CLI is installed and a larger delegated task
-   is desired.
+8. `listRuntimeJobs` / `getRuntimeJobTail` — inspect async job summaries and
+   bounded tails.
+9. For cleanup, prefer `deleteProjectFiles`, `gitRestorePaths`, and
+   `discardUntrackedFiles` over ad hoc `rm` or broad shell.
+10. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
+    `getRuntimeJobLog`, when Codex CLI is installed and a larger delegated
+    task is desired.
 
 The dedicated inspection and execution actions are the robust default path for
 ChatGPT-assisted development. MCP clients can drive the same loop with the
 snake_case runtime tool names (`read_file`, `git_diff`, `validate_patch`,
-`apply_patch_checked`, `apply_patch`, `run_shell`). Codex is optional and should not be required for
-basic read/diff/patch/test workflows.
+`apply_patch_checked`, `apply_patch`, `run_shell`). Codex is optional and should
+not be required for basic read/diff/patch/test workflows.
 
-## `callRuntimeTool` (advanced)
+## `callRuntimeTool` (advanced escape hatch)
 
-`callRuntimeTool` is the generic escape hatch. It takes a `tool` name and a
-`params` object and dispatches to `ToolRuntime`. Accepted `tool` values:
+`callRuntimeTool` remains available as the advanced generic escape hatch for any
+runtime tool that does not yet have a dedicated GPT Action. A custom GPT can now
+complete the full core coding loop using only dedicated typed actions; reach for
+`callRuntimeTool` only when a tool is not exposed as a dedicated operation.
 
 - `list_tools`, `list_projects`, `list_agents`, `runtime_status`
 - `run_shell`, `run_job`, `run_codex`
@@ -119,15 +151,14 @@ Errors are field-aware and never echo the raw request body, token, env,
 - Missing required field → names both the tool and the missing field.
 - Wrong field type → names the tool.
 
-`validate_patch` is a runtime/MCP tool rather than a dedicated GPT Action today.
-It is a dry-run patch preflight: it does not modify the worktree and is suitable
-for full-auto coding loops before `apply_patch`. `apply_patch_checked` combines
-preflight, apply, and post-apply diff summary for MCP/runtime clients that want
-a safer one-call mutation path. `delete_project_files`, `git_restore_paths`, and
-`discard_untracked` are restricted cleanup tools intended to reduce ad hoc `rm`
-and broad shell usage. GPT Actions can still discover these through
-`listRuntimeTools`; promote any of them to dedicated actions later if the
-OpenAPI surface should expose them directly.
+`validateProjectPatch` is a read-only dry-run patch preflight: it does not
+modify the worktree and is suitable for full-auto coding loops before
+`applyProjectPatch` / `applyProjectPatchChecked`. `applyProjectPatchChecked`
+combines preflight, apply, and post-apply diff summary in one safer mutation
+call. `deleteProjectFiles`, `gitRestorePaths`, and `discardUntrackedFiles` are
+restricted cleanup tools intended to reduce ad hoc `rm` and broad shell usage.
+All of these are now dedicated GPT Actions (Phase 3); they are also still
+discoverable through `listRuntimeTools` and callable via `callRuntimeTool`.
 
 `params` is an OpenAPI 3.1 object (`type: object`, `additionalProperties: true`)
 that carries tool-specific arguments. **Prefer the dedicated actions when they
@@ -228,18 +259,20 @@ business logic is duplicated, and owner/capability checks stay centralized in
 
 Tests in `src/openapi.rs` assert:
 
-- The operation-id set matches the documented set exactly (no more, no less).
+- The operation-id set matches the documented set exactly (22 operations).
+- The operation count is exactly 22 and never exceeds 30.
 - Every `$ref` resolves to a defined schema.
 - Every path is POST-only.
 - Bearer auth is present and globally enabled.
 - No legacy/non-GPT-Actions paths appear in the schema (file-drop, desktop,
   raw shell, codex command/context, agent protocol routes, `/mcp`,
-  `/openapi.json`).
+  `/openapi.json`, `/console`, `/api/jobs/stop`, `/api/audit/*`).
 - `callRuntimeTool` declares `params` as an OpenAPI 3.1 object accepting
   arbitrary tool arguments, plus an `arguments` compatibility alias (`params`
   wins when both are present).
 - `listRuntimeTools` returns `tools` (back-compat), `names`, `count`,
   `categories`, and `recommended_flows`.
-- Executable actions (`applyProjectPatch`, `runProjectShellCommand`) describe
-  their execution risk and auth requirement.
+- Mutation actions describe their side effects, Bearer auth, and agent shell
+  capability requirement.
+- Read-only dedicated actions are marked read-only in their descriptions.
 - Key actions ship request examples so ChatGPT has concrete templates.

@@ -87,22 +87,23 @@ wins. `listRuntimeTools` (`POST /api/tools/list`) returns `tools`, `names`,
 `count`, `categories`, and `recommended_flows`.
 
 MCP App console read-only tools (Phase A; thin REST wrappers over
-`ToolRuntime`, also exposed via MCP `tools/list`. Not GPT Actions —
-`/openapi.json` stays at 12 ops):
+`ToolRuntime`, also exposed via MCP `tools/list`. Now also dedicated GPT Actions
+as of Phase 3 — `/openapi.json` grew from 12 to 22 ops):
 
-- `POST /api/projects/list_files`
-- `POST /api/projects/search_text`
-- `POST /api/projects/git_diff_summary`
-- `POST /api/jobs/list`
-- `POST /api/jobs/tail`
+- `POST /api/projects/list_files` → `listProjectFiles` (read-only GPT Action)
+- `POST /api/projects/search_text` → `searchProjectText` (read-only GPT Action)
+- `POST /api/projects/git_diff_summary` → `getProjectGitDiffSummary` (read-only GPT Action)
+- `POST /api/jobs/list` → `listRuntimeJobs` (read-only GPT Action)
+- `POST /api/jobs/tail` → `getRuntimeJobTail` (read-only GPT Action)
 
-Runtime/MCP-only patch and cleanup tools (not GPT Actions yet):
+Runtime/MCP-only patch and cleanup tools (now also dedicated GPT Actions as of
+Phase 3):
 
-- `apply_patch_checked`: validates with `validate_patch`, applies only when
-  `can_apply=true`, then returns `git_diff_summary`.
-- `delete_project_files`: deletes selected project-relative files only.
-- `git_restore_paths`: restores selected tracked paths with `git restore --`.
-- `discard_untracked`: removes selected untracked files with `git clean -f --`.
+- `POST /api/projects/validate_patch` → `validateProjectPatch` (read-only dry-run GPT Action)
+- `POST /api/projects/apply_patch_checked` → `applyProjectPatchChecked` (mutation GPT Action)
+- `POST /api/projects/delete_files` → `deleteProjectFiles` (mutation GPT Action)
+- `POST /api/projects/git_restore_paths` → `gitRestorePaths` (mutation GPT Action)
+- `POST /api/projects/discard_untracked` → `discardUntrackedFiles` (mutation GPT Action)
 
 MCP App console (Phase B; read-only status console. Public static HTML/JS/CSS
 entry, NOT behind Bearer auth — like `/openapi.json`. Data is fetched by the
@@ -192,7 +193,7 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 430 tests passing, agent binary 23 tests passing.
+- `cargo test`: main binary 433 tests passing, agent binary 23 tests passing.
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -214,8 +215,8 @@ bash -n scripts/smoke_deployment.sh
 
 Current E2E smoke result:
 
-- `bash scripts/e2e_zero_config_ws.sh`: 53 passed / 0 failed.
-- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 53 passed / 0
+- `bash scripts/e2e_zero_config_ws.sh`: 61 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 61 passed / 0
   failed.
 
 ## validate_patch (patch preflight / dry-run)
@@ -249,9 +250,8 @@ Behavior:
 - Output: `can_apply` (bool), `affected_files` (array), `stat`, `stdout`,
   `stderr`, `warnings` (array).
 - Exposed via MCP `tools/list` (23 tools) and `POST /api/projects/validate_patch`.
-- **Not** a GPT Action: `/openapi.json` stays at 12 ops. The route is in the
-  `LEGACY_FORBIDDEN_PATHS` guard so it can never leak into the GPT Actions
-  schema.
+- As of Phase 3, **also** a dedicated read-only GPT Action
+  (`validateProjectPatch`); `/openapi.json` grew from 12 to 22 ops.
 - Capability: requires the agent `shell` capability (same as `apply_patch`,
   since the dry-run runs `git apply --check` via the agent shell path). Owner
   boundary checks are reused from `authorize_agent_tool`.

@@ -1012,42 +1012,37 @@ mod trusted_command_tests {
         assert_eq!(response.summary_markdown, None);
     }
 
-    // --- Test 8: OpenAPI schema still has trusted fields ---
+    // --- Test 8: OpenAPI schema is generated from current code ---
 
     #[test]
-    fn openapi_schema_contains_trusted_descriptions() {
-        let spec: serde_json::Value =
-            serde_json::from_str(include_str!("../data/openapi.json")).unwrap();
+    fn generated_openapi_schema_contains_current_coding_actions() {
+        let spec = crate::openapi::build_openapi_spec();
 
-        let op_enum: Vec<String> = spec["components"]["schemas"]["CommandRequestOpRequest"]
-            ["properties"]["op"]["enum"]
-            .as_array()
+        let operation_ids: Vec<String> = spec["paths"]
+            .as_object()
             .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_string())
+            .values()
+            .map(|path| path["post"]["operationId"].as_str().unwrap().to_string())
             .collect();
         assert!(
-            op_enum.contains(&"create_trusted_raw".to_string()),
-            "op enum should contain 'create_trusted_raw', got: {:?}",
-            op_enum
+            operation_ids.contains(&"runProjectShellCommand".to_string()),
+            "generated schema should expose the dedicated shell action, got: {:?}",
+            operation_ids
         );
         assert!(
-            op_enum.contains(&"create_trusted_raw_and_approve".to_string()),
-            "op enum should contain 'create_trusted_raw_and_approve', got: {:?}",
-            op_enum
+            operation_ids.contains(&"validateProjectPatch".to_string()),
+            "generated schema should expose the patch preflight action, got: {:?}",
+            operation_ids
         );
-
-        let cr_props = &spec["components"]["schemas"]["CommandRequestOpRequest"]["properties"];
-        assert!(!cr_props["script_text"].is_null());
-        assert!(!cr_props["timeout_secs"].is_null());
-        assert!(!cr_props["response_mode"].is_null());
-
-        let job_props = &spec["components"]["schemas"]["JobOpRequest"]["properties"];
-        assert!(!job_props["script_text"].is_null());
-        assert!(!job_props["trusted"].is_null());
-
-        let resp_props = &spec["components"]["schemas"]["CommandRequestOpResponse"]["properties"];
-        assert!(!resp_props["trusted_result"].is_null());
+        assert!(
+            operation_ids.contains(&"replaceProjectFileText".to_string()),
+            "generated schema should expose the structured text replace action, got: {:?}",
+            operation_ids
+        );
+        assert!(
+            spec["components"]["schemas"]["CommandRequestOpRequest"].is_null(),
+            "legacy command-request schema must not be carried by generated GPT Actions schema"
+        );
     }
 
     #[test]

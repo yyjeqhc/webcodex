@@ -115,7 +115,7 @@ pub async fn openapi_json(res: &mut Response) {
     res.render(Json(build_openapi_spec()));
 }
 
-fn build_openapi_spec() -> Value {
+pub(crate) fn build_openapi_spec() -> Value {
     json!({
         "openapi": "3.1.0",
         "info": {

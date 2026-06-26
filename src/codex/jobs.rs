@@ -2627,93 +2627,48 @@ mod tests {
     }
 
     #[test]
-    fn openapi_schema_includes_recover_and_detail() {
-        let spec: serde_json::Value =
-            serde_json::from_str(include_str!("../../data/openapi.json")).unwrap();
+    fn generated_openapi_schema_excludes_legacy_codex_job_surface() {
+        let spec = crate::openapi::build_openapi_spec();
 
-        // Check "recover" is in op enum
-        let op_enum: Vec<String> = spec["components"]["schemas"]["JobOpRequest"]["properties"]
-            ["op"]["enum"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|v| v.as_str().unwrap().to_string())
-            .collect();
         assert!(
-            op_enum.contains(&"recover".to_string()),
-            "op enum should contain 'recover', got: {:?}",
-            op_enum
+            spec["paths"]["/api/codex/job"].is_null(),
+            "legacy /api/codex/job must not appear in generated GPT Actions schema"
+        );
+        assert!(
+            spec["components"]["schemas"]["JobOpRequest"].is_null(),
+            "legacy JobOpRequest must not appear in generated GPT Actions schema"
+        );
+        assert!(
+            spec["components"]["schemas"]["JobOpResponse"].is_null(),
+            "legacy JobOpResponse must not appear in generated GPT Actions schema"
         );
 
-        // Check "detail" field exists
-        let detail = &spec["components"]["schemas"]["JobOpRequest"]["properties"]["detail"];
+        let run_codex_desc = spec["paths"]["/api/codex/run"]["post"]["description"]
+            .as_str()
+            .unwrap();
         assert!(
-            !detail.is_null(),
-            "detail field should exist in JobOpRequest"
-        );
-
-        // Check "metadata_only" and "logs_included" in JobOpResponse
-        let resp_props = &spec["components"]["schemas"]["JobOpResponse"]["properties"];
-        assert!(
-            !resp_props["metadata_only"].is_null(),
-            "metadata_only should exist in JobOpResponse"
-        );
-        assert!(
-            !resp_props["logs_included"].is_null(),
-            "logs_included should exist in JobOpResponse"
-        );
-        assert!(
-            !resp_props["warnings"].is_null(),
-            "warnings should exist in JobOpResponse"
+            run_codex_desc.contains("job_id"),
+            "current runCodexTask description should mention job_id, got: {}",
+            run_codex_desc
         );
     }
 
     #[test]
-    fn openapi_no_auto_upgrade_text() {
-        let spec: serde_json::Value =
-            serde_json::from_str(include_str!("../../data/openapi.json")).unwrap();
+    fn generated_openapi_schema_has_no_auto_upgrade_text() {
+        let spec = crate::openapi::build_openapi_spec();
+        let schema_text = serde_json::to_string(&spec).unwrap();
 
-        // detail description must NOT contain "auto-upgrades"
-        let detail_desc = spec["components"]["schemas"]["JobOpRequest"]["properties"]["detail"]
-            ["description"]
-            .as_str()
-            .unwrap();
         assert!(
-            !detail_desc.contains("auto-upgrades"),
-            "detail description should not contain 'auto-upgrades', got: {}",
-            detail_desc
-        );
-
-        // detail description must contain "basic" and "logs"
-        assert!(
-            detail_desc.contains("basic"),
-            "detail description should mention 'basic', got: {}",
-            detail_desc
+            !schema_text.contains("auto-upgrades"),
+            "generated GPT Actions schema should not contain stale auto-upgrade wording"
         );
         assert!(
-            detail_desc.contains("logs"),
-            "detail description should mention 'logs', got: {}",
-            detail_desc
-        );
-
-        // runJobOp description must mention "recover"
-        let job_desc = spec["paths"]["/api/codex/job"]["post"]["description"]
-            .as_str()
-            .unwrap();
-        assert!(
-            job_desc.contains("recover"),
-            "runJobOp description should mention 'recover', got: {}",
-            job_desc
+            schema_text.contains("getRuntimeJobStatus"),
+            "generated schema should include the current job status action"
         );
         assert!(
-            job_desc.contains("detail=basic"),
-            "runJobOp description should mention 'detail=basic', got: {}",
-            job_desc
-        );
-        assert!(
-            job_desc.contains("detail=logs"),
-            "runJobOp description should mention 'detail=logs', got: {}",
-            job_desc
+            schema_text.contains("getRuntimeJobLog"),
+            "generated schema should include the current job log action"
         );
     }
 

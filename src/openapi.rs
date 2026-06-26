@@ -21,15 +21,17 @@ fn public_url() -> String {
 /// 4. project mutation (`validateProjectPatch`, `applyProjectPatch`,
 ///    `applyProjectPatchChecked`, `runProjectShellCommand`,
 ///    `deleteProjectFiles`, `gitRestorePaths`, `discardUntrackedFiles`,
-///    `replaceProjectFileText`)
+///    `replaceProjectFileText`, `writeProjectFile`, `startProjectShellJob`)
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
 /// 6. advanced/generic entry point (`callRuntimeTool`)
 ///
-/// Phase 3 promotes the core runtime tools to dedicated GPT Actions, and Phase
-/// 5 promotes the safer structured text replacement action, so a custom GPT can
-/// drive the coding loop without `callRuntimeTool` for common edits. Codex is
-/// an optional advanced capability. `callRuntimeTool` remains as an advanced
-/// escape hatch; prefer the dedicated typed actions.
+/// Phase 3 promotes the core runtime tools to dedicated GPT Actions, Phase 5
+/// promotes the safer structured text replacement action, and this phase
+/// promotes `write_project_file` and `run_job` to dedicated GPT Actions, so a
+/// custom GPT can drive the coding loop without `callRuntimeTool` for common
+/// edits and async command execution. Codex is an optional advanced
+/// capability. `callRuntimeTool` remains as an advanced escape hatch; prefer
+/// the dedicated typed actions.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
@@ -52,6 +54,8 @@ const GPT_ACTION_OPS: &[&str] = &[
     "gitRestorePaths",
     "discardUntrackedFiles",
     "replaceProjectFileText",
+    "writeProjectFile",
+    "startProjectShellJob",
     "listRuntimeJobs",
     "getRuntimeJobTail",
     "callRuntimeTool",
@@ -88,11 +92,11 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/jobs/stop",
     "/api/shell/jobs/list",
     // Phase 5: `replace_in_file` was promoted to a dedicated GPT Action
-    // (`replaceProjectFileText`) so it is no longer forbidden here. `write_file`
-    // remains a runtime-only thin REST wrapper over ToolRuntime (also reachable
-    // via callRuntimeTool / MCP tools/call); it is intentionally NOT promoted
-    // to a dedicated GPT Action because whole-file overwrite is riskier.
-    "/api/projects/write_file",
+    // (`replaceProjectFileText`) so it is no longer forbidden here. This phase
+    // promotes `write_file` (`writeProjectFile`) and `run_job`
+    // (`startProjectShellJob`) to dedicated GPT Actions as well, so they are
+    // no longer forbidden. All three remain reachable via callRuntimeTool /
+    // MCP tools/call too.
     "/api/shell/agent/register",
     "/api/shell/agent/poll",
     "/api/shell/agent/result",
@@ -547,6 +551,62 @@ pub(crate) fn build_openapi_spec() -> Value {
                     })
                 )
             },
+            "/api/projects/write_file": {
+                "post": operation_with_examples(
+                    "writeProjectFile",
+                    "Write a project file",
+                    "Writes a UTF-8 project file via the owning agent, creating new files or overwriting existing ones. Mutation with side effects; requires Bearer auth and the agent shell capability. Use expected_sha256 or expected_content_prefix to guard overwrites. Rejects sensitive paths.",
+                    "WriteProjectFileRequest",
+                    "ToolResult",
+                    json!({
+                        "createNew": {
+                            "summary": "Create a new project file",
+                            "value": {
+                                "project": "private-drop",
+                                "path": "src/new_module.rs",
+                                "content": "// new module\n"
+                            }
+                        },
+                        "overwriteWithGuard": {
+                            "summary": "Overwrite an existing file with an expected_sha256 guard",
+                            "value": {
+                                "project": "private-drop",
+                                "path": "src/existing.rs",
+                                "content": "// updated\n",
+                                "overwrite": true,
+                                "expected_sha256": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/run_job": {
+                "post": operation_with_examples(
+                    "startProjectShellJob",
+                    "Start an async project shell job",
+                    "Starts an async background shell job in an agent-registered project and returns a job_id. Execution with side effects; requires Bearer auth and the agent async shell job capability. Poll with getRuntimeJobStatus; read output with getRuntimeJobTail or getRuntimeJobLog.",
+                    "StartProjectShellJobRequest",
+                    "ToolResult",
+                    json!({
+                        "testCommand": {
+                            "summary": "Run a lightweight test command asynchronously",
+                            "value": {
+                                "project": "private-drop",
+                                "command": "cargo test --no-run"
+                            }
+                        },
+                        "withTimeout": {
+                            "summary": "Run a check command with a timeout",
+                            "value": {
+                                "project": "private-drop",
+                                "command": "cargo clippy",
+                                "timeout_secs": 300,
+                                "cwd": "src"
+                            }
+                        }
+                    })
+                )
+            },
             "/api/tools/call": {
                 "post": operation_with_examples(
                     "callRuntimeTool",
@@ -975,6 +1035,62 @@ fn schemas() -> Value {
                 }
             }
         },
+        "WriteProjectFileRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "path", "content"],
+            "description": "Write a UTF-8 project file via the owning agent. Mutation with side effects; creates new files and overwrites existing ones when a guard matches.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Project-relative file path. Absolute paths and traversal (..) are rejected. Sensitive paths are rejected."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Full UTF-8 file content to write."
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Optional. When true, allows overwriting an existing file (guarded by expected_sha256 / expected_content_prefix when set)."
+                },
+                "expected_sha256": {
+                    "type": "string",
+                    "description": "Optional sha256 of the existing file content. Overwrite only proceeds when it matches; prevents accidental overwrites."
+                },
+                "expected_content_prefix": {
+                    "type": "string",
+                    "description": "Optional prefix the existing file content must start with before overwriting."
+                }
+            }
+        },
+        "StartProjectShellJobRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "command"],
+            "description": "Start an async background shell job in an agent-registered project. Execution with side effects; returns a job_id to poll with getRuntimeJobStatus.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to run asynchronously in the project directory."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Optional maximum runtime in seconds."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional project-relative working directory. The owning agent enforces its cwd policy."
+                }
+            }
+        },
         "ListProjectFilesRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -1279,6 +1395,8 @@ mod tests {
             "/api/projects/git_restore_paths",
             "/api/projects/discard_untracked",
             "/api/projects/replace_in_file",
+            "/api/projects/write_file",
+            "/api/projects/run_job",
             "/api/tools/call",
         ] {
             assert!(
@@ -1484,6 +1602,8 @@ mod tests {
             ("/api/projects/git_restore_paths", "gitRestorePaths"),
             ("/api/projects/discard_untracked", "discardUntrackedFiles"),
             ("/api/projects/replace_in_file", "replaceProjectFileText"),
+            ("/api/projects/write_file", "writeProjectFile"),
+            ("/api/projects/run_job", "startProjectShellJob"),
             ("/api/jobs/list", "listRuntimeJobs"),
             ("/api/jobs/tail", "getRuntimeJobTail"),
             ("/api/tools/call", "callRuntimeTool"),
@@ -1568,6 +1688,14 @@ mod tests {
             "replaceProjectFileText"
         );
         assert_eq!(
+            spec["paths"]["/api/projects/write_file"]["post"]["operationId"],
+            "writeProjectFile"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/run_job"]["post"]["operationId"],
+            "startProjectShellJob"
+        );
+        assert_eq!(
             spec["paths"]["/api/jobs/list"]["post"]["operationId"],
             "listRuntimeJobs"
         );
@@ -1596,6 +1724,8 @@ mod tests {
             "/api/projects/git_restore_paths",
             "/api/projects/discard_untracked",
             "/api/projects/replace_in_file",
+            "/api/projects/write_file",
+            "/api/projects/run_job",
         ] {
             let desc = spec["paths"][path]["post"]["description"]
                 .as_str()
@@ -1613,10 +1743,12 @@ mod tests {
                 desc
             );
         }
-        // The patch/shell/cleanup mutations must also mention the agent shell
-        // capability. runCodexTask does not require the shell capability
+        // The patch/shell/cleanup/write mutations must also mention the agent
+        // shell capability. runCodexTask does not require the shell capability
         // directly (it starts a Codex process), so it is excluded from this
-        // sub-check.
+        // sub-check. startProjectShellJob requires the async shell job
+        // capability (checked separately below), not the plain shell
+        // capability.
         for path in [
             "/api/projects/apply_patch",
             "/api/projects/apply_patch_checked",
@@ -1625,6 +1757,7 @@ mod tests {
             "/api/projects/git_restore_paths",
             "/api/projects/discard_untracked",
             "/api/projects/replace_in_file",
+            "/api/projects/write_file",
         ] {
             let desc = spec["paths"][path]["post"]["description"]
                 .as_str()
@@ -1633,6 +1766,19 @@ mod tests {
                 desc.to_lowercase().contains("agent shell capability"),
                 "{} description should mention the agent shell capability, got: {}",
                 path,
+                desc
+            );
+        }
+        // startProjectShellJob requires the async shell job capability, not
+        // the plain shell capability. Pin its capability wording so GPT callers
+        // understand the different requirement.
+        {
+            let desc = spec["paths"]["/api/projects/run_job"]["post"]["description"]
+                .as_str()
+                .unwrap_or("");
+            assert!(
+                desc.to_lowercase().contains("async shell job"),
+                "startProjectShellJob description should mention the async shell job capability, got: {}",
                 desc
             );
         }
@@ -1786,12 +1932,13 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_is_twenty_three() {
+    fn openapi_operation_count_is_twenty_five() {
         // Phase 3 promoted 10 core runtime tools to dedicated GPT Actions,
         // bringing the schema from 12 to 22 ops. Phase 5 promotes
         // replace_in_file to a dedicated GPT Action (replaceProjectFileText),
-        // bringing the count to 23. The surface must stay <= 30. write_file
-        // stays runtime-only (NOT a dedicated GPT Action).
+        // bringing the count to 23. This phase promotes write_project_file
+        // (writeProjectFile) and run_job (startProjectShellJob) to dedicated
+        // GPT Actions, bringing the count to 25. The surface must stay <= 30.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
             .as_object()
@@ -1799,36 +1946,42 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 23, "GPT Actions schema must be 23 operations");
+        assert_eq!(count, 25, "GPT Actions schema must be 25 operations");
         assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
     }
 
     #[test]
-    fn openapi_replace_in_file_promoted_but_write_file_stays_runtime_only() {
-        // Phase 5 promotes replace_in_file to a dedicated GPT Action
-        // (replaceProjectFileText); write_file stays runtime-only (reachable
-        // via callRuntimeTool / MCP) because whole-file overwrite is riskier.
+    fn openapi_write_file_and_run_job_promoted_to_dedicated_actions() {
+        // This phase promotes write_project_file (writeProjectFile) and
+        // run_job (startProjectShellJob) to dedicated GPT Actions. Both are
+        // also still reachable via callRuntimeTool / MCP tools/call.
         let spec = build_openapi_spec();
         let paths = spec["paths"].as_object().unwrap();
         assert!(
-            paths.contains_key("/api/projects/replace_in_file"),
-            "replace_in_file must now appear in /openapi.json as a dedicated mutation action"
+            paths.contains_key("/api/projects/write_file"),
+            "write_file must now appear in /openapi.json as a dedicated mutation action"
         );
         assert_eq!(
-            spec["paths"]["/api/projects/replace_in_file"]["post"]["operationId"],
-            "replaceProjectFileText"
+            spec["paths"]["/api/projects/write_file"]["post"]["operationId"],
+            "writeProjectFile"
         );
         assert!(
-            !paths.contains_key("/api/projects/write_file"),
-            "write_file must stay runtime-only (not a dedicated GPT Action)"
+            paths.contains_key("/api/projects/run_job"),
+            "run_job must now appear in /openapi.json as a dedicated execution action"
         );
-        // replace_in_file is no longer forbidden; write_file still is, so
-        // future edits catch accidental promotion.
+        assert_eq!(
+            spec["paths"]["/api/projects/run_job"]["post"]["operationId"],
+            "startProjectShellJob"
+        );
+        // Neither is forbidden any more; future edits catch accidental demotion.
         assert!(
-            !LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/replace_in_file"),
-            "replace_in_file must be removed from the forbidden guard now that it is a dedicated action"
+            !LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/write_file"),
+            "write_file must be removed from the forbidden guard now that it is a dedicated action"
         );
-        assert!(LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/write_file"));
+        assert!(
+            !LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/run_job"),
+            "run_job must not be in the forbidden guard now that it is a dedicated action"
+        );
     }
 
     #[test]

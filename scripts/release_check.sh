@@ -173,6 +173,6 @@ fi
 # ----------------------------------------------------------------------------
 printf '\n[release] ===== all stages passed =====\n'
 ok "fmt, check, check --tests, test, E2E ws, E2E polling, no sensitive files"
-log "invariants (verified by E2E): /openapi.json ops == 23, MCP tools/list == 25"
+log "invariants (verified by E2E): /openapi.json ops == 25, MCP tools/list == 25"
 log "release readiness PASSED"
 exit 0

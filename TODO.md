@@ -198,6 +198,26 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       change; OpenAPI op count stays 23 and MCP `tools/list` stays 25. Local
       E2E passes 98/98 over both transports; `cargo test` passes 473 main + 23
       agent tests; `bash scripts/release_check.sh` passes.
+- [x] Promote `write_project_file` and `run_job` to dedicated GPT Actions:
+      added two dedicated GPT Actions — `writeProjectFile`
+      (`POST /api/projects/write_file`, reuses the existing thin REST wrapper
+      over `ToolCall::WriteProjectFile`) and `startProjectShellJob`
+      (`POST /api/projects/run_job`, a new thin REST wrapper over
+      `ToolCall::RunJob`). No new `ToolRuntime` business logic, no new
+      `ToolCall` variant, no new runtime tool, no MCP tool count change.
+      OpenAPI op count grew from 23 to 25 (still <= 30); `/api/projects/write_file`
+      was removed from the forbidden-paths guard; `/api/projects/run_job` was
+      added as a new dedicated path. New request schemas
+      `WriteProjectFileRequest` and `StartProjectShellJobRequest` (both
+      `additionalProperties=false`). Mutation/execution descriptions mention
+      side effects + Bearer auth; `writeProjectFile` mentions the agent shell
+      capability, `startProjectShellJob` mentions the agent async shell job
+      capability. MCP `tools/list` stays 25. E2E adds a dedicated smoke
+      (writeProjectFile create → read → overwrite-with-guard → read → delete;
+      startProjectShellJob `printf job-ok` → poll getRuntimeJobStatus → confirm
+      via getRuntimeJobTail). Local E2E passes 108/108 over both transports;
+      `cargo test` passes 475 main + 23 agent tests; `bash scripts/release_check.sh`
+      passes.
 
 ### Deprecated (not active features)
 

@@ -166,7 +166,7 @@ GPT Actions:
 
 - [ ] Public HTTPS URL is reachable (e.g. `https://drop.example.com`).
 - [ ] `GET /openapi.json` returns a valid schema.
-- [ ] Schema exposes 23 operations (`scripts/e2e_zero_config_ws.sh` asserts
+- [ ] Schema exposes 25 operations (`scripts/e2e_zero_config_ws.sh` asserts
       this against the live schema).
 - [ ] Every operation is POST-only (asserted by the E2E schema check).
 - [ ] `DROP_TOKEN` is set on the server; GPT Action auth is configured as an

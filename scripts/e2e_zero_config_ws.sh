@@ -804,8 +804,9 @@ expected_ops = {
     "getProjectGitDiffSummary", "listProjectFiles", "searchProjectText",
     "validateProjectPatch", "applyProjectPatch", "applyProjectPatchChecked",
     "runProjectShellCommand", "deleteProjectFiles", "gitRestorePaths",
-    "discardUntrackedFiles", "replaceProjectFileText", "listRuntimeJobs",
-    "getRuntimeJobTail", "callRuntimeTool",
+    "discardUntrackedFiles", "replaceProjectFileText", "writeProjectFile",
+    "startProjectShellJob", "listRuntimeJobs", "getRuntimeJobTail",
+    "callRuntimeTool",
 }
 missing = expected_ops - ops_set
 extra = ops_set - expected_ops
@@ -814,11 +815,14 @@ if missing:
 if extra:
     errors.append(f"unexpected operationIds: {sorted(extra)}")
 
-# Phase 5: operation count must stay small (<= 30) and exactly 23 this phase.
+# Operation count must stay small (<= 30) and exactly 25 this phase.
+# Phase 5 brought the count to 23; this phase promotes write_project_file
+# (writeProjectFile) and run_job (startProjectShellJob) to dedicated GPT
+# Actions, bringing the count to 25.
 if len(ops_set) > 30:
     errors.append(f"too many operations: {len(ops_set)} (must be <= 30)")
-if len(ops_set) != 23:
-    errors.append(f"operation count must be 23 this phase, got {len(ops_set)}")
+if len(ops_set) != 25:
+    errors.append(f"operation count must be 25 this phase, got {len(ops_set)}")
 
 # Phase 2: each operation description must fit the <= 300 char budget.
 for path, methods in schema.get("paths", {}).items():
@@ -837,7 +841,6 @@ for path, methods in schema.get("paths", {}).items():
 # forbidden.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
              "/api/jobs/stop",
-             "/api/projects/write_file",
              "/api/messages", "/api/files", "/api/desktop/task_op", "/api/desktop/task",
              "/api/shell/run", "/api/shell/job", "/api/shell/file",
              "/mcp", "/openapi.json", "/console", "/console/app.js", "/console/styles.css"]
@@ -907,6 +910,8 @@ mutation_paths = [
     "/api/projects/git_restore_paths",
     "/api/projects/discard_untracked",
     "/api/projects/replace_in_file",
+    "/api/projects/write_file",
+    "/api/projects/run_job",
 ]
 for path in mutation_paths:
     op = schema.get("paths", {}).get(path, {}).get("post", {})
@@ -1622,6 +1627,149 @@ if [ "${loop_patch_final_count:-0}" = "0" ] 2>/dev/null; then
     pass "loop: getProjectGitDiffSummary confirms clean after patch cleanup"
 else
     fail "loop: worktree not clean after patch cleanup (changed_files_count=$loop_patch_final_count)"
+fi
+
+# ----------------------------------------------------------------------------
+# 7i. Dedicated writeProjectFile + startProjectShellJob smoke (probe files only)
+# ----------------------------------------------------------------------------
+#
+# Proves the two newly promoted dedicated GPT Actions work end-to-end through
+# the recommended loop, without callRuntimeTool:
+#
+#   1. writeProjectFile   — create WRITE_ACTION_PROBE.txt
+#   2. readProjectFile    — confirm content
+#   3. writeProjectFile   — overwrite with an expected_sha256 guard
+#   4. readProjectFile    — confirm overwritten content
+#   5. deleteProjectFiles — cleanup the probe file
+#   6. startProjectShellJob — start `printf job-ok` asynchronously
+#   7. getRuntimeJobStatus — poll until completed
+#   8. getRuntimeJobTail   — confirm the output contains job-ok
+
+log "---- dedicated writeProjectFile + startProjectShellJob smoke ----"
+
+# Step 1: writeProjectFile — create WRITE_ACTION_PROBE.txt.
+waf_create_body="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "project": sys.argv[1],
+    "path": "WRITE_ACTION_PROBE.txt",
+    "content": "write-action-probe-v1\n"
+}))
+' "$RUNTIME_PROJECT_ID")"
+body="$(api_post /api/projects/write_file "$waf_create_body")"
+if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.created)" = "True" ]; then
+    pass "writeProjectFile creates WRITE_ACTION_PROBE.txt"
+else
+    fail "writeProjectFile did not create probe (body: ${body:0:300})"
+fi
+waf_sha="$(json_get "$body" output.sha256)"
+if [ -n "$waf_sha" ] && [ "$waf_sha" != "None" ] && [ ${#waf_sha} -eq 64 ]; then
+    pass "writeProjectFile returns 64-char sha256 for new file"
+else
+    fail "writeProjectFile missing sha256 (got: $waf_sha)"
+fi
+
+# Step 2: readProjectFile — confirm content.
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"WRITE_ACTION_PROBE.txt\"}")"
+if echo "$(json_get "$body" output.content)" | grep -q "write-action-probe-v1"; then
+    pass "readProjectFile confirms WRITE_ACTION_PROBE.txt content"
+else
+    fail "readProjectFile did not confirm probe content (got: ${body:0:200})"
+fi
+
+# Step 3: writeProjectFile — overwrite with an expected_sha256 guard. Use the
+# sha256 returned by the create step so the overwrite guard matches exactly.
+waf_overwrite_body="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "project": sys.argv[1],
+    "path": "WRITE_ACTION_PROBE.txt",
+    "content": "write-action-probe-v2\n",
+    "overwrite": True,
+    "expected_sha256": sys.argv[2]
+}))
+' "$RUNTIME_PROJECT_ID" "$waf_sha")"
+body="$(api_post /api/projects/write_file "$waf_overwrite_body")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "writeProjectFile overwrites with matching expected_sha256 guard"
+else
+    fail "writeProjectFile overwrite with guard failed (body: ${body:0:300})"
+fi
+
+# Step 4: readProjectFile — confirm overwritten content.
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"WRITE_ACTION_PROBE.txt\"}")"
+if echo "$(json_get "$body" output.content)" | grep -q "write-action-probe-v2"; then
+    pass "readProjectFile confirms overwritten content"
+else
+    fail "readProjectFile did not confirm overwritten content (got: ${body:0:200})"
+fi
+
+# Step 5: deleteProjectFiles — cleanup the probe.
+waf_del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"WRITE_ACTION_PROBE.txt\"]}")"
+body="$(api_post /api/projects/delete_files "$waf_del_body")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "deleteProjectFiles removes WRITE_ACTION_PROBE.txt"
+else
+    fail "deleteProjectFiles did not remove probe (body: ${body:0:300})"
+fi
+
+# Step 6: startProjectShellJob — start a lightweight async command.
+sjr_body="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "project": sys.argv[1],
+    "command": "printf job-ok"
+}))
+' "$RUNTIME_PROJECT_ID")"
+body="$(api_post /api/projects/run_job "$sjr_body")"
+sjr_success="$(json_get "$body" success)"
+SJ_JOB_ID="$(json_get "$body" output.job_id)"
+if [ "$sjr_success" = "True" ] && [ -n "$SJ_JOB_ID" ] && [ "$SJ_JOB_ID" != "None" ]; then
+    pass "startProjectShellJob started async job (job_id=$SJ_JOB_ID)"
+else
+    fail "startProjectShellJob did not start a job (success=$sjr_success body=${body:0:300})"
+fi
+
+# Step 7: getRuntimeJobStatus — poll until completed.
+sj_done=0
+sj_poll_tries=0
+sj_status=""
+while [ "$sj_poll_tries" -lt 20 ]; do
+    check_deadline
+    body="$(api_post /api/jobs/status "{\"job_id\":\"$SJ_JOB_ID\"}")"
+    sj_status="$(json_get "$body" output.status)"
+    case "$sj_status" in
+        completed|failed|stopped|lost)
+            sj_done=1
+            break
+            ;;
+    esac
+    sj_poll_tries=$((sj_poll_tries + 1))
+    sleep 1
+done
+if [ "$sj_done" = "1" ] && [ "$sj_status" = "completed" ]; then
+    pass "getRuntimeJobStatus confirms async job completed"
+else
+    fail "getRuntimeJobStatus did not confirm completion (status=$sj_status tries=$sj_poll_tries body=${body:0:200})"
+fi
+
+# Step 8: getRuntimeJobTail — confirm the output contains job-ok.
+body="$(api_post /api/jobs/tail "{\"job_id\":\"$SJ_JOB_ID\",\"tail_lines\":50}")"
+sj_tail="$(json_get "$body" output.stdout)"
+if echo "$sj_tail" | grep -q "job-ok"; then
+    pass "getRuntimeJobTail confirms async job output (job-ok)"
+else
+    fail "getRuntimeJobTail did not show job-ok (stdout=$sj_tail body=${body:0:200})"
+fi
+
+# Confirm the worktree is clean after the dedicated action smoke (the job ran
+# `printf` which does not touch the repo).
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+ded_final_count="$(json_get "$body" output.changed_files_count)"
+if [ "${ded_final_count:-0}" = "0" ] 2>/dev/null; then
+    pass "dedicated action smoke leaves worktree clean"
+else
+    fail "dedicated action smoke left worktree dirty (changed_files_count=$ded_final_count)"
 fi
 
 # ----------------------------------------------------------------------------

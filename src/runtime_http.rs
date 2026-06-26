@@ -152,8 +152,9 @@ struct ReplaceInFileRequest {
 
 /// `POST /api/projects/write_file` — thin REST wrapper over
 /// `ToolCall::WriteProjectFile`. Mutation with side effects: writes a UTF-8
-/// file via the owning agent with optional overwrite guards. NOT a GPT Action
-/// (excluded from `/openapi.json`); reachable via callRuntimeTool / MCP as well.
+/// file via the owning agent with optional overwrite guards. Dedicated GPT
+/// Action (`writeProjectFile`); also reachable via callRuntimeTool / MCP
+/// tools/call.
 #[derive(Debug, Deserialize)]
 struct WriteProjectFileRequest {
     pub project: String,
@@ -939,8 +940,8 @@ pub async fn projects_replace_in_file(req: &mut Request, depot: &mut Depot, res:
 /// `POST /api/projects/write_file` — thin REST wrapper over
 /// `ToolCall::WriteProjectFile`. Mutation with side effects: writes a UTF-8
 /// file via the owning agent with optional overwrite guards. Requires Bearer
-/// auth and the agent shell capability. NOT a GPT Action (excluded from
-/// `/openapi.json`); also reachable via callRuntimeTool / MCP tools/call.
+/// auth and the agent shell capability. Dedicated GPT Action
+/// (`writeProjectFile`); also reachable via callRuntimeTool / MCP tools/call.
 #[handler]
 pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/write_file", "writeProjectFile");
@@ -979,6 +980,65 @@ pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut
         )
         .await;
     render_result(res, &audit, "write_project_file", project, result);
+}
+
+/// `POST /api/projects/run_job` — thin REST wrapper over
+/// `ToolCall::RunJob`. Starts an async background shell job in an
+/// agent-registered project and returns a `job_id`. Execution with side
+/// effects; requires Bearer auth and the agent async shell job capability.
+/// Dedicated GPT Action (`startProjectShellJob`); also reachable via
+/// callRuntimeTool / MCP tools/call. Poll with `getRuntimeJobStatus` and read
+/// output with `getRuntimeJobTail` / `getRuntimeJobLog`.
+#[derive(Debug, Deserialize)]
+struct StartProjectShellJobRequest {
+    pub project: String,
+    pub command: String,
+    #[serde(default)]
+    pub timeout_secs: Option<i64>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
+/// `POST /api/projects/run_job` handler. Thin wrapper: parse request, auth,
+/// audit, and dispatch to `ToolRuntime` via `ToolCall::RunJob`. All business
+/// logic (capability checks, owner boundary, job creation) stays in
+/// `ToolRuntime`.
+#[handler]
+pub async fn projects_run_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/projects/run_job", "startProjectShellJob");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: StartProjectShellJobRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: body.project,
+                command: body.command,
+                timeout_secs: body.timeout_secs,
+                cwd: body.cwd,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "run_job", project, result);
 }
 
 /// `POST /api/projects/run_shell` — thin GPT Actions wrapper over
@@ -1372,6 +1432,7 @@ mod tests {
                             .post(projects_replace_in_file),
                     )
                     .push(Router::with_path("projects/write_file").post(projects_write_file))
+                    .push(Router::with_path("projects/run_job").post(projects_run_job))
                     .push(Router::with_path("projects/list_files").post(projects_list_files))
                     .push(Router::with_path("projects/search_text").post(projects_search_text))
                     .push(
@@ -2355,6 +2416,77 @@ mod tests {
                 body["error"].as_str().is_some_and(|e| !e.is_empty()),
                 "{} should return a structured runtime error",
                 tool
+            );
+        }
+    }
+
+    // =========================================================================
+    // Dedicated writeProjectFile / startProjectShellJob GPT Actions — auth gate
+    // + dispatch wiring. write_file reuses the existing REST wrapper; run_job
+    // is a new thin wrapper over ToolCall::RunJob. Both are still reachable
+    // via callRuntimeTool / MCP.
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_dedicated_write_file_and_run_job_require_bearer_auth() {
+        let (_tmp, service) = phase2_service();
+        for (path, body) in [
+            (
+                "/api/projects/write_file",
+                json!({"project": "demo", "path": "x.txt", "content": "a"}),
+            ),
+            (
+                "/api/projects/run_job",
+                json!({"project": "demo", "command": "echo hi"}),
+            ),
+        ] {
+            let resp = TestClient::post(&format!("http://localhost{}", path))
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::UNAUTHORIZED,
+                "{} should require auth",
+                path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_dedicated_write_file_and_run_job_dispatch_to_runtime() {
+        // With a correct bearer token the dedicated routes reach the runtime.
+        // The project id is not agent-registered, so the runtime returns a
+        // structured error (not a 401/404) — proving the request was
+        // authenticated, deserialized, and dispatched to ToolRuntime.
+        let (_tmp, service) = phase2_service();
+        for (path, body) in [
+            (
+                "/api/projects/write_file",
+                json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}),
+            ),
+            (
+                "/api/projects/run_job",
+                json!({"project": "agent:nope:nope", "command": "echo hi"}),
+            ),
+        ] {
+            let mut resp = TestClient::post(&format!("http://localhost{}", path))
+                .bearer_auth("secret")
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::BAD_REQUEST,
+                "{} should reach runtime and return structured error",
+                path
+            );
+            let body: Value = resp.take_json().await.unwrap();
+            assert_eq!(body["success"], false);
+            assert!(
+                body["error"].as_str().is_some_and(|e| !e.is_empty()),
+                "{} should return a structured runtime error",
+                path
             );
         }
     }

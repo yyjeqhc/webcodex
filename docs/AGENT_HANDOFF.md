@@ -88,7 +88,8 @@ wins. `listRuntimeTools` (`POST /api/tools/list`) returns `tools`, `names`,
 
 MCP App console read-only tools (Phase A; thin REST wrappers over
 `ToolRuntime`, also exposed via MCP `tools/list`. Now also dedicated GPT Actions
-as of Phase 3 — `/openapi.json` grew from 12 to 22 ops, then to 23 in Phase 5):
+as of Phase 3 — `/openapi.json` grew from 12 to 22 ops, then to 23 in Phase 5,
+then to 25 this phase):
 
 - `POST /api/projects/list_files` → `listProjectFiles` (read-only GPT Action)
 - `POST /api/projects/search_text` → `searchProjectText` (read-only GPT Action)
@@ -105,20 +106,25 @@ Phase 3):
 - `POST /api/projects/git_restore_paths` → `gitRestorePaths` (mutation GPT Action)
 - `POST /api/projects/discard_untracked` → `discardUntrackedFiles` (mutation GPT Action)
 
-Phase 4/5 structured-edit tools:
+Phase 4/5 structured-edit tools (and this phase's promotions):
 
 - `POST /api/projects/replace_in_file` → `replaceProjectFileText` (mutation;
   dedicated GPT Action as of Phase 5; thin REST wrapper over
   `ToolCall::ReplaceInFile`). Fixed python3 helper on the owning agent;
   `old`/`new` travel over stdin, never interpolated into the command. Also
   reachable via `callRuntimeTool` / MCP `tools/call`.
-- `POST /api/projects/write_file` → `writeProjectFile` (mutation; runtime-only,
-  NOT a dedicated GPT Action — reachable via `callRuntimeTool` / MCP
-  `tools/call`; listed in the forbidden-paths guard). Thin REST wrapper over
-  `ToolCall::WriteProjectFile`. Create/overwrite with optional
-  `expected_sha256` / `expected_content_prefix` guards. Intentionally kept
-  runtime-only because whole-file overwrite is riskier than a unique-substring
-  replace.
+- `POST /api/projects/write_file` → `writeProjectFile` (mutation; dedicated
+  GPT Action as of this phase; thin REST wrapper over
+  `ToolCall::WriteProjectFile`). Create/overwrite a UTF-8 file via the owning
+  agent with optional `expected_sha256` / `expected_content_prefix` guards.
+  Rejects sensitive paths. Also reachable via `callRuntimeTool` / MCP
+  `tools/call`.
+- `POST /api/projects/run_job` → `startProjectShellJob` (execution; dedicated
+  GPT Action as of this phase; thin REST wrapper over `ToolCall::RunJob`).
+  Starts an async background shell job and returns a `job_id`; poll with
+  `getRuntimeJobStatus` and read output with `getRuntimeJobTail` /
+  `getRuntimeJobLog`. Requires the agent async shell job capability. Also
+  reachable via `callRuntimeTool` / MCP `tools/call`.
 
 MCP App console (Phase B; read-only status console. Public static HTML/JS/CSS
 entry, NOT behind Bearer auth — like `/openapi.json`. Data is fetched by the
@@ -212,14 +218,14 @@ bash scripts/release_check.sh
 ```
 
 The release gate does not re-count operations statically; the E2E harness
-asserts the invariants: `/openapi.json` has exactly 23 operations and MCP
+asserts the invariants: `/openapi.json` has exactly 25 operations and MCP
 `tools/list` has exactly 25 tools.
 
 Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 473 tests passing, agent binary 23 tests passing.
+- `cargo test`: main binary 475 tests passing, agent binary 23 tests passing.
   (Phase 4 added tests covering `replace_in_file` / `write_project_file`
   parsing, path validation, agent routing, capability checks, helper-script
   semantics, and the runtime-only REST wrappers. Phase 6 hardening added
@@ -253,8 +259,8 @@ bash -n scripts/smoke_deployment.sh
 
 Current E2E smoke result:
 
-- `bash scripts/e2e_zero_config_ws.sh`: 98 passed / 0 failed.
-- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 98 passed / 0
+- `bash scripts/e2e_zero_config_ws.sh`: 108 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 108 passed / 0
   failed.
 
 The E2E smoke now includes a "full-auto coding loop smoke" stage (section 7h)
@@ -266,7 +272,11 @@ that simulates a GPT Actions auto-coding loop using ONLY dedicated endpoints
 (`validateProjectPatch` → `applyProjectPatchChecked` →
 `getProjectGitDiffSummary` → `deleteProjectFiles` →
 `getProjectGitDiffSummary`). The worktree returns to its clean baseline at
-the end of both sub-loops.
+the end of both sub-loops. A dedicated `writeProjectFile` +
+`startProjectShellJob` smoke (section 7i) exercises the two newly promoted
+actions: create → read → overwrite-with-guard → read → delete, then start an
+async `printf job-ok` job, poll `getRuntimeJobStatus` to completion, and
+confirm output via `getRuntimeJobTail`.
 
 The `/openapi.json` schema check in the E2E smoke now also asserts:
 `additionalProperties=false` on every requestBody schema, unique operationIds,
@@ -308,13 +318,16 @@ Behavior:
   (`validateProjectPatch`); `/openapi.json` grew from 12 to 22 ops. Phase 4 adds
   `replace_in_file` / `write_project_file` as runtime-only tools. Phase 5
   promotes `replace_in_file` to a dedicated GPT Action
-  (`replaceProjectFileText`), so the OpenAPI op count is now 23 and MCP
+  (`replaceProjectFileText`), so the OpenAPI op count became 23 and MCP
   `tools/list` is 25. Phase 7 hardens the GPT Actions contract guard
   (every requestBody schema must have `additionalProperties=false`; every
   read-only action description must say "read-only" or "never writes"; every
   mutation action description must mention side effects + Bearer auth) and
-  adds the full-auto coding loop E2E smoke — but does not change the op count
-  (23) or MCP tool count (25).
+  adds the full-auto coding loop E2E smoke — but did not change the op count
+  (23) or MCP tool count (25). This phase promotes `write_project_file`
+  (`writeProjectFile`) and `run_job` (`startProjectShellJob`) to dedicated
+  GPT Actions, bringing the OpenAPI op count to 25; MCP `tools/list` stays
+  25 (no new runtime tool).
 - Capability: requires the agent `shell` capability (same as `apply_patch`,
   since the dry-run runs `git apply --check` via the agent shell path). Owner
   boundary checks are reused from `authorize_agent_tool`.
@@ -390,7 +403,7 @@ Prefer this order:
    `runtime_status` keeps the agent `online` across idle periods. If it flips
    to `stale`, inspect reverse-proxy WebSocket upgrade/timeouts and agent logs
    before changing code.
-3. Import `/openapi.json` into ChatGPT GPT Actions and verify the 23 operation
+3. Import `/openapi.json` into ChatGPT GPT Actions and verify the 25 operation
    schema works against the public deployment.
 4. Test the optional real Codex CLI path with a low-risk prompt. Codex remains
    optional; most development work should still function through typed

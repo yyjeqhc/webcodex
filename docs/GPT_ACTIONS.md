@@ -37,7 +37,7 @@ DROP_PUBLIC_URL="https://drop.example.com" cargo run --bin private-drop
 
 ## Operations
 
-The schema exposes a small, stable set of operation ids (23),
+The schema exposes a small, stable set of operation ids (25),
 grouped by recommended call flow. GPT Actions and MCP are peer surfaces over
 the same `ToolRuntime`: GPT Actions expose selected typed OpenAPI operations,
 while MCP exposes the runtime tool set directly through `tools/list` and
@@ -76,6 +76,8 @@ requires the Codex CLI on the agent host.
 | `gitRestorePaths` | `POST /api/projects/git_restore_paths` | `git restore` selected tracked paths. **Mutation with side effects; Bearer auth + agent shell capability required.** |
 | `discardUntrackedFiles` | `POST /api/projects/discard_untracked` | `git clean -f` selected untracked files. **Mutation with side effects; Bearer auth + agent shell capability required.** |
 | `replaceProjectFileText` | `POST /api/projects/replace_in_file` | Replace a unique substring in a project file via the owning agent. **Mutation with side effects; Bearer auth + agent shell capability required. Fails without writing when `old` is missing or ambiguous; rejects sensitive paths.** |
+| `writeProjectFile` | `POST /api/projects/write_file` | Write a UTF-8 project file (create or overwrite) via the owning agent. **Mutation with side effects; Bearer auth + agent shell capability required. Use `expected_sha256` / `expected_content_prefix` to guard overwrites; rejects sensitive paths.** |
+| `startProjectShellJob` | `POST /api/projects/run_job` | Start an async background shell job and return a `job_id`. **Execution with side effects; Bearer auth + agent async shell job capability required. Poll with `getRuntimeJobStatus`; read output with `getRuntimeJobTail` / `getRuntimeJobLog`.** |
 
 ### Advanced escape hatch
 
@@ -104,11 +106,15 @@ requires the Codex CLI on the agent host.
    `discardUntrackedFiles` over ad hoc `rm` or broad shell.
 10. For simple text edits, prefer `replaceProjectFileText` / `replace_in_file`
     over `runProjectShellCommand` `sed`/`awk`/`python` one-liners — it is safer
-    and refuses to write on a missing/ambiguous match. Use `write_project_file`
-    (via `callRuntimeTool` / MCP `tools/call`) to create new files (or overwrite
-    with an `expected_sha256` guard). `replace_in_file` is a dedicated GPT
-    Action; `write_project_file` remains runtime-only.
-11. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
+    and refuses to write on a missing/ambiguous match. Use `writeProjectFile`
+    / `write_file` to create new files (or overwrite with an `expected_sha256`
+    guard). Both `replace_in_file` and `write_file` are now dedicated GPT
+    Actions.
+11. For long-running commands, prefer `startProjectShellJob` (`run_job`) over
+    blocking `runProjectShellCommand` — it starts an async job and returns a
+    `job_id` you can poll with `getRuntimeJobStatus` and read with
+    `getRuntimeJobTail` / `getRuntimeJobLog`.
+12. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
     `getRuntimeJobLog`, when Codex CLI is installed and a larger delegated
     task is desired.
 
@@ -158,6 +164,13 @@ Key recommendations:
 - **Small text edits**: prefer `replaceProjectFileText` over
   `runProjectShellCommand` with `sed`/`awk`/`python` — it is safer, rejects
   ambiguous matches, and never interpolates content into the shell command.
+- **New file creation**: use `writeProjectFile` to create new files (or
+  overwrite an existing one with an `expected_sha256` guard). It is safer than
+  assembling raw shell `cat`/heredoc via `runProjectShellCommand`.
+- **Long-running commands**: prefer `startProjectShellJob` over blocking
+  `runProjectShellCommand` — it starts an async job and returns a `job_id`
+  you can poll with `getRuntimeJobStatus` and read with `getRuntimeJobTail` /
+  `getRuntimeJobLog`.
 - **Multi-file or complex changes**: prefer `validateProjectPatch` →
   `applyProjectPatchChecked` over raw `applyProjectPatch` — the preflight
   catches context mismatches before any file is touched.
@@ -187,10 +200,14 @@ complete the full core coding loop using only dedicated typed actions; reach for
   simple text edits: the command is a fixed helper, `old`/`new` travel over
   stdin (never interpolated into the shell command), sensitive paths are
   rejected, and the file is left untouched when `old` is missing or ambiguous.
-- `write_project_file` (Phase 4 structured-edit tool; runtime-only — not a
-  dedicated GPT Action, reachable via `callRuntimeTool` / MCP `tools/call`).
-  Use it to create new files or overwrite with an `expected_sha256` /
-  `expected_content_prefix` guard.
+- `write_project_file` (Phase 4 structured-edit tool; now a dedicated GPT
+  Action `writeProjectFile`, also reachable via `callRuntimeTool` / MCP
+  `tools/call`). Use it to create new files or overwrite with an
+  `expected_sha256` / `expected_content_prefix` guard.
+- `run_job` (runtime async-job tool; now a dedicated GPT Action
+  `startProjectShellJob`, also reachable via `callRuntimeTool` / MCP
+  `tools/call`). Prefer it over blocking `run_shell` for long-running commands;
+  it returns a `job_id` to poll with `job_status` / `job_tail` / `job_log`.
 
 ### Request shapes
 
@@ -337,13 +354,11 @@ business logic is duplicated, and owner/capability checks stay centralized in
 
 Tests in `src/openapi.rs` assert:
 
-- The operation-id set matches the documented set exactly (23 operations).
-- The operation count is exactly 23 and never exceeds 30. Phase 5 promotes
+- The operation-id set matches the documented set exactly (25 operations).
+- The operation count is exactly 25 and never exceeds 30. Phase 5 promotes
   `replace_in_file` to a dedicated GPT Action (`replaceProjectFileText`).
-  `write_project_file` remains a **runtime-only** tool (reachable via
-  `callRuntimeTool` / MCP `tools/call`) and is intentionally NOT promoted to a
-  dedicated GPT Action; its endpoint `POST /api/projects/write_file` is listed
-  in the forbidden-paths guard so it can never leak into the schema.
+  This phase promotes `write_project_file` (`writeProjectFile`) and `run_job`
+  (`startProjectShellJob`) to dedicated GPT Actions, bringing the count to 25.
 - Every operationId is unique (no duplicates).
 - Every operation description is <= 300 chars.
 - Every operation is POST-only.
@@ -355,8 +370,10 @@ Tests in `src/openapi.rs` assert:
 - Bearer auth is present and globally enabled.
 - No legacy/non-GPT-Actions paths appear in the schema (file-drop, desktop,
   raw shell, codex command/context, agent protocol routes, `/mcp`,
-  `/openapi.json`, `/console`, `/api/jobs/stop`, `/api/audit/*`,
-  `/api/projects/write_file`).
+  `/openapi.json`, `/console`, `/api/jobs/stop`, `/api/audit/*`).
+  `/api/projects/write_file` and `/api/projects/run_job` are now dedicated GPT
+  Actions (`writeProjectFile` / `startProjectShellJob`) and are no longer
+  forbidden.
 - `callRuntimeTool` declares `params` as an OpenAPI 3.1 object accepting
   arbitrary tool arguments, plus an `arguments` compatibility alias (`params`
   wins when both are present).
@@ -370,7 +387,7 @@ Tests in `src/openapi.rs` assert:
 - Key actions ship request examples so ChatGPT has concrete templates.
 
 The E2E smoke (`scripts/e2e_zero_config_ws.sh`) re-checks the live
-`/openapi.json` for the same invariants: operation count 23, unique
+`/openapi.json` for the same invariants: operation count 25, unique
 operationIds, POST-only, description <= 300 chars,
 `additionalProperties=false` on every requestBody schema, mutation descriptions
 mention side effects + Bearer auth, read-only descriptions mention read-only,

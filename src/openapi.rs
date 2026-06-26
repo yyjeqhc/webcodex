@@ -114,7 +114,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation(
                     "listRuntimeTools",
                     "List runtime tools",
-                    "Returns the MCP-compatible tool list exposed by the server. Useful for discovering every tool name accepted by callRuntimeTool. GPT Actions normally do not need this if the dedicated actions cover the task.",
+                    "Returns the MCP-compatible tool list plus `names`, `count`, `categories`, and `recommended_flows`. Useful for discovering every tool name accepted by callRuntimeTool and their groupings. GPT Actions normally do not need this if the dedicated actions cover the task.",
                     "EmptyRequest",
                     "ToolsListResponse"
                 )
@@ -342,6 +342,21 @@ fn build_openapi_spec() -> Value {
                                     "path": "README.md"
                                 }
                             }
+                        },
+                        "argumentsAlias": {
+                            "summary": "MCP-style arguments alias (params wins when both present)",
+                            "value": {
+                                "tool": "git_diff_summary",
+                                "arguments": {
+                                    "project": "private-drop"
+                                }
+                            }
+                        },
+                        "noParams": {
+                            "summary": "Argument-less tool; omit params",
+                            "value": {
+                                "tool": "list_tools"
+                            }
                         }
                     })
                 )
@@ -450,15 +465,22 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name; `params` is the tool-specific arguments object.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. Omit both (or send null) for argument-less tools like list_tools.",
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, list_projects, runtime_status, read_file, git_status, git_diff, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, list_projects, runtime_status, read_file, git_status, git_diff, git_diff_summary, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
                 "params": {
                     "type": "object",
-                    "description": "Tool-specific arguments object. Omit or send {} for tools that take no arguments (list_tools, list_projects, list_agents).",
+                    "description": "Tool-specific arguments object. Takes precedence over `arguments` when both are present. Omit or send {} for argument-less tools (list_tools, list_projects, list_agents).",
+                    "nullable": true,
+                    "additionalProperties": true
+                },
+                "arguments": {
+                    "type": "object",
+                    "description": "Compatibility alias for `params`. Used only when `params` is absent; ignored otherwise. Useful for MCP-style callers that send `arguments`.",
+                    "nullable": true,
                     "additionalProperties": true
                 }
             }
@@ -634,12 +656,35 @@ fn schemas() -> Value {
         },
         "ToolsListResponse": {
             "type": "object",
-            "required": ["success", "tools"],
+            "required": ["success", "tools", "names", "count"],
+            "description": "Runtime tool list. `tools` is the full MCP-compatible ToolSpec list (back-compat). `names` is just the tool name strings, `count` is the tool count, `categories` groups tools by family, and `recommended_flows` lists short GPT flow hints.",
             "properties": {
                 "success": { "type": "boolean" },
                 "tools": {
                     "type": "array",
                     "items": { "$ref": "#/components/schemas/ToolSpec" }
+                },
+                "names": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Accepted runtime tool names, in spec order."
+                },
+                "count": {
+                    "type": "integer",
+                    "description": "Number of tools in `tools`/`names`."
+                },
+                "categories": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "array",
+                        "items": { "type": "string" }
+                    },
+                    "description": "Optional grouping by family: inspect, git, patch, shell, jobs, runtime, cleanup. A tool may appear in more than one category."
+                },
+                "recommended_flows": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional short GPT flow hints for common tool sequences."
                 }
             }
         },
@@ -1077,6 +1122,7 @@ mod tests {
         );
         let params = &properties["params"];
         assert_eq!(params["type"], "object", "params must be type object");
+        assert_eq!(params["nullable"], true, "params must allow null");
         assert_eq!(
             params["additionalProperties"], true,
             "params must allow arbitrary object properties"
@@ -1085,6 +1131,93 @@ mod tests {
         // omit it for argument-less tools).
         let required = tool_call["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v == "tool"));
+    }
+
+    #[test]
+    fn openapi_call_runtime_tool_documents_arguments_alias() {
+        // Phase 2: ToolCallRequest must document the `arguments` compatibility
+        // alias and state that `params` wins. Both must be object-typed.
+        let spec = build_openapi_spec();
+        let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(
+            properties.contains_key("arguments"),
+            "ToolCallRequest must declare an `arguments` alias property"
+        );
+        let arguments = &properties["arguments"];
+        assert_eq!(arguments["type"], "object", "arguments must be type object");
+        assert_eq!(arguments["nullable"], true, "arguments must allow null");
+        assert_eq!(
+            arguments["additionalProperties"], true,
+            "arguments must allow arbitrary object properties"
+        );
+        let desc_blob =
+            serde_json::to_string(&spec["components"]["schemas"]["ToolCallRequest"]).unwrap();
+        assert!(
+            desc_blob.contains("params") && desc_blob.contains("precedence"),
+            "ToolCallRequest description must document params precedence over arguments"
+        );
+    }
+
+    #[test]
+    fn openapi_tools_list_response_includes_names_count_categories_flows() {
+        // Phase 2: ToolsListResponse must declare names/count (required) and
+        // categories/recommended_flows (optional), while keeping `tools` for
+        // backward compatibility.
+        let spec = build_openapi_spec();
+        let resp = &spec["components"]["schemas"]["ToolsListResponse"];
+        let required = resp["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "tools"));
+        assert!(required.iter().any(|v| v == "names"));
+        assert!(required.iter().any(|v| v == "count"));
+        let props = resp["properties"].as_object().unwrap();
+        assert!(props.contains_key("tools"));
+        assert!(props.contains_key("names"));
+        assert!(props.contains_key("count"));
+        assert!(props.contains_key("categories"));
+        assert!(props.contains_key("recommended_flows"));
+    }
+
+    #[test]
+    fn openapi_operation_count_remains_twelve() {
+        // Phase 2 must NOT add dedicated GPT Actions; the schema stays at 12.
+        let spec = build_openapi_spec();
+        let count: usize = spec["paths"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|m| m.as_object().unwrap().len())
+            .sum();
+        assert_eq!(count, 12, "GPT Actions schema must stay at 12 operations");
+    }
+
+    #[test]
+    fn openapi_call_runtime_tool_examples_cover_alias_and_no_params() {
+        // Phase 2: callRuntimeTool examples should demonstrate the arguments
+        // alias and the argument-less (params omitted) shapes so a custom GPT
+        // has concrete templates for both.
+        let spec = build_openapi_spec();
+        let examples = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
+            ["application/json"]["examples"];
+        let keys: Vec<&str> = examples
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(|k| k.as_str())
+            .collect();
+        assert!(
+            keys.iter()
+                .any(|k| examples[*k]["value"]["arguments"].is_object()),
+            "callRuntimeTool examples should include an arguments-alias variant"
+        );
+        assert!(
+            keys.iter().any(|k| {
+                let v = &examples[*k]["value"];
+                v["tool"].as_str() == Some("list_tools") && v.get("params").is_none()
+            }),
+            "callRuntimeTool examples should include an argument-less variant"
+        );
     }
 
     #[test]

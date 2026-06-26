@@ -6,11 +6,21 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
+/// Generic runtime tool call body. `tool` is required; `params` carries the
+/// tool-specific arguments. `arguments` is accepted as a compatibility alias
+/// for `params` — when both are present, `params` wins. Parsing is done
+/// manually in `tools_call` (via `extract_tool_call`) so the
+/// params-over-arguments precedence and the rich error messages stay explicit.
+/// The OpenAPI `ToolCallRequest` schema documents the same wire shape.
 #[derive(Debug, Deserialize)]
+#[allow(dead_code)]
 struct ToolCallRequest {
     pub tool: String,
     #[serde(default)]
     pub params: Value,
+    /// Compatibility alias for `params`. Ignored when `params` is present.
+    #[serde(default)]
+    pub arguments: Value,
 }
 
 #[derive(Debug, Deserialize)]
@@ -168,9 +178,16 @@ pub async fn tools_list(depot: &mut Depot, res: &mut Response) {
         ));
         return;
     };
+    let specs = runtime.tool_specs();
+    let names: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
+    let count = specs.len();
     res.render(Json(json!({
         "success": true,
-        "tools": runtime.tool_specs(),
+        "tools": specs,
+        "names": names,
+        "count": count,
+        "categories": runtime.tool_categories(),
+        "recommended_flows": ToolRuntime::recommended_flows(),
     })));
 }
 
@@ -185,7 +202,11 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
         ));
         return;
     };
-    let body: ToolCallRequest = match req.parse_json().await {
+    // Parse the body as a raw JSON value so we can apply the params/arguments
+    // precedence rule explicitly and emit field-aware errors that include the
+    // tool name. We never echo the raw body back, so tokens/headers/env never
+    // leak through error messages.
+    let body: Value = match req.parse_json().await {
         Ok(body) => body,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
@@ -196,7 +217,15 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     };
-    let call = match ToolCall::from_tool_name(&body.tool, body.params) {
+    let (tool, params) = match extract_tool_call(&body) {
+        Ok(pair) => pair,
+        Err(msg) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, msg));
+            return;
+        }
+    };
+    let call = match ToolCall::from_tool_name(&tool, params) {
         Ok(call) => call,
         Err(e) => {
             res.status_code(StatusCode::BAD_REQUEST);
@@ -207,7 +236,45 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
     let project = tool_project(&call);
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime.dispatch_with_auth(call, auth.as_ref()).await;
-    render_result(res, &audit, &body.tool, project, result);
+    render_result(res, &audit, &tool, project, result);
+}
+
+/// Extract `(tool, params)` from a raw `callRuntimeTool` request body.
+///
+/// Accepted shapes (all route to the same tool dispatch):
+/// - `{"tool":"list_tools"}`
+/// - `{"tool":"list_tools","params":null}`
+/// - `{"tool":"git_diff_summary","params":{"project":"agent:c:p"}}`
+/// - `{"tool":"git_diff_summary","arguments":{"project":"agent:c:p"}}`
+///
+/// When both `params` and `arguments` are present, `params` wins; `arguments`
+/// is only a compatibility alias. Returns a human-readable error string (never
+/// including the raw body) when the body is not a JSON object or `tool` is
+/// missing/not a non-empty string.
+fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
+    let obj = body
+        .as_object()
+        .ok_or_else(|| "request body must be a JSON object".to_string())?;
+    let tool = match obj.get("tool") {
+        Some(v) => match v.as_str() {
+            Some(s) if !s.is_empty() => s.to_string(),
+            _ => {
+                return Err("field 'tool' must be a non-empty string".to_string());
+            }
+        },
+        None => {
+            return Err("missing required field 'tool'".to_string());
+        }
+    };
+    // params takes precedence over the `arguments` alias.
+    let params = if obj.contains_key("params") {
+        obj.get("params").cloned().unwrap_or(Value::Null)
+    } else if obj.contains_key("arguments") {
+        obj.get("arguments").cloned().unwrap_or(Value::Null)
+    } else {
+        Value::Null
+    };
+    Ok((tool, params))
 }
 
 #[handler]
@@ -937,6 +1004,8 @@ mod tests {
             .push(
                 Router::with_path("api")
                     .hoop(crate::AuthMiddleware)
+                    .push(Router::with_path("tools/list").post(tools_list))
+                    .push(Router::with_path("tools/call").post(tools_call))
                     .push(Router::with_path("projects/list").post(projects_list))
                     .push(Router::with_path("projects/read_file").post(projects_read_file))
                     .push(Router::with_path("projects/git_status").post(projects_git_status))
@@ -1464,5 +1533,267 @@ mod tests {
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], false);
+    }
+
+    // =========================================================================
+    // Phase 2: callRuntimeTool / /api/tools/call generic entry point
+    // =========================================================================
+
+    fn phase2_service() -> (tempfile::TempDir, salvo::Service) {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+        (_tmp, service)
+    }
+
+    #[tokio::test]
+    async fn http_tools_list_returns_names_and_count() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/list")
+            .bearer_auth("secret")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert!(
+            body["tools"].is_array(),
+            "tools array must remain for back-compat"
+        );
+        assert!(body["names"].is_array(), "names array must be present");
+        let names = body["names"].as_array().unwrap();
+        assert!(!names.is_empty(), "names must not be empty");
+        assert!(names.iter().any(|n| n == "list_tools"));
+        assert!(names.iter().any(|n| n == "git_diff_summary"));
+        assert_eq!(body["count"], names.len());
+        // Optional enrichment fields.
+        assert!(body["categories"].is_object(), "categories must be present");
+        assert!(
+            body["recommended_flows"].is_array(),
+            "recommended_flows must be present"
+        );
+        // names and tools must stay in sync.
+        let tools_count = body["tools"].as_array().unwrap().len();
+        assert_eq!(tools_count, names.len());
+    }
+
+    #[tokio::test]
+    async fn http_tools_list_requires_bearer_auth() {
+        let (_tmp, service) = phase2_service();
+        let resp = TestClient::post("http://localhost/api/tools/list")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_params_omitted_works_for_list_tools() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "list_tools"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert!(body["output"]["tools"].is_array());
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_params_null_works_for_list_tools() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "list_tools", "params": null}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert!(body["output"]["tools"].is_array());
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_arguments_alias_works() {
+        // `arguments` is accepted as a compatibility alias for `params`.
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "list_tools", "arguments": null}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_params_wins_over_arguments() {
+        // When both params and arguments are present, params wins. Use a tool
+        // whose params shape we can distinguish: git_diff_summary takes a
+        // `project`. The runtime returns a structured error for an unknown
+        // project, but the project string from `params` is what gets routed,
+        // so we assert the error names the params project (not the arguments
+        // one).
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "git_diff_summary",
+                "params": {"project": "agent:params-wins:p"},
+                "arguments": {"project": "agent:arguments-loses:p"},
+            }))
+            .send(&service)
+            .await;
+        // Authenticated + dispatched to ToolRuntime (structured error, not 401).
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        let err = body["error"].as_str().unwrap();
+        assert!(
+            err.contains("params-wins"),
+            "params must win over arguments; error was: {}",
+            err
+        );
+        assert!(
+            !err.contains("arguments-loses"),
+            "arguments must not be used when params present; error was: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_unknown_tool_returns_useful_error() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "definitely_not_a_tool"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        let err = body["error"].as_str().unwrap();
+        assert!(
+            err.contains("definitely_not_a_tool"),
+            "error must name the tool"
+        );
+        // Must point the caller at discovery and list available tools.
+        assert!(
+            err.contains("listRuntimeTools") || err.contains("list_tools"),
+            "error should hint at discovery: {}",
+            err
+        );
+        assert!(
+            err.contains("git_diff_summary"),
+            "error should list available tools: {}",
+            err
+        );
+        // Must not leak secrets / config artifacts.
+        let lower = err.to_lowercase();
+        for forbidden in ["token", "authorization", "agent.toml", "drop.env", "secret"] {
+            assert!(
+                !lower.contains(&forbidden),
+                "unknown-tool error must not leak '{}': {}",
+                forbidden,
+                err
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_missing_required_field_names_tool_and_field() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "run_shell", "params": {"command": "echo"}}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        let err = body["error"].as_str().unwrap();
+        assert!(
+            err.contains("run_shell"),
+            "error must name the tool: {}",
+            err
+        );
+        assert!(
+            err.contains("project"),
+            "error must name the missing field: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_wrong_field_type_names_tool() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "run_shell", "params": {"project": 123, "command": "echo"}}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        let err = body["error"].as_str().unwrap();
+        assert!(
+            err.contains("run_shell"),
+            "wrong-type error must name the tool: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_missing_tool_field_returns_field_error() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"params": {}}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        let err = body["error"].as_str().unwrap();
+        assert!(
+            err.contains("tool"),
+            "error must mention the missing 'tool' field: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_git_diff_summary_dispatches() {
+        // callRuntimeTool routes git_diff_summary to the runtime. With an
+        // unknown agent project the runtime returns a structured error (not a
+        // 401/404), proving the generic path deserializes + dispatches.
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "git_diff_summary",
+                "params": {"project": "agent:nope:nope"}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(
+            body["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "git_diff_summary should return a structured runtime error"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_requires_bearer_auth() {
+        let (_tmp, service) = phase2_service();
+        let resp = TestClient::post("http://localhost/api/tools/call")
+            .json(&json!({"tool": "list_tools"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
     }
 }

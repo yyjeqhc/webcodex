@@ -796,11 +796,32 @@ if missing:
 if extra:
     errors.append(f"unexpected operationIds: {sorted(extra)}")
 
-# Forbidden legacy/admin paths must not appear in the schema paths.
+# Phase 2: operation count must stay small (<= 30) and exactly 12 this phase.
+if len(ops_set) > 30:
+    errors.append(f"too many operations: {len(ops_set)} (must be <= 30)")
+if len(ops_set) != 12:
+    errors.append(f"operation count must be 12 this phase, got {len(ops_set)}")
+
+# Phase 2: each operation description must fit the <= 300 char budget.
+for path, methods in schema.get("paths", {}).items():
+    for method, op in methods.items():
+        desc = op.get("description", "") or ""
+        if len(desc) > 300:
+            errors.append(
+                f"{method} {path} operationId {op.get('operationId')} "
+                f"description too long: {len(desc)} chars"
+            )
+
+# Forbidden legacy/admin/internal paths must not appear in the schema paths.
 # validate_patch is a preflight/dry-run tool exposed via MCP + REST, NOT a
 # GPT Action, so it must not appear in /openapi.json.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
-             "/api/jobs/stop", "/api/projects/validate_patch"]
+             "/api/jobs/stop", "/api/projects/validate_patch",
+             "/api/projects/list_files", "/api/projects/search_text",
+             "/api/projects/git_diff_summary", "/api/jobs/list", "/api/jobs/tail",
+             "/api/messages", "/api/files", "/api/desktop/task_op", "/api/desktop/task",
+             "/api/shell/run", "/api/shell/job", "/api/shell/file",
+             "/mcp", "/openapi.json", "/console", "/console/app.js", "/console/styles.css"]
 paths = set(schema.get("paths", {}).keys())
 for fp in forbidden:
     if fp in paths:
@@ -891,6 +912,83 @@ if [ "$(json_get "$status_body" output.agents.stale_count)" != "None" ]; then
     pass "runtime_status exposes agents.stale_count"
 else
     fail "runtime_status missing agents.stale_count"
+fi
+
+# ----------------------------------------------------------------------------
+# 7c. Phase 2: generic callRuntimeTool / /api/tools/list enhancements
+# ----------------------------------------------------------------------------
+
+log "---- Phase 2: callRuntimeTool / tools/list ----"
+
+# /api/tools/list must return names + count alongside the back-compat tools array.
+body="$(api_post /api/tools/list '{}')"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "/api/tools/list returns success"
+else
+    fail "/api/tools/list did not return success (body: ${body:0:300})"
+fi
+tl_names="$(json_get "$body" names)"
+tl_count="$(json_get "$body" count)"
+tl_tools_count="$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("output",{}).get("tools",[]) if isinstance(d.get("output"),dict) else d.get("tools",[])))' 2>/dev/null || echo 0)"
+# tools array is top-level in the tools/list response.
+tl_tools_count="$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("tools",[])))' 2>/dev/null || echo 0)"
+if [ "${tl_count:-0}" -gt 0 ] 2>/dev/null && [ "${tl_count}" = "${tl_tools_count}" ]; then
+    pass "/api/tools/list names/count match tools array (count=$tl_count)"
+else
+    fail "/api/tools/list names/count mismatch (count=$tl_count tools=$tl_tools_count body=${body:0:200})"
+fi
+if echo "$tl_names" | grep -q "git_diff_summary" && echo "$tl_names" | grep -q "list_tools"; then
+    pass "/api/tools/list names include git_diff_summary and list_tools"
+else
+    fail "/api/tools/list names missing expected tools (got: ${tl_names:0:200})"
+fi
+if [ "$(json_get "$body" categories)" != "None" ] && [ "$(json_get "$body" recommended_flows)" != "None" ]; then
+    pass "/api/tools/list includes categories and recommended_flows"
+else
+    fail "/api/tools/list missing categories/recommended_flows (body: ${body:0:200})"
+fi
+
+# callRuntimeTool: params omitted -> list_tools succeeds.
+body="$(api_post /api/tools/call '{"tool":"list_tools"}')"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "callRuntimeTool(list_tools) params omitted succeeds"
+else
+    fail "callRuntimeTool(list_tools) params omitted failed (body: ${body:0:300})"
+fi
+
+# callRuntimeTool: params null -> list_tools succeeds.
+body="$(api_post /api/tools/call '{"tool":"list_tools","params":null}')"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "callRuntimeTool(list_tools) params null succeeds"
+else
+    fail "callRuntimeTool(list_tools) params null failed (body: ${body:0:300})"
+fi
+
+# callRuntimeTool: arguments alias -> list_tools succeeds.
+body="$(api_post /api/tools/call '{"tool":"list_tools","arguments":null}')"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "callRuntimeTool(list_tools) arguments alias succeeds"
+else
+    fail "callRuntimeTool(list_tools) arguments alias failed (body: ${body:0:300})"
+fi
+
+# callRuntimeTool: git_diff_summary against the agent project succeeds.
+body="$(api_post /api/tools/call "{\"tool\":\"git_diff_summary\",\"params\":{\"project\":\"$RUNTIME_PROJECT_ID\"}}")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "callRuntimeTool(git_diff_summary) routes to agent and succeeds"
+else
+    fail "callRuntimeTool(git_diff_summary) failed (body: ${body:0:300})"
+fi
+
+# callRuntimeTool: unknown tool returns a useful error (not a 5xx / empty).
+body="$(api_post /api/tools/call '{"tool":"definitely_not_a_tool"}')"
+unk_err="$(json_get "$body" error)"
+if [ -n "$unk_err" ] && [ "$unk_err" != "None" ] && \
+   echo "$unk_err" | grep -q "definitely_not_a_tool" && \
+   (echo "$unk_err" | grep -q "listRuntimeTools" || echo "$unk_err" | grep -q "list_tools"); then
+    pass "callRuntimeTool(unknown tool) returns useful discovery hint"
+else
+    fail "callRuntimeTool(unknown tool) error not useful (got: ${unk_err:0:200})"
 fi
 
 # ----------------------------------------------------------------------------

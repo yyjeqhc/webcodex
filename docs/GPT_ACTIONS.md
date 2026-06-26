@@ -47,7 +47,7 @@ agent host.
 
 | Flow step | operationId | Path | Purpose |
 |-----------|-------------|------|---------|
-| Discovery | `listRuntimeTools` | `POST /api/tools/list` | List every runtime tool name (advanced). |
+| Discovery | `listRuntimeTools` | `POST /api/tools/list` | List every runtime tool name plus `names`, `count`, `categories`, and `recommended_flows` (advanced). |
 | Discovery | `listProjects` | `POST /api/projects/list` | List agent-registered project ids. **Call this first.** |
 | Discovery | `getRuntimeStatus` | `POST /api/runtime/status` | Structured runtime health/observability summary (agent client summaries, project counts, job counts). Read-only; never exposes tokens or secrets. |
 | Code task | `runCodexTask` | `POST /api/codex/run` | Start a Codex CLI task, returns `job_id`. **Optional advanced action; requires Codex CLI on the agent host.** |
@@ -88,10 +88,36 @@ basic read/diff/patch/test workflows.
 
 - `list_tools`, `list_projects`, `list_agents`, `runtime_status`
 - `run_shell`, `run_job`, `run_codex`
-- `job_status`, `job_log`
-- `read_file`, `git_status`, `git_diff`
+- `job_status`, `job_log`, `list_jobs`, `job_tail`
+- `read_file`, `git_status`, `git_diff`, `git_diff_summary`
+- `list_project_files`, `search_project_text`
 - `validate_patch`, `apply_patch_checked`, `apply_patch`
 - `delete_project_files`, `git_restore_paths`, `discard_untracked`
+
+### Request shapes
+
+`callRuntimeTool` accepts several equivalent request shapes so a custom GPT
+can call it even when the OpenAI schema layer drops or renames fields:
+
+- `{"tool":"list_tools"}` — params omitted (argument-less tools).
+- `{"tool":"list_tools","params":null}` — explicit null params.
+- `{"tool":"git_diff_summary","params":{"project":"agent:c:p"}}` — standard form.
+- `{"tool":"git_diff_summary","arguments":{"project":"agent:c:p"}}` — MCP-style
+  `arguments` alias.
+
+`arguments` is a compatibility alias for `params`. When both `params` and
+`arguments` are present, **`params` wins**; `arguments` is only used when
+`params` is absent. Omit both (or send `null`) for argument-less tools like
+`list_tools`, `list_projects`, `list_agents`, `runtime_status`.
+
+### Error messages
+
+Errors are field-aware and never echo the raw request body, token, env,
+`agent.toml`, or the `Authorization` header:
+
+- Unknown tool → lists every accepted tool name and points at `listRuntimeTools`.
+- Missing required field → names both the tool and the missing field.
+- Wrong field type → names the tool.
 
 `validate_patch` is a runtime/MCP tool rather than a dedicated GPT Action today.
 It is a dry-run patch preflight: it does not modify the worktree and is suitable
@@ -210,7 +236,10 @@ Tests in `src/openapi.rs` assert:
   raw shell, codex command/context, agent protocol routes, `/mcp`,
   `/openapi.json`).
 - `callRuntimeTool` declares `params` as an OpenAPI 3.1 object accepting
-  arbitrary tool arguments.
+  arbitrary tool arguments, plus an `arguments` compatibility alias (`params`
+  wins when both are present).
+- `listRuntimeTools` returns `tools` (back-compat), `names`, `count`,
+  `categories`, and `recommended_flows`.
 - Executable actions (`applyProjectPatch`, `runProjectShellCommand`) describe
   their execution risk and auth requirement.
 - Key actions ship request examples so ChatGPT has concrete templates.

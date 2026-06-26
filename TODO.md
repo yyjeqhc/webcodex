@@ -82,6 +82,13 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       `delete_project_files`, `git_restore_paths`, and `discard_untracked`
       are runtime/MCP-only cleanup tools. See
       [docs/MCP_APP_CONSOLE_PLAN.md](docs/MCP_APP_CONSOLE_PLAN.md).
+- [x] Harden generic `callRuntimeTool` / `/api/tools/call` (Phase 2):
+      supports omitted/null `params`, `arguments` alias with `params`
+      precedence, richer unknown-tool and field errors, and enhanced
+      `/api/tools/list` output (`tools`, `names`, `count`, `categories`,
+      `recommended_flows`). `/openapi.json` remains 12 ops; MCP tools remain
+      23. Local E2E passes 53/53 over both transports; `cargo test` passes
+      430 main + 23 agent tests.
 
 ### Deprecated (not active features)
 

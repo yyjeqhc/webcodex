@@ -23,7 +23,7 @@ runtime project source again.
 Latest known baseline when this file was written:
 
 - Branch: `v2-mcp-runtime`
-- Commit: current `HEAD` (`Add safer runtime patch and cleanup tools`)
+- Commit: current `HEAD` (`Harden generic runtime tool calls`)
 - Main binary: `private-drop`
 - Agent binary: `private-drop-agent`
 
@@ -79,6 +79,12 @@ Important runtime endpoints:
 - `POST /api/tools/list`
 - `POST /api/tools/call`
 - `POST /mcp`
+
+GPT Actions `callRuntimeTool` (`POST /api/tools/call`) is the advanced generic
+entry point. It accepts `params` omitted, `params: null`, or `arguments` as a
+compatibility alias. If both `params` and `arguments` are present, `params`
+wins. `listRuntimeTools` (`POST /api/tools/list`) returns `tools`, `names`,
+`count`, `categories`, and `recommended_flows`.
 
 MCP App console read-only tools (Phase A; thin REST wrappers over
 `ToolRuntime`, also exposed via MCP `tools/list`. Not GPT Actions —
@@ -186,7 +192,7 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 401 tests passing, agent binary 23 tests passing.
+- `cargo test`: main binary 430 tests passing, agent binary 23 tests passing.
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -208,8 +214,8 @@ bash -n scripts/smoke_deployment.sh
 
 Current E2E smoke result:
 
-- `bash scripts/e2e_zero_config_ws.sh`: 44 passed / 0 failed.
-- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 44 passed / 0
+- `bash scripts/e2e_zero_config_ws.sh`: 53 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 53 passed / 0
   failed.
 
 ## validate_patch (patch preflight / dry-run)

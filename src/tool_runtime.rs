@@ -190,8 +190,58 @@ pub enum ToolCall {
     RuntimeStatus,
 }
 
+/// The exact, ordered set of runtime tool names accepted by
+/// `ToolCall::from_tool_name`. Kept in sync with the `ToolCall` variants
+/// (which use `#[serde(rename_all = "snake_case")]`). Used to produce helpful
+/// "unknown tool" errors that list every accepted name instead of leaking a
+/// raw serde variant error.
+pub const KNOWN_TOOL_NAMES: &[&str] = &[
+    "list_tools",
+    "run_shell",
+    "apply_patch",
+    "apply_patch_checked",
+    "delete_project_files",
+    "git_restore_paths",
+    "discard_untracked",
+    "validate_patch",
+    "git_status",
+    "git_diff",
+    "read_file",
+    "run_job",
+    "run_codex",
+    "job_status",
+    "job_log",
+    "list_project_files",
+    "search_project_text",
+    "git_diff_summary",
+    "list_jobs",
+    "job_tail",
+    "list_projects",
+    "list_agents",
+    "runtime_status",
+];
+
+/// Returns `true` if `name` is a recognized runtime tool name. Public so the
+/// HTTP/MCP adapters can decide whether to emit the rich "unknown tool" error.
+pub fn is_known_tool_name(name: &str) -> bool {
+    KNOWN_TOOL_NAMES.iter().any(|n| *n == name)
+}
+
 impl ToolCall {
     pub fn from_tool_name(name: &str, arguments: Value) -> Result<Self, String> {
+        // Reject unknown tool names up front with a helpful message that lists
+        // every accepted tool and points the caller at listRuntimeTools. This
+        // avoids leaking a raw serde "unknown variant" error and gives custom
+        // GPTs an actionable discovery hint.
+        if !is_known_tool_name(name) {
+            return Err(format!(
+                "unknown tool '{}'. Available tools: {}. Call listRuntimeTools \
+                 (POST /api/tools/list) or the list_tools runtime tool to \
+                 discover accepted tool names.",
+                name,
+                KNOWN_TOOL_NAMES.join(", ")
+            ));
+        }
         let mut wrapped = serde_json::Map::new();
         wrapped.insert("tool".to_string(), Value::String(name.to_string()));
         let unit_tool = matches!(
@@ -1093,6 +1143,59 @@ impl ToolRuntime {
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings.", false),
                 ]),
             },
+        ]
+    }
+
+    /// The sorted list of accepted runtime tool names (mirrors `tool_specs`).
+    pub fn tool_names(&self) -> Vec<String> {
+        self.tool_specs().iter().map(|s| s.name.clone()).collect()
+    }
+
+    /// Group every accepted tool name into coarse categories so a custom GPT
+    /// can pick the right tool family at a glance. A tool may appear in more
+    /// than one category. Returned as a JSON object keyed by category.
+    pub fn tool_categories(&self) -> Value {
+        let names = self.tool_names();
+        let pick = |set: &[&str]| -> Vec<String> {
+            set.iter()
+                .filter(|n| names.iter().any(|x| x == **n))
+                .map(|s| s.to_string())
+                .collect()
+        };
+        json!({
+            "inspect": pick(&[
+                "list_tools", "list_projects", "list_agents", "runtime_status",
+                "read_file", "list_project_files", "search_project_text",
+                "git_status", "git_diff", "git_diff_summary"
+            ]),
+            "git": pick(&[
+                "git_status", "git_diff", "git_diff_summary",
+                "git_restore_paths", "discard_untracked"
+            ]),
+            "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
+            "shell": pick(&["run_shell", "run_job"]),
+            "jobs": pick(&[
+                "run_codex", "run_job", "job_status", "job_log",
+                "list_jobs", "job_tail"
+            ]),
+            "runtime": pick(&[
+                "list_tools", "list_projects", "list_agents", "runtime_status"
+            ]),
+            "cleanup": pick(&[
+                "delete_project_files", "git_restore_paths", "discard_untracked"
+            ]),
+        })
+    }
+
+    /// Short, GPT-facing flow hints. Each entry is well under the 300-char
+    /// ToolSpec/operation description budget.
+    pub fn recommended_flows() -> Vec<&'static str> {
+        vec![
+            "Discovery: call list_projects then runtime_status to see agents and projects.",
+            "Inspect: use git_diff_summary then read_file before proposing changes.",
+            "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",
+            "Cleanup: use delete_project_files / git_restore_paths / discard_untracked instead of ad hoc rm.",
+            "Jobs: start run_codex, then poll job_status and read job_log/job_tail.",
         ]
     }
 
@@ -4000,6 +4103,243 @@ mod tests {
                 spec.description.chars().count()
             );
         }
+    }
+
+    // =========================================================================
+    // Phase 2: schema coverage for the generic callRuntimeTool tool set
+    // =========================================================================
+
+    /// Helper: fetch a ToolSpec by name from the runtime.
+    fn spec_named<'a>(specs: &'a [ToolSpec], name: &str) -> &'a ToolSpec {
+        specs
+            .iter()
+            .find(|s| s.name == name)
+            .unwrap_or_else(|| panic!("tool '{}' missing from specs", name))
+    }
+
+    /// Helper: the `required` field of a tool's input schema, as Strings.
+    fn required_fields(spec: &ToolSpec) -> Vec<String> {
+        spec.input_schema["required"]
+            .as_array()
+            .map(|arr| {
+                arr.iter()
+                    .map(|v| v.as_str().unwrap().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
+
+    #[test]
+    fn tool_specs_apply_patch_checked_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "apply_patch_checked");
+        let required = required_fields(spec);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"patch".to_string()));
+        assert!(!required.contains(&"deny_sensitive_paths".to_string()));
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_validate_patch_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "validate_patch");
+        let required = required_fields(spec);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"patch".to_string()));
+        assert!(!required.contains(&"deny_sensitive_paths".to_string()));
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_git_diff_summary_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "git_diff_summary");
+        let required = required_fields(spec);
+        assert_eq!(required, vec!["project".to_string()]);
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_delete_project_files_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "delete_project_files");
+        let required = required_fields(spec);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"paths".to_string()));
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_git_restore_paths_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "git_restore_paths");
+        let required = required_fields(spec);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"paths".to_string()));
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_discard_untracked_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "discard_untracked");
+        let required = required_fields(spec);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"paths".to_string()));
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_list_project_files_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "list_project_files");
+        let required = required_fields(spec);
+        assert_eq!(required, vec!["project".to_string()]);
+        // path/limit are optional.
+        assert!(!required.contains(&"path".to_string()));
+        assert!(!required.contains(&"limit".to_string()));
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_search_project_text_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "search_project_text");
+        let required = required_fields(spec);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"pattern".to_string()));
+        assert!(!required.contains(&"path".to_string()));
+        assert!(!required.contains(&"limit".to_string()));
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_list_jobs_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "list_jobs");
+        let required = required_fields(spec);
+        // list_jobs has only optional fields.
+        assert!(required.is_empty());
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_job_tail_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "job_tail");
+        let required = required_fields(spec);
+        assert_eq!(required, vec!["job_id".to_string()]);
+        assert!(!required.contains(&"tail_lines".to_string()));
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_categories_and_recommended_flows_are_well_formed() {
+        let runtime = test_runtime();
+        let categories = runtime.tool_categories();
+        // Every declared category is a non-empty array of known tool names.
+        let names = runtime.tool_names();
+        for (cat, members) in categories.as_object().unwrap() {
+            let arr = members.as_array().unwrap();
+            assert!(!arr.is_empty(), "category '{}' must not be empty", cat);
+            for m in arr {
+                let name = m.as_str().unwrap();
+                assert!(
+                    names.iter().any(|n| n == name),
+                    "category '{}' lists unknown tool '{}'",
+                    cat,
+                    name
+                );
+            }
+        }
+        // Each expected category is present.
+        for cat in [
+            "inspect", "git", "patch", "shell", "jobs", "runtime", "cleanup",
+        ] {
+            assert!(
+                categories.as_object().unwrap().contains_key(cat),
+                "missing category {}",
+                cat
+            );
+        }
+        // recommended_flows are short and non-empty.
+        let flows = ToolRuntime::recommended_flows();
+        assert!(!flows.is_empty());
+        for flow in &flows {
+            assert!(flow.chars().count() <= 300, "flow too long: {}", flow);
+        }
+    }
+
+    #[test]
+    fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
+        let err = ToolCall::from_tool_name("definitely_not_a_tool", Value::Null).unwrap_err();
+        assert!(err.contains("definitely_not_a_tool"));
+        assert!(
+            err.contains("listRuntimeTools") || err.contains("list_tools"),
+            "unknown-tool error should hint at discovery: {}",
+            err
+        );
+        // Should list at least a couple of known tool names.
+        assert!(err.contains("git_diff_summary"));
+        assert!(err.contains("apply_patch_checked"));
+        // Must not leak secret/config artifacts.
+        let lower = err.to_lowercase();
+        for forbidden in ["token", "authorization", "agent.toml", "drop.env", "secret"] {
+            assert!(
+                !lower.contains(&forbidden),
+                "unknown-tool error must not leak '{}': {}",
+                forbidden,
+                err
+            );
+        }
+    }
+
+    #[test]
+    fn known_tool_names_matches_spec_count() {
+        let runtime = test_runtime();
+        let spec_count = runtime.tool_specs().len();
+        assert_eq!(
+            KNOWN_TOOL_NAMES.len(),
+            spec_count,
+            "KNOWN_TOOL_NAMES must stay in sync with tool_specs()"
+        );
+        // Every known name must be recognized (i.e. must NOT yield the
+        // "unknown tool" error). Unit tools parse with null args; non-unit
+        // tools fail with a missing-field error, which is still a recognition
+        // success (the variant matched).
+        for name in KNOWN_TOOL_NAMES {
+            assert!(
+                is_known_tool_name(name),
+                "known name '{}' not recognized by is_known_tool_name",
+                name
+            );
+            let result = ToolCall::from_tool_name(name, Value::Null);
+            match result {
+                Ok(_) => {}
+                Err(e) => {
+                    assert!(
+                        !e.contains("unknown tool"),
+                        "known tool '{}' was treated as unknown: {}",
+                        name,
+                        e
+                    );
+                }
+            }
+        }
+        // An unknown name must still produce the unknown-tool error.
+        let err = ToolCall::from_tool_name("not_a_real_tool", Value::Null).unwrap_err();
+        assert!(err.contains("unknown tool"));
     }
 
     // =========================================================================

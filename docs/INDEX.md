@@ -27,8 +27,11 @@ surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
    `AgentEnvelope` and the WebSocket lifecycle.
 9. [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — compact handoff notes for future
    coding agents after context compaction or a new window.
-10. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — historical
-   phase-by-phase development plan retained for context.
+10. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation
+    harness (`scripts/e2e_zero_config_ws.sh`): how to run it, env vars, MCP
+    smoke, GPT Actions schema smoke, and mapping to a real ChatGPT import.
+11. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — historical
+    phase-by-phase development plan retained for context.
 
 ## Scope and architecture
 

@@ -179,4 +179,19 @@ Prefer this order:
 4. Real ChatGPT GPT Actions and MCP connection validation.
 5. Deployment hardening docs and examples.
 
+## Priority verification after handoff
+
+After reading this file, run the E2E smoke harness first to confirm the
+runtime still runs end-to-end on a single host before making changes:
+
+```bash
+bash scripts/e2e_zero_config_ws.sh
+```
+
+This boots a real server + WebSocket agent with a stub `CODEX_BIN` (no real
+Codex CLI, no ChatGPT) and exercises the GPT Actions + MCP surface. See
+[docs/E2E_VALIDATION.md](E2E_VALIDATION.md) for details. If it fails, inspect
+the printed server/agent log paths before touching code — the failure is often
+a local environment issue, not a regression.
+
 Avoid broad refactors until real ChatGPT integration has been exercised.

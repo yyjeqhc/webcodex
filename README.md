@@ -432,3 +432,13 @@ transport label is also visible in `runtime_status` and `list_agents`.
 cargo check
 cargo test
 ```
+
+For a real end-to-end smoke (server + WebSocket agent + GPT Actions + MCP on
+one host, with a stub Codex CLI — no ChatGPT or real Codex required):
+
+```bash
+bash scripts/e2e_zero_config_ws.sh
+```
+
+See [docs/E2E_VALIDATION.md](docs/E2E_VALIDATION.md) for what it covers, env
+vars, and how to map the same flow to a real ChatGPT GPT Action import.

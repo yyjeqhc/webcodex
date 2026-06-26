@@ -256,16 +256,27 @@ async fn handle_agent_ws(
         };
         match env {
             AgentEnvelope::Result { payload } => {
+                // `complete` refreshes `last_seen` internally; a redundant
+                // touch here would only add lock contention.
                 if let Err(e) = registry.complete(payload).await {
                     tracing::warn!(client_id = %client_id, error = %e, "ws result rejected");
                 }
             }
             AgentEnvelope::JobUpdate { payload } => {
+                // `update_job` refreshes `last_seen` internally.
                 if let Err(e) = registry.update_job(payload).await {
                     tracing::warn!(client_id = %client_id, error = %e, "ws job_update rejected");
                 }
             }
             AgentEnvelope::Ping { ts } => {
+                // Keepalive: refresh liveness before replying so an idle
+                // WebSocket agent (no pending requests) is not aged out of the
+                // online window by the 60s `CLIENT_ONLINE_WINDOW_SECS` check.
+                // Without this touch, a connected-but-idle agent decays to
+                // `"stale"` even though its socket is healthy.
+                if let Err(e) = registry.touch_client(&client_id).await {
+                    tracing::warn!(client_id = %client_id, error = %e, "ws ping liveness touch failed");
+                }
                 let pong = AgentEnvelope::Pong { ts };
                 if let Ok(json) = pong.to_json() {
                     // Pong is a best-effort keepalive: never block the reader
@@ -274,6 +285,16 @@ async fn handle_agent_ws(
                     // the channel is saturated; the agent treats a missing
                     // pong as a soft liveness signal, not a fatal error.
                     let _ = out_tx.try_send(json);
+                }
+            }
+            AgentEnvelope::Pong { .. } => {
+                // Pong is a normal keepalive response. The server does not
+                // currently originate Pings, but a Pong (e.g. a stray or
+                // future server-initiated ping reply) must still count as
+                // live traffic so the client does not decay to stale, and it
+                // must never be treated as an unexpected envelope.
+                if let Err(e) = registry.touch_client(&client_id).await {
+                    tracing::debug!(client_id = %client_id, error = %e, "ws pong liveness touch failed");
                 }
             }
             AgentEnvelope::Register { .. } => {
@@ -361,6 +382,13 @@ mod tests {
                 ),
             },
         }
+    }
+
+    /// A `last_seen` timestamp comfortably past the 60s online window, used to
+    /// simulate liveness decay without a real sleep. The window constant lives
+    /// in `shell_client` and is private, so we use a generous 2-minute age.
+    fn aged_last_seen() -> i64 {
+        chrono::Utc::now().timestamp() - 120
     }
 
     async fn recv_envelope(
@@ -509,6 +537,167 @@ mod tests {
             AgentEnvelope::Pong { ts } => assert_eq!(ts, 12345),
             other => panic!("expected pong, got {:?}", other),
         }
+
+        // A Ping must refresh liveness: the client stays online.
+        let view = registry.get_client_view("ws-ping").await.unwrap();
+        assert!(view.connected);
+        assert_eq!(view.status, "online");
+        assert_eq!(view.transport, "websocket");
+    }
+
+    #[tokio::test]
+    async fn ws_ping_refreshes_liveness_after_aging() {
+        // Simulate the 60s online window elapsing with only keepalive traffic
+        // by directly aging `last_seen`, then sending a Ping. The server must
+        // refresh liveness so the agent reads online again instead of decaying
+        // to stale. This avoids a real 60s sleep.
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+
+        let url = format!("ws://{}/api/agents/ws", addr);
+        let (mut ws, _resp) = connect_async(url).await.unwrap();
+        ws.send(TungsteniteMessage::Text(
+            register_envelope("ws-age").to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        let _ = recv_envelope(&mut ws).await; // Registered
+
+        // Age past the online window.
+        registry
+            .set_last_seen_for_test("ws-age", aged_last_seen())
+            .await;
+        let stale = registry.get_client_view("ws-age").await.unwrap();
+        assert!(!stale.connected, "client should be stale after aging");
+
+        // A Ping must bring it back online.
+        ws.send(TungsteniteMessage::Text(
+            AgentEnvelope::Ping { ts: 1 }.to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        let pong = recv_envelope(&mut ws).await;
+        assert!(matches!(pong, AgentEnvelope::Pong { .. }));
+
+        let fresh = registry.get_client_view("ws-age").await.unwrap();
+        assert!(fresh.connected);
+        assert_eq!(fresh.status, "online");
+    }
+
+    #[tokio::test]
+    async fn ws_pong_treated_as_keepalive_not_unexpected() {
+        // A Pong from the agent (e.g. a future server-initiated ping reply,
+        // or a stray frame) must be treated as live traffic, never as an
+        // unexpected envelope, and must refresh liveness. The connection must
+        // stay open.
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+
+        let url = format!("ws://{}/api/agents/ws", addr);
+        let (mut ws, _resp) = connect_async(url).await.unwrap();
+        ws.send(TungsteniteMessage::Text(
+            register_envelope("ws-pong").to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        let _ = recv_envelope(&mut ws).await; // Registered
+
+        registry
+            .set_last_seen_for_test("ws-pong", aged_last_seen())
+            .await;
+        assert!(!registry.get_client_view("ws-pong").await.unwrap().connected);
+
+        // Send a Pong. The server must not close the socket and must not echo
+        // anything back (Pong is terminal keepalive).
+        ws.send(TungsteniteMessage::Text(
+            AgentEnvelope::Pong { ts: 99 }.to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+
+        // Give the server a moment to process the frame.
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            if registry.get_client_view("ws-pong").await.unwrap().connected {
+                break;
+            }
+        }
+        let fresh = registry.get_client_view("ws-pong").await.unwrap();
+        assert!(fresh.connected, "pong must refresh liveness");
+        assert_eq!(fresh.status, "online");
+
+        // The connection is still usable: a subsequent Ping still gets a Pong.
+        ws.send(TungsteniteMessage::Text(
+            AgentEnvelope::Ping { ts: 7 }.to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        let pong = recv_envelope(&mut ws).await;
+        assert!(matches!(pong, AgentEnvelope::Pong { ts: 7 }));
+    }
+
+    #[tokio::test]
+    async fn ws_reconnect_re_registers_same_client_id_as_websocket_online() {
+        // After a disconnect the server reconciles (jobs lost, notifier
+        // removed). A fresh WebSocket register for the same client_id must
+        // overwrite the old record, flip transport back to websocket, and read
+        // connected=true/online.
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+        let url = format!("ws://{}/api/agents/ws", addr);
+
+        // First session.
+        let (mut ws1, _resp) = connect_async(url.clone()).await.unwrap();
+        ws1.send(TungsteniteMessage::Text(
+            register_envelope("ws-recon").to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        let ack1 = recv_envelope(&mut ws1).await;
+        assert!(matches!(
+            ack1,
+            AgentEnvelope::Registered { success: true, .. }
+        ));
+        let view1 = registry.get_client_view("ws-recon").await.unwrap();
+        assert_eq!(view1.transport, "websocket");
+        assert!(view1.connected);
+
+        // Disconnect: server reconciles (retains the client record).
+        drop(ws1);
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            // Reconcile happens in the background; we just wait for it to
+            // settle by observing the record is still present.
+            if registry.get_client_view("ws-recon").await.is_some() {
+                break;
+            }
+        }
+
+        // Reconnect with the same client_id.
+        let (mut ws2, _resp) = connect_async(url).await.unwrap();
+        ws2.send(TungsteniteMessage::Text(
+            register_envelope("ws-recon").to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        let ack2 = recv_envelope(&mut ws2).await;
+        match ack2 {
+            AgentEnvelope::Registered {
+                success, client, ..
+            } => {
+                assert!(success);
+                let client = client.expect("client view in ack");
+                assert_eq!(client.client_id, "ws-recon");
+                assert_eq!(client.transport, "websocket");
+                assert!(client.connected);
+            }
+            other => panic!("expected registered ack on reconnect, got {:?}", other),
+        }
+
+        let view2 = registry.get_client_view("ws-recon").await.unwrap();
+        assert_eq!(view2.transport, "websocket");
+        assert!(view2.connected);
+        assert_eq!(view2.status, "online");
     }
 
     #[tokio::test]

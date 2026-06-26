@@ -97,3 +97,36 @@ are still reported to the server, but no current runtime route invokes hook
 - Path access is controlled by the local agent policy
   (`allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`,
   `max_timeout_secs`, `max_output_bytes`).
+
+## Troubleshooting: unexpected runtime project ids (e.g. `agent:<client>:tmp-hello`)
+
+The server is a zero-project-config relay: every runtime project id of the form
+`agent:<client_id>:<project_id>` comes from a `projects.d/*.toml` file on the
+**agent** host, never from server-side `projects.toml`. If an unexpected id such
+as `agent:oe:tmp-hello` appears in `listProjects` / `runtime_status`, it means
+the agent identified by `<client_id>` (`oe` in the example) has a `tmp-hello`
+project file locally.
+
+To find and remove it, on the agent host (the machine running
+`private-drop-agent` for that `client_id`):
+
+```bash
+# 1. Find the agent's projects_dir (from its agent.toml).
+grep -n 'projects_dir' /etc/private-drop-agent/agent.toml \
+  ~/.config/private-drop-agent/agent.toml 2>/dev/null
+
+# 2. List the project files the agent scans (default shown below).
+ls -1 ~/.config/private-drop-agent/projects.d/*.toml
+
+# 3. Locate the offending id.
+grep -rl 'id = "tmp-hello"' ~/.config/private-drop-agent/projects.d/
+
+# 4. Remove or disable it, then let the agent rescan (next poll/register).
+rm ~/.config/private-drop-agent/projects.d/tmp-hello.toml
+#   or set `disabled = true` inside the file.
+```
+
+The server cache refreshes on the agent's next register/poll plus the short
+local scan cache. Do not commit real `agent.toml` or `projects.d/` files to
+this repository; they are host-local configuration.
+

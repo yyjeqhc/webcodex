@@ -556,6 +556,36 @@ impl ShellClientRegistry {
         Ok(())
     }
 
+    /// Refresh `last_seen` for a registered client to "now" without performing
+    /// any business operation. Used by the WebSocket reader so that idle
+    /// keepalive traffic (`Ping`/`Pong`) keeps a connected agent inside the
+    /// `CLIENT_ONLINE_WINDOW_SECS` online window. Without this, a WebSocket
+    /// agent that has no pending requests would age out to `"stale"` after 60s
+    /// even though its socket is still open.
+    ///
+    /// Returns an error (and mutates nothing) for an unknown `client_id` so
+    /// callers can log a clear diagnostic; it is a no-op for the unknown path.
+    /// `register`, `poll`, `complete`, and `update_job` already refresh
+    /// `last_seen` on their own, so this is only needed for keepalive frames.
+    pub async fn touch_client(&self, client_id: &str) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get_mut(client_id) else {
+            return Err(format!("unknown shell client: {}", client_id));
+        };
+        client.last_seen = now_ts();
+        Ok(())
+    }
+
+    /// Test-only hook to force a client's `last_seen` so liveness/stale
+    /// behavior can be exercised without sleeping for the full online window.
+    #[cfg(test)]
+    pub async fn set_last_seen_for_test(&self, client_id: &str, ts: i64) {
+        let mut inner = self.inner.lock().await;
+        if let Some(client) = inner.clients.get_mut(client_id) {
+            client.last_seen = ts;
+        }
+    }
+
     /// Register a push notifier for a client. The WebSocket handler calls
     /// this after register; the server's request pump waits on the notifier
     /// between polls. Calling this replaces any previously registered
@@ -3249,6 +3279,74 @@ mod tests {
         let lost = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(lost.status, "lost");
         assert!(lost.error.unwrap().contains("stale"));
+    }
+
+    #[tokio::test]
+    async fn touch_client_refreshes_stale_client_back_to_online() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+                agent_protocol_version: None,
+            })
+            .await
+            .unwrap();
+
+        // Age the client past the online window so it reads as stale.
+        registry
+            .set_last_seen_for_test("oe", now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
+            .await;
+        let stale = registry.get_client_view("oe").await.unwrap();
+        assert!(!stale.connected);
+        assert_eq!(stale.status, "stale");
+
+        // A keepalive touch must bring it back online.
+        registry.touch_client("oe").await.unwrap();
+        let fresh = registry.get_client_view("oe").await.unwrap();
+        assert!(fresh.connected);
+        assert_eq!(fresh.status, "online");
+
+        // Unknown client_id is a clear error and does not mutate state.
+        assert!(registry.touch_client("nope").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn touch_client_refreshes_websocket_transport_client() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "ws-1".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+                agent_protocol_version: None,
+            })
+            .await
+            .unwrap();
+        registry
+            .set_transport("ws-1", TRANSPORT_WEBSOCKET)
+            .await
+            .unwrap();
+
+        registry
+            .set_last_seen_for_test("ws-1", now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
+            .await;
+        let stale = registry.get_client_view("ws-1").await.unwrap();
+        assert_eq!(stale.transport, "websocket");
+        assert!(!stale.connected);
+
+        registry.touch_client("ws-1").await.unwrap();
+        let fresh = registry.get_client_view("ws-1").await.unwrap();
+        assert_eq!(fresh.transport, "websocket");
+        assert!(fresh.connected);
+        assert_eq!(fresh.status, "online");
     }
 
     #[test]

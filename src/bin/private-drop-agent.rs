@@ -38,6 +38,14 @@ const WS_OUTGOING_CAPACITY: usize = 64;
 const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
 /// Reconnect backoff after a WebSocket session ends.
 const WS_RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
+/// Bounded wait for the writer task to flush its last frame and close the
+/// sink during shutdown. A split WebSocket sink's `close()` waits for the
+/// peer's close acknowledgement, which is delivered through the read half;
+/// once the read loop has broken the read half is no longer polled, so
+/// `close()` can hang indefinitely on a half-closed socket. Bounding it
+/// guarantees `websocket_session` (and therefore the reconnect loop) always
+/// makes progress instead of stalling forever after a disconnect.
+const WS_WRITER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
 #[derive(Debug, Clone, Deserialize)]
 struct AgentConfig {
@@ -1739,7 +1747,13 @@ async fn websocket_session(
                 Err(_) => break,
             }
         }
-        let _ = sink.close().await;
+        // The sink is dropped here. We intentionally do NOT call
+        // `sink.close()`: on a split WebSocket sink the close handshake is
+        // delivered through the read half, which is no longer polled once
+        // the read loop breaks, so an unbounded `close().await` can hang and
+        // block the reconnect loop. Dropping the sink lets the OS tear down
+        // the socket; the server reconciles via its disconnect path either
+        // way.
     });
 
     let sink_handle = AgentSink::WebSocket {
@@ -1790,6 +1804,13 @@ async fn websocket_session(
                     AgentEnvelope::Ping { ts } => {
                         let _ = out_tx.send(AgentEnvelope::Pong { ts }).await;
                     }
+                    AgentEnvelope::Pong { .. } => {
+                        // Normal keepalive response from the server to our
+                        // Ping. This is expected liveness traffic: do not
+                        // log at info level, do not disconnect, do not treat
+                        // it as an unexpected envelope. Staying silent here
+                        // keeps the agent log quiet during idle periods.
+                    }
                     AgentEnvelope::Error { code, message } => {
                         eprintln!(
                             "private-drop-agent websocket server error {}: {}",
@@ -1815,9 +1836,21 @@ async fn websocket_session(
         }
     }
 
-    // Shutdown: drop the sender so the writer drains and closes, then wait.
+    // Shutdown: drop the sender so the writer stops sending, drop the read
+    // half so the underlying socket can be torn down, then give the writer a
+    // brief grace window to flush any in-flight frame before aborting it. We
+    // must NOT await an unbounded graceful close (see the writer task note):
+    // bounding here guarantees `websocket_session` (and therefore the
+    // reconnect loop) always makes progress after a disconnect.
     drop(out_tx);
-    let _ = writer_task.await;
+    drop(stream);
+    let mut writer_task = writer_task;
+    if tokio::time::timeout(WS_WRITER_CLOSE_TIMEOUT, &mut writer_task)
+        .await
+        .is_err()
+    {
+        writer_task.abort();
+    }
     // Give in-flight job threads a moment to flush final updates through the
     // (now closed) sink; they will log send errors and exit on their own.
     while jobs.has_work() {
@@ -2174,5 +2207,101 @@ path = "/tmp/private-drop"
             client_id: cfg.client_id.clone(),
         });
         assert_eq!(sink.client_id(), "oe");
+    }
+
+    // ------------------------------------------------------------------------
+    // WebSocket session: Pong must be handled as keepalive, not unexpected
+    // ------------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn websocket_session_accepts_pong_without_error_or_disconnect() {
+        use futures_util::{SinkExt, StreamExt};
+        use tokio::net::TcpListener;
+        use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+        // Minimal WS server. It:
+        //   1. reads the agent's Register,
+        //   2. sends a Registered ack,
+        //   3. sends a Pong (the frame that previously triggered the noisy
+        //      "ignoring unexpected envelope: pong" path),
+        //   4. sends a Ping and waits for the agent's Pong reply — if the
+        //      agent had exited on the Pong in step 3 it would never reply,
+        //      and this receive would time out (failing the test),
+        //   5. drops the socket so the agent's session returns cleanly.
+        //
+        // This both guards the "Pong is not unexpected" regression and proves
+        // the session stays alive after a Pong.
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server_task = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut ws = tokio_tungstenite::accept_async(stream).await.unwrap();
+
+            // Read Register.
+            let reg_msg = ws.next().await.unwrap().unwrap();
+            let reg_env =
+                AgentEnvelope::from_slice(reg_msg.into_text().unwrap().as_bytes()).unwrap();
+            assert!(matches!(reg_env, AgentEnvelope::Register { .. }));
+
+            // Ack register.
+            let ack = AgentEnvelope::Registered {
+                success: true,
+                client: None,
+                error: None,
+            };
+            ws.send(WsMessage::Text(ack.to_json().unwrap().into()))
+                .await
+                .unwrap();
+
+            // Send a Pong — the agent must accept it as keepalive and stay
+            // connected (this is the regression we are guarding against).
+            let pong = AgentEnvelope::Pong { ts: 42 };
+            ws.send(WsMessage::Text(pong.to_json().unwrap().into()))
+                .await
+                .unwrap();
+
+            // Probe liveness: send a Ping and expect a Pong reply. If the
+            // agent had broken out of its read loop on the Pong above, this
+            // would time out.
+            ws.send(WsMessage::Text(
+                AgentEnvelope::Ping { ts: 7 }.to_json().unwrap().into(),
+            ))
+            .await
+            .unwrap();
+            let reply = tokio::time::timeout(Duration::from_secs(2), ws.next())
+                .await
+                .expect("agent did not reply to ping after pong (session exited on pong)")
+                .expect("stream open")
+                .expect("ok message");
+            match AgentEnvelope::from_slice(reply.into_text().unwrap().as_bytes()).unwrap() {
+                AgentEnvelope::Pong { ts } => assert_eq!(ts, 7),
+                other => panic!("expected pong reply, got {:?}", other.kind()),
+            }
+
+            // Drop the socket; the agent's reader will error/EOF and the
+            // session returns cleanly. Avoids a close-handshake that can hang
+            // on a current-thread test runtime.
+            drop(ws);
+        });
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("config/projects.d"));
+        cfg.server_url = format!("http://{}", addr);
+        cfg.transport = Some(TRANSPORT_WEBSOCKET.to_string());
+
+        let outcome =
+            tokio::time::timeout(Duration::from_secs(10), websocket_session(&cfg, Vec::new()))
+                .await
+                .expect("websocket_session did not complete in time");
+
+        // The session must end (server dropped the socket) and must NOT have
+        // returned an error — a Pong is normal keepalive traffic.
+        assert!(
+            outcome.is_ok(),
+            "websocket_session errored on Pong (regression): {:?}",
+            outcome
+        );
+
+        server_task.await.unwrap();
     }
 }

@@ -3704,7 +3704,9 @@ mod tests {
         // The configured approval_mode flows through build_codex_command into
         // the agent job's command preview.
         assert!(
-            jobs[0].command_preview.contains("--approval-mode 'suggest'"),
+            jobs[0]
+                .command_preview
+                .contains("--approval-mode 'suggest'"),
             "{}",
             jobs[0].command_preview
         );

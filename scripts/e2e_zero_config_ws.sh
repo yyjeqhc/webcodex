@@ -31,6 +31,9 @@ set -euo pipefail
 #   E2E_PROJECT_ID      agent project id (default: smoke-proj)
 #   E2E_TRANSPORT       agent transport (default: websocket; polling fallback)
 #   E2E_TIMEOUT_SECS    overall wall-clock cap (default: 180)
+#   E2E_KEEPALIVE_WAIT_SECS
+#                       seconds to idle before the keepalive-online recheck
+#                       (default: 2; raise to ~35 to span a real ping/pong)
 #   E2E_SKIP_RUN        if set to "1", skip `cargo run` and only syntax-check
 #   CARGO_BIN           cargo binary (default: cargo)
 #
@@ -397,6 +400,30 @@ if [ "$REGISTERED" -ne 1 ]; then
     exit 1
 fi
 pass "agent registered (transport=$TRANSPORT)"
+
+# ----------------------------------------------------------------------------
+# 4b. Keepalive liveness smoke
+# ----------------------------------------------------------------------------
+# After a brief idle period the agent must still report online. This is a
+# light regression guard for the WebSocket ping/pong liveness fix: a
+# connected-but-idle agent must not decay to stale merely because no job
+# requests are flowing. (The full 60s online window is exercised by unit
+# tests via last_seen injection; here we only confirm no immediate drop so
+# the default e2e stays fast. Override the wait with
+# E2E_KEEPALIVE_WAIT_SECS, e.g. 35 to span one real ping/pong cycle.)
+KEEPALIVE_WAIT="${E2E_KEEPALIVE_WAIT_SECS:-2}"
+log "keepalive liveness check (idle ${KEEPALIVE_WAIT}s)"
+sleep "$KEEPALIVE_WAIT"
+check_deadline
+body="$(api_post /api/runtime/status '{}' || true)"
+agent_connected="$(json_get "$body" output.agents.clients.0.connected)"
+agent_status="$(json_get "$body" output.agents.clients.0.status)"
+agent_transport="$(json_get "$body" output.agents.clients.0.transport)"
+if [ "$agent_connected" = "True" ] && [ "$agent_status" = "online" ]; then
+    pass "agent still online after idle wait (transport=$agent_transport)"
+else
+    fail "agent went stale after idle wait (connected=$agent_connected status=$agent_status transport=$agent_transport)"
+fi
 
 # ----------------------------------------------------------------------------
 # 5. GPT Actions surface smoke

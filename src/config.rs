@@ -78,6 +78,9 @@ impl CodexConfig {
     }
 }
 
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Debug, Clone)]
 pub(crate) struct EnvFileLoad {
     pub(crate) path: PathBuf,
@@ -218,6 +221,7 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_uses_defaults_when_unset() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         // Clear CODEX_* env vars so we get deterministic defaults.
         std::env::remove_var("CODEX_BIN");
         std::env::remove_var("CODEX_APPROVAL_MODE");
@@ -235,6 +239,7 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_parses_overrides() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("CODEX_BIN", "/usr/local/bin/codex");
         std::env::set_var("CODEX_APPROVAL_MODE", "suggest");
         std::env::set_var("CODEX_DEFAULT_TIMEOUT_SECS", "600");
@@ -264,6 +269,7 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_ignores_invalid_numeric_values() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("CODEX_DEFAULT_TIMEOUT_SECS", "not-a-number");
         std::env::set_var("CODEX_MAX_PROMPT_BYTES", "-5");
 
@@ -277,6 +283,7 @@ mod tests {
 
     #[test]
     fn codex_config_allowed_extra_args_ignores_empty_entries() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("CODEX_ALLOWED_EXTRA_ARGS", " --verbose , , --json ");
 
         let cfg = CodexConfig::from_env();

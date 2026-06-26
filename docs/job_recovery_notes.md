@@ -28,6 +28,25 @@ Recovery behavior:
   restart loses in-flight agent jobs (a known limitation; see
   [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md)).
 
+Timeout & process reclamation (local jobs):
+
+- Local jobs are spawned with `setsid` so the wrapper shell is a session and
+  process-group leader; its pid is recorded as `process_group_id` in
+  `metadata.json`.
+- When `job_status` / `job_log` detect a `running` local job past
+  `max_runtime_secs`, the runtime sends `SIGTERM` to the whole process group
+  (`kill -TERM -<pgid>`), escalates to `SIGKILL` after a short grace window if
+  still alive, and persists a terminal `lost` status with a `note`. The group
+  is never left running.
+- An internal `POST /api/jobs/stop` stops a running local job the same way and
+  marks it `stopped`. It is a thin REST wrapper over `ToolRuntime::stop_job`
+  and is **not** a GPT Action (absent from `openapi.json`).
+- Old metadata written before pid/pgid tracking has no `pid` file or
+  `process_group_id`; on timeout/stop such jobs are only marked
+  `lost`/`stopped` — the runtime never guesses a pid to kill.
+- Kill failures never panic; a conservative terminal status is persisted
+  regardless.
+
 There is no `client_request_id` deduplication and no `runJobOp` aggregate op in
 the current runtime. Do not re-create a job blindly after a timeout; poll its
 `job_id` with `getRuntimeJobStatus` first.

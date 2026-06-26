@@ -172,6 +172,99 @@ struct LocalJobRecord {
     dir: PathBuf,
 }
 
+/// Local job statuses that are still active (not yet terminal). A stop/timeout
+/// only acts on these; terminal jobs (`completed`/`failed`/`stopped`/`lost`)
+/// are left untouched.
+const ACTIVE_LOCAL_STATUSES: &[&str] = &["running", "queued"];
+
+/// Outcome of attempting to terminate a local job's process group.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TerminateOutcome {
+    /// The process group was alive and was signalled. `escalated_to_kill` is
+    /// true when SIGTERM did not suffice within the grace window and SIGKILL
+    /// was sent to the whole group.
+    Terminated { pgid: i64, escalated_to_kill: bool },
+    /// No live process was found for the recorded pid (already exited).
+    AlreadyGone,
+}
+
+/// Abstraction over terminating a local job's process group.
+///
+/// The production implementation shells out to `kill -TERM/-KILL -<pgid>`
+/// (negative pid => whole process group). Local jobs are spawned with
+/// `setsid`, which makes the wrapper shell a session and process-group
+/// leader, so `-<pgid>` reaches the wrapper and every descendant it spawned
+/// in a single signal — reliably reclaiming the whole subtree rather than
+/// orphaning children.
+///
+/// Tests inject a fake to assert the runtime targets the correct pgid without
+/// spawning real processes. The runtime only ever passes pids/pgids read from
+/// its own on-disk job files (never caller-supplied pids), so this trait is
+/// never an arbitrary kill surface.
+trait LocalJobKiller: Send + Sync {
+    /// Terminate the process group led by `pid`/`pgid`. Sends SIGTERM, waits
+    /// briefly, and escalates to SIGKILL if the leader is still alive. Never
+    /// panics; a failure to signal is reflected as a `Terminated` outcome
+    /// without escalation (the caller persists a conservative `lost` status
+    /// regardless).
+    fn terminate_group(&self, pid: i64, pgid: i64) -> TerminateOutcome;
+}
+
+/// Production `LocalJobKiller` backed by the `kill` shell command.
+struct SystemJobKiller;
+
+impl SystemJobKiller {
+    /// True if a process with `pid` is currently alive (`kill -0`).
+    fn is_alive(pid: i64) -> bool {
+        std::process::Command::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Send `signal` (e.g. `-TERM`/`-KILL`) to the whole process group `pgid`
+    /// (negative pid). Failures are swallowed: a non-existent group yields a
+    /// non-zero exit which we treat as "nothing left to signal".
+    fn signal_group(pgid: i64, signal: &str) {
+        let _ = std::process::Command::new("kill")
+            .arg(signal)
+            .arg(format!("-{}", pgid))
+            .status();
+    }
+}
+
+impl LocalJobKiller for SystemJobKiller {
+    fn terminate_group(&self, pid: i64, pgid: i64) -> TerminateOutcome {
+        if !Self::is_alive(pid) {
+            return TerminateOutcome::AlreadyGone;
+        }
+        Self::signal_group(pgid, "-TERM");
+        // Bounded grace window for graceful shutdown, then escalate to SIGKILL.
+        // This blocks the calling (async) thread for at most ~300ms and only
+        // when a genuinely-alive overtime process is being reclaimed.
+        let deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < deadline {
+            if !Self::is_alive(pid) {
+                return TerminateOutcome::Terminated {
+                    pgid,
+                    escalated_to_kill: false,
+                };
+            }
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        let escalated = Self::is_alive(pid);
+        if escalated {
+            Self::signal_group(pgid, "-KILL");
+        }
+        TerminateOutcome::Terminated {
+            pgid,
+            escalated_to_kill: escalated,
+        }
+    }
+}
+
 /// Capability an agent-backed tool requires. Kept private to the runtime;
 /// only used by `authorize_agent_tool` to map a `ToolCall` variant to the
 /// capability flag it needs on the agent client.
@@ -244,6 +337,7 @@ pub struct ToolRuntime {
     pub codex: Arc<CodexConfig>,
     pub runtime_info: Arc<RuntimeInfo>,
     local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
+    job_killer: Arc<dyn LocalJobKiller>,
 }
 
 impl ToolRuntime {
@@ -259,6 +353,7 @@ impl ToolRuntime {
             codex,
             runtime_info,
             local_jobs: Arc::new(Mutex::new(HashMap::new())),
+            job_killer: Arc::new(SystemJobKiller),
         }
     }
 
@@ -1262,7 +1357,7 @@ impl ToolRuntime {
                 return ToolResult::err(format!("Failed to create job dir: {}", e));
             }
             let now = chrono::Utc::now().timestamp();
-            let meta = json!({
+            let mut meta = json!({
                 "job_id": job_id,
                 "project": project.clone(),
                 "command": command,
@@ -1301,7 +1396,17 @@ impl ToolRuntime {
                 .spawn()
             {
                 Ok(child) => {
+                    // `setsid` makes the child a session + process-group
+                    // leader, so child.id() is both the leader pid and the
+                    // process-group id. Record the pgid so timeout/stop can
+                    // signal the whole subtree (`kill -<pgid>`).
+                    let pgid = child.id() as i64;
                     let _ = std::fs::write(dir.join("pid"), child.id().to_string());
+                    meta["process_group_id"] = json!(pgid);
+                    let _ = std::fs::write(
+                        dir.join("metadata.json"),
+                        serde_json::to_string_pretty(&meta).unwrap_or_default(),
+                    );
                     self.local_jobs
                         .lock()
                         .await
@@ -1385,15 +1490,16 @@ impl ToolRuntime {
     }
 
     async fn job_status(&self, job_id: String) -> ToolResult {
+        let killer = self.job_killer.as_ref();
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
-            return local_job_status(&job_id, &record);
+            return local_job_status(&job_id, &record, killer);
         }
         // Fall through to agent-backed jobs. If the agent registry does not
         // know this job either, attempt local recovery from on-disk metadata
         // so jobs started before a server restart remain queryable.
         if self.shell_clients.get_job(&job_id).await.is_err() {
             if let Some(record) = self.recover_local_job(&job_id).await {
-                return local_job_status(&job_id, &record);
+                return local_job_status(&job_id, &record, killer);
             }
             return ToolResult::err(format!("unknown job: {}", job_id));
         }
@@ -1420,12 +1526,13 @@ impl ToolRuntime {
         offset: Option<usize>,
         tail_lines: Option<usize>,
     ) -> ToolResult {
+        let killer = self.job_killer.as_ref();
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
-            return local_job_log(&job_id, &record, offset, tail_lines);
+            return local_job_log(&job_id, &record, killer, offset, tail_lines);
         }
         if self.shell_clients.get_job(&job_id).await.is_err() {
             if let Some(record) = self.recover_local_job(&job_id).await {
-                return local_job_log(&job_id, &record, offset, tail_lines);
+                return local_job_log(&job_id, &record, killer, offset, tail_lines);
             }
             return ToolResult::err(format!("unknown job: {}", job_id));
         }
@@ -1446,6 +1553,33 @@ impl ToolRuntime {
             }
             Err(e) => ToolResult::err(e),
         }
+    }
+
+    /// Stop a local job by terminating its process group and marking it
+    /// `stopped`.
+    ///
+    /// This is an internal lifecycle method intended as the implementation
+    /// backing a future explicit stop API; it is deliberately **not** exposed
+    /// as a GPT Actions / MCP write tool, to avoid surfacing an arbitrary kill
+    /// surface to remote callers. Only jobs we created and recorded (in-memory
+    /// or recoverable on disk) can be stopped, and the pid/pgid come
+    /// exclusively from the job's own on-disk files — never from caller input.
+    pub async fn stop_job(&self, job_id: String) -> ToolResult {
+        if !is_safe_job_id(&job_id) {
+            return ToolResult::err("invalid job id");
+        }
+        let cached = {
+            let jobs = self.local_jobs.lock().await;
+            jobs.get(&job_id).cloned()
+        };
+        let record = match cached {
+            Some(r) => r,
+            None => match self.recover_local_job(&job_id).await {
+                Some(r) => r,
+                None => return ToolResult::err(format!("unknown job: {}", job_id)),
+            },
+        };
+        stop_local_job(&job_id, &record, self.job_killer.as_ref())
     }
 
     /// Recover a local job from on-disk `.codex/jobs/<job_id>/metadata.json`
@@ -1718,10 +1852,18 @@ fn read_file_content_result(
     }))
 }
 
-fn local_job_status(job_id: &str, record: &LocalJobRecord) -> ToolResult {
+fn local_job_status(
+    job_id: &str,
+    record: &LocalJobRecord,
+    killer: &dyn LocalJobKiller,
+) -> ToolResult {
+    // Reclaim overtime jobs before reading status: this persists a terminal
+    // `lost` status (and terminates the process group) so callers see a
+    // consistent terminal state and we don't leak processes.
+    let timeout_note = enforce_local_job_timeout(record, killer);
     let meta = read_json(record.dir.join("metadata.json"));
     let raw_status = read_trim(record.dir.join("status")).unwrap_or_default();
-    let mut status = normalize_local_status(&raw_status);
+    let status = normalize_local_status(&raw_status);
     let exit_code = read_trim(record.dir.join("exit_code")).and_then(|v| v.parse::<i32>().ok());
     let created_at = meta
         .get("created_at")
@@ -1730,24 +1872,12 @@ fn local_job_status(job_id: &str, record: &LocalJobRecord) -> ToolResult {
     let started_at = meta.get("started_at").and_then(Value::as_i64);
     let finished_at = read_trim(record.dir.join("finished_at")).and_then(|v| v.parse::<i64>().ok());
     let max_runtime_secs = meta.get("max_runtime_secs").and_then(Value::as_i64);
-    // Detect over-time running jobs and mark them lost. The process itself is
-    // not killed here; this normalizes status so callers see a terminal state.
-    if status == "running" {
-        if let (Some(started), Some(max_rt)) = (started_at, max_runtime_secs) {
-            if finished_at.is_none() {
-                let now = chrono::Utc::now().timestamp();
-                if now.saturating_sub(started) > max_rt {
-                    status = "lost".to_string();
-                }
-            }
-        }
-    }
     let elapsed_secs = started_at.map(|started| {
         finished_at
             .unwrap_or_else(|| chrono::Utc::now().timestamp())
             .saturating_sub(started) as u64
     });
-    ToolResult::ok(json!({
+    let mut output = json!({
         "job_id": job_id,
         "project": record.project,
         "status": status,
@@ -1759,26 +1889,177 @@ fn local_job_status(job_id: &str, record: &LocalJobRecord) -> ToolResult {
         "max_runtime_secs": max_runtime_secs,
         "executor": "local",
         "kind": meta.get("kind").cloned().unwrap_or_else(|| Value::String("shell".to_string())),
-    }))
+    });
+    if let Some(note) = timeout_note {
+        output["note"] = Value::String(note);
+    }
+    ToolResult::ok(output)
 }
 
 fn local_job_log(
     job_id: &str,
     record: &LocalJobRecord,
+    killer: &dyn LocalJobKiller,
     offset: Option<usize>,
     tail_lines: Option<usize>,
 ) -> ToolResult {
+    // A log query on an overtime job also reclaims it so the reported status
+    // is terminal and the process group is not leaked.
+    let timeout_note = enforce_local_job_timeout(record, killer);
     let stdout = read_lines_from(record.dir.join("stdout.log"), offset, tail_lines);
     let stderr = read_lines_from(record.dir.join("stderr.log"), offset, tail_lines);
     let raw_status = read_trim(record.dir.join("status")).unwrap_or_default();
     let status = normalize_local_status(&raw_status);
-    ToolResult::ok(json!({
+    let mut output = json!({
         "job_id": job_id,
         "status": status,
         "stdout": stdout.0,
         "stderr": stderr.0,
         "next_stdout_line": stdout.1,
         "next_stderr_line": stderr.1,
+    });
+    if let Some(note) = timeout_note {
+        output["note"] = Value::String(note);
+    }
+    ToolResult::ok(output)
+}
+
+/// Resolve the process-group id to signal for a local job. Prefers an explicit
+/// `process_group_id` in metadata (written by current spawn code); falls back
+/// to the `pid` file, which under `setsid` is equal to the pgid. Returns
+/// `None` when neither is recorded (e.g. very old metadata predating pid
+/// tracking) — in that case we never guess at a pid to kill.
+fn resolve_job_pgid(meta: &Value, record: &LocalJobRecord) -> Option<i64> {
+    meta.get("process_group_id")
+        .and_then(Value::as_i64)
+        .or_else(|| read_trim(record.dir.join("pid")).and_then(|s| s.parse::<i64>().ok()))
+}
+
+/// If a local job is still `running` but has exceeded `max_runtime_secs`,
+/// terminate its process group and persist a terminal `lost` status. Returns a
+/// short human-readable note when a timeout was enforced, or `None` if the job
+/// is not running or not over time.
+///
+/// Safety: the pid/pgid come only from this job's own on-disk files (written by
+/// us at spawn time via `setsid`). We never kill based on caller-supplied pids.
+/// If no pid/pgid is recorded, we only mark the job `lost` — never guess. Kill
+/// failures never panic; a conservative `lost` status is persisted regardless.
+fn enforce_local_job_timeout(
+    record: &LocalJobRecord,
+    killer: &dyn LocalJobKiller,
+) -> Option<String> {
+    let meta = read_json(record.dir.join("metadata.json"));
+    let raw_status = read_trim(record.dir.join("status")).unwrap_or_default();
+    if normalize_local_status(&raw_status) != "running" {
+        return None;
+    }
+    let started_at = meta.get("started_at").and_then(Value::as_i64)?;
+    let max_runtime_secs = meta.get("max_runtime_secs").and_then(Value::as_i64)?;
+    // The wrapper writes `finished_at` before `status`. If it exists, the job
+    // just finished (or was already reclaimed) — do not double-reclaim.
+    if read_trim(record.dir.join("finished_at")).is_some() {
+        return None;
+    }
+    let now = chrono::Utc::now().timestamp();
+    if now.saturating_sub(started_at) <= max_runtime_secs {
+        return None;
+    }
+    // Over time. Reclaim the process group if we recorded one.
+    let pgid = resolve_job_pgid(&meta, record);
+    let note = match pgid {
+        Some(pgid) => {
+            let pid = read_trim(record.dir.join("pid"))
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(pgid);
+            let outcome = killer.terminate_group(pid, pgid);
+            match outcome {
+                TerminateOutcome::Terminated {
+                    pgid,
+                    escalated_to_kill,
+                } => {
+                    let sig = if escalated_to_kill {
+                        "SIGKILL"
+                    } else {
+                        "SIGTERM"
+                    };
+                    format!(
+                        "timed out after {}s; process group {} terminated ({})",
+                        max_runtime_secs, pgid, sig
+                    )
+                }
+                TerminateOutcome::AlreadyGone => format!(
+                    "timed out after {}s; process group {} already exited; marked lost",
+                    max_runtime_secs, pgid
+                ),
+            }
+        }
+        None => format!(
+            "timed out after {}s; no pid/process_group_id on record; marked lost",
+            max_runtime_secs
+        ),
+    };
+    // Persist terminal state so subsequent reads are consistent and we don't
+    // repeatedly attempt to kill. The wrapper shell was part of the group and
+    // is now gone, so it will not write its own status/finished_at.
+    let _ = std::fs::write(record.dir.join("status"), "lost");
+    let _ = std::fs::write(record.dir.join("finished_at"), now.to_string());
+    Some(note)
+}
+
+/// Stop a local job by terminating its process group and persisting a
+/// `stopped` status. Only acts on active jobs; terminal jobs are left alone.
+/// Like `enforce_local_job_timeout`, the pid/pgid come only from the job's own
+/// on-disk files, and missing pid/pgid yields a conservative `stopped` marker
+/// without guessing. Kill failures never panic.
+fn stop_local_job(
+    job_id: &str,
+    record: &LocalJobRecord,
+    killer: &dyn LocalJobKiller,
+) -> ToolResult {
+    let meta = read_json(record.dir.join("metadata.json"));
+    let raw_status = read_trim(record.dir.join("status")).unwrap_or_default();
+    let status = normalize_local_status(&raw_status);
+    if !ACTIVE_LOCAL_STATUSES.contains(&status.as_str()) {
+        return ToolResult::ok(json!({
+            "job_id": job_id,
+            "project": record.project,
+            "status": status,
+            "note": "job already terminal; not stopped again",
+        }));
+    }
+    let now = chrono::Utc::now().timestamp();
+    let note = match resolve_job_pgid(&meta, record) {
+        Some(pgid) => {
+            let pid = read_trim(record.dir.join("pid"))
+                .and_then(|s| s.parse::<i64>().ok())
+                .unwrap_or(pgid);
+            let outcome = killer.terminate_group(pid, pgid);
+            match outcome {
+                TerminateOutcome::Terminated {
+                    pgid,
+                    escalated_to_kill,
+                } => {
+                    let sig = if escalated_to_kill {
+                        "SIGKILL"
+                    } else {
+                        "SIGTERM"
+                    };
+                    format!("stopped; process group {} terminated ({})", pgid, sig)
+                }
+                TerminateOutcome::AlreadyGone => {
+                    format!("stopped; process group {} already exited", pgid)
+                }
+            }
+        }
+        None => "stopped; no pid/process_group_id on record; marked stopped".to_string(),
+    };
+    let _ = std::fs::write(record.dir.join("status"), "stopped");
+    let _ = std::fs::write(record.dir.join("finished_at"), now.to_string());
+    ToolResult::ok(json!({
+        "job_id": job_id,
+        "project": record.project,
+        "status": "stopped",
+        "note": note,
     }))
 }
 
@@ -2678,6 +2959,256 @@ mod tests {
         let result = runtime.job_status(job_id.to_string()).await;
         assert!(result.success);
         assert_eq!(result.output["status"], "completed");
+    }
+
+    // =========================================================================
+    // Phase 11: local job lifecycle hardening (process-group reclamation)
+    // =========================================================================
+
+    /// Test double for `LocalJobKiller` that records the (pid, pgid) pairs it
+    /// was asked to terminate without touching any real process. Deterministic
+    /// by construction — no real `kill` is invoked, so these tests never flake
+    /// on process timing.
+    #[derive(Default, Clone)]
+    struct FakeJobKiller {
+        calls: Arc<std::sync::Mutex<Vec<(i64, i64)>>>,
+    }
+
+    impl FakeJobKiller {
+        fn calls(&self) -> Vec<(i64, i64)> {
+            self.calls.lock().unwrap().clone()
+        }
+    }
+
+    impl LocalJobKiller for FakeJobKiller {
+        fn terminate_group(&self, pid: i64, pgid: i64) -> TerminateOutcome {
+            self.calls.lock().unwrap().push((pid, pgid));
+            // Fake pids are never alive; report AlreadyGone. The runtime still
+            // persists a terminal status, which is what the tests assert.
+            TerminateOutcome::AlreadyGone
+        }
+    }
+
+    fn runtime_with_fake_killer(root: &Path, project_id: &str) -> (ToolRuntime, FakeJobKiller) {
+        let mut runtime = runtime_with_project(root, project_id);
+        let killer = FakeJobKiller::default();
+        let killer_dyn: Arc<dyn LocalJobKiller> = Arc::new(killer.clone());
+        runtime.job_killer = killer_dyn;
+        (runtime, killer)
+    }
+
+    /// Write a fake on-disk local job plus a `pid` file and `process_group_id`
+    /// metadata field, simulating a job spawned by the current code.
+    fn write_fake_job_with_pgid(
+        root: &Path,
+        job_id: &str,
+        project: &str,
+        path: &str,
+        status: &str,
+        pid: i64,
+        meta_extra: Value,
+    ) -> PathBuf {
+        let dir = write_fake_job(root, job_id, project, path, status, "", "", meta_extra);
+        fs::write(dir.join("pid"), pid.to_string()).unwrap();
+        dir
+    }
+
+    #[tokio::test]
+    async fn run_job_metadata_records_process_group_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let runtime = runtime_with_project(root, "demo");
+        let result = runtime
+            .run_job("demo".to_string(), "true".to_string(), Some(10), None)
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        let job_id = result.output["job_id"].as_str().unwrap().to_string();
+        let record = runtime
+            .local_jobs
+            .lock()
+            .await
+            .get(&job_id)
+            .cloned()
+            .unwrap();
+        let meta = read_json(record.dir.join("metadata.json"));
+        // process_group_id must be recorded and equal to the pid file (setsid
+        // makes the leader pid == pgid).
+        let pgid = meta["process_group_id"]
+            .as_i64()
+            .expect("process_group_id set");
+        let pid_file = read_trim(record.dir.join("pid"))
+            .unwrap()
+            .parse::<i64>()
+            .unwrap();
+        assert_eq!(pgid, pid_file);
+        assert!(pgid > 0);
+    }
+
+    #[tokio::test]
+    async fn timeout_terminates_recorded_process_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+        let job_id = "12121212-3434-5656-7878-909090909090";
+        let past = chrono::Utc::now().timestamp() - 100_000;
+        let dir = write_fake_job_with_pgid(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "running",
+            12345,
+            json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 12345 }),
+        );
+        let result = runtime.job_status(job_id.to_string()).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["status"], "lost");
+        assert!(result.output["note"]
+            .as_str()
+            .unwrap()
+            .contains("process group 12345"));
+        // The recorded pgid was targeted for termination.
+        assert_eq!(killer.calls(), vec![(12345, 12345)]);
+        // Terminal state persisted to disk.
+        assert_eq!(read_trim(dir.join("status")).unwrap(), "lost");
+        assert!(read_trim(dir.join("finished_at")).is_some());
+    }
+
+    #[tokio::test]
+    async fn timeout_without_pid_only_marks_lost_no_kill() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+        let job_id = "13131313-4545-6767-8989-101010101010";
+        let past = chrono::Utc::now().timestamp() - 100_000;
+        // No pid file, no process_group_id — simulates very old metadata that
+        // predates pid/pgid tracking. We must NOT guess a pid to kill.
+        write_fake_job(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "running",
+            "",
+            "",
+            json!({ "started_at": past, "max_runtime_secs": 60 }),
+        );
+        let result = runtime.job_status(job_id.to_string()).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["status"], "lost");
+        // No kill attempted because no pid/pgid was recorded.
+        assert!(killer.calls().is_empty());
+        assert!(result.output["note"].as_str().unwrap().contains("no pid"));
+    }
+
+    #[tokio::test]
+    async fn job_log_also_reclaims_timeout_process_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+        let job_id = "14141414-5656-7878-9090-111111111111";
+        let past = chrono::Utc::now().timestamp() - 100_000;
+        write_fake_job_with_pgid(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "running",
+            4242,
+            json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 4242 }),
+        );
+        let result = runtime.job_log(job_id.to_string(), None, None).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["status"], "lost");
+        assert_eq!(killer.calls(), vec![(4242, 4242)]);
+    }
+
+    #[tokio::test]
+    async fn timeout_does_not_affect_completed_job() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+        let job_id = "15151515-6767-8989-1010-121212121212";
+        let past = chrono::Utc::now().timestamp() - 100_000;
+        write_fake_job_with_pgid(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "completed",
+            9999,
+            json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 9999 }),
+        );
+        let result = runtime.job_status(job_id.to_string()).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["status"], "completed");
+        assert!(killer.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn stop_job_terminates_process_group() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+        let job_id = "16161616-7878-9090-1111-131313131313";
+        let now = chrono::Utc::now().timestamp();
+        let dir = write_fake_job_with_pgid(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "running",
+            7777,
+            json!({ "started_at": now, "max_runtime_secs": 3600, "process_group_id": 7777 }),
+        );
+        let result = runtime.stop_job(job_id.to_string()).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["status"], "stopped");
+        assert_eq!(killer.calls(), vec![(7777, 7777)]);
+        assert_eq!(read_trim(dir.join("status")).unwrap(), "stopped");
+        assert!(read_trim(dir.join("finished_at")).is_some());
+    }
+
+    #[tokio::test]
+    async fn stop_job_leaves_completed_job_untouched() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+        let job_id = "17171717-8989-1010-1212-141414141414";
+        let past = chrono::Utc::now().timestamp() - 100_000;
+        write_fake_job_with_pgid(
+            root,
+            job_id,
+            "demo",
+            &root.to_string_lossy(),
+            "completed",
+            8888,
+            json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 8888 }),
+        );
+        let result = runtime.stop_job(job_id.to_string()).await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["status"], "completed");
+        assert!(killer.calls().is_empty());
+    }
+
+    #[tokio::test]
+    async fn stop_job_rejects_unsafe_job_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (runtime, _killer) = runtime_with_fake_killer(tmp.path(), "demo");
+        let result = runtime.stop_job("../escape".to_string()).await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("invalid job id"));
+    }
+
+    #[tokio::test]
+    async fn stop_job_unknown_job_returns_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (runtime, _killer) = runtime_with_fake_killer(tmp.path(), "demo");
+        let result = runtime
+            .stop_job("55555555-6666-7777-8888-999999999999".to_string())
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("unknown job"));
     }
 
     #[tokio::test]

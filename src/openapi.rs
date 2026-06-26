@@ -58,6 +58,7 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/shell/jobs/status",
     "/api/shell/jobs/log",
     "/api/shell/jobs/stop",
+    "/api/jobs/stop",
     "/api/shell/jobs/list",
     "/api/shell/agent/register",
     "/api/shell/agent/poll",

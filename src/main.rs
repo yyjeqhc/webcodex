@@ -124,6 +124,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("codex/run").post(runtime_http::codex_run))
             .push(Router::with_path("jobs/status").post(runtime_http::job_status))
             .push(Router::with_path("jobs/log").post(runtime_http::job_log))
+            .push(Router::with_path("jobs/stop").post(runtime_http::job_stop))
             .push(Router::with_path("projects/list").post(runtime_http::projects_list))
             .push(Router::with_path("projects/read_file").post(runtime_http::projects_read_file))
             .push(Router::with_path("projects/git_status").post(runtime_http::projects_git_status))
@@ -248,6 +249,7 @@ mod tests {
 
     #[test]
     fn test_config_from_env_defaults() {
+        let _guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
         // Clear env vars to test defaults
         std::env::remove_var("DROP_ADDR");
         std::env::remove_var("DROP_DATA");

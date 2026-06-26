@@ -234,6 +234,36 @@ curl -H "Authorization: Bearer change-me" \
   -d '{"job_id":"<job-id>"}'
 ```
 
+### Local job lifecycle & timeout
+
+Local executor jobs (started by `run_job` / `run_codex`) run in their own
+process group via `setsid`, and the leader pid is recorded as
+`process_group_id` in `.codex/jobs/<job_id>/metadata.json`. This lets the
+runtime reclaim a whole subtree on timeout or stop rather than orphaning child
+processes.
+
+- **Timeout.** When `job_status` or `job_log` detect a `running` local job
+  whose `started_at + max_runtime_secs` has passed, the runtime sends `SIGTERM`
+  to the whole process group (`kill -TERM -<pgid>`), escalates to `SIGKILL` if
+  the group is still alive after a short grace window, and persists a terminal
+  `lost` status plus a `note` describing what happened. The process group is
+  never left running in the background.
+- **Stop.** An internal `POST /api/jobs/stop` endpoint (with `{"job_id": ...}`)
+  stops a running local job by terminating its process group and marking it
+  `stopped`. This is a thin REST wrapper over `ToolRuntime::stop_job` and is
+  **not** exposed as a GPT Action (it is deliberately absent from
+  `openapi.json`) so remote ChatGPT callers cannot drive an explicit kill.
+  Already-terminal jobs are left untouched.
+- **Old metadata without pid/pgid.** Local job metadata written before
+  pid/process-group tracking existed has no `pid` file or
+  `process_group_id`. On timeout/stop the runtime only marks such jobs
+  `lost`/`stopped` — it never guesses a pid to kill.
+
+Security: only jobs the runtime itself created and recorded (in memory or
+recoverable on disk) can be stopped. The pid/pgid come exclusively from the
+job's own on-disk files, never from caller input, and `job_id` is validated by
+`is_safe_job_id` against path traversal.
+
 ## MCP
 
 `/mcp` speaks JSON-RPC 2.0 over HTTP (streamable-http-jsonrpc transport). It is

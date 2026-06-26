@@ -16,8 +16,13 @@ surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
 5. [AUDIT_API.md](AUDIT_API.md) — the read-only admin/debug audit query API
    (`/api/audit/sessions`, `/api/audit/session`, `/api/audit/stats`): endpoints,
    limit bounds, and secret-sanitization guarantees. Not a GPT Action.
-6. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — the historical
-   phase-by-phase development plan (Phases 1–7 complete; Phase 8 in progress).
+6. [ROADMAP.md](ROADMAP.md) — current forward-looking roadmap after the initial
+   runtime MVP: real ChatGPT validation, deployment hardening, agent queue
+   durability, and operational controls.
+7. [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — compact handoff notes for future
+   coding agents after context compaction or a new window.
+8. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — historical
+   phase-by-phase development plan retained for context.
 
 ## Scope and architecture
 

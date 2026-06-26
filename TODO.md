@@ -27,6 +27,10 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       `/api/audit/session`, `/api/audit/stats` — admin/debug only, not a GPT
       Action, with strict read-time secret sanitization. See
       [docs/AUDIT_API.md](docs/AUDIT_API.md).
+- [x] Local job process termination on timeout/stop (Phase 11): current jobs
+      record `process_group_id`; over-time running jobs are marked `lost` and
+      their process group is terminated when possible; explicit stop is wired to
+      `POST /api/jobs/stop` but not exposed as a GPT Action.
 
 ### Deprecated (not active features)
 
@@ -40,13 +44,12 @@ removed. They are intentionally not tracked as future work.
 - [ ] Real ChatGPT GPT Actions import test (import `/openapi.json` and run the
       recommended call flow against a live deployment)
 - [ ] Real ChatGPT MCP connection test (connect a ChatGPT MCP client to `/mcp`)
-- [ ] Local job process termination on timeout (detect over-time running local
-      jobs and terminate the process group when possible)
+- [ ] Deployment hardening: reverse proxy / HTTPS guide, systemd notes
+- [ ] Rate limiting
+- [ ] Audit retention / cleanup policy for long-running deployments
 - [ ] Optional WebSocket/SSE agent transport as a second transport (not a
       rewrite of runtime tools)
 - [ ] Persistent agent job queue (survive server restart for in-flight agent
       jobs; currently in-memory)
-- [ ] Deployment hardening: reverse proxy / HTTPS guide, systemd notes
-- [ ] Rate limiting
 - [ ] Docs cleanup ongoing (keep README + docs aligned with `src/main.rs` and
       `src/openapi.rs` as the runtime evolves)

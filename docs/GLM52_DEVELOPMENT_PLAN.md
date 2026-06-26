@@ -6,7 +6,8 @@ This document is the handoff plan for continuing Private Drop Runtime developmen
 
 Branch baseline:
 
-- Current architecture commit: `0d50de4 Add runtime status observability`
+- Current architecture commit when the initial runtime MVP closed:
+  `3a0352e Harden local job lifecycle`
 - Server binary: `private-drop`
 - Agent binary: `private-drop-agent`
 - Main integration surfaces:
@@ -85,10 +86,10 @@ Avoid reintroducing:
 
 ## Phase Status
 
-Phases 1–7 are complete. Phase 8 (Documentation Cleanup) is the current phase.
-This plan is retained as the historical handoff; the authoritative current
-state lives in `README.md`, `V2_SCOPE.md`, `TODO.md`, and the kept docs under
-`docs/` (see `docs/INDEX.md`).
+Phases 1–11 are complete. This plan is retained as the historical handoff for
+the GLM 5.2 implementation sequence. The authoritative current state lives in
+`README.md`, `V2_SCOPE.md`, `TODO.md`, `docs/ROADMAP.md`, and the kept docs
+under `docs/` (see `docs/INDEX.md`).
 
 ## Phase 1: Stabilize Runtime Tool Contracts
 

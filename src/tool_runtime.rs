@@ -5,9 +5,11 @@
 
 use crate::auth::AuthContext;
 use crate::config::CodexConfig;
-use crate::projects::ProjectsState;
+use crate::projects::{Executor, ProjectConfig, ProjectsState};
 use crate::shell_client::ShellClientRegistry;
-use crate::shell_protocol::{ShellFileOpRequest, ShellJobOpRequest, ShellRunRequest};
+use crate::shell_protocol::{
+    ShellAgentProjectSummary, ShellFileOpRequest, ShellJobOpRequest, ShellRunRequest,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -95,7 +97,7 @@ pub enum ToolCall {
         tail_lines: Option<usize>,
     },
 
-    /// List all configured projects.
+    /// List all agent-registered runtime projects.
     ListProjects,
 
     /// List connected shell/agent clients.
@@ -357,14 +359,71 @@ impl ToolRuntime {
         }
     }
 
-    fn resolve_project(&self, project: &str) -> Result<&crate::projects::ProjectConfig, String> {
-        let projects = self.projects.config.as_ref().ok_or_else(|| {
-            self.projects
-                .load_error
-                .clone()
-                .unwrap_or_else(|| "Projects not configured".to_string())
-        })?;
-        projects.get_project(project)
+    fn agent_project_runtime_id(client_id: &str, project_id: &str) -> String {
+        format!("agent:{}:{}", client_id, project_id)
+    }
+
+    fn agent_project_config(client_id: &str, project: &ShellAgentProjectSummary) -> ProjectConfig {
+        ProjectConfig {
+            path: project.path.clone(),
+            executor: Executor::Agent,
+            client_id: Some(client_id.to_string()),
+            allow_patch: project.allow_patch,
+            allow_command_requests: false,
+            allow_raw_command_requests: false,
+            default_apply_patch_backend: None,
+            allowed_checks: Vec::new(),
+            checks: None,
+            commands: HashMap::new(),
+            hooks: HashMap::new(),
+        }
+    }
+
+    async fn resolve_agent_registered_project(
+        &self,
+        project: &str,
+    ) -> Result<Option<ProjectConfig>, String> {
+        let Some(rest) = project.strip_prefix("agent:") else {
+            return Ok(None);
+        };
+        let Some((client_id, agent_project_id)) = rest.split_once(':') else {
+            return Err("agent project ids must use agent:<client_id>:<project_id>".to_string());
+        };
+        if client_id.trim().is_empty() || agent_project_id.trim().is_empty() {
+            return Err("agent project ids must use agent:<client_id>:<project_id>".to_string());
+        }
+        let client = self
+            .shell_clients
+            .get_client_view(client_id)
+            .await
+            .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
+        let Some(project_summary) = client.projects.iter().find(|p| p.id == agent_project_id)
+        else {
+            return Err(format!(
+                "agent project '{}' is not registered by client '{}'",
+                agent_project_id, client_id
+            ));
+        };
+        if project_summary.disabled {
+            return Err(format!(
+                "agent project '{}' on client '{}' is disabled",
+                agent_project_id, client_id
+            ));
+        }
+        Ok(Some(Self::agent_project_config(
+            &client.client_id,
+            project_summary,
+        )))
+    }
+
+    async fn resolve_project(&self, project: &str) -> Result<ProjectConfig, String> {
+        if let Some(project) = self.resolve_agent_registered_project(project).await? {
+            return Ok(project);
+        }
+        Err(format!(
+            "Unknown project '{}'. Server-side projects.toml is not used by the runtime surface; use an agent-registered id like agent:<client_id>:<project_id> from listProjects.",
+            project
+        ))
     }
 
     /// The capability an agent-backed tool variant requires from the agent
@@ -414,7 +473,7 @@ impl ToolRuntime {
             Some(cap) => cap,
             None => return Ok(()),
         };
-        let proj = self.resolve_project(project)?;
+        let proj = self.resolve_project(project).await?;
         if !proj.is_agent() {
             return Ok(());
         }
@@ -501,7 +560,7 @@ impl ToolRuntime {
         match call {
             ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
 
-            ToolCall::ListProjects => self.list_projects(),
+            ToolCall::ListProjects => self.list_projects().await,
 
             ToolCall::ListAgents => self.list_agents().await,
 
@@ -572,7 +631,8 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "list_projects".to_string(),
-                description: "List configured projects and their execution mode.".to_string(),
+                description: "List agent-registered runtime projects and their execution mode."
+                    .to_string(),
                 input_schema: object_schema(vec![]),
             },
             ToolSpec {
@@ -590,7 +650,8 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "run_shell".to_string(),
-                description: "Run a short shell command inside a configured project.".to_string(),
+                description: "Run a short shell command inside an agent-registered project."
+                    .to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Configured project id.", true),
                     ("command", "string", "Shell command to run.", true),
@@ -610,7 +671,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "run_job".to_string(),
-                description: "Start an asynchronous shell job inside a configured project."
+                description: "Start an asynchronous shell job inside an agent-registered project."
                     .to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Configured project id.", true),
@@ -697,7 +758,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "read_file".to_string(),
-                description: "Read a UTF-8 file from a configured project.".to_string(),
+                description: "Read a UTF-8 file from an agent-registered project.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Configured project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -725,7 +786,8 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "apply_patch".to_string(),
-                description: "Apply a unified diff patch to a configured project.".to_string(),
+                description: "Apply a unified diff patch to an agent-registered project."
+                    .to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Configured project id.", true),
                     ("patch", "string", "Unified diff patch.", true),
@@ -739,31 +801,28 @@ impl ToolRuntime {
     // and shell_client handlers.
     // -------------------------------------------------------------------------
 
-    fn list_projects(&self) -> ToolResult {
-        let projects = match self.projects.config.as_ref() {
-            Some(cfg) => cfg,
-            None => {
-                let error = self
-                    .projects
-                    .load_error
-                    .clone()
-                    .unwrap_or_else(|| "Projects not configured".to_string());
-                return ToolResult::err(error);
+    async fn list_projects(&self) -> ToolResult {
+        let mut list: Vec<Value> = Vec::new();
+        for client in self.shell_clients.list_clients().await {
+            for project in client.projects.iter().filter(|p| !p.disabled) {
+                list.push(json!({
+                    "id": Self::agent_project_runtime_id(&client.client_id, &project.id),
+                    "agent_project_id": project.id,
+                    "name": project.name,
+                    "path": project.path,
+                    "executor": "agent",
+                    "client_id": client.client_id,
+                    "allow_patch": project.allow_patch,
+                    "source": "agent_registered",
+                }));
             }
-        };
-        let list: Vec<Value> = projects
-            .projects
-            .iter()
-            .map(|(id, proj)| {
-                json!({
-                    "id": id,
-                    "path": proj.path,
-                    "executor": if proj.is_agent() { "agent" } else { "local" },
-                    "client_id": proj.client_id,
-                    "allow_patch": proj.allow_patch,
-                })
-            })
-            .collect();
+        }
+        list.sort_by(|a, b| {
+            a["id"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(b["id"].as_str().unwrap_or_default())
+        });
         ToolResult::ok(Value::Array(list))
     }
 
@@ -815,6 +874,8 @@ impl ToolRuntime {
                     "status": c.status,
                     "connected": c.connected,
                     "agent_protocol_version": c.agent_protocol_version,
+                    "transport": c.transport,
+                    "pending_requests": c.pending_requests,
                     "capabilities": c.capabilities,
                     "projects_count": c.projects.len(),
                 })
@@ -890,7 +951,7 @@ impl ToolRuntime {
         timeout_secs: Option<u64>,
         cwd: Option<String>,
     ) -> ToolResult {
-        let proj = match self.resolve_project(&project) {
+        let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
@@ -951,7 +1012,7 @@ impl ToolRuntime {
                 }
             }
         } else {
-            let cwd_path = match resolve_local_cwd(proj, cwd.as_deref()) {
+            let cwd_path = match resolve_local_cwd(&proj, cwd.as_deref()) {
                 Ok(path) => path,
                 Err(e) => return ToolResult::err(e),
             };
@@ -981,7 +1042,7 @@ impl ToolRuntime {
     }
 
     async fn apply_patch(&self, project: String, patch: String) -> ToolResult {
-        let proj = match self.resolve_project(&project) {
+        let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
@@ -1108,7 +1169,7 @@ impl ToolRuntime {
     }
 
     async fn git_status(&self, project: String) -> ToolResult {
-        let proj = match self.resolve_project(&project) {
+        let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
@@ -1167,7 +1228,7 @@ impl ToolRuntime {
     }
 
     async fn git_diff(&self, project: String, args: Option<Vec<String>>) -> ToolResult {
-        let proj = match self.resolve_project(&project) {
+        let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
@@ -1237,7 +1298,7 @@ impl ToolRuntime {
         start_line: Option<usize>,
         limit: Option<usize>,
     ) -> ToolResult {
-        let proj = match self.resolve_project(&project) {
+        let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
@@ -1316,7 +1377,7 @@ impl ToolRuntime {
         timeout_secs: Option<i64>,
         cwd: Option<String>,
     ) -> ToolResult {
-        let proj = match self.resolve_project(&project) {
+        let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
         };
@@ -3014,34 +3075,16 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_job_metadata_records_process_group_id() {
+    async fn run_job_rejects_server_configured_project_without_local_spawn() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let runtime = runtime_with_project(root, "demo");
         let result = runtime
             .run_job("demo".to_string(), "true".to_string(), Some(10), None)
             .await;
-        assert!(result.success, "{:?}", result.error);
-        let job_id = result.output["job_id"].as_str().unwrap().to_string();
-        let record = runtime
-            .local_jobs
-            .lock()
-            .await
-            .get(&job_id)
-            .cloned()
-            .unwrap();
-        let meta = read_json(record.dir.join("metadata.json"));
-        // process_group_id must be recorded and equal to the pid file (setsid
-        // makes the leader pid == pgid).
-        let pgid = meta["process_group_id"]
-            .as_i64()
-            .expect("process_group_id set");
-        let pid_file = read_trim(record.dir.join("pid"))
-            .unwrap()
-            .parse::<i64>()
-            .unwrap();
-        assert_eq!(pgid, pid_file);
-        assert!(pgid > 0);
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("projects.toml"));
+        assert!(runtime.local_jobs.lock().await.is_empty());
     }
 
     #[tokio::test]
@@ -3501,16 +3544,15 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_codex_output_contains_structured_fields() {
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
-        // Initialize a git repo so run_job's wrapper (git apply etc.) is not
-        // needed — run_job only spawns a shell wrapper, no git required.
-        std::fs::create_dir_all(root).unwrap();
-        let runtime = runtime_with_codex(root, CodexConfig::default());
+    async fn run_codex_agent_output_contains_structured_fields() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.async_shell_jobs = true;
+        register_agent(&runtime, "oe", None, caps).await;
+        let project = agent_test_project_id("oe");
         let result = runtime
             .run_codex(
-                "demo".to_string(),
+                project.clone(),
                 "echo hello".to_string(),
                 None,
                 Some(10),
@@ -3521,13 +3563,17 @@ mod tests {
         assert!(result.success, "{:?}", result.error);
         assert!(result.output["job_id"].is_string());
         assert_eq!(result.output["kind"], "codex");
-        assert_eq!(result.output["project"], "demo");
+        assert_eq!(result.output["project"], project);
         assert_eq!(result.output["status_endpoint"], "/api/jobs/status");
         assert_eq!(result.output["log_endpoint"], "/api/jobs/log");
+        assert!(
+            runtime.local_jobs.lock().await.is_empty(),
+            "agent-backed Codex jobs must not create server-local job metadata"
+        );
     }
 
     #[tokio::test]
-    async fn run_codex_metadata_kind_is_codex() {
+    async fn run_codex_rejects_server_configured_project() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         let runtime = runtime_with_codex(root, CodexConfig::default());
@@ -3541,30 +3587,25 @@ mod tests {
                 None,
             )
             .await;
-        assert!(result.success, "{:?}", result.error);
-        let job_id = result.output["job_id"].as_str().unwrap().to_string();
-        // The job dir metadata.json should record kind = codex.
-        let record = runtime.local_jobs.lock().await.get(&job_id).cloned();
-        assert!(record.is_some(), "job should be cached in local_jobs");
-        let meta = read_json(record.unwrap().dir.join("metadata.json"));
-        assert_eq!(meta["kind"], "codex");
-        assert_eq!(meta["project"], "demo");
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("projects.toml"));
+        assert!(runtime.local_jobs.lock().await.is_empty());
     }
 
     #[tokio::test]
-    async fn run_codex_uses_default_timeout_from_config() {
-        // When timeout_secs is None, run_codex uses codex.default_timeout_secs.
-        // We verify by checking metadata.json max_runtime_secs matches config.
-        let tmp = tempfile::tempdir().unwrap();
-        let root = tmp.path();
+    async fn run_codex_agent_uses_configured_command_builder() {
         let codex = CodexConfig {
             default_timeout_secs: 42,
             ..CodexConfig::default()
         };
-        let runtime = runtime_with_codex(root, codex);
+        let mut runtime = runtime_with_agent_project("oe");
+        runtime.codex = Arc::new(codex);
+        let mut caps = ShellClientCapabilities::default();
+        caps.async_shell_jobs = true;
+        register_agent(&runtime, "oe", None, caps).await;
         let result = runtime
             .run_codex(
-                "demo".to_string(),
+                agent_test_project_id("oe"),
                 "echo hi".to_string(),
                 None,
                 None,
@@ -3573,23 +3614,22 @@ mod tests {
             )
             .await;
         assert!(result.success, "{:?}", result.error);
-        let job_id = result.output["job_id"].as_str().unwrap().to_string();
-        let record = runtime
-            .local_jobs
-            .lock()
-            .await
-            .get(&job_id)
-            .cloned()
-            .unwrap();
-        let meta = read_json(record.dir.join("metadata.json"));
-        assert_eq!(meta["max_runtime_secs"], 42);
+        let jobs = runtime.shell_clients.list_jobs(None).await;
+        assert_eq!(jobs.len(), 1);
+        assert!(
+            jobs[0].command_preview.contains("--approval-mode"),
+            "{}",
+            jobs[0].command_preview
+        );
     }
 
     // =========================================================================
     // Phase 6: agent capability checks, owner boundary, structured errors
     // =========================================================================
 
-    use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
+    use crate::shell_protocol::{
+        ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
+    };
 
     fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
         crate::auth::AuthContext {
@@ -3647,11 +3687,105 @@ mod tests {
                 owner: owner.map(str::to_string),
                 hostname: None,
                 capabilities: Some(caps),
-                projects: None,
+                projects: Some(vec![registered_project("agent-proj", "/tmp/agent-proj")]),
                 agent_protocol_version: Some("polling-v1".to_string()),
             })
             .await
             .unwrap();
+    }
+
+    fn agent_test_project_id(client_id: &str) -> String {
+        ToolRuntime::agent_project_runtime_id(client_id, "agent-proj")
+    }
+
+    fn registered_project(id: &str, path: &str) -> ShellAgentProjectSummary {
+        ShellAgentProjectSummary {
+            id: id.to_string(),
+            name: Some(id.to_string()),
+            path: path.to_string(),
+            allow_patch: true,
+            kind: Some("repo".to_string()),
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at: 123,
+        }
+    }
+
+    async fn register_agent_with_projects(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        owner: Option<&str>,
+        caps: ShellClientCapabilities,
+        projects: Vec<ShellAgentProjectSummary>,
+    ) {
+        runtime
+            .shell_clients
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                display_name: None,
+                owner: owner.map(str::to_string),
+                hostname: None,
+                capabilities: Some(caps),
+                projects: Some(projects),
+                agent_protocol_version: Some("polling-v1".to_string()),
+            })
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn list_projects_returns_agent_registered_projects_without_server_config() {
+        let runtime = test_runtime();
+        register_agent_with_projects(
+            &runtime,
+            "workstation-1",
+            None,
+            ShellClientCapabilities::default(),
+            vec![registered_project("private-drop", "/root/git/private-drop")],
+        )
+        .await;
+
+        let result = runtime.dispatch(ToolCall::ListProjects).await;
+        assert!(result.success, "{:?}", result.error);
+        let projects = result.output.as_array().unwrap();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0]["id"], "agent:workstation-1:private-drop");
+        assert_eq!(projects[0]["agent_project_id"], "private-drop");
+        assert_eq!(projects[0]["executor"], "agent");
+        assert_eq!(projects[0]["source"], "agent_registered");
+    }
+
+    #[tokio::test]
+    async fn server_configured_project_id_is_not_resolved_by_runtime_surface() {
+        let runtime = runtime_with_agent_project("oe");
+        register_agent(
+            &runtime,
+            "oe",
+            None,
+            ShellClientCapabilities {
+                shell: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunShell {
+                    project: "agent-proj".to_string(),
+                    command: "echo hi".to_string(),
+                    timeout_secs: Some(1),
+                    cwd: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("projects.toml"));
     }
 
     #[tokio::test]
@@ -3664,7 +3798,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunShell {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
                     timeout_secs: None,
                     cwd: None,
@@ -3687,7 +3821,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::ReadFile {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("oe"),
                     path: "README.md".to_string(),
                     start_line: None,
                     limit: None,
@@ -3709,7 +3843,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunJob {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
                     timeout_secs: None,
                     cwd: None,
@@ -3732,7 +3866,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::GitStatus {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("oe"),
                 },
                 Some(&bootstrap),
             )
@@ -3750,7 +3884,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunShell {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("ghost"),
                     command: "echo hi".to_string(),
                     timeout_secs: None,
                     cwd: None,
@@ -3775,7 +3909,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunJob {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
                     timeout_secs: None,
                     cwd: None,
@@ -3799,7 +3933,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunShell {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
                     timeout_secs: None,
                     cwd: None,
@@ -3826,7 +3960,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunJob {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
                     timeout_secs: None,
                     cwd: None,
@@ -3848,7 +3982,7 @@ mod tests {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::RunJob {
-                    project: "agent-proj".to_string(),
+                    project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
                     timeout_secs: None,
                     cwd: None,
@@ -3860,9 +3994,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn local_project_unaffected_by_agent_auth_checks() {
-        // Local-executor projects must still work when no auth context is
-        // supplied (e.g. internal callers using dispatch_with_auth(None)).
+    async fn server_configured_local_project_is_not_runtime_surface() {
+        // The ChatGPT runtime surface is agent-registered only. A server-side
+        // local project config may still exist in older internal modules, but
+        // ToolRuntime must not treat it as an exposed project.
         let tmp = tempfile::tempdir().unwrap();
         let runtime = runtime_with_codex(tmp.path(), CodexConfig::default());
         let result = runtime
@@ -3878,7 +4013,8 @@ mod tests {
                 None,
             )
             .await;
-        assert!(result.success, "{:?}", result.error);
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("projects.toml"));
     }
 
     // =========================================================================
@@ -4043,9 +4179,53 @@ mod tests {
         assert_eq!(clients.len(), 1);
         assert_eq!(clients[0]["client_id"], "agent-1");
         assert_eq!(clients[0]["agent_protocol_version"], "polling-v1");
+        assert_eq!(clients[0]["transport"], "polling");
         assert_eq!(clients[0]["connected"], true);
         assert!(clients[0]["capabilities"].is_object());
         assert_eq!(clients[0]["projects_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn runtime_status_reflects_websocket_transport_label() {
+        let registry = Arc::new(ShellClientRegistry::default());
+        let runtime = ToolRuntime::new(
+            Arc::new(ProjectsState::failed(
+                "none".to_string(),
+                "test".to_string(),
+            )),
+            registry.clone(),
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        );
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "ws-agent".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: Some("websocket-v1".to_string()),
+            })
+            .await
+            .unwrap();
+        // Flip the transport label the same way the WebSocket handler does.
+        registry
+            .set_transport("ws-agent", crate::shell_client::TRANSPORT_WEBSOCKET)
+            .await
+            .unwrap();
+
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        let clients = &result.output["agents"]["clients"];
+        let entry = clients
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|c| c["client_id"] == "ws-agent")
+            .expect("ws-agent present");
+        assert_eq!(entry["transport"], "websocket");
+        assert_eq!(entry["agent_protocol_version"], "websocket-v1");
     }
 
     #[tokio::test]

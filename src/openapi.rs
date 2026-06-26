@@ -103,8 +103,8 @@ fn build_openapi_spec() -> Value {
             "/api/projects/list": {
                 "post": operation(
                     "listProjects",
-                    "List configured projects",
-                    "Returns the list of configured projects with their id, path, executor (local or agent), and whether patching is allowed. Call this first to learn the project ids required by runCodexTask, readProjectFile, and getProjectGitStatus.",
+                    "List agent-registered projects",
+                    "Returns the list of projects registered by connected agents with their runtime id (`agent:<client_id>:<project_id>`), path, executor, client_id, and whether patching is allowed. Call this first to learn the project ids required by runCodexTask, readProjectFile, and getProjectGitStatus.",
                     "EmptyRequest",
                     "ToolResult"
                 )
@@ -122,7 +122,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "runCodexTask",
                     "Run Codex CLI task",
-                    "Recommended primary action for code tasks. Starts Codex CLI asynchronously inside a configured project and returns a job_id plus status/log endpoint hints. The runtime constructs the Codex command for the caller; GPT should NOT assemble raw shell to run Codex. After calling this, poll the returned job_id with getRuntimeJobStatus and read output with getRuntimeJobLog.",
+                    "Recommended primary action for code tasks. Starts Codex CLI asynchronously inside an agent-registered project and returns a job_id plus status/log endpoint hints. The runtime constructs the Codex command for the caller; GPT should NOT assemble raw shell to run Codex. After calling this, poll the returned job_id with getRuntimeJobStatus and read output with getRuntimeJobLog.",
                     "CodexRunRequest",
                     "ToolResult",
                     json!({
@@ -189,7 +189,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "readProjectFile",
                     "Read a project file",
-                    "Reads a UTF-8 file from a configured project. Paths are confined to the project root; traversal and absolute paths are rejected. Output is bounded; use start_line and limit for pagination. This is the safe, dedicated alternative to callRuntimeTool for file inspection.",
+                    "Reads a UTF-8 file from an agent-registered project. Paths are resolved by the owning agent within that project. Output is bounded; use start_line and limit for pagination. This is the safe, dedicated alternative to callRuntimeTool for file inspection.",
                     "ReadProjectFileRequest",
                     "ToolResult",
                     json!({
@@ -216,7 +216,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getProjectGitStatus",
                     "Get project git status",
-                    "Runs `git status --porcelain` in a configured project and returns stdout, stderr, and exit_code. Safe read-only project inspection. Use this before proposing changes via runCodexTask.",
+                    "Runs `git status --porcelain` in an agent-registered project and returns stdout, stderr, and exit_code. Safe read-only project inspection. Use this before proposing changes via runCodexTask.",
                     "ProjectIdRequest",
                     "ToolResult",
                     json!({
@@ -380,11 +380,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "prompt"],
-            "description": "Start a Codex CLI task. `project` must be a configured project id (see listProjects). `prompt` is the instruction passed to Codex CLI.",
+            "description": "Start a Codex CLI task. `project` must be an agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`. `prompt` is the instruction passed to Codex CLI.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Configured project id from projects.toml. Use listProjects to discover available ids."
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "prompt": {
                     "type": "string",
@@ -400,7 +400,7 @@ fn schemas() -> Value {
                 },
                 "cwd": {
                     "type": "string",
-                    "description": "Optional project-relative working directory. Must stay within the project root."
+                    "description": "Optional project-relative working directory. The owning agent enforces its cwd policy."
                 },
                 "extra_args": {
                     "type": "array",
@@ -447,11 +447,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "path"],
-            "description": "Read a UTF-8 file from a configured project. Paths are confined to the project root.",
+            "description": "Read a UTF-8 file from an agent-registered project.",
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Configured project id from projects.toml. Use listProjects to discover available ids."
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 },
                 "path": {
                     "type": "string",
@@ -475,7 +475,7 @@ fn schemas() -> Value {
             "properties": {
                 "project": {
                     "type": "string",
-                    "description": "Configured project id from projects.toml. Use listProjects to discover available ids."
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
                 }
             }
         },

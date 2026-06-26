@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 mod action_audit;
 mod action_sessions;
+mod agent_ws;
 mod audit_http;
 mod auth;
 mod codex;
@@ -139,7 +140,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("shell/agent/register").post(shell_agent_register))
             .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
             .push(Router::with_path("shell/agent/result").post(shell_agent_result))
-            .push(Router::with_path("shell/agent/job_update").post(shell_agent_job_update)),
+            .push(Router::with_path("shell/agent/job_update").post(shell_agent_job_update))
+            // WebSocket agent transport (preferred long-lived connection).
+            // Polling endpoints above remain as fallback. Bearer auth is
+            // enforced by the shared AuthMiddleware hoop.
+            .push(Router::with_path("agents/ws").get(agent_ws::agent_ws)),
     );
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
@@ -193,6 +198,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("MCP endpoint: {}/mcp", base);
     tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);
+    tracing::info!("Agent WebSocket: {}/api/agents/ws", base);
+    tracing::info!("Agent polling (fallback): {}/api/shell/agent/poll", base);
     tracing::info!("Audit API (read-only): {}/api/audit/sessions", base);
     Server::new(acceptor).serve(router).await;
     Ok(())

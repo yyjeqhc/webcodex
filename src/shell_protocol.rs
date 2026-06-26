@@ -28,11 +28,24 @@ fn default_agent_protocol_version() -> String {
     "unknown".to_string()
 }
 
+/// Default `transport` for `ShellClientView` when deserializing views that
+/// predate the transport field (e.g. older snapshots). Polling is the legacy
+/// default.
+fn default_transport_polling() -> String {
+    "polling".to_string()
+}
+
 /// Protocol version announced by current `private-drop-agent` builds. Used by
 /// the `private-drop-agent` binary target; allowed dead-code here because the
 /// main server binary does not reference it directly.
 #[allow(dead_code)]
 pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
+
+/// Protocol version announced by `private-drop-agent` builds that connect over
+/// WebSocket. Kept in the shared protocol module so both the server and the
+/// agent binary reference the same literal.
+#[allow(dead_code)]
+pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
@@ -72,6 +85,8 @@ pub struct ShellAgentProjectSummary {
     #[serde(default)]
     pub name: Option<String>,
     pub path: String,
+    #[serde(default = "default_shell_true")]
+    pub allow_patch: bool,
     #[serde(default)]
     pub kind: Option<String>,
     #[serde(default)]
@@ -125,6 +140,10 @@ pub struct ShellClientView {
     /// that registered before this field existed.
     #[serde(default = "default_agent_protocol_version")]
     pub agent_protocol_version: String,
+    /// Transport the agent is currently connected over: `"polling"` or
+    /// `"websocket"`. Defaults to `"polling"` for older agents/views.
+    #[serde(default = "default_transport_polling")]
+    pub transport: String,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -528,4 +547,273 @@ pub struct ShellClientJobsListResponse {
     pub jobs: Vec<ShellJobInfo>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+// ============================================================================
+// Transport-neutral agent message envelope
+// ============================================================================
+//
+// A single message format used by the WebSocket agent transport (and future
+// QUIC transport). It wraps the existing polling protocol payloads so the
+// server and agent never duplicate business logic: register/request/result/
+// job_update reuse the same structs as the HTTP polling endpoints.
+//
+// Wire format is JSON with an internal `type` tag:
+//
+//   {"type":"register","client_id":"...","projects":[...]}
+//   {"type":"registered","success":true,"client":{...}}
+//   {"type":"request","request_id":"...","client_id":"...","kind":"run_shell",...}
+//   {"type":"result","client_id":"...","request_id":"...","exit_code":0,...}
+//   {"type":"job_update","client_id":"...","job_id":"...","status":"running",...}
+//   {"type":"ping","ts":1700000000}
+//   {"type":"pong","ts":1700000000}
+//   {"type":"error","code":"bad_request","message":"..."}
+//
+// The envelope is transport-neutral: it carries no WebSocket-specific fields
+// and could be framed over QUIC streams unchanged.
+
+/// One agent transport message. Used by both the server WebSocket handler and
+/// the `private-drop-agent` WebSocket client mode.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentEnvelope {
+    /// Agent -> server. First message after the WebSocket handshake. Carries
+    /// the same payload as `POST /api/shell/agent/register`.
+    Register {
+        #[serde(flatten)]
+        payload: ShellClientRegisterRequest,
+    },
+    /// Server -> agent. Acknowledgement of `Register`.
+    Registered {
+        success: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        client: Option<ShellClientView>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    /// Server -> agent. A pending shell/file/job request pushed to the agent.
+    /// Same payload as the `request` field of the polling response.
+    Request {
+        #[serde(flatten)]
+        request: ShellAgentShellRequest,
+    },
+    /// Agent -> server. Result of a synchronous shell/file request. Same
+    /// payload as `POST /api/shell/agent/result`.
+    Result {
+        #[serde(flatten)]
+        payload: ShellAgentResultRequest,
+    },
+    /// Agent -> server. Incremental or final update for an async job. Same
+    /// payload as `POST /api/shell/agent/job_update`.
+    JobUpdate {
+        #[serde(flatten)]
+        payload: ShellAgentJobUpdateRequest,
+    },
+    /// Either direction. Liveness keepalive.
+    Ping { ts: i64 },
+    /// Either direction. Reply to `Ping`.
+    Pong { ts: i64 },
+    /// Server -> agent. Fatal protocol error; the agent should reconnect.
+    Error { code: String, message: String },
+}
+
+impl AgentEnvelope {
+    /// Short discriminator string for a variant, e.g. `"register"`. Useful
+    /// for logging and tests.
+    #[allow(dead_code)]
+    pub fn kind(&self) -> &'static str {
+        match self {
+            AgentEnvelope::Register { .. } => "register",
+            AgentEnvelope::Registered { .. } => "registered",
+            AgentEnvelope::Request { .. } => "request",
+            AgentEnvelope::Result { .. } => "result",
+            AgentEnvelope::JobUpdate { .. } => "job_update",
+            AgentEnvelope::Ping { .. } => "ping",
+            AgentEnvelope::Pong { .. } => "pong",
+            AgentEnvelope::Error { .. } => "error",
+        }
+    }
+
+    /// Encode the envelope as a JSON string.
+    pub fn to_json(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    /// Decode an envelope from a JSON byte slice.
+    pub fn from_slice(bytes: &[u8]) -> Result<Self, serde_json::Error> {
+        serde_json::from_slice(bytes)
+    }
+}
+
+#[cfg(test)]
+mod envelope_tests {
+    use super::*;
+
+    fn sample_register() -> ShellClientRegisterRequest {
+        ShellClientRegisterRequest {
+            client_id: "ws-1".to_string(),
+            display_name: Some("WS Agent".to_string()),
+            owner: Some("alice".to_string()),
+            hostname: None,
+            capabilities: Some(ShellClientCapabilities {
+                shell: true,
+                file_read: true,
+                file_write: false,
+                git: false,
+                jobs: true,
+                async_jobs: true,
+                async_shell_jobs: true,
+            }),
+            projects: None,
+            agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string()),
+        }
+    }
+
+    #[test]
+    fn register_envelope_round_trips_with_type_tag() {
+        let env = AgentEnvelope::Register {
+            payload: sample_register(),
+        };
+        let json = env.to_json().unwrap();
+        assert!(json.contains(r#""type":"register""#), "json was: {json}");
+        assert!(json.contains(r#""client_id":"ws-1""#));
+        let back = AgentEnvelope::from_slice(json.as_bytes()).unwrap();
+        match back {
+            AgentEnvelope::Register { payload } => {
+                assert_eq!(payload.client_id, "ws-1");
+                assert_eq!(
+                    payload.agent_protocol_version.as_deref(),
+                    Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1),
+                );
+                let caps = payload.capabilities.expect("capabilities");
+                assert!(caps.shell);
+                assert!(!caps.file_write);
+            }
+            other => panic!("expected register, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn request_envelope_flattens_shell_request_fields() {
+        let request = ShellAgentShellRequest {
+            request_id: "req-1".to_string(),
+            client_id: "ws-1".to_string(),
+            kind: "run_shell".to_string(),
+            job_id: None,
+            cwd: Some("/tmp".to_string()),
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            command: "echo hi".to_string(),
+            timeout_secs: 10,
+            requested_by: "tester".to_string(),
+            created_at: 123,
+        };
+        let env = AgentEnvelope::Request { request };
+        let json = env.to_json().unwrap();
+        assert!(json.contains(r#""type":"request""#));
+        assert!(json.contains(r#""request_id":"req-1""#));
+        assert!(json.contains(r#""kind":"run_shell""#));
+        assert!(json.contains(r#""command":"echo hi""#));
+        let back = AgentEnvelope::from_slice(json.as_bytes()).unwrap();
+        match back {
+            AgentEnvelope::Request { request } => {
+                assert_eq!(request.request_id, "req-1");
+                assert_eq!(request.command, "echo hi");
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn result_and_job_update_envelopes_round_trip() {
+        let result_env = AgentEnvelope::Result {
+            payload: ShellAgentResultRequest {
+                client_id: "ws-1".to_string(),
+                request_id: "req-1".to_string(),
+                exit_code: Some(0),
+                stdout: Some("hi".to_string()),
+                stderr: None,
+                duration_ms: Some(5),
+                error: None,
+            },
+        };
+        let json = result_env.to_json().unwrap();
+        assert!(json.contains(r#""type":"result""#));
+        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
+            AgentEnvelope::Result { payload } => assert_eq!(payload.exit_code, Some(0)),
+            other => panic!("expected result, got {:?}", other.kind()),
+        }
+
+        let job_env = AgentEnvelope::JobUpdate {
+            payload: ShellAgentJobUpdateRequest {
+                client_id: "ws-1".to_string(),
+                job_id: "job-1".to_string(),
+                request_id: Some("req-1".to_string()),
+                status: "running".to_string(),
+                stdout_chunk: Some("out".to_string()),
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: None,
+                duration_ms: None,
+                error: None,
+                finished: false,
+            },
+        };
+        let json = job_env.to_json().unwrap();
+        assert!(json.contains(r#""type":"job_update""#));
+        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
+            AgentEnvelope::JobUpdate { payload } => assert_eq!(payload.job_id, "job-1"),
+            other => panic!("expected job_update, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn ping_pong_error_envelopes_round_trip() {
+        let ping = AgentEnvelope::Ping { ts: 1700000000 };
+        let json = ping.to_json().unwrap();
+        assert_eq!(json, r#"{"type":"ping","ts":1700000000}"#);
+        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
+            AgentEnvelope::Ping { ts } => assert_eq!(ts, 1700000000),
+            other => panic!("expected ping, got {:?}", other.kind()),
+        }
+
+        let err = AgentEnvelope::Error {
+            code: "bad_request".to_string(),
+            message: "nope".to_string(),
+        };
+        let json = err.to_json().unwrap();
+        assert!(json.contains(r#""type":"error""#));
+        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
+            AgentEnvelope::Error { code, message } => {
+                assert_eq!(code, "bad_request");
+                assert_eq!(message, "nope");
+            }
+            other => panic!("expected error, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn invalid_envelope_type_is_rejected() {
+        let json = r#"{"type":"not_a_real_variant"}"#;
+        assert!(AgentEnvelope::from_slice(json.as_bytes()).is_err());
+    }
+
+    #[test]
+    fn registered_envelope_omits_none_fields() {
+        let env = AgentEnvelope::Registered {
+            success: true,
+            client: None,
+            error: None,
+        };
+        let json = env.to_json().unwrap();
+        assert!(json.contains(r#""type":"registered""#));
+        assert!(json.contains(r#""success":true"#));
+        // client/error are skip_serializing_if None.
+        assert!(!json.contains(r#""client""#));
+        assert!(!json.contains(r#""error""#));
+    }
 }

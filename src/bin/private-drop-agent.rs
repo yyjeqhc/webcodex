@@ -14,10 +14,11 @@ use std::time::{Duration, Instant};
 mod shell_protocol;
 
 use shell_protocol::{
-    ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
+    AgentEnvelope, ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
     ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
     ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
     ShellClientRegisterRequest, ShellClientRegisterResponse, AGENT_PROTOCOL_VERSION_POLLING_V1,
+    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
@@ -27,6 +28,16 @@ const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 const PROJECT_SCAN_CACHE_MS: u64 = 5000;
 const DEFAULT_MAX_CONCURRENT_JOBS: usize = 2;
+/// Config value selecting the polling transport (HTTP `/api/shell/agent/poll`).
+const TRANSPORT_POLLING: &str = "polling";
+/// Config value selecting the WebSocket transport (preferred long-lived).
+const TRANSPORT_WEBSOCKET: &str = "websocket";
+/// WebSocket outgoing envelope channel capacity.
+const WS_OUTGOING_CAPACITY: usize = 64;
+/// WebSocket ping interval.
+const WS_PING_INTERVAL: Duration = Duration::from_secs(30);
+/// Reconnect backoff after a WebSocket session ends.
+const WS_RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 
 #[derive(Debug, Clone, Deserialize)]
 struct AgentConfig {
@@ -49,6 +60,10 @@ struct AgentConfig {
     max_concurrent_jobs: Option<usize>,
     #[serde(default)]
     policy: AgentPolicy,
+    /// Transport selection: `"polling"` (default, HTTP fallback) or
+    /// `"websocket"` (preferred long-lived connection).
+    #[serde(default)]
+    transport: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -108,10 +123,157 @@ struct CommandResult {
     error: Option<String>,
 }
 
-#[derive(Debug, Clone, Default)]
+/// Minimal HTTP send configuration used by the polling `AgentSink`. We do not
+/// store the whole `AgentConfig` here: policy and concurrency limits stay
+/// with the agent config and are passed alongside the sink.
+#[derive(Debug, Clone)]
+struct HttpSendConfig {
+    client: Client,
+    server_url: String,
+    token: String,
+    client_id: String,
+}
+
+/// Transport-neutral outgoing channel for an agent. Both the polling loop and
+/// the WebSocket loop build an `AgentSink` and hand it to the shared
+/// `dispatch_request` / `JobManager` execution path. This is the single seam
+/// that lets the agent speak either transport without duplicating execution
+/// logic.
+#[derive(Debug, Clone)]
+enum AgentSink {
+    /// Polling transport: POST results/job_updates to the HTTP endpoints.
+    Http(HttpSendConfig),
+    /// WebSocket transport: push envelopes through an mpsc that a writer task
+    /// drains onto the socket.
+    WebSocket {
+        tx: tokio::sync::mpsc::Sender<AgentEnvelope>,
+        client_id: String,
+    },
+}
+
+impl AgentSink {
+    fn client_id(&self) -> &str {
+        match self {
+            AgentSink::Http(h) => &h.client_id,
+            AgentSink::WebSocket { client_id, .. } => client_id,
+        }
+    }
+
+    /// Submit the result of a synchronous shell/file request. Mirrors the old
+    /// `submit_result` free function but routes over the active transport.
+    fn submit_result(&self, request_id: String, result: CommandResult) -> Result<bool, String> {
+        let body = ShellAgentResultRequest {
+            client_id: self.client_id().to_string(),
+            request_id,
+            exit_code: result.exit_code,
+            stdout: result.stdout,
+            stderr: result.stderr,
+            duration_ms: result.duration_ms,
+            error: result.error,
+        };
+        match self {
+            AgentSink::Http(h) => {
+                let resp: ShellAgentResultResponse = post_json_raw(
+                    &h.client,
+                    &h.server_url,
+                    &h.token,
+                    "/api/shell/agent/result",
+                    &body,
+                )?;
+                if resp.success {
+                    Ok(true)
+                } else {
+                    Err(resp
+                        .error
+                        .unwrap_or_else(|| "result submission failed without error".to_string()))
+                }
+            }
+            AgentSink::WebSocket { tx, .. } => {
+                let env = AgentEnvelope::Result { payload: body };
+                tx.blocking_send(env)
+                    .map_err(|_| "websocket send failed".to_string())?;
+                Ok(true)
+            }
+        }
+    }
+
+    /// Push an incremental/final job update. Mirrors the old `send_job_update`
+    /// free function.
+    fn send_job_update(&self, body: &ShellAgentJobUpdateRequest) -> Result<(), String> {
+        match self {
+            AgentSink::Http(h) => {
+                let resp: ShellAgentJobUpdateResponse = post_json_raw(
+                    &h.client,
+                    &h.server_url,
+                    &h.token,
+                    "/api/shell/agent/job_update",
+                    body,
+                )?;
+                if resp.success {
+                    Ok(())
+                } else {
+                    Err(resp
+                        .error
+                        .unwrap_or_else(|| "job_update failed without error".to_string()))
+                }
+            }
+            AgentSink::WebSocket { tx, .. } => {
+                let env = AgentEnvelope::JobUpdate {
+                    payload: body.clone(),
+                };
+                tx.blocking_send(env)
+                    .map_err(|_| "websocket send failed".to_string())
+            }
+        }
+    }
+}
+
+/// Send a JSON POST to the server and decode the response. Same wire behavior
+/// as `post_json` but takes the raw connection bits so it can be used from
+/// `AgentSink::Http` without an `AgentConfig`.
+fn post_json_raw<T, R>(
+    client: &Client,
+    server_url: &str,
+    token: &str,
+    path: &str,
+    body: &T,
+) -> Result<R, String>
+where
+    T: serde::Serialize + ?Sized,
+    R: serde::de::DeserializeOwned,
+{
+    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
+    let resp = client
+        .post(url)
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .map_err(|e| format!("request {} failed: {}", path, e))?;
+    let status = resp.status();
+    let text = resp
+        .text()
+        .map_err(|e| format!("failed to read response {}: {}", path, e))?;
+    if !status.is_success() {
+        return Err(format!("{} returned {}: {}", path, status, text));
+    }
+    serde_json::from_str(&text).map_err(|e| format!("failed to parse response {}: {}", path, e))
+}
+
+#[derive(Debug, Clone)]
 struct JobManager {
+    max_concurrent: usize,
     jobs: Arc<Mutex<HashMap<String, RunningJob>>>,
-    queued: Arc<Mutex<VecDeque<(Client, AgentConfig, ShellAgentShellRequest)>>>,
+    queued: Arc<Mutex<VecDeque<(AgentSink, AgentPolicy, ShellAgentShellRequest)>>>,
+}
+
+impl JobManager {
+    fn new(max_concurrent: usize) -> Self {
+        Self {
+            max_concurrent: max_concurrent.max(1),
+            jobs: Arc::new(Mutex::new(HashMap::new())),
+            queued: Arc::new(Mutex::new(VecDeque::new())),
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -125,6 +287,8 @@ struct RunningJob {
 struct AgentProjectFile {
     id: String,
     path: String,
+    #[serde(default = "default_true")]
+    allow_patch: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -322,6 +486,7 @@ fn agent_project_summary(
         id: project.id.clone(),
         name: project.name.clone().or_else(|| Some(project.id.clone())),
         path: project.path.clone(),
+        allow_patch: project.allow_patch,
         kind: project.kind.clone(),
         description: project.description.clone(),
         hooks,
@@ -469,6 +634,7 @@ fn agent_register_capabilities(cfg: &AgentConfig) -> ShellClientCapabilities {
 fn build_register_request(
     cfg: &AgentConfig,
     projects: Vec<ShellAgentProjectSummary>,
+    protocol_version: &str,
 ) -> ShellClientRegisterRequest {
     let capabilities = agent_register_capabilities(cfg);
     ShellClientRegisterRequest {
@@ -478,7 +644,7 @@ fn build_register_request(
         hostname: cfg.hostname.clone().or_else(hostname),
         capabilities: Some(capabilities),
         projects: Some(projects),
-        agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_POLLING_V1.to_string()),
+        agent_protocol_version: Some(protocol_version.to_string()),
     }
 }
 
@@ -487,7 +653,11 @@ fn register(
     cfg: &AgentConfig,
     project_cache: &mut AgentProjectCache,
 ) -> Result<(), String> {
-    let body = build_register_request(cfg, project_cache.get(cfg));
+    let body = build_register_request(
+        cfg,
+        project_cache.get(cfg),
+        AGENT_PROTOCOL_VERSION_POLLING_V1,
+    );
     let response: ShellClientRegisterResponse =
         post_json(client, cfg, "/api/shell/agent/register", &body)?;
     if response.success {
@@ -933,48 +1103,6 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
     }
 }
 
-fn submit_result(
-    client: &Client,
-    cfg: &AgentConfig,
-    request_id: String,
-    result: CommandResult,
-) -> Result<bool, String> {
-    let body = ShellAgentResultRequest {
-        client_id: cfg.client_id.clone(),
-        request_id,
-        exit_code: result.exit_code,
-        stdout: result.stdout,
-        stderr: result.stderr,
-        duration_ms: result.duration_ms,
-        error: result.error,
-    };
-    let response: ShellAgentResultResponse =
-        post_json(client, cfg, "/api/shell/agent/result", &body)?;
-    if response.success {
-        Ok(true)
-    } else {
-        Err(response
-            .error
-            .unwrap_or_else(|| "result submission failed without error".to_string()))
-    }
-}
-
-fn send_job_update(
-    client: &Client,
-    cfg: &AgentConfig,
-    body: &ShellAgentJobUpdateRequest,
-) -> Result<(), String> {
-    let response: ShellAgentJobUpdateResponse =
-        post_json(client, cfg, "/api/shell/agent/job_update", body)?;
-    if response.success {
-        Ok(())
-    } else {
-        Err(response
-            .error
-            .unwrap_or_else(|| "job_update failed without error".to_string()))
-    }
-}
-
 fn spawn_reader<R: Read + Send + 'static>(
     reader: R,
     tx: mpsc::Sender<OutputChunk>,
@@ -1000,31 +1128,25 @@ fn spawn_reader<R: Read + Send + 'static>(
     })
 }
 
-fn send_start_failure(
-    client: &Client,
-    cfg: &AgentConfig,
-    request: ShellAgentShellRequest,
-    error: String,
-) {
+/// Report a job-start failure over the active transport. Used by
+/// `JobManager::start_shell_job` when spawn/cwd/policy checks fail before the
+/// job can run.
+fn send_start_failure(sink: &AgentSink, request: ShellAgentShellRequest, error: String) {
     if let Some(job_id) = request.job_id {
-        let _ = send_job_update(
-            client,
-            cfg,
-            &ShellAgentJobUpdateRequest {
-                client_id: cfg.client_id.clone(),
-                job_id,
-                request_id: Some(request.request_id),
-                status: "failed".to_string(),
-                stdout_chunk: None,
-                stderr_chunk: None,
-                stdout_tail: None,
-                stderr_tail: None,
-                exit_code: None,
-                duration_ms: Some(0),
-                error: Some(error),
-                finished: true,
-            },
-        );
+        let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+            client_id: sink.client_id().to_string(),
+            job_id,
+            request_id: Some(request.request_id),
+            status: "failed".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            exit_code: None,
+            duration_ms: Some(0),
+            error: Some(error),
+            finished: true,
+        });
     }
 }
 
@@ -1059,41 +1181,38 @@ impl JobManager {
             .count()
     }
 
-    fn enqueue(&self, client: Client, cfg: AgentConfig, request: ShellAgentShellRequest) {
+    fn enqueue(&self, sink: AgentSink, policy: AgentPolicy, request: ShellAgentShellRequest) {
         let Some(job_id) = request.job_id.clone() else {
             return;
         };
-        let active = self.active_job_count(&cfg.client_id);
-        if active >= max_concurrent_jobs(&cfg) {
-            let _ = send_job_update(
-                &client,
-                &cfg,
-                &ShellAgentJobUpdateRequest {
-                    client_id: cfg.client_id.clone(),
-                    job_id: job_id.clone(),
-                    request_id: Some(request.request_id.clone()),
-                    status: "agent_queued".to_string(),
-                    stdout_chunk: None,
-                    stderr_chunk: None,
-                    stdout_tail: None,
-                    stderr_tail: None,
-                    exit_code: None,
-                    duration_ms: None,
-                    error: None,
-                    finished: false,
-                },
-            );
+        let client_id = sink.client_id().to_string();
+        let active = self.active_job_count(&client_id);
+        if active >= self.max_concurrent {
+            let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+                client_id: client_id.clone(),
+                job_id: job_id.clone(),
+                request_id: Some(request.request_id.clone()),
+                status: "agent_queued".to_string(),
+                stdout_chunk: None,
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: None,
+                duration_ms: None,
+                error: None,
+                finished: false,
+            });
             self.queued
                 .lock()
                 .unwrap()
-                .push_back((client, cfg, request));
+                .push_back((sink, policy, request));
             return;
         }
-        self.start_now(client, cfg, request);
+        self.start_now(sink, policy, request);
     }
 
-    fn start_now(&self, client: Client, cfg: AgentConfig, request: ShellAgentShellRequest) {
-        self.start_shell_job(client, cfg, request);
+    fn start_now(&self, sink: AgentSink, policy: AgentPolicy, request: ShellAgentShellRequest) {
+        self.start_shell_job(sink, policy, request);
     }
 
     fn start_available_queued(&self) {
@@ -1102,33 +1221,37 @@ impl JobManager {
                 let jobs = self.jobs.lock().unwrap();
                 let mut queued = self.queued.lock().unwrap();
                 let mut selected = None;
-                for (idx, (_, cfg, request)) in queued.iter().enumerate() {
+                for (idx, (_, _policy, request)) in queued.iter().enumerate() {
                     let active = jobs
                         .values()
                         .filter(|job| job.client_id == request.client_id)
                         .count();
-                    if active < max_concurrent_jobs(cfg) {
+                    if active < self.max_concurrent {
                         selected = Some(idx);
                         break;
                     }
                 }
                 selected.and_then(|idx| queued.remove(idx))
             };
-            let Some((client, cfg, request)) = next else {
+            let Some((sink, policy, request)) = next else {
                 return;
             };
-            self.start_now(client, cfg, request);
+            self.start_now(sink, policy, request);
         }
     }
 
-    fn start_shell_job(&self, client: Client, cfg: AgentConfig, request: ShellAgentShellRequest) {
+    fn start_shell_job(
+        &self,
+        sink: AgentSink,
+        policy: AgentPolicy,
+        request: ShellAgentShellRequest,
+    ) {
         let Some(job_id) = request.job_id.clone() else {
             return;
         };
-        if !cfg.policy.allow_raw_shell {
+        if !policy.allow_raw_shell {
             send_start_failure(
-                &client,
-                &cfg,
+                &sink,
                 request,
                 "raw shell is disabled by local agent policy".to_string(),
             );
@@ -1139,8 +1262,8 @@ impl JobManager {
             .as_deref()
             .map(PathBuf::from)
             .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from("/")));
-        if let Err(e) = cwd_allowed(&cfg.policy, &cwd_path) {
-            send_start_failure(&client, &cfg, request, e);
+        if let Err(e) = cwd_allowed(&policy, &cwd_path) {
+            send_start_failure(&sink, request, e);
             return;
         }
         let start = Instant::now();
@@ -1155,12 +1278,7 @@ impl JobManager {
         let mut child = match spawn {
             Ok(c) => c,
             Err(e) => {
-                send_start_failure(
-                    &client,
-                    &cfg,
-                    request,
-                    format!("failed to spawn command: {}", e),
-                );
+                send_start_failure(&sink, request, format!("failed to spawn command: {}", e));
                 return;
             }
         };
@@ -1168,34 +1286,32 @@ impl JobManager {
         let stderr = child.stderr.take();
         let child = Arc::new(Mutex::new(child));
         let stop_requested = Arc::new(AtomicBool::new(false));
+        let client_id = sink.client_id().to_string();
         self.jobs.lock().unwrap().insert(
             job_id.clone(),
             RunningJob {
-                client_id: cfg.client_id.clone(),
+                client_id: client_id.clone(),
                 child: Some(child.clone()),
                 stop_requested: stop_requested.clone(),
             },
         );
-        let _ = send_job_update(
-            &client,
-            &cfg,
-            &ShellAgentJobUpdateRequest {
-                client_id: cfg.client_id.clone(),
-                job_id: job_id.clone(),
-                request_id: Some(request.request_id.clone()),
-                status: "running".to_string(),
-                stdout_chunk: None,
-                stderr_chunk: None,
-                stdout_tail: None,
-                stderr_tail: None,
-                exit_code: None,
-                duration_ms: None,
-                error: None,
-                finished: false,
-            },
-        );
+        let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+            client_id: client_id.clone(),
+            job_id: job_id.clone(),
+            request_id: Some(request.request_id.clone()),
+            status: "running".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            finished: false,
+        });
         let jobs = self.jobs.clone();
         let queued = self.queued.clone();
+        let max_concurrent = self.max_concurrent;
         std::thread::spawn(move || {
             let (tx, rx) = mpsc::channel::<OutputChunk>();
             let mut readers = Vec::new();
@@ -1206,7 +1322,7 @@ impl JobManager {
                 readers.push(spawn_reader(stderr, tx.clone(), false));
             }
             drop(tx);
-            let timeout_secs = request.timeout_secs.min(cfg.policy.max_timeout_secs).max(1);
+            let timeout_secs = request.timeout_secs.min(policy.max_timeout_secs).max(1);
             let final_status;
             loop {
                 let mut out = String::new();
@@ -1218,24 +1334,20 @@ impl JobManager {
                     }
                 }
                 if !out.is_empty() || !err.is_empty() {
-                    let _ = send_job_update(
-                        &client,
-                        &cfg,
-                        &ShellAgentJobUpdateRequest {
-                            client_id: cfg.client_id.clone(),
-                            job_id: job_id.clone(),
-                            request_id: Some(request.request_id.clone()),
-                            status: "running".to_string(),
-                            stdout_chunk: (!out.is_empty()).then_some(out),
-                            stderr_chunk: (!err.is_empty()).then_some(err),
-                            stdout_tail: None,
-                            stderr_tail: None,
-                            exit_code: None,
-                            duration_ms: None,
-                            error: None,
-                            finished: false,
-                        },
-                    );
+                    let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+                        client_id: sink.client_id().to_string(),
+                        job_id: job_id.clone(),
+                        request_id: Some(request.request_id.clone()),
+                        status: "running".to_string(),
+                        stdout_chunk: (!out.is_empty()).then_some(out),
+                        stderr_chunk: (!err.is_empty()).then_some(err),
+                        stdout_tail: None,
+                        stderr_tail: None,
+                        exit_code: None,
+                        duration_ms: None,
+                        error: None,
+                        finished: false,
+                    });
                 }
                 match child.lock().unwrap().try_wait() {
                     Ok(Some(status)) => {
@@ -1292,26 +1404,23 @@ impl JobManager {
                     OutputChunk::Stderr(t) => err.push_str(&t),
                 }
             }
-            let _ = send_job_update(
-                &client,
-                &cfg,
-                &ShellAgentJobUpdateRequest {
-                    client_id: cfg.client_id.clone(),
-                    job_id: job_id.clone(),
-                    request_id: Some(request.request_id),
-                    status: final_status.0,
-                    stdout_chunk: (!out.is_empty()).then_some(out),
-                    stderr_chunk: (!err.is_empty()).then_some(err),
-                    stdout_tail: None,
-                    stderr_tail: None,
-                    exit_code: final_status.1,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: final_status.2,
-                    finished: true,
-                },
-            );
+            let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+                client_id: sink.client_id().to_string(),
+                job_id: job_id.clone(),
+                request_id: Some(request.request_id),
+                status: final_status.0,
+                stdout_chunk: (!out.is_empty()).then_some(out),
+                stderr_chunk: (!err.is_empty()).then_some(err),
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: final_status.1,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: final_status.2,
+                finished: true,
+            });
             jobs.lock().unwrap().remove(&job_id);
             let manager = JobManager {
+                max_concurrent,
                 jobs: jobs.clone(),
                 queued: queued.clone(),
             };
@@ -1331,27 +1440,23 @@ impl JobManager {
                 None
             }
         };
-        if let Some((client, cfg, request)) = queued_job {
+        if let Some((sink, _policy, request)) = queued_job {
             let request_id = request.request_id.clone();
             let job_id = request.job_id.clone().unwrap_or_default();
-            let _ = send_job_update(
-                &client,
-                &cfg,
-                &ShellAgentJobUpdateRequest {
-                    client_id: cfg.client_id.clone(),
-                    job_id,
-                    request_id: Some(request_id),
-                    status: "stopped".to_string(),
-                    stdout_chunk: None,
-                    stderr_chunk: None,
-                    stdout_tail: None,
-                    stderr_tail: Some("job stopped before start".to_string()),
-                    exit_code: Some(-1),
-                    duration_ms: Some(0),
-                    error: Some("job stopped before start".to_string()),
-                    finished: true,
-                },
-            );
+            let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
+                client_id: sink.client_id().to_string(),
+                job_id,
+                request_id: Some(request_id),
+                status: "stopped".to_string(),
+                stdout_chunk: None,
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: Some("job stopped before start".to_string()),
+                exit_code: Some(-1),
+                duration_ms: Some(0),
+                error: Some("job stopped before start".to_string()),
+                finished: true,
+            });
             return Ok(());
         }
         let (child, stop_requested) = {
@@ -1369,6 +1474,48 @@ impl JobManager {
         }
     }
 }
+/// Execute a single agent request (shell/file/job) and send the result over
+/// the active transport. This is the shared dispatch path used by both the
+/// polling loop (`handle_one_poll`) and the WebSocket loop. It contains no
+/// transport-specific code: all outgoing traffic goes through `sink`.
+fn dispatch_request(
+    sink: &AgentSink,
+    policy: &AgentPolicy,
+    jobs: &JobManager,
+    request: ShellAgentShellRequest,
+) -> Result<bool, String> {
+    match request.kind.as_str() {
+        "start_job" => {
+            jobs.enqueue(sink.clone(), policy.clone(), request);
+            Ok(true)
+        }
+        "stop_job" => {
+            if let Some(job_id) = request.job_id.as_deref() {
+                if let Err(e) = jobs.stop(job_id) {
+                    eprintln!("private-drop-agent stop_job error: {}", e);
+                }
+            }
+            Ok(true)
+        }
+        "file_read" | "file_write" | "file_list" => {
+            let request_id = request.request_id.clone();
+            let result = handle_file_request(policy, &request);
+            sink.submit_result(request_id, result)
+        }
+        _ => {
+            let request_id = request.request_id.clone();
+            let result = run_shell(
+                policy,
+                request.cwd.as_deref(),
+                &request.command,
+                request.timeout_secs,
+                None,
+            );
+            sink.submit_result(request_id, result)
+        }
+    }
+}
+
 fn handle_one_poll(
     client: &Client,
     cfg: &AgentConfig,
@@ -1388,47 +1535,39 @@ fn handle_one_poll(
     let Some(request) = response.request else {
         return Ok(false);
     };
-    match request.kind.as_str() {
-        "start_job" => {
-            jobs.enqueue(client.clone(), cfg.clone(), request);
-            Ok(true)
-        }
-        "stop_job" => {
-            if let Some(job_id) = request.job_id.as_deref() {
-                if let Err(e) = jobs.stop(job_id) {
-                    eprintln!("private-drop-agent stop_job error: {}", e);
-                }
-            }
-            Ok(true)
-        }
-        "file_read" | "file_write" | "file_list" => {
-            let request_id = request.request_id.clone();
-            let result = handle_file_request(&cfg.policy, &request);
-            submit_result(client, cfg, request_id, result)
-        }
-        _ => {
-            let result = run_shell(
-                &cfg.policy,
-                request.cwd.as_deref(),
-                &request.command,
-                request.timeout_secs,
-                None,
-            );
-            submit_result(client, cfg, request.request_id, result)
-        }
-    }
+    let sink = AgentSink::Http(HttpSendConfig {
+        client: client.clone(),
+        server_url: cfg.server_url.clone(),
+        token: cfg.token.clone(),
+        client_id: cfg.client_id.clone(),
+    });
+    dispatch_request(&sink, &cfg.policy, jobs, request)
 }
 
 fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
+    let transport = cfg
+        .transport
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(TRANSPORT_POLLING)
+        .to_string();
+    match transport.as_str() {
+        TRANSPORT_WEBSOCKET => run_websocket_agent(cfg, once),
+        _ => run_polling_agent(cfg, once),
+    }
+}
+
+fn run_polling_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("failed to create http client: {}", e))?;
-    let jobs = JobManager::default();
+    let jobs = JobManager::new(max_concurrent_jobs(&cfg));
     let mut project_cache = AgentProjectCache::default();
     register(&client, &cfg, &mut project_cache)?;
     eprintln!(
-        "private-drop-agent registered client_id={} server={}",
+        "private-drop-agent registered client_id={} server={} transport=polling",
         cfg.client_id, cfg.server_url
     );
     loop {
@@ -1454,6 +1593,237 @@ fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
             }
         }
     }
+}
+
+// ============================================================================
+// WebSocket agent transport
+// ============================================================================
+//
+// The WebSocket mode keeps one long-lived connection to the server. The server
+// pushes `Request` envelopes; the agent executes them via the same
+// `dispatch_request` path the polling loop uses, and sends `Result` /
+// `JobUpdate` envelopes back. Polling is unchanged and remains the fallback.
+
+/// Convert an `http(s)://` server URL into a `ws(s)://` URL plus path.
+fn server_url_to_ws(server_url: &str, path: &str) -> Result<String, String> {
+    let base = server_url.trim_end_matches('/');
+    let ws = if let Some(rest) = base.strip_prefix("https://") {
+        format!("wss://{}{}", rest, path)
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        format!("ws://{}{}", rest, path)
+    } else if base.starts_with("ws://") || base.starts_with("wss://") {
+        format!("{}{}", base, path)
+    } else {
+        return Err(format!(
+            "server_url must be http(s)://... for websocket transport; got {}",
+            server_url
+        ));
+    };
+    Ok(ws)
+}
+
+/// Build a WebSocket handshake request carrying the Bearer token in the
+/// `Authorization` header, matching the server `AuthMiddleware`.
+fn build_ws_request(
+    ws_url: &str,
+    token: &str,
+) -> Result<tokio_tungstenite::tungstenite::http::Request<()>, String> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut request = ws_url
+        .into_client_request()
+        .map_err(|e| format!("invalid websocket url: {}", e))?;
+    let value = format!("Bearer {}", token);
+    let header_value = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&value)
+        .map_err(|e| format!("invalid token header value: {}", e))?;
+    request.headers_mut().insert(
+        tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
+        header_value,
+    );
+    Ok(request)
+}
+
+/// Entry point for the WebSocket transport. Runs a tokio current-thread
+/// runtime and reconnects on session failure.
+fn run_websocket_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to create tokio runtime: {}", e))?;
+    rt.block_on(async move {
+        let mut project_cache = AgentProjectCache::default();
+        loop {
+            let projects = project_cache.get(&cfg);
+            match websocket_session(&cfg, projects).await {
+                Ok(()) => {
+                    if once {
+                        return Ok(());
+                    }
+                    eprintln!("private-drop-agent websocket session ended; reconnecting");
+                    tokio::time::sleep(WS_RECONNECT_BACKOFF).await;
+                }
+                Err(e) => {
+                    eprintln!("private-drop-agent websocket error: {}", e);
+                    if once {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(WS_RECONNECT_BACKOFF).await;
+                }
+            }
+        }
+    })
+}
+
+/// One WebSocket connection lifecycle: connect, register, then serve requests
+/// until the socket closes or a fatal server error arrives.
+async fn websocket_session(
+    cfg: &AgentConfig,
+    projects: Vec<ShellAgentProjectSummary>,
+) -> Result<(), String> {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message as WsMessage;
+
+    let ws_url = server_url_to_ws(&cfg.server_url, "/api/agents/ws")?;
+    let request = build_ws_request(&ws_url, &cfg.token)?;
+    let (mut ws_stream, _resp) = tokio_tungstenite::connect_async(request)
+        .await
+        .map_err(|e| format!("websocket connect failed: {}", e))?;
+
+    // Register over the socket.
+    let register_payload =
+        build_register_request(cfg, projects, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1);
+    let reg_env = AgentEnvelope::Register {
+        payload: register_payload,
+    };
+    let reg_json =
+        serde_json::to_string(&reg_env).map_err(|e| format!("failed to encode register: {}", e))?;
+    ws_stream
+        .send(WsMessage::Text(reg_json.into()))
+        .await
+        .map_err(|e| format!("failed to send register: {}", e))?;
+
+    // Wait for Registered ack.
+    let ack_msg = ws_stream
+        .next()
+        .await
+        .ok_or_else(|| "server closed before register ack".to_string())?
+        .map_err(|e| format!("failed to read register ack: {}", e))?;
+    let ack_text = ack_msg
+        .into_text()
+        .map_err(|_| "register ack was not text".to_string())?;
+    let ack = AgentEnvelope::from_slice(ack_text.as_bytes())
+        .map_err(|e| format!("register ack is not a valid envelope: {}", e))?;
+    match ack {
+        AgentEnvelope::Registered { success: true, .. } => {}
+        AgentEnvelope::Registered { error, .. } => {
+            return Err(error.unwrap_or_else(|| "register rejected".to_string()));
+        }
+        AgentEnvelope::Error { message, .. } => return Err(message),
+        other => return Err(format!("expected registered ack, got {}", other.kind())),
+    }
+    eprintln!(
+        "private-drop-agent registered client_id={} server={} transport=websocket",
+        cfg.client_id, cfg.server_url
+    );
+
+    // Split socket into writer (drains outgoing envelopes) and reader.
+    let (mut sink, mut stream) = ws_stream.split();
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+    let writer_task = tokio::spawn(async move {
+        while let Some(env) = out_rx.recv().await {
+            match serde_json::to_string(&env) {
+                Ok(json) => {
+                    if sink.send(WsMessage::Text(json.into())).await.is_err() {
+                        break;
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+        let _ = sink.close().await;
+    });
+
+    let sink_handle = AgentSink::WebSocket {
+        tx: out_tx.clone(),
+        client_id: cfg.client_id.clone(),
+    };
+    let jobs = JobManager::new(max_concurrent_jobs(cfg));
+    let mut ping_interval = tokio::time::interval(WS_PING_INTERVAL);
+    ping_interval.tick().await; // skip immediate first tick
+
+    loop {
+        tokio::select! {
+            msg = stream.next() => {
+                let msg = match msg {
+                    Some(Ok(m)) => m,
+                    Some(Err(e)) => {
+                        eprintln!("private-drop-agent websocket read error: {}", e);
+                        break;
+                    }
+                    None => break,
+                };
+                if msg.is_close() {
+                    break;
+                }
+                let text = match msg.into_text() {
+                    Ok(t) => t,
+                    Err(_) => continue,
+                };
+                let env = match AgentEnvelope::from_slice(text.as_bytes()) {
+                    Ok(env) => env,
+                    Err(e) => {
+                        eprintln!("private-drop-agent websocket malformed envelope: {}", e);
+                        continue;
+                    }
+                };
+                match env {
+                    AgentEnvelope::Request { request } => {
+                        let sink_handle = sink_handle.clone();
+                        let policy = cfg.policy.clone();
+                        let jobs = jobs.clone();
+                        // Execution is blocking (shell/file/jobs); run it off
+                        // the async runtime thread. dispatch_request sends
+                        // results/updates via the shared AgentSink.
+                        tokio::task::spawn_blocking(move || {
+                            let _ = dispatch_request(&sink_handle, &policy, &jobs, request);
+                        });
+                    }
+                    AgentEnvelope::Ping { ts } => {
+                        let _ = out_tx.send(AgentEnvelope::Pong { ts }).await;
+                    }
+                    AgentEnvelope::Error { code, message } => {
+                        eprintln!(
+                            "private-drop-agent websocket server error {}: {}",
+                            code, message
+                        );
+                        break;
+                    }
+                    other => {
+                        eprintln!(
+                            "private-drop-agent websocket ignoring unexpected envelope: {}",
+                            other.kind()
+                        );
+                    }
+                }
+            }
+            _ = ping_interval.tick() => {
+                let _ = out_tx
+                    .send(AgentEnvelope::Ping {
+                        ts: chrono::Utc::now().timestamp(),
+                    })
+                    .await;
+            }
+        }
+    }
+
+    // Shutdown: drop the sender so the writer drains and closes, then wait.
+    drop(out_tx);
+    let _ = writer_task.await;
+    // Give in-flight job threads a moment to flush final updates through the
+    // (now closed) sink; they will log send errors and exit on their own.
+    while jobs.has_work() {
+        std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms.min(1000)));
+    }
+    Ok(())
 }
 
 fn main() {
@@ -1494,6 +1864,7 @@ mod tests {
             capabilities: None,
             max_concurrent_jobs: None,
             policy: AgentPolicy::default(),
+            transport: None,
         }
     }
 
@@ -1643,7 +2014,7 @@ path = "/tmp/private-drop"
     fn register_request_announces_polling_v1_protocol_version() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().join("config/projects.d"));
-        let body = build_register_request(&cfg, Vec::new());
+        let body = build_register_request(&cfg, Vec::new(), AGENT_PROTOCOL_VERSION_POLLING_V1);
         assert_eq!(body.client_id, "oe");
         assert_eq!(
             body.agent_protocol_version.as_deref(),
@@ -1657,5 +2028,151 @@ path = "/tmp/private-drop"
         assert!(caps.file_write);
         assert!(caps.async_jobs);
         assert!(caps.async_shell_jobs);
+    }
+
+    // ------------------------------------------------------------------------
+    // WebSocket transport helpers + shared dispatch over a WebSocket sink
+    // ------------------------------------------------------------------------
+
+    #[test]
+    fn server_url_to_ws_converts_http_https_and_rejects_bare() {
+        assert_eq!(
+            server_url_to_ws("http://127.0.0.1:8080", "/api/agents/ws").unwrap(),
+            "ws://127.0.0.1:8080/api/agents/ws"
+        );
+        assert_eq!(
+            server_url_to_ws("https://example.com/", "/api/agents/ws").unwrap(),
+            "wss://example.com/api/agents/ws"
+        );
+        // Already a ws(s) URL passes through.
+        assert_eq!(
+            server_url_to_ws("wss://example.com", "/api/agents/ws").unwrap(),
+            "wss://example.com/api/agents/ws"
+        );
+        assert!(server_url_to_ws("ftp://x", "/api/agents/ws").is_err());
+    }
+
+    #[test]
+    fn build_register_request_announces_websocket_v1_when_requested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let body = build_register_request(&cfg, Vec::new(), AGENT_PROTOCOL_VERSION_WEBSOCKET_V1);
+        assert_eq!(
+            body.agent_protocol_version.as_deref(),
+            Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1)
+        );
+        assert_eq!(body.agent_protocol_version.as_deref(), Some("websocket-v1"));
+    }
+
+    fn ws_sink(client_id: &str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+        (
+            AgentSink::WebSocket {
+                tx,
+                client_id: client_id.to_string(),
+            },
+            rx,
+        )
+    }
+
+    #[test]
+    fn websocket_sink_submit_result_sends_result_envelope() {
+        let (sink, mut rx) = ws_sink("ws-client");
+        let result = CommandResult {
+            exit_code: Some(0),
+            stdout: Some("hi".to_string()),
+            stderr: Some(String::new()),
+            duration_ms: Some(3),
+            error: None,
+        };
+        assert!(sink.submit_result("req-9".to_string(), result).unwrap());
+        let env = rx.try_recv().expect("envelope was sent");
+        match env {
+            AgentEnvelope::Result { payload } => {
+                assert_eq!(payload.client_id, "ws-client");
+                assert_eq!(payload.request_id, "req-9");
+                assert_eq!(payload.exit_code, Some(0));
+                assert_eq!(payload.stdout.as_deref(), Some("hi"));
+            }
+            other => panic!("expected result, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn websocket_sink_send_job_update_sends_job_update_envelope() {
+        let (sink, mut rx) = ws_sink("ws-client");
+        let body = ShellAgentJobUpdateRequest {
+            client_id: "ws-client".to_string(),
+            job_id: "job-1".to_string(),
+            request_id: Some("req-1".to_string()),
+            status: "running".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            finished: false,
+        };
+        sink.send_job_update(&body).unwrap();
+        let env = rx.try_recv().expect("envelope was sent");
+        match env {
+            AgentEnvelope::JobUpdate { payload } => {
+                assert_eq!(payload.job_id, "job-1");
+                assert_eq!(payload.status, "running");
+            }
+            other => panic!("expected job_update, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn dispatch_request_run_shell_sends_result_over_websocket_sink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let cwd = tmp.path().to_string_lossy().to_string();
+        let (sink, mut rx) = ws_sink("ws-client");
+        let jobs = JobManager::new(max_concurrent_jobs(&cfg));
+        let request = ShellAgentShellRequest {
+            request_id: "req-shell".to_string(),
+            client_id: "ws-client".to_string(),
+            kind: "run_shell".to_string(),
+            job_id: None,
+            cwd: Some(cwd),
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            command: "printf wsok".to_string(),
+            timeout_secs: 10,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        };
+        let ran = dispatch_request(&sink, &cfg.policy, &jobs, request).unwrap();
+        assert!(ran);
+        let env = rx.try_recv().expect("result envelope was sent");
+        match env {
+            AgentEnvelope::Result { payload } => {
+                assert_eq!(payload.request_id, "req-shell");
+                assert_eq!(payload.exit_code, Some(0));
+                assert_eq!(payload.stdout.as_deref(), Some("wsok"));
+            }
+            other => panic!("expected result, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn http_sink_client_id_matches_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let client = Client::new();
+        let sink = AgentSink::Http(HttpSendConfig {
+            client,
+            server_url: cfg.server_url.clone(),
+            token: cfg.token.clone(),
+            client_id: cfg.client_id.clone(),
+        });
+        assert_eq!(sink.client_id(), "oe");
     }
 }

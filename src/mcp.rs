@@ -368,8 +368,9 @@ mod tests {
         assert_eq!(value["result"]["content"][0]["type"], "text");
         assert!(value["result"]["content"][0]["text"].is_string());
         assert!(value["result"]["structuredContent"].is_object());
-        // list_projects with no config -> success false, isError true.
-        assert_eq!(value["result"]["isError"], true);
+        // No server-side project config is normal; without registered agents,
+        // list_projects succeeds with an empty project array.
+        assert_eq!(value["result"]["isError"], false);
     }
 
     #[tokio::test]

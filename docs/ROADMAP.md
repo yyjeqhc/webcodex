@@ -12,10 +12,11 @@ The runtime MVP is implemented:
 - MCP HTTP JSON-RPC endpoint at `POST /mcp`.
 - Shared `ToolRuntime` execution layer for GPT Actions, MCP, and REST wrappers.
 - Codex CLI async jobs through `run_codex`.
-- Local job recovery, bounded logs, timeout detection, and process-group
-  termination for over-time or stopped local jobs.
 - Polling agent protocol `polling-v1` with version, capabilities, owner checks,
   and structured errors.
+- Initial zero-config runtime project discovery: agent-registered projects are
+  listed as `agent:<client_id>:<project_id>` and server-side project config is
+  no longer the runtime project source.
 - Runtime observability through `runtime_status`.
 - Read-only Audit API for admin/debug.
 - Documentation cleanup for removed legacy product surfaces.
@@ -25,64 +26,129 @@ MCP and GPT Actions wrappers stay thin.
 
 ## Near-Term Priorities
 
-### Phase 12: Real ChatGPT Connection Validation
+### Phase 12: Finish Zero-Config Agent Runtime
 
-Goal: prove the runtime works from real ChatGPT surfaces, not only tests.
+Goal: complete the transition from server-configured projects to
+agent-registered projects.
+
+Tasks:
+
+- Remove current-doc references that present `PROJECTS_CONFIG` as the runtime
+  project source.
+- Update runtime status wording around projects to focus on agent-registered
+  projects.
+- Add tests for agent-registered `readProjectFile`, `getProjectGitStatus`, and
+  `runCodexTask` routing.
+- Decide whether remaining legacy `ProjectsState` code should be deleted now
+  or left only for deprecated `/api/codex/*` internals.
+
+Acceptance:
+
+- The server can start with no `projects.toml`.
+- `listProjects` works when an authenticated agent registers projects.
+- Static server-side project config is not required for normal GPT/MCP use.
+
+### Phase 13: WebSocket Agent Transport
+
+Goal: make WebSocket the primary long-lived agent transport while keeping
+polling as fallback.
+
+Status: implemented.
+
+- Transport-neutral `AgentEnvelope` (`src/shell_protocol.rs`) wraps the
+  existing register/request/result/job_update payloads; no business types
+  duplicated.
+- Server endpoint `GET /api/agents/ws` (`src/agent_ws.rs`): Bearer auth via the
+  shared `AuthMiddleware`, registers into the existing `ShellClientRegistry`,
+  installs a push notifier, and pumps pending requests from the shared
+  per-client queue. Result / job_update / ping are routed back to the same
+  registry methods the polling endpoints use.
+- Agent WebSocket mode in `src/bin/private-drop-agent.rs` selected by
+  `transport = "websocket"`. It reuses the shared `dispatch_request` /
+  `JobManager` execution path through an `AgentSink` abstraction; polling mode
+  is unchanged and remains the default/fallback.
+- `runtime_status` and `list_agents` expose `transport`
+  (`polling` / `websocket`); disconnect removes the notifier so the agent
+  decays to stale/offline.
+- Polling endpoints remain fully functional.
+
+Acceptance:
+
+- One agent can stay connected over WebSocket and execute a low-risk runtime
+  tool call. (Covered by `agent_ws::tests::ws_register_then_request_result_roundtrip`.)
+- Polling agents continue to work. (Polling tests unchanged.)
+
+### Phase 14: WebSocket Hardening And Phase 13 Consolidation
+
+Goal: converge the Phase 13 WebSocket foundation into committable quality and
+close the most critical long-connection risks. QUIC is explicitly out of scope
+for this phase.
+
+Status: implemented.
+
+- Consolidated the mixed Phase 13 workspace (staged + unstaged + untracked
+  `src/agent_ws.rs`) into a single coherent change set; no commit was made
+  (pending human confirmation).
+- Backpressure: per-client pending queue cap
+  (`MAX_QUEUED_REQUESTS_PER_CLIENT = 256`) rejects overflow with a structured
+  error; outbound `request` is never silently dropped; `pong` is best-effort
+  (`try_send`); inbound `job_update` stdout/stderr stay capped. A slow consumer
+  never deadlocks the enqueue path.
+- Reconnect / job reconciliation: `reconcile_disconnect` removes the notifier
+  and marks running-like jobs `lost` on transport disconnect, so an agent is
+  never permanently `online` and a job is never permanently `running`.
+- Owner / auth boundary: `enforce_register_owner` binds `owner` to the
+  authenticated principal at registration on both polling and WebSocket
+  (bootstrap = any owner; API key = `owner == username`).
+- Observability: `runtime_status` / `list_agents` expose `transport`,
+  `agent_protocol_version`, `connected`/`status`, and `pending_requests`; no
+  secrets are exposed.
+- Tests: `cargo fmt`/`fmt --check`, `cargo check`, `cargo check --tests` all
+  clean (0 warnings); `cargo test` = main 327 passed, agent 21 passed; polling
+  fallback tests still pass.
+
+Acceptance:
+
+- WebSocket and polling share one registry, one queue, one job state, one
+  `ToolRuntime` (no second execution path).
+- Polling fallback unchanged and green.
+- Long-connection risks (backpressure, reconnect, owner boundary) covered by
+  tests.
+
+### Phase 15: QUIC Transport Design
+
+Goal: prepare QUIC support without coupling runtime logic to a transport.
+
+Tasks:
+
+- Keep the WebSocket message envelope compatible with QUIC.
+- Document stream/session/auth expectations.
+- Defer implementation until WebSocket behavior is stable.
+
+Acceptance:
+
+- QUIC can be added as another transport without changing ToolRuntime.
+
+### Phase 16: Real ChatGPT Connection Validation
+
+Goal: prove the zero-config runtime works from real ChatGPT surfaces, not only
+tests.
 
 Tasks:
 
 - Start a local or deployed server with a real `DROP_TOKEN`.
+- Connect an agent and confirm `listProjects` sees agent projects.
 - Import `GET /openapi.json` into a GPT Action.
-- Exercise the recommended GPT Actions flow:
-  `getRuntimeStatus` -> `listProjects` -> `readProjectFile` /
-  `getProjectGitStatus` -> `runCodexTask` -> `getRuntimeJobStatus` ->
-  `getRuntimeJobLog`.
+- Exercise the recommended GPT Actions flow.
 - Connect a ChatGPT MCP client to `/mcp`, then run `initialize`,
   `tools/list`, and a low-risk `tools/call`.
-- Document the exact setup, screenshots or request/response snippets, failure
-  modes, and any schema/MCP compatibility changes needed.
 
 Acceptance:
 
-- A real GPT Action can call at least one read-only project operation.
-- A real MCP client can list tools and call a read-only tool.
-- Any manual setup steps are written in docs.
+- A real GPT Action can call at least one read-only agent project operation.
+- A real MCP client can list tools and call a read-only agent project tool.
 
-### Phase 13: Deployment Hardening
-
-Goal: make the server safe and repeatable to run outside a dev shell.
-
-Tasks:
-
-- Write a deployment guide covering `DROP_TOKEN`, `DROP_PUBLIC_URL`,
-  `PROJECTS_CONFIG`, `CODEX_*`, reverse proxy, HTTPS, and systemd.
-- Add a sample systemd unit and environment file template.
-- Add production health/smoke commands for `/api/runtime/status`,
-  `/openapi.json`, and `/mcp` discovery.
-- Review startup logs for deploy usefulness.
-
-Acceptance:
-
-- A new operator can deploy the runtime from docs without reading source code.
-- Secrets are passed through env files or secret stores, not committed config.
-
-### Phase 14: Agent Queue Durability
-
-Goal: decide whether in-flight agent jobs should survive server restart.
-
-Tasks:
-
-- Document current in-memory behavior and operational consequences.
-- If needed, persist queued/running agent job metadata.
-- On restart, mark ambiguous in-flight agent jobs as `lost` or reattach when the
-  polling agent can prove ownership.
-- Keep owner/capability checks centralized.
-
-Acceptance:
-
-- Server restart behavior for agent jobs is explicit, tested, and documented.
-
-### Phase 15: Operational Controls
+### Phase 17: Deployment Hardening
 
 Goal: reduce abuse and long-term maintenance risk.
 
@@ -100,8 +166,8 @@ Acceptance:
 
 ## Deferred Ideas
 
-- WebSocket or SSE agent transport. Only add this if polling latency or network
-  behavior becomes a real limitation.
+- SSE agent transport. WebSocket is now the preferred long-lived transport;
+  SSE is not planned.
 - Exposing audit summaries to ChatGPT. Prefer aggregated `runtime_status`
   signals first; raw audit query APIs should remain admin/debug by default.
 - More dedicated GPT Actions. The current small surface is intentional.

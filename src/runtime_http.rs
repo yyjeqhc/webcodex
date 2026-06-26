@@ -547,7 +547,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_projects_list_happy_path_returns_configured_project() {
+    async fn http_projects_list_ignores_server_configured_projects() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let tmp_proj = tempfile::tempdir().unwrap();
@@ -565,9 +565,10 @@ mod tests {
         let list = body["output"]
             .as_array()
             .expect("output is a project array");
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0]["id"], "demo");
-        assert_eq!(list[0]["executor"], "local");
+        assert!(
+            list.is_empty(),
+            "runtime project discovery is agent-registered only"
+        );
     }
 
     // =========================================================================
@@ -591,7 +592,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_projects_read_file_happy_path_returns_content() {
+    async fn http_projects_read_file_rejects_server_configured_project() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let tmp_proj = tempfile::tempdir().unwrap();
@@ -604,11 +605,10 @@ mod tests {
             .json(&json!({"project": "demo", "path": "README.md"}))
             .send(&service)
             .await;
-        assert_eq!(effective_status(&resp), StatusCode::OK);
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], true);
-        assert_eq!(body["output"]["content"], "line1\nline2");
-        assert_eq!(body["output"]["total_lines"], 2);
+        assert_eq!(body["success"], false);
+        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
     }
 
     #[tokio::test]
@@ -650,7 +650,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn http_projects_git_status_happy_path_runs_git_status() {
+    async fn http_projects_git_status_rejects_server_configured_project() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let tmp_proj = tempfile::tempdir().unwrap();
@@ -670,12 +670,10 @@ mod tests {
             .json(&json!({"project": "demo"}))
             .send(&service)
             .await;
-        assert_eq!(effective_status(&resp), StatusCode::OK);
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], true);
-        // git status --porcelain lists untracked files with "?? " prefix.
-        let stdout = body["output"]["stdout"].as_str().unwrap_or("");
-        assert!(stdout.contains("tracked.txt"), "stdout was: {}", stdout);
+        assert_eq!(body["success"], false);
+        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
     }
 
     // =========================================================================

@@ -13,6 +13,11 @@ connect through:
 
 Both surfaces must use the same backend execution layer: `ToolRuntime`.
 
+Current direction: the server should be zero project config. Runtime projects
+are registered by agents and exposed as ids like
+`agent:<client_id>:<project_id>`. Do not make `projects.toml` the normal
+runtime project source again.
+
 ## Current Baseline
 
 Latest known baseline when this file was written:
@@ -33,8 +38,19 @@ uncommitted work from another agent window; do not overwrite or revert it.
 - `src/mcp.rs`: thin MCP JSON-RPC wrapper.
 - `src/openapi.rs`: minimal GPT Actions OpenAPI schema.
 - `src/main.rs`: route wiring and shared state injection.
+- `src/projects.rs`: legacy server-side project config parser. Treat this as
+  non-primary for runtime project discovery unless a task explicitly says
+  otherwise.
 - `src/shell_client.rs`: polling agent registry and in-memory agent job queue.
-- `src/bin/private-drop-agent.rs`: polling agent process.
+  Now also carries the `transport` label (`polling`/`websocket`) and a push
+  notifier map used by the WebSocket handler.
+- `src/agent_ws.rs`: WebSocket agent endpoint (`GET /api/agents/ws`). Thin: only
+  translates between `AgentEnvelope` and `ShellClientRegistry` calls.
+- `src/shell_protocol.rs`: shared protocol types including the transport-neutral
+  `AgentEnvelope`.
+- `src/bin/private-drop-agent.rs`: agent process. Selects `polling` (default) or
+  `websocket` transport via config; both reuse `dispatch_request` / `JobManager`
+  through an `AgentSink` abstraction.
 - `src/action_sessions.rs`, `src/action_audit.rs`, `src/audit_http.rs`: audit
   storage and read-only admin/debug API.
 
@@ -46,6 +62,10 @@ GPT Actions schema exposes a small stable set of POST operations. Check
 Important runtime endpoints:
 
 - `POST /api/runtime/status`
+- `GET /api/agents/ws` (WebSocket, preferred agent transport; Bearer auth in
+  handshake header)
+- `POST /api/shell/agent/register` / `/poll` / `/result` / `/job_update`
+  (polling agent fallback)
 - `POST /api/projects/list`
 - `POST /api/projects/read_file`
 - `POST /api/projects/git_status`
@@ -70,9 +90,12 @@ specific safety review.
 
 - `ToolRuntime` is the single execution layer.
 - MCP and REST wrappers stay thin: auth/protocol envelope/deserialization only.
+- Runtime project discovery comes from agent registration, not server-side
+  project config.
 - Do not create a second Codex runner, shell runner, or MCP-specific business
   path.
-- Local project file access must stay inside configured project roots.
+- Project file access is routed to the owning registered agent; server-side
+  project path config is not the runtime source of truth.
 - Agent tools must keep owner and capability checks centralized.
 - Do not log or return tokens, API keys, full secrets, full prompts containing
   credentials, or unbounded stdout/stderr.
@@ -111,7 +134,7 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 307 tests passing, agent binary 9 tests passing.
+- `cargo test`: main binary 327 tests passing, agent binary 21 tests passing.
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -129,6 +152,7 @@ Start with:
 
 - `docs/INDEX.md`
 - `docs/ROADMAP.md`
+- `docs/ZERO_CONFIG_AGENT_RUNTIME.md`
 - `TODO.md`
 - `README.md`
 
@@ -143,9 +167,16 @@ guides.
 
 Prefer this order:
 
-1. Real ChatGPT GPT Actions and MCP connection validation.
-2. Deployment hardening docs and examples.
-3. Agent queue durability decision.
-4. Operational controls: rate limiting, audit retention, cleanup policy.
+1. Finish zero-config agent runtime cleanup.
+2. WebSocket agent transport is implemented (Phase 13) and hardened
+   (Phase 14): per-client pending-queue cap (`MAX_QUEUED_REQUESTS_PER_CLIENT`),
+   conservative `reconcile_disconnect` (marks running jobs `lost` on
+   disconnect), and `enforce_register_owner` (binds `owner` to the authed
+   principal at registration on both transports). Polling fallback is
+   unchanged and green. Not yet committed — confirm before committing.
+3. Keep the message envelope QUIC-compatible for a later QUIC transport
+   (Phase 15, design only; not implemented).
+4. Real ChatGPT GPT Actions and MCP connection validation.
+5. Deployment hardening docs and examples.
 
 Avoid broad refactors until real ChatGPT integration has been exercised.

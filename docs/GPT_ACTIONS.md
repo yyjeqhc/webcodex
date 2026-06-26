@@ -42,8 +42,8 @@ The schema exposes exactly 9 operation ids, grouped by recommended call flow:
 | Flow step | operationId | Path | Purpose |
 |-----------|-------------|------|---------|
 | Discovery | `listRuntimeTools` | `POST /api/tools/list` | List every runtime tool name (advanced). |
-| Discovery | `listProjects` | `POST /api/projects/list` | List configured project ids. **Call this first.** |
-| Discovery | `getRuntimeStatus` | `POST /api/runtime/status` | Structured runtime health/observability summary (projects config status, agent client summaries, job counts). Read-only; never exposes tokens or secrets. |
+| Discovery | `listProjects` | `POST /api/projects/list` | List agent-registered project ids. **Call this first.** |
+| Discovery | `getRuntimeStatus` | `POST /api/runtime/status` | Structured runtime health/observability summary (agent client summaries, project counts, job counts). Read-only; never exposes tokens or secrets. |
 | Code task | `runCodexTask` | `POST /api/codex/run` | Start a Codex CLI task, returns `job_id`. **Recommended primary action.** |
 | Code task | `getRuntimeJobStatus` | `POST /api/jobs/status` | Poll the `job_id` returned by `runCodexTask`. |
 | Code task | `getRuntimeJobLog` | `POST /api/jobs/log` | Read bounded stdout/stderr for the `job_id`. |
@@ -53,7 +53,7 @@ The schema exposes exactly 9 operation ids, grouped by recommended call flow:
 
 ### Recommended call flow
 
-1. `getRuntimeStatus` — is the runtime healthy? Are projects configured? Are
+1. `getRuntimeStatus` — is the runtime healthy? Are agents registered? Are
    agents online? (See [docs/RUNTIME_STATUS.md](RUNTIME_STATUS.md).)
 2. `listProjects` — learn the available `project` ids.
 3. `runCodexTask` — start a Codex task in a project; capture `job_id` from the
@@ -64,8 +64,8 @@ The schema exposes exactly 9 operation ids, grouped by recommended call flow:
    (`next_stdout_line`) for pagination.
 
 For inspection before/after a task, use `readProjectFile` and
-`getProjectGitStatus`. These are safe, read-only, and confined to configured
-project roots.
+`getProjectGitStatus`. These are safe, read-only, and routed to the registered
+agent that owns the selected project id.
 
 ## `callRuntimeTool` (advanced)
 

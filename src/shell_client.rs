@@ -15,7 +15,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
-use tokio::sync::{oneshot, Mutex};
+use tokio::sync::{oneshot, Mutex, Notify};
 use uuid::Uuid;
 
 const MAX_CLIENT_ID_LEN: usize = 80;
@@ -29,6 +29,22 @@ const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
 
+/// Maximum number of pending requests queued for a single agent client.
+/// Bounds memory when an agent is slow or disconnected: once a client's
+/// queue reaches this depth, new enqueues are rejected with a structured
+/// error instead of growing unboundedly. The WebSocket outbound channel
+/// (`OUTGOING_CHANNEL_CAPACITY` in `agent_ws.rs`) is smaller than this, so a
+/// slow WebSocket agent fills its outbound channel first and the request
+/// pump applies natural backpressure; this cap is the hard ceiling that
+/// protects the registry when even that backpressure cannot drain (e.g. a
+/// dead socket the OS has not yet reported as closed).
+const MAX_QUEUED_REQUESTS_PER_CLIENT: usize = 256;
+
+/// Transport label for polling agents (HTTP `/api/shell/agent/poll`).
+pub const TRANSPORT_POLLING: &str = "polling";
+/// Transport label for agents connected over the WebSocket endpoint.
+pub const TRANSPORT_WEBSOCKET: &str = "websocket";
+
 #[derive(Debug, Clone)]
 struct ShellClientRecord {
     client_id: String,
@@ -39,6 +55,8 @@ struct ShellClientRecord {
     projects: Vec<ShellAgentProjectSummary>,
     last_seen: i64,
     agent_protocol_version: String,
+    /// How this client is currently connected: `"polling"` or `"websocket"`.
+    transport: String,
 }
 
 #[derive(Debug)]
@@ -76,6 +94,12 @@ struct ShellClientRegistryInner {
     queues_by_client: HashMap<String, VecDeque<String>>,
     jobs_by_id: HashMap<String, ShellJobRecord>,
     request_to_job: HashMap<String, String>,
+    /// Optional push notifiers for agents connected over a long-lived
+    /// transport (WebSocket). When a request is enqueued for a client that
+    /// has a registered notifier, the server pumps the request immediately
+    /// instead of waiting for the agent to poll. Polling agents never
+    /// register a notifier and are unaffected.
+    notifiers: HashMap<String, Arc<Notify>>,
 }
 
 #[derive(Debug, Default)]
@@ -138,6 +162,28 @@ pub(crate) fn assert_shell_client_owner(
         "agent client {} is owned by {}; current api key belongs to {}",
         client_id, owner, username
     ))
+}
+
+/// Enforce the owner/auth boundary at registration time. Mirrors
+/// [`assert_shell_client_owner`] but is intentionally a no-op when no
+/// `AuthContext` is present (unit tests that do not install `AuthMiddleware`).
+/// In production every agent route is behind `AuthMiddleware`, which rejects
+/// anonymous requests before the handler runs, so `auth` is always `Some`.
+///
+/// Rules:
+/// - bootstrap token (or auth disabled) may register any owner;
+/// - a normal API key may only register `owner == username`;
+/// - a normal API key with a missing/empty owner is rejected, matching the
+///   existing owner boundary enforced on later operations.
+pub(crate) fn enforce_register_owner(
+    auth: Option<&crate::auth::AuthContext>,
+    client_id: &str,
+    owner: Option<&str>,
+) -> Result<(), String> {
+    let Some(auth) = auth else {
+        return Ok(());
+    };
+    assert_shell_client_owner(Some(auth), client_id, owner)
 }
 
 fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), String> {
@@ -423,6 +469,26 @@ fn client_is_connected_locked(inner: &ShellClientRegistryInner, client_id: &str)
         .unwrap_or(false)
 }
 
+/// Reject enqueue when a client's pending queue has reached
+/// `MAX_QUEUED_REQUESTS_PER_CLIENT`. Callers must already hold `inner`.
+fn ensure_queue_capacity_locked(
+    inner: &ShellClientRegistryInner,
+    client_id: &str,
+) -> Result<(), String> {
+    let len = inner
+        .queues_by_client
+        .get(client_id)
+        .map(VecDeque::len)
+        .unwrap_or(0);
+    if len >= MAX_QUEUED_REQUESTS_PER_CLIENT {
+        return Err(format!(
+            "too many pending requests for shell client {} (limit {})",
+            client_id, MAX_QUEUED_REQUESTS_PER_CLIENT
+        ));
+    }
+    Ok(())
+}
+
 fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, job_id: &str) {
     let Some(job) = inner.jobs_by_id.get(job_id) else {
         return;
@@ -470,10 +536,112 @@ impl ShellClientRegistry {
                 .map(|v| v.trim().to_string())
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(|| "unknown".to_string()),
+            transport: TRANSPORT_POLLING.to_string(),
         };
         let mut inner = self.inner.lock().await;
         inner.clients.insert(client_id.clone(), record);
         Ok(Self::client_view_locked(&inner, &client_id).expect("client just inserted"))
+    }
+
+    /// Override the transport label for a registered client. Called by the
+    /// WebSocket handler after a successful register so observability and
+    /// `list_agents` reflect how the agent is actually connected. Polling
+    /// agents keep the default `"polling"` label set during `register`.
+    pub async fn set_transport(&self, client_id: &str, transport: &str) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get_mut(client_id) else {
+            return Err(format!("unknown shell client: {}", client_id));
+        };
+        client.transport = transport.to_string();
+        Ok(())
+    }
+
+    /// Register a push notifier for a client. The WebSocket handler calls
+    /// this after register; the server's request pump waits on the notifier
+    /// between polls. Calling this replaces any previously registered
+    /// notifier for the client (e.g. after a reconnect).
+    pub async fn register_notifier(
+        &self,
+        client_id: &str,
+        notify: Arc<Notify>,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        if !inner.clients.contains_key(client_id) {
+            return Err(format!("unknown shell client: {}", client_id));
+        }
+        inner.notifiers.insert(client_id.to_string(), notify);
+        Ok(())
+    }
+
+    /// Reconcile state after an agent transport disconnects (currently only
+    /// the WebSocket handler calls this). Conservative strategy:
+    ///
+    /// - remove the push notifier so the request pump is not re-armed;
+    /// - mark every non-final, running-like job owned by the client as
+    ///   `"lost"` with a descriptive error, and drop its pending request (the
+    ///   oneshot waiter resolves to a "dropped" error on the caller side);
+    /// - the client record itself is retained so late results/updates can be
+    ///   logged, and `last_seen` is left untouched so the client decays to
+    ///   `"stale"`/offline through the normal 60s online window.
+    ///
+    /// This is intentionally conservative: a reconnecting agent that keeps
+    /// running the same job will see the server-side job as `"lost"` (final),
+    /// so its late `job_update`/`result` is ignored by `update_job`/`complete`.
+    /// Operators should treat `"lost"` as "the server no longer tracks this
+    /// job; restart it if needed". A future phase may lift `JobManager` to
+    /// agent-level so reconnects can resume in-flight jobs.
+    pub async fn reconcile_disconnect(&self, client_id: &str) {
+        let mut inner = self.inner.lock().await;
+        inner.notifiers.remove(client_id);
+        let lost_error = "agent transport disconnected".to_string();
+        let now = now_ts();
+        let lost_job_ids: Vec<String> = inner
+            .jobs_by_id
+            .iter()
+            .filter_map(|(job_id, job)| {
+                if job.client_id != client_id {
+                    return None;
+                }
+                if is_final_job_status(&job.status)
+                    || !matches!(
+                        job.status.as_str(),
+                        "queued" | "agent_queued" | "running" | "stop_requested"
+                    )
+                {
+                    return None;
+                }
+                Some(job_id.clone())
+            })
+            .collect();
+        for job_id in lost_job_ids {
+            let request_id = inner
+                .jobs_by_id
+                .get(&job_id)
+                .and_then(|j| j.request_id.clone());
+            if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
+                job.status = "lost".to_string();
+                job.ended_at = Some(now);
+                job.error = Some(lost_error.clone());
+            }
+            if let Some(request_id) = request_id {
+                inner.pending_by_id.remove(&request_id);
+                inner.request_to_job.remove(&request_id);
+                if let Some(queue) = inner.queues_by_client.get_mut(client_id) {
+                    queue.retain(|id| id != &request_id);
+                }
+            }
+        }
+    }
+
+    /// Wake the push notifier for a client if one is registered. Called by
+    /// the enqueue paths (`enqueue_run`, `enqueue_file_op`, `start_job`,
+    /// `stop_job`) so the WebSocket pump can immediately push the new
+    /// request to the agent instead of waiting for a poll. Holds no lock of
+    /// its own; callers must already hold `inner`.
+    fn notify_client_locked(inner: &ShellClientRegistryInner, client_id: &str) {
+        if let Some(notify) = inner.notifiers.get(client_id) {
+            notify.notify_one();
+        }
     }
 
     pub async fn list_clients(&self) -> Vec<ShellClientView> {
@@ -567,6 +735,7 @@ impl ShellClientRegistry {
         if !inner.clients.contains_key(&body.client_id) {
             return Err(format!("unknown shell client: {}", body.client_id));
         }
+        ensure_queue_capacity_locked(&inner, &body.client_id)?;
         inner
             .queues_by_client
             .entry(body.client_id.clone())
@@ -580,6 +749,7 @@ impl ShellClientRegistry {
                 job_id: None,
             },
         );
+        Self::notify_client_locked(&inner, &body.client_id);
         Ok((request_id, rx))
     }
 
@@ -611,6 +781,7 @@ impl ShellClientRegistry {
         if !inner.clients.contains_key(&body.client_id) {
             return Err(format!("unknown shell client: {}", body.client_id));
         }
+        ensure_queue_capacity_locked(&inner, &body.client_id)?;
         inner
             .queues_by_client
             .entry(body.client_id.clone())
@@ -624,6 +795,7 @@ impl ShellClientRegistry {
                 job_id: None,
             },
         );
+        Self::notify_client_locked(&inner, &body.client_id);
         Ok((request_id, rx))
     }
 
@@ -786,6 +958,7 @@ impl ShellClientRegistry {
                 client_id
             ));
         }
+        ensure_queue_capacity_locked(&inner, &client_id)?;
         inner
             .queues_by_client
             .entry(client_id.clone())
@@ -820,6 +993,7 @@ impl ShellClientRegistry {
         );
         inner.request_to_job.insert(request_id, job_id.clone());
         inner.jobs_by_id.insert(job_id.clone(), job);
+        Self::notify_client_locked(&inner, &client_id);
         Ok(job_view(
             inner.jobs_by_id.get(&job_id).expect("job just inserted"),
         ))
@@ -949,6 +1123,7 @@ impl ShellClientRegistry {
                     requested_by,
                     created_at: now_ts(),
                 };
+                ensure_queue_capacity_locked(&inner, &client_id)?;
                 inner
                     .queues_by_client
                     .entry(client_id)
@@ -965,7 +1140,9 @@ impl ShellClientRegistry {
                 let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
                 job.status = "stop_requested".to_string();
                 job.error = Some("stop requested".to_string());
-                Ok(job_view(job))
+                let notify_client_id = job.client_id.clone();
+                Self::notify_client_locked(&inner, &notify_client_id);
+                Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists")))
             }
             _ => Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists"))),
         }
@@ -1064,6 +1241,7 @@ impl ShellClientRegistry {
             pending_requests,
             projects: client.projects.clone(),
             agent_protocol_version: client.agent_protocol_version.clone(),
+            transport: client.transport.clone(),
         })
     }
 }
@@ -1319,6 +1497,16 @@ pub async fn shell_agent_register(req: &mut Request, depot: &mut Depot, res: &mu
             return;
         }
     };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    if let Err(e) = enforce_register_owner(auth.as_ref(), &body.client_id, body.owner.as_deref()) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellClientRegisterResponse {
+            success: false,
+            client: None,
+            error: Some(e),
+        }));
+        return;
+    }
     match registry.register(body).await {
         Ok(client) => res.render(Json(ShellClientRegisterResponse {
             success: true,
@@ -2398,6 +2586,7 @@ mod tests {
             id: id.to_string(),
             name: Some(id.to_string()),
             path: path.to_string(),
+            allow_patch: true,
             kind: Some("rust".to_string()),
             description: Some("test project".to_string()),
             hooks: vec!["doctor".to_string(), "precommit".to_string()],
@@ -3060,5 +3249,130 @@ mod tests {
         let lost = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(lost.status, "lost");
         assert!(lost.error.unwrap().contains("stale"));
+    }
+
+    #[test]
+    fn enforce_register_owner_skips_when_no_auth() {
+        // No AuthMiddleware (unit tests): defer to the middleware, which in
+        // production rejects anonymous requests before the handler runs.
+        assert!(enforce_register_owner(None, "client-1", Some("anyone")).is_ok());
+        assert!(enforce_register_owner(None, "client-1", None).is_ok());
+    }
+
+    #[test]
+    fn enforce_register_owner_bootstrap_allows_any_owner() {
+        let bootstrap = auth_context(None, true);
+        assert!(enforce_register_owner(Some(&bootstrap), "client-1", None).is_ok());
+        assert!(enforce_register_owner(Some(&bootstrap), "client-1", Some("bob")).is_ok());
+    }
+
+    #[test]
+    fn enforce_register_owner_api_key_must_match_username() {
+        let alice = auth_context(Some("alice"), false);
+        assert!(enforce_register_owner(Some(&alice), "client-1", Some("alice")).is_ok());
+        let mismatch = enforce_register_owner(Some(&alice), "client-1", Some("bob")).unwrap_err();
+        assert!(mismatch.contains("owned by bob"));
+        let missing = enforce_register_owner(Some(&alice), "client-1", None).unwrap_err();
+        assert_eq!(missing, "agent client client-1 has no owner");
+    }
+
+    #[tokio::test]
+    async fn registry_rejects_enqueue_when_queue_full() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "full".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: None,
+            })
+            .await
+            .unwrap();
+        // Fill the queue to the limit without any consumer draining it.
+        for _ in 0..MAX_QUEUED_REQUESTS_PER_CLIENT {
+            registry
+                .enqueue_run(
+                    ShellRunRequest {
+                        client_id: "full".to_string(),
+                        cwd: None,
+                        command: "echo hi".to_string(),
+                        timeout_secs: 5,
+                        wait_timeout_secs: 0,
+                    },
+                    "tester".to_string(),
+                )
+                .await
+                .unwrap();
+        }
+        // The next enqueue must be rejected with a structured error instead
+        // of growing the queue unboundedly.
+        let err = registry
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: "full".to_string(),
+                    cwd: None,
+                    command: "echo hi".to_string(),
+                    timeout_secs: 5,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert!(err.contains("too many pending requests"));
+        assert!(err.contains("full"));
+        // The queue is exactly at the cap; memory is bounded.
+        let view = registry.get_client_view("full").await.unwrap();
+        assert_eq!(view.pending_requests, MAX_QUEUED_REQUESTS_PER_CLIENT);
+    }
+
+    #[tokio::test]
+    async fn reconcile_disconnect_marks_running_jobs_lost() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+                agent_protocol_version: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("oe".to_string()),
+                    cwd: None,
+                    command: Some("sleep 10".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "test".to_string(),
+            )
+            .await
+            .unwrap();
+        // Job is "queued" with its request sitting in the client's queue.
+        let before = registry.get_client_view("oe").await.unwrap();
+        assert_eq!(before.pending_requests, 1);
+        // Transport disconnects (e.g. WebSocket dropped).
+        registry.reconcile_disconnect("oe").await;
+        let lost = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(lost.status, "lost");
+        assert!(lost.error.unwrap().contains("disconnected"));
+        // Pending request was dropped: no dangling waiter / queue entry.
+        let after = registry.get_client_view("oe").await.unwrap();
+        assert_eq!(after.pending_requests, 0);
     }
 }

@@ -1,221 +1,209 @@
-# Agent Protocol (Polling)
+# Agent Protocol
 
-Private Drop Runtime drives remote execution through a **polling** agent
-protocol. There is no WebSocket or SSE transport in this phase; the agent
-binary (`private-drop-agent`) periodically polls the server for work.
+This document describes the wire protocol between `private-drop-agent` and the
+Private Drop server. There are two transports, but they share the same
+business semantics: the server authenticates and routes; the agent owns local
+execution; the server never executes local repository commands as the normal
+path.
 
-This document describes the wire protocol as implemented by
-`src/shell_protocol.rs`, `src/shell_client.rs`, and
-`src/bin/private-drop-agent.rs`. GPT Actions (`/openapi.json`) and MCP
-(`/mcp`) do **not** speak this protocol directly — they call `ToolRuntime`,
-which enqueues work onto the same in-memory queues described here.
+## Transports
 
-## Transport
+| Transport   | Endpoint                      | Direction        | Status                          |
+| ----------- | ----------------------------- | ---------------- | ------------------------------- |
+| `websocket` | `GET /api/agents/ws`          | Long-lived, push | Preferred (Phase 13)            |
+| `polling`   | `POST /api/shell/agent/*`     | Poll-based        | Fallback (default)              |
+| `quic`      | (future)                      | Long-lived        | Future; envelope is compatible  |
 
-- Wire format: JSON over HTTP.
-- Auth: HTTP Bearer (`Authorization: Bearer <DROP_TOKEN>`), the same token
-  used by the runtime API. When `DROP_TOKEN` is unset the server runs in
-  development mode and auth is bypassed.
-- All endpoints are `POST` with a JSON body and a JSON response.
-- The agent polls on a fixed interval (`poll_interval_ms`, default 1000ms).
+Both implemented transports feed the same `ShellClientRegistry`, the same
+per-client request queue, the same job state, and the same `ToolRuntime`.
+There is no second business-logic path for WebSocket.
 
-## Endpoints
+## Authentication
 
-All four endpoints live under `/api/shell/agent/*` and require Bearer auth
-(when auth is enabled).
+Both transports require Bearer auth (`DROP_TOKEN` or an API key):
 
-### 1. Register — `POST /api/shell/agent/register`
+- Polling: `Authorization: Bearer <token>` on every request (or `?token=`).
+- WebSocket: `Authorization: Bearer <token>` in the handshake request headers.
 
-The agent announces itself and its capabilities. Called once on startup and
-again whenever a poll fails (the agent re-registers to refresh `last_seen`).
+Auth is enforced by the shared `AuthMiddleware`. The WebSocket endpoint is
+mounted under the same authenticated `/api` router as the polling endpoints.
 
-Request (`ShellClientRegisterRequest`):
+### Owner binding at registration
 
-| field                    | type     | required | notes |
-|--------------------------|----------|----------|-------|
-| `client_id`              | string   | yes      | Stable agent id. ASCII letters/digits/`-`/`_`/`.`, 1–80 chars. |
-| `display_name`           | string   | no       | Human label. |
-| `owner`                  | string   | no       | Username that owns this agent. Drives the owner boundary (see below). |
-| `hostname`               | string   | no       | Agent host. |
-| `capabilities`           | object   | no       | Capability flags (see below). Defaults to `shell=true`, everything else false. |
-| `projects`               | array    | no       | Project summaries the agent can execute against. |
-| `agent_protocol_version` | string   | no       | Protocol version announced by the agent. Current agent sends `"polling-v1"`. Missing → `"unknown"`. |
+The `owner` field in `register` is bound to the authenticated principal, on
+both transports, by `enforce_register_owner` (which reuses the existing
+`assert_shell_client_owner` rule):
 
-Response (`ShellClientRegisterResponse`): `{ success, client?, error? }` where
-`client` is a `ShellClientView`.
+- A bootstrap token (or auth disabled) may register any `owner`.
+- A normal API key may only register `owner == <api key username>`.
+- A normal API key with a missing/empty `owner` is rejected.
 
-### 2. Poll — `POST /api/shell/agent/poll`
+This closes the gap where any valid token could register a client under an
+arbitrary owner. Polling and WebSocket register follow the same rule.
 
-The agent asks for the next pending request. The server also uses this call to
-refresh `last_seen` and optionally update the agent's project list.
+## Registration
 
-Request (`ShellAgentPollRequest`):
+The agent registers its `client_id`, capabilities, projects (id / path /
+`allow_patch` / kind / git state), and a protocol version:
 
-| field       | type   | required | notes |
-|-------------|--------|----------|-------|
-| `client_id` | string | yes      | The agent's `client_id`. |
-| `projects`  | array  | no       | If present, replaces the agent's registered project summaries. |
+- Polling agent announces `agent_protocol_version = "polling-v1"`.
+- WebSocket agent announces `agent_protocol_version = "websocket-v1"`.
 
-Response (`ShellAgentPollResponse`): `{ success, request?, error? }`. `request`
-is a `ShellAgentShellRequest` when there is pending work, otherwise `null`.
+Runtime project ids are namespaced as `agent:<client_id>:<project_id>`. The
+server does not need a server-side `projects.toml` to resolve runtime project
+ids; project paths and policies come from agent registration.
 
-### 3. Result — `POST /api/shell/agent/result`
+## Polling protocol (fallback)
 
-For **synchronous** shell/file requests, the agent posts the final result
-exactly once.
+- `POST /api/shell/agent/register` — register client + projects.
+- `POST /api/shell/agent/poll` — long-poll the next pending request for this
+  client. Returns at most one `ShellAgentShellRequest` or `None`.
+- `POST /api/shell/agent/result` — submit the result of a synchronous
+  shell/file request.
+- `POST /api/shell/agent/job_update` — push an incremental or final update for
+  an async job.
 
-Request (`ShellAgentResultRequest`): `client_id`, `request_id`, and the
-optional `exit_code`, `stdout`, `stderr`, `duration_ms`, `error`.
+The agent polls on `poll_interval_ms`. The server records `last_seen` on every
+poll/register/result/job_update; a client whose `last_seen` ages past the
+online window is reported `stale`/`offline`.
 
-Response (`ShellAgentResultResponse`): `{ success, error? }`.
+## WebSocket protocol (preferred)
 
-### 4. Job Update — `POST /api/shell/agent/job_update`
+### Transport-neutral envelope
 
-For **asynchronous jobs**, the agent streams progress and the final status.
+All WebSocket traffic is JSON text messages using a single internally-tagged
+envelope (`AgentEnvelope`, defined in `src/shell_protocol.rs`). The same
+envelope is intended to carry over QUIC later without changes.
 
-Request (`ShellAgentJobUpdateRequest`): `client_id`, `job_id`, `status`,
-optional `stdout_chunk`/`stderr_chunk` (append), optional
-`stdout_tail`/`stderr_tail` (replace), `exit_code`, `duration_ms`, `error`,
-and `finished` (boolean).
+```jsonc
+// agent -> server (first message after handshake)
+{"type":"register","client_id":"...","projects":[...],"agent_protocol_version":"websocket-v1",...}
 
-Response (`ShellAgentJobUpdateResponse`): `{ success, job?, error? }`.
+// server -> agent (ack)
+{"type":"registered","success":true,"client":{...}}
 
-## Request kinds (`ShellAgentShellRequest.kind`)
+// server -> agent (push a pending request)
+{"type":"request","request_id":"...","client_id":"...","kind":"run_shell","command":"...",...}
 
-The server enqueues a `ShellAgentShellRequest` and the agent dispatches on
-`kind`:
+// agent -> server (synchronous result)
+{"type":"result","client_id":"...","request_id":"...","exit_code":0,"stdout":"...",...}
 
-| kind          | sync/async | agent action |
-|---------------|------------|--------------|
-| `run_shell`   | sync       | Run `command` via `sh -c`, return result on `/result`. |
-| `file_read`   | sync       | Read `path` (bounded by `max_bytes`), return on `/result`. |
-| `file_write`  | sync       | Write `content` to `path` (optional `expected_sha256`), return on `/result`. |
-| `file_list`   | sync       | List `path` directory, return on `/result`. |
-| `start_job`   | async      | Spawn `command` (setsid), stream updates via `/job_update`. |
-| `stop_job`    | async      | Stop a running job by `job_id`. |
+// agent -> server (incremental/final job state)
+{"type":"job_update","client_id":"...","job_id":"...","status":"running","stdout_chunk":"...",...}
 
-## Sync shell vs async job
+// either direction (keepalive)
+{"type":"ping","ts":1700000000}
+{"type":"pong","ts":1700000000}
 
-- **Sync shell** (`run_shell`, `file_*`): the runtime holds a `oneshot` waiter
-  while the agent runs the command. The HTTP request blocks up to
-  `wait_timeout_secs` (≤ 120s) for the agent's `/result`. If the agent does not
-  respond in time, the request is cancelled and the caller gets a timeout
-  error.
-- **Async job** (`start_job`): the runtime creates a `ShellJobRecord` with
-  `status=queued`, enqueues a `start_job` request, and returns a `job_id`
-  immediately. The agent streams `running` → terminal status via `/job_update`.
-  Callers poll `job_status`/`job_log` (runtime tools) or
-  `/api/shell/jobs/status` (legacy).
+// server -> agent (fatal protocol error; agent should reconnect)
+{"type":"error","code":"...","message":"..."}
+```
 
-## How the server enqueues work
+### Lifecycle
 
-1. A caller invokes a runtime tool (`run_shell`, `read_file`, `git_status`,
-   `run_job`, `run_codex`, …) for an **agent** project.
-2. `ToolRuntime` resolves the project, checks the caller is allowed to drive
-   the agent (owner boundary + capability), then calls
-   `ShellClientRegistry::enqueue_run` / `enqueue_file_op` / `start_job`.
-3. The registry pushes a `request_id` onto `queues_by_client[client_id]` and
-   stores a `PendingShellRequest` (with a `oneshot` waiter for sync calls).
-4. The agent's next `/poll` pops the request and runs it.
+1. Agent opens `GET /api/agents/ws` with `Authorization: Bearer <token>`.
+2. Agent sends `register`. Server calls `ShellClientRegistry::register`, flips
+   the client `transport` to `"websocket"`, installs a push notifier, and
+   replies `registered`.
+3. Server runs a request pump: it pops pending requests from the client's
+   shared queue (the same queue polling serves) and pushes each as a `request`
+   envelope. When idle it waits on the notifier that the registry fires on
+   enqueue.
+4. Agent executes each `request` via the shared dispatch path
+   (`run_shell` / `handle_file_request` / `JobManager`) and sends `result`
+   (synchronous) or `job_update` (async job) back. Server routes these to
+   `ShellClientRegistry::complete` / `update_job`.
+5. Either side may send `ping`; the other replies `pong`.
+6. On disconnect the server runs `reconcile_disconnect`: it removes the push
+   notifier and marks every non-final running-like job owned by the client as
+   `lost` (with its pending request dropped). The client record is retained and
+   `last_seen` is left untouched, so the client decays to `stale`/`offline`
+   through the normal 60s online window — it is never left permanently
+   `online`, and a job is never left permanently `running`.
 
-## How the agent polls
+### Request kinds
 
-`private-drop-agent` runs a loop:
+The `request.kind` field selects execution (identical to polling):
 
-1. `register` on startup.
-2. `poll` every `poll_interval_ms`.
-3. If a request is returned:
-   - `start_job` → enqueue locally (bounded concurrency) and stream
-     `/job_update`.
-   - `stop_job` → stop the local job.
-   - `file_*` → run the file op and `result`.
-   - other → run `sh -c` and `result`.
-4. On poll error, sleep and re-`register`.
+- `run_shell` — synchronous shell command; agent returns `result`.
+- `file_read` / `file_write` / `file_list` — synchronous file op; agent returns
+  `result`.
+- `start_job` — async job; agent streams `job_update` until `finished: true`.
+- `stop_job` — stop a running/queued local job.
 
-## Capabilities
+## Backpressure
 
-`ShellClientCapabilities` flags (registered with the agent):
+Memory and liveness are bounded conservatively in both directions:
 
-| flag               | default | meaning |
-|--------------------|---------|---------|
-| `shell`            | `true`  | Agent can run `sh -c` commands (sync `run_shell`, `apply_patch` via `git apply`, `git status`/`git diff`). |
-| `file_read`        | `false` | Agent can read files (`read_file` runtime tool). |
-| `file_write`       | `false` | Agent can write files. |
-| `git`              | `false` | Agent can run git commands. `git_status`/`git_diff` accept `shell` **or** `git`. |
-| `jobs`             | `false` | Agent tracks jobs. |
-| `async_jobs`       | `false` | Agent can run async jobs (`run_job`/`run_codex`). |
-| `async_shell_jobs` | `false` | Agent can run async shell jobs. `run_job`/`run_codex` require `async_jobs` **or** `async_shell_jobs`. |
+- **Outbound (server → agent) `request`**: critical, never silently dropped. The
+  request pump uses a bounded mpsc (`OUTGOING_CHANNEL_CAPACITY = 64`) and blocks
+  on send until the agent reads; if the writer task detects a closed socket it
+  tears down the pump.
+- **Outbound `pong`**: best-effort keepalive. Sent with `try_send`; a saturated
+  outbound channel drops the pong rather than stalling inbound processing. The
+  agent treats a missing pong as a soft liveness signal, not a fatal error.
+- **Per-client pending queue cap** (`MAX_QUEUED_REQUESTS_PER_CLIENT = 256`): the
+  hard memory ceiling. Once a client's shared queue reaches this depth, new
+  enqueues (`enqueue_run`, `enqueue_file_op`, `start_job`, `stop_job`) are
+  rejected with a structured `too many pending requests` error instead of
+  growing unboundedly. This protects the registry when an agent is slow or dead
+  and the pump cannot drain.
+- **Inbound (agent → server) `job_update`**: processed sequentially under the
+  registry lock; job stdout/stderr are capped by `append_limited` /
+  `replace_limited` (`MAX_OUTPUT_BYTES`). The agent side uses `blocking_send`
+  for `result` and `job_update`, which naturally throttles the update rate to
+  what the server can ingest and fails fast when the channel closes.
 
-The current `private-drop-agent` registers with `shell=true` (default),
-`file_read=true`, `file_write=true`, `jobs=true`, `async_jobs=true`,
-`async_shell_jobs=true`.
+A slow consumer therefore never deadlocks the server's enqueue path (enqueue
+never blocks on the transport), and total in-flight requests per client are
+bounded by the outbound channel plus the queue cap.
 
-`ToolRuntime::authorize_agent_tool` enforces these before dispatching any
-agent-backed tool. Missing capability → structured error:
-`agent client <id> does not support <shell|file_read|shell or git|async shell jobs>`.
+## Reconnect and job reconciliation
 
-## `agent_protocol_version`
+Each transport session reconciles conservatively on disconnect
+(`ShellClientRegistry::reconcile_disconnect`):
 
-Declared during register. Current values:
+- The push notifier is removed so the request pump is not re-armed.
+- Every non-final job in a running-like state (`queued` / `agent_queued` /
+  `running` / `stop_requested`) owned by the client is marked `lost` with error
+  `agent transport disconnected`, and its pending request/waiter is dropped.
+- The client record is retained (late results/updates are logged), and
+  `last_seen` is left untouched so the client decays to `stale`/offline within
+  the 60s online window.
 
-- `"polling-v1"` — current `private-drop-agent` builds.
-- `"unknown"` — agents that registered before the field existed (backwards
-  compatibility; old agents keep working).
+Trade-off (intentional, conservative): a reconnecting agent that keeps running
+the same job will see the server-side job as `lost` (final); its late
+`job_update`/`result` is ignored by `update_job`/`complete`. Operators should
+treat `lost` as "the server no longer tracks this job; restart it if needed".
+A future phase may lift `JobManager` to agent-level so reconnects can resume
+in-flight jobs.
 
-The version is stored on the client record and returned by `list_agents` /
-`ShellClientView`. The server does not yet reject unknown versions; it is
-intended for observability and future capability negotiation.
+## Observability
 
-## Owner field and permission boundary
+`runtime_status` and `list_agents` expose, per agent:
 
-Each agent registers an optional `owner` username. The owner boundary is
-enforced in two places, both using `assert_shell_client_owner`:
+- `client_id`, `status` (`online` / `stale`), `connected`
+- `agent_protocol_version` (`polling-v1` / `websocket-v1` / `unknown`)
+- `transport` (`polling` / `websocket`)
+- `pending_requests` (depth of the shared per-client request queue)
+- `capabilities`, `projects_count`
 
-1. **Legacy `/api/shell/*` handlers** — check the caller's API key username
-   matches the agent's `owner` (bootstrap tokens always pass).
-2. **Runtime paths** (`/api/tools/call`, `/api/codex/run`,
-   `/api/projects/{list,read_file,git_status}`, `/mcp` `tools/call`) —
-   `ToolRuntime::dispatch_with_auth` calls `authorize_agent_tool`, which runs
-   the same owner check before any agent-backed tool runs. This closes the gap
-   where runtime paths previously bypassed owner enforcement.
+No tokens, API keys, secrets, full environment, or Authorization headers are
+exposed.
 
-Rules:
+## Constraints
 
-- **Bootstrap token** (the `DROP_TOKEN`, or dev mode with auth disabled):
-  allowed to drive any agent.
-- **API key** (non-bootstrap): allowed only if the key's username equals the
-  agent's `owner`.
-- **No auth context** (`dispatch` without auth, e.g. internal calls): agent
-  tools are rejected because no owner can be proven. Local-executor projects
-  are unaffected.
-
-This means a non-owner API key cannot use `run_shell`, `read_file`,
-`git_status`, `run_job`, `run_codex`, `apply_patch`, or `git_diff` against an
-agent project through any runtime path.
-
-## Structured agent errors
-
-Agent-backed runtime tools return explicit error strings:
-
-| situation | error string |
-|-----------|--------------|
-| Agent client_id not registered | `unknown shell client: <id>` |
-| Caller is not the agent owner | `agent client <id> is owned by <owner>; current api key belongs to <user>` |
-| Missing capability | `agent client <id> does not support <capability>` |
-| Sync wait timed out | `timed out waiting <n> seconds for agent shell result` |
-| Waiter dropped | `shell request waiter was dropped` |
-| Agent policy deny | forwarded verbatim from the agent's `error` field |
-
-## Known limitations
-
-- **In-memory queues.** Pending requests, job records, and the agent registry
-  live in process memory. A server restart loses in-flight agent jobs (local
-  on-disk jobs can be recovered via `.codex/jobs/<id>/metadata.json`).
-- **Polling latency.** Work starts only on the agent's next poll
-  (`poll_interval_ms`). There is no push notification.
-- **Single-server.** The registry is not shared across server instances; each
-  agent polls one server.
-- **No flow control.** A slow agent backs up its per-client queue; there is no
-  global backpressure across clients beyond the sync wait timeout.
-- **Owner boundary is username-based.** Agents without an `owner` cannot be
-  driven by non-bootstrap API keys.
+- The server never executes local repository commands as the normal path.
+- WebSocket does not introduce a second `ToolRuntime`, a second agent job
+  queue, or transport-specific execution logic.
+- Polling remains fully supported and is the default when `transport` is
+  omitted.
+- The server does not need a server-side `projects.toml` to resolve runtime
+  project ids; project paths and policies come from agent registration, as
+  `agent:<client_id>:<project_id>`.
+- Per-client pending requests are bounded (`MAX_QUEUED_REQUESTS_PER_CLIENT`);
+  a disconnect never leaves an agent permanently `online` or a job permanently
+  `running`.
+- `owner` at registration is bound to the authenticated principal on both
+  transports; QUIC is not implemented yet (future transport; envelope is
+  already transport-neutral).

@@ -5,7 +5,7 @@ Private Drop is now a self-hosted tool runtime for ChatGPT:
 - GPT Actions import `/openapi.json`.
 - ChatGPT MCP clients connect to `/mcp`.
 - Both surfaces call the same `ToolRuntime`.
-- Local or remote execution is handled by configured projects and optional `private-drop-agent` clients.
+- Project execution is handled by registered `private-drop-agent` clients; the server does not need project path/client mappings.
 
 The old file-drop/web UI direction has been removed from the active server surface.
 
@@ -65,24 +65,31 @@ curl -H "Authorization: Bearer change-me" \
   -d '{}'
 ```
 
-## Project Config
+## Projects
 
-`PROJECTS_CONFIG` points to a TOML file:
+Runtime projects are registered by agents. The server does not need a
+server-side `projects.toml` block that maps project ids to local paths or
+`client_id`s.
+
+Agent-side project files describe local projects and are reported during agent
+registration:
 
 ```toml
-[projects.private-drop]
+id = "private-drop"
 path = "/root/git/private-drop"
-executor = "local"
+name = "Private Drop"
 allow_patch = true
-
-[projects.remote-demo]
-path = "/root/git/remote-demo"
-executor = "agent"
-client_id = "workstation-1"
-allow_patch = true
+kind = "rust"
 ```
 
-`executor = "local"` runs on the server host. `executor = "agent"` queues work for a registered `private-drop-agent`.
+`listProjects` returns runtime ids in the form
+`agent:<client_id>:<project_id>`, for example
+`agent:workstation-1:private-drop`.
+
+Polling is the fallback agent transport. WebSocket is the preferred long-lived
+transport (Phase 13); QUIC is a later transport target. Both transports feed
+the same `ShellClientRegistry` / job queue / `ToolRuntime`, so there is no
+second business-logic path.
 
 ## Runtime Tools
 
@@ -129,9 +136,9 @@ operations without guessing tool names:
 - `POST /api/runtime/status` → `getRuntimeStatus`: structured runtime
   health/observability summary (service metadata, projects config status, agent
   client summaries, job counts). Read-only; never exposes tokens or secrets.
-- `POST /api/projects/list` → `listProjects`: list configured project ids.
+- `POST /api/projects/list` → `listProjects`: list agent-registered project ids.
 - `POST /api/projects/read_file` → `readProjectFile`: read a UTF-8 file from a
-  project (paths confined to the project root).
+  project through the owning agent.
 - `POST /api/projects/git_status` → `getProjectGitStatus`: run
   `git status --porcelain` in a project.
 
@@ -142,7 +149,7 @@ full import guide and recommended call flow, and
 
 ### Recommended troubleshooting flow
 
-1. `getRuntimeStatus` — is the runtime healthy? Are projects configured? Are
+1. `getRuntimeStatus` — is the runtime healthy? Are agents registered? Are
    agents online?
 2. `listProjects` — which project ids are available?
 3. `listRuntimeTools` — which tools are exposed?
@@ -354,13 +361,40 @@ curl -H "Authorization: Bearer change-me" \
 
 ## Agent
 
-The agent is still a polling execution client:
+The agent supports two transports, selected by the `transport` config field:
+
+- `websocket` (preferred): one long-lived WebSocket connection to
+  `GET /api/agents/ws`. The server pushes requests; the agent executes them
+  and streams `result` / `job_update` back. Bearer auth is sent in the
+  handshake `Authorization` header.
+- `polling` (fallback, default): the agent polls `POST /api/shell/agent/poll`
+  on an interval. Use this for restricted networks or older agents.
+
+Both transports reuse the same execution path (`run_shell`, `handle_file_request`,
+`JobManager`) and the same server-side registry, queue, and job state.
+
+Reliability guarantees (Phase 14):
+
+- **Backpressure**: per-client pending requests are capped
+  (`MAX_QUEUED_REQUESTS_PER_CLIENT = 256`); overflow is rejected with a
+  structured error rather than growing unbounded. Outbound `request` messages
+  are never silently dropped; `pong` keepalives are best-effort.
+- **Reconnect**: on disconnect the server marks the agent's running jobs `lost`
+  and removes its push notifier, so an agent is never permanently `online` and a
+  job is never permanently `running`. A reconnecting agent should treat `lost`
+  jobs as needing a restart.
+- **Owner/auth**: at registration, a bootstrap token may register any `owner`;
+  a normal API key may only register `owner == <username>`. Applied identically
+  to polling and WebSocket.
+
+QUIC is a future transport target; it is not implemented yet. The
+`AgentEnvelope` wire format is already transport-neutral.
 
 ```bash
 cargo run --bin private-drop-agent -- --config /etc/private-drop-agent/agent.toml
 ```
 
-Example config:
+Example config (WebSocket preferred):
 
 ```toml
 server_url = "https://your-server.example"
@@ -368,6 +402,7 @@ token = "change-me"
 client_id = "workstation-1"
 display_name = "Workstation"
 owner = "you"
+transport = "websocket"
 poll_interval_ms = 1000
 
 [capabilities]
@@ -386,6 +421,10 @@ allowed_roots = ["/root/git"]
 max_timeout_secs = 3600
 max_output_bytes = 262144
 ```
+
+Omit `transport` (or set `transport = "polling"`) to use the polling fallback.
+The agent announces `websocket-v1` / `polling-v1` as its protocol version; the
+transport label is also visible in `runtime_status` and `list_agents`.
 
 ## Verification
 

@@ -31,6 +31,10 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       record `process_group_id`; over-time running jobs are marked `lost` and
       their process group is terminated when possible; explicit stop is wired to
       `POST /api/jobs/stop` but not exposed as a GPT Action.
+- [x] Initial zero-config runtime project switch: runtime project discovery now
+      starts from agent-registered project summaries using ids like
+      `agent:<client_id>:<project_id>`; server-side project config is no longer
+      the intended runtime project source.
 
 ### Deprecated (not active features)
 
@@ -41,14 +45,20 @@ removed. They are intentionally not tracked as future work.
 
 ## Backlog
 
+- [ ] Finish zero-config agent runtime cleanup: remove remaining docs/tests that
+      present `PROJECTS_CONFIG` as the normal runtime project source, and add
+      agent-registered happy-path tests for read/git/Codex routing.
+- [ ] WebSocket agent transport as the primary long-lived transport, reusing the
+      existing registry/queue/job_update semantics.
+- [ ] Keep polling as fallback transport for restricted networks and old agents.
+- [ ] QUIC transport design after the WebSocket message envelope is stable.
 - [ ] Real ChatGPT GPT Actions import test (import `/openapi.json` and run the
-      recommended call flow against a live deployment)
+      recommended call flow against a live deployment with an agent-registered
+      project)
 - [ ] Real ChatGPT MCP connection test (connect a ChatGPT MCP client to `/mcp`)
 - [ ] Deployment hardening: reverse proxy / HTTPS guide, systemd notes
 - [ ] Rate limiting
 - [ ] Audit retention / cleanup policy for long-running deployments
-- [ ] Optional WebSocket/SSE agent transport as a second transport (not a
-      rewrite of runtime tools)
 - [ ] Persistent agent job queue (survive server restart for in-flight agent
       jobs; currently in-memory)
 - [ ] Docs cleanup ongoing (keep README + docs aligned with `src/main.rs` and

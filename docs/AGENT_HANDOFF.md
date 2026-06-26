@@ -88,7 +88,7 @@ wins. `listRuntimeTools` (`POST /api/tools/list`) returns `tools`, `names`,
 
 MCP App console read-only tools (Phase A; thin REST wrappers over
 `ToolRuntime`, also exposed via MCP `tools/list`. Now also dedicated GPT Actions
-as of Phase 3 — `/openapi.json` grew from 12 to 22 ops):
+as of Phase 3 — `/openapi.json` grew from 12 to 22 ops, then to 23 in Phase 5):
 
 - `POST /api/projects/list_files` → `listProjectFiles` (read-only GPT Action)
 - `POST /api/projects/search_text` → `searchProjectText` (read-only GPT Action)
@@ -105,16 +105,20 @@ Phase 3):
 - `POST /api/projects/git_restore_paths` → `gitRestorePaths` (mutation GPT Action)
 - `POST /api/projects/discard_untracked` → `discardUntrackedFiles` (mutation GPT Action)
 
-Phase 4 structured-edit runtime tools (runtime-only; NOT dedicated GPT Actions —
-reachable via `callRuntimeTool` / MCP `tools/call`. `/openapi.json` stays at 22
-ops; the REST wrappers are listed in the forbidden-paths guard):
+Phase 4/5 structured-edit tools:
 
-- `POST /api/projects/replace_in_file` → `replaceInFile` (mutation; thin REST
-  wrapper over `ToolCall::ReplaceInFile`). Fixed python3 helper on the owning
-  agent; `old`/`new` travel over stdin, never interpolated into the command.
-- `POST /api/projects/write_file` → `writeProjectFile` (mutation; thin REST
-  wrapper over `ToolCall::WriteProjectFile`). Create/overwrite with optional
-  `expected_sha256` / `expected_content_prefix` guards.
+- `POST /api/projects/replace_in_file` → `replaceProjectFileText` (mutation;
+  dedicated GPT Action as of Phase 5; thin REST wrapper over
+  `ToolCall::ReplaceInFile`). Fixed python3 helper on the owning agent;
+  `old`/`new` travel over stdin, never interpolated into the command. Also
+  reachable via `callRuntimeTool` / MCP `tools/call`.
+- `POST /api/projects/write_file` → `writeProjectFile` (mutation; runtime-only,
+  NOT a dedicated GPT Action — reachable via `callRuntimeTool` / MCP
+  `tools/call`; listed in the forbidden-paths guard). Thin REST wrapper over
+  `ToolCall::WriteProjectFile`. Create/overwrite with optional
+  `expected_sha256` / `expected_content_prefix` guards. Intentionally kept
+  runtime-only because whole-file overwrite is riskier than a unique-substring
+  replace.
 
 MCP App console (Phase B; read-only status console. Public static HTML/JS/CSS
 entry, NOT behind Bearer auth — like `/openapi.json`. Data is fetched by the
@@ -229,8 +233,8 @@ bash -n scripts/smoke_deployment.sh
 
 Current E2E smoke result:
 
-- `bash scripts/e2e_zero_config_ws.sh`: 61 passed / 0 failed.
-- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 61 passed / 0
+- `bash scripts/e2e_zero_config_ws.sh`: 78 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 78 passed / 0
   failed.
 
 ## validate_patch (patch preflight / dry-run)
@@ -266,8 +270,10 @@ Behavior:
 - Exposed via MCP `tools/list` (25 tools as of Phase 4) and `POST /api/projects/validate_patch`.
 - As of Phase 3, **also** a dedicated read-only GPT Action
   (`validateProjectPatch`); `/openapi.json` grew from 12 to 22 ops. Phase 4 adds
-  `replace_in_file` / `write_project_file` as runtime-only tools (no new GPT
-  Actions), so the OpenAPI op count stays 22 and MCP `tools/list` is 25.
+  `replace_in_file` / `write_project_file` as runtime-only tools. Phase 5
+  promotes `replace_in_file` to a dedicated GPT Action
+  (`replaceProjectFileText`), so the OpenAPI op count is now 23 and MCP
+  `tools/list` is 25.
 - Capability: requires the agent `shell` capability (same as `apply_patch`,
   since the dry-run runs `git apply --check` via the agent shell path). Owner
   boundary checks are reused from `authorize_agent_tool`.

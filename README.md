@@ -158,7 +158,7 @@ Actions expose a small typed OpenAPI surface with stable operation ids; MCP
 exposes the runtime tool set directly. The underlying project/agent execution
 path is the same.
 
-Dedicated GPT Actions (Phase 3, 22 operations). Read-only inspection first,
+Dedicated GPT Actions (23 operations). Read-only inspection first,
 then mutation/execution, then the advanced escape hatch:
 
 | operationId | Purpose |
@@ -178,6 +178,7 @@ then mutation/execution, then the advanced escape hatch:
 | `deleteProjectFiles` | Delete selected project files. Mutation. |
 | `gitRestorePaths` | `git restore` selected tracked paths. Mutation. |
 | `discardUntrackedFiles` | `git clean -f` selected untracked files. Mutation. |
+| `replaceProjectFileText` | Replace a unique substring in a project file. Mutation. |
 | `runCodexTask` | Optional Codex CLI task, returns a `job_id`. |
 | `getRuntimeJobStatus` | Poll an async job. |
 | `getRuntimeJobLog` | Read bounded job stdout/stderr. |
@@ -208,12 +209,13 @@ fall back to `callRuntimeTool` only for tools without a dedicated action:
 9. For cleanup, prefer `deleteProjectFiles` / `delete_project_files`,
    `gitRestorePaths` / `git_restore_paths`, and `discardUntrackedFiles` /
    `discard_untracked` over ad hoc `rm`.
-10. For simple text edits, prefer `replace_in_file` (via `callRuntimeTool` /
-    MCP `tools/call`) over `run_shell` `sed`/`awk`/`python` one-liners — it
-    replaces a unique substring safely and refuses to write when `old` is
-    missing or ambiguous. Use `write_project_file` to create new files (or
-    overwrite with an `expected_sha256` guard). Both are runtime-only tools
-    (not dedicated GPT Actions).
+10. For simple text edits, prefer `replaceProjectFileText` / `replace_in_file`
+    over `run_shell` `sed`/`awk`/`python` one-liners — it replaces a unique
+    substring safely and refuses to write when `old` is missing or ambiguous.
+    Use `write_project_file` (via `callRuntimeTool` / MCP `tools/call`) to
+    create new files (or overwrite with an `expected_sha256` guard).
+    `replace_in_file` is a dedicated GPT Action; `write_project_file` remains
+    runtime-only.
 11. `applyProjectPatch` / `apply_patch` — apply small patches directly when the
     caller already performed preflight checks.
 12. `runCodexTask` / `run_codex` — optional advanced path when Codex CLI is

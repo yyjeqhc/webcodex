@@ -20,14 +20,16 @@ fn public_url() -> String {
 ///    `searchProjectText`)
 /// 4. project mutation (`validateProjectPatch`, `applyProjectPatch`,
 ///    `applyProjectPatchChecked`, `runProjectShellCommand`,
-///    `deleteProjectFiles`, `gitRestorePaths`, `discardUntrackedFiles`)
+///    `deleteProjectFiles`, `gitRestorePaths`, `discardUntrackedFiles`,
+///    `replaceProjectFileText`)
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
 /// 6. advanced/generic entry point (`callRuntimeTool`)
 ///
-/// Phase 3 promotes the core runtime tools to dedicated GPT Actions so a
-/// custom GPT can drive the full coding loop without `callRuntimeTool`.
-/// Codex is an optional advanced capability. `callRuntimeTool` remains as an
-/// advanced escape hatch; prefer the dedicated typed actions.
+/// Phase 3 promotes the core runtime tools to dedicated GPT Actions, and Phase
+/// 5 promotes the safer structured text replacement action, so a custom GPT can
+/// drive the coding loop without `callRuntimeTool` for common edits. Codex is
+/// an optional advanced capability. `callRuntimeTool` remains as an advanced
+/// escape hatch; prefer the dedicated typed actions.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
@@ -49,6 +51,7 @@ const GPT_ACTION_OPS: &[&str] = &[
     "deleteProjectFiles",
     "gitRestorePaths",
     "discardUntrackedFiles",
+    "replaceProjectFileText",
     "listRuntimeJobs",
     "getRuntimeJobTail",
     "callRuntimeTool",
@@ -84,11 +87,11 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/shell/jobs/stop",
     "/api/jobs/stop",
     "/api/shell/jobs/list",
-    // Phase 4 runtime-only structured-edit endpoints. They are thin REST
-    // wrappers over ToolRuntime and are also reachable via callRuntimeTool /
-    // MCP tools/call; they are intentionally NOT promoted to dedicated GPT
-    // Actions so the OpenAPI operation count stays at 22.
-    "/api/projects/replace_in_file",
+    // Phase 5: `replace_in_file` was promoted to a dedicated GPT Action
+    // (`replaceProjectFileText`) so it is no longer forbidden here. `write_file`
+    // remains a runtime-only thin REST wrapper over ToolRuntime (also reachable
+    // via callRuntimeTool / MCP tools/call); it is intentionally NOT promoted
+    // to a dedicated GPT Action because whole-file overwrite is riskier.
     "/api/projects/write_file",
     "/api/shell/agent/register",
     "/api/shell/agent/poll",
@@ -524,6 +527,26 @@ fn build_openapi_spec() -> Value {
                     })
                 )
             },
+            "/api/projects/replace_in_file": {
+                "post": operation_with_examples(
+                    "replaceProjectFileText",
+                    "Replace text in a project file",
+                    "Mutation with side effects: modifies a project file by replacing a unique substring via the owning agent shell capability. Requires Bearer auth. Fails without writing when old is missing or ambiguous. Rejects sensitive paths.",
+                    "ReplaceInFileRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Replace a unique substring in a project file",
+                            "value": {
+                                "project": "private-drop",
+                                "path": "src/main.rs",
+                                "old": "fn main()",
+                                "new": "fn main() -> Result<(), Box<dyn std::error::Error>>"
+                            }
+                        }
+                    })
+                )
+            },
             "/api/tools/call": {
                 "post": operation_with_examples(
                     "callRuntimeTool",
@@ -920,6 +943,38 @@ fn schemas() -> Value {
                 }
             }
         },
+        "ReplaceInFileRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "path", "old", "new"],
+            "description": "Replace a unique substring in a project file. Mutation with side effects; routes to the owning agent. Fails without writing when `old` is missing or ambiguous.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Project-relative file path. Absolute paths and traversal (..) are rejected."
+                },
+                "old": {
+                    "type": "string",
+                    "description": "Non-empty substring to replace. The call fails without writing when it is missing or ambiguous (unless allow_multiple/expected_replacements permit more)."
+                },
+                "new": {
+                    "type": "string",
+                    "description": "Replacement string. May be empty to delete the match."
+                },
+                "expected_replacements": {
+                    "type": "integer",
+                    "description": "Optional expected number of replacements. Defaults to 1. The call fails if the actual count differs."
+                },
+                "allow_multiple": {
+                    "type": "boolean",
+                    "description": "Optional. When true, allows more than one replacement. Defaults to false."
+                }
+            }
+        },
         "ListProjectFilesRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -1223,6 +1278,7 @@ mod tests {
             "/api/projects/delete_files",
             "/api/projects/git_restore_paths",
             "/api/projects/discard_untracked",
+            "/api/projects/replace_in_file",
             "/api/tools/call",
         ] {
             assert!(
@@ -1427,6 +1483,7 @@ mod tests {
             ("/api/projects/delete_files", "deleteProjectFiles"),
             ("/api/projects/git_restore_paths", "gitRestorePaths"),
             ("/api/projects/discard_untracked", "discardUntrackedFiles"),
+            ("/api/projects/replace_in_file", "replaceProjectFileText"),
             ("/api/jobs/list", "listRuntimeJobs"),
             ("/api/jobs/tail", "getRuntimeJobTail"),
             ("/api/tools/call", "callRuntimeTool"),
@@ -1507,6 +1564,10 @@ mod tests {
             "discardUntrackedFiles"
         );
         assert_eq!(
+            spec["paths"]["/api/projects/replace_in_file"]["post"]["operationId"],
+            "replaceProjectFileText"
+        );
+        assert_eq!(
             spec["paths"]["/api/jobs/list"]["post"]["operationId"],
             "listRuntimeJobs"
         );
@@ -1532,6 +1593,7 @@ mod tests {
             "/api/projects/delete_files",
             "/api/projects/git_restore_paths",
             "/api/projects/discard_untracked",
+            "/api/projects/replace_in_file",
         ] {
             let desc = spec["paths"][path]["post"]["description"]
                 .as_str()
@@ -1656,11 +1718,12 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_is_twenty_two() {
-        // Phase 3 promotes 10 core runtime tools to dedicated GPT Actions,
-        // bringing the schema from 12 to 22 ops. The surface must stay <= 30.
-        // Phase 4 adds replace_in_file / write_project_file as runtime-only
-        // tools (NOT dedicated GPT Actions), so the operation count stays 22.
+    fn openapi_operation_count_is_twenty_three() {
+        // Phase 3 promoted 10 core runtime tools to dedicated GPT Actions,
+        // bringing the schema from 12 to 22 ops. Phase 5 promotes
+        // replace_in_file to a dedicated GPT Action (replaceProjectFileText),
+        // bringing the count to 23. The surface must stay <= 30. write_file
+        // stays runtime-only (NOT a dedicated GPT Action).
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
             .as_object()
@@ -1668,27 +1731,35 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 22, "GPT Actions schema must be 22 operations");
+        assert_eq!(count, 23, "GPT Actions schema must be 23 operations");
         assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
     }
 
     #[test]
-    fn openapi_forbids_phase4_runtime_only_edit_endpoints() {
-        // Phase 4 runtime-only structured-edit endpoints must NOT appear in the
-        // GPT Actions schema (they stay reachable via callRuntimeTool / MCP).
+    fn openapi_replace_in_file_promoted_but_write_file_stays_runtime_only() {
+        // Phase 5 promotes replace_in_file to a dedicated GPT Action
+        // (replaceProjectFileText); write_file stays runtime-only (reachable
+        // via callRuntimeTool / MCP) because whole-file overwrite is riskier.
         let spec = build_openapi_spec();
         let paths = spec["paths"].as_object().unwrap();
         assert!(
-            !paths.contains_key("/api/projects/replace_in_file"),
-            "replace_in_file must stay runtime-only (not a dedicated GPT Action)"
+            paths.contains_key("/api/projects/replace_in_file"),
+            "replace_in_file must now appear in /openapi.json as a dedicated mutation action"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/replace_in_file"]["post"]["operationId"],
+            "replaceProjectFileText"
         );
         assert!(
             !paths.contains_key("/api/projects/write_file"),
             "write_file must stay runtime-only (not a dedicated GPT Action)"
         );
-        // They are listed in the forbidden guard so future edits catch
-        // accidental promotion.
-        assert!(LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/replace_in_file"));
+        // replace_in_file is no longer forbidden; write_file still is, so
+        // future edits catch accidental promotion.
+        assert!(
+            !LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/replace_in_file"),
+            "replace_in_file must be removed from the forbidden guard now that it is a dedicated action"
+        );
         assert!(LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/write_file"));
     }
 

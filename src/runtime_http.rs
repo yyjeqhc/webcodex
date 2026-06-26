@@ -136,8 +136,8 @@ struct DiscardUntrackedRequest {
 /// `POST /api/projects/replace_in_file` — thin REST wrapper over
 /// `ToolCall::ReplaceInFile`. Mutation with side effects: replaces a substring
 /// in a project file via the owning agent using a fixed helper (old/new travel
-/// over stdin, never interpolated into the shell command). NOT a GPT Action
-/// (excluded from `/openapi.json`); reachable via callRuntimeTool / MCP as well.
+/// over stdin, never interpolated into the shell command). Dedicated GPT Action
+/// (`replaceProjectFileText`); also reachable via callRuntimeTool / MCP.
 #[derive(Debug, Deserialize)]
 struct ReplaceInFileRequest {
     pub project: String,
@@ -893,8 +893,9 @@ pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, re
 /// `POST /api/projects/replace_in_file` — thin REST wrapper over
 /// `ToolCall::ReplaceInFile`. Mutation with side effects: replaces a substring
 /// in a project file via the owning agent's fixed helper. Requires Bearer auth
-/// and the agent shell capability. NOT a GPT Action (excluded from
-/// `/openapi.json`); also reachable via callRuntimeTool / MCP tools/call.
+/// and the agent shell capability. Dedicated GPT Action
+/// (`replaceProjectFileText`); also reachable via callRuntimeTool / MCP
+/// tools/call.
 #[handler]
 pub async fn projects_replace_in_file(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/replace_in_file", "replaceInFile");
@@ -2239,9 +2240,9 @@ mod tests {
     }
 
     // =========================================================================
-    // Phase 4: runtime-only structured-edit endpoints (replace_in_file,
-    // write_file) — auth gate + dispatch wiring. NOT GPT Actions (excluded
-    // from /openapi.json); also reachable via callRuntimeTool / MCP.
+    // Phase 4/5: structured-edit endpoints — auth gate + dispatch wiring.
+    // replace_in_file is now also a dedicated GPT Action; write_file remains
+    // runtime-only. Both are still reachable via callRuntimeTool / MCP.
     // =========================================================================
 
     #[tokio::test]

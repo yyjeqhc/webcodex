@@ -804,8 +804,8 @@ expected_ops = {
     "getProjectGitDiffSummary", "listProjectFiles", "searchProjectText",
     "validateProjectPatch", "applyProjectPatch", "applyProjectPatchChecked",
     "runProjectShellCommand", "deleteProjectFiles", "gitRestorePaths",
-    "discardUntrackedFiles", "listRuntimeJobs", "getRuntimeJobTail",
-    "callRuntimeTool",
+    "discardUntrackedFiles", "replaceProjectFileText", "listRuntimeJobs",
+    "getRuntimeJobTail", "callRuntimeTool",
 }
 missing = expected_ops - ops_set
 extra = ops_set - expected_ops
@@ -814,11 +814,11 @@ if missing:
 if extra:
     errors.append(f"unexpected operationIds: {sorted(extra)}")
 
-# Phase 3: operation count must stay small (<= 30) and exactly 22 this phase.
+# Phase 5: operation count must stay small (<= 30) and exactly 23 this phase.
 if len(ops_set) > 30:
     errors.append(f"too many operations: {len(ops_set)} (must be <= 30)")
-if len(ops_set) != 22:
-    errors.append(f"operation count must be 22 this phase, got {len(ops_set)}")
+if len(ops_set) != 23:
+    errors.append(f"operation count must be 23 this phase, got {len(ops_set)}")
 
 # Phase 2: each operation description must fit the <= 300 char budget.
 for path, methods in schema.get("paths", {}).items():
@@ -837,7 +837,7 @@ for path, methods in schema.get("paths", {}).items():
 # forbidden.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
              "/api/jobs/stop",
-             "/api/projects/replace_in_file", "/api/projects/write_file",
+             "/api/projects/write_file",
              "/api/messages", "/api/files", "/api/desktop/task_op", "/api/desktop/task",
              "/api/shell/run", "/api/shell/job", "/api/shell/file",
              "/mcp", "/openapi.json", "/console", "/console/app.js", "/console/styles.css"]
@@ -1225,6 +1225,72 @@ if [ "$(json_get "$body" success)" = "True" ]; then
     pass "deleteProjectFiles removes EDIT_PROBE.txt"
 else
     fail "deleteProjectFiles did not remove probe (body: ${body:0:300})"
+fi
+
+# ----------------------------------------------------------------------------
+# 7f. Phase 5: dedicated replaceProjectFileText GPT Action (probe files only)
+# ----------------------------------------------------------------------------
+
+log "---- Phase 5: dedicated replaceProjectFileText (probe files only) ----"
+
+# Create a temporary probe file via the safe write_project_file runtime tool.
+wpf2_body="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "tool": "write_project_file",
+    "params": {
+        "project": sys.argv[1],
+        "path": "REPLACE_PROBE.txt",
+        "content": "alpha beta\n"
+    }
+}))
+' "$RUNTIME_PROJECT_ID")"
+body="$(api_post /api/tools/call "$wpf2_body")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "write_project_file creates REPLACE_PROBE.txt for dedicated action smoke"
+else
+    fail "write_project_file did not create REPLACE_PROBE.txt (body: ${body:0:300})"
+fi
+
+# replaceProjectFileText — dedicated GPT Action. Replace "beta" -> "gamma".
+rif_ded_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"REPLACE_PROBE.txt\",\"old\":\"beta\",\"new\":\"gamma\"}")"
+body="$(api_post /api/projects/replace_in_file "$rif_ded_body")"
+if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.changed)" = "True" ]; then
+    pass "replaceProjectFileText edits REPLACE_PROBE.txt"
+else
+    fail "replaceProjectFileText did not edit probe (body: ${body:0:300})"
+fi
+
+# readProjectFile confirms the dedicated action edit.
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"REPLACE_PROBE.txt\"}")"
+if echo "$(json_get "$body" output.content)" | grep -q "alpha gamma"; then
+    pass "readProjectFile confirms replaceProjectFileText edit"
+else
+    fail "readProjectFile did not confirm dedicated action edit (got: ${body:0:200})"
+fi
+
+# replaceProjectFileText with a missing old must fail WITHOUT modifying the file.
+rif_ded_miss="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"REPLACE_PROBE.txt\",\"old\":\"does-not-exist\",\"new\":\"x\"}")"
+body="$(api_post /api/projects/replace_in_file "$rif_ded_miss")"
+if [ "$(json_get "$body" success)" = "False" ]; then
+    pass "replaceProjectFileText(missing old) fails"
+else
+    fail "replaceProjectFileText(missing old) unexpectedly succeeded (body: ${body:0:200})"
+fi
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"REPLACE_PROBE.txt\"}")"
+if echo "$(json_get "$body" output.content)" | grep -q "alpha gamma"; then
+    pass "replaceProjectFileText(missing old) left file unchanged"
+else
+    fail "replaceProjectFileText(missing old) modified the file (got: ${body:0:200})"
+fi
+
+# Clean up the probe file so the worktree returns to a clean state.
+del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"REPLACE_PROBE.txt\"]}")"
+body="$(api_post /api/projects/delete_files "$del_body")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "deleteProjectFiles removes REPLACE_PROBE.txt"
+else
+    fail "deleteProjectFiles did not remove REPLACE_PROBE.txt (body: ${body:0:300})"
 fi
 
 # ----------------------------------------------------------------------------

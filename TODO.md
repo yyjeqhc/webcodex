@@ -122,6 +122,21 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       `tools/list` grows from 23 to 25. Capability: requires agent `shell`.
       Local E2E adds a Phase 4 probe smoke (write → replace → read → delete)
       via `callRuntimeTool`; `cargo test` passes 466 main + 23 agent tests.
+- [x] Promote `replace_in_file` to a dedicated GPT Action (Phase 5): the safer
+      structured text-replace primitive is now a dedicated GPT Action
+      (`replaceProjectFileText`, `POST /api/projects/replace_in_file`) so GPT
+      can use it at high frequency without `callRuntimeTool`. It reuses the
+      existing REST wrapper `projects_replace_in_file` and
+      `ToolCall::ReplaceInFile` — no business logic duplicated. `write_file`
+      stays runtime/MCP-only (whole-file overwrite is riskier). OpenAPI op
+      count grew from 22 to 23 (still <= 30); `/api/projects/replace_in_file`
+      was removed from the forbidden-paths guard while
+      `/api/projects/write_file` remains forbidden. MCP `tools/list` stays 25.
+      Tests updated (op set, count 23, mutation-description coverage,
+      forbidden-path guard, write_file stays out). E2E adds a dedicated-action
+      smoke (write probe → replaceProjectFileText → read → missing-old fail →
+      cleanup). Local E2E passes 78/78 over both transports; `cargo test`
+      passes 466 main + 23 agent tests.
 
 ### Deprecated (not active features)
 

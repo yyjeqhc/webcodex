@@ -37,7 +37,7 @@ DROP_PUBLIC_URL="https://drop.example.com" cargo run --bin private-drop
 
 ## Operations
 
-The schema exposes a small, stable set of operation ids (22 in Phase 3),
+The schema exposes a small, stable set of operation ids (23),
 grouped by recommended call flow. GPT Actions and MCP are peer surfaces over
 the same `ToolRuntime`: GPT Actions expose selected typed OpenAPI operations,
 while MCP exposes the runtime tool set directly through `tools/list` and
@@ -75,6 +75,7 @@ requires the Codex CLI on the agent host.
 | `deleteProjectFiles` | `POST /api/projects/delete_files` | Delete selected project-relative files. **Mutation with side effects; Bearer auth + agent shell capability required.** |
 | `gitRestorePaths` | `POST /api/projects/git_restore_paths` | `git restore` selected tracked paths. **Mutation with side effects; Bearer auth + agent shell capability required.** |
 | `discardUntrackedFiles` | `POST /api/projects/discard_untracked` | `git clean -f` selected untracked files. **Mutation with side effects; Bearer auth + agent shell capability required.** |
+| `replaceProjectFileText` | `POST /api/projects/replace_in_file` | Replace a unique substring in a project file via the owning agent. **Mutation with side effects; Bearer auth + agent shell capability required. Fails without writing when `old` is missing or ambiguous; rejects sensitive paths.** |
 
 ### Advanced escape hatch
 
@@ -101,11 +102,12 @@ requires the Codex CLI on the agent host.
    bounded tails.
 9. For cleanup, prefer `deleteProjectFiles`, `gitRestorePaths`, and
    `discardUntrackedFiles` over ad hoc `rm` or broad shell.
-10. For simple text edits, prefer `replace_in_file` (via `callRuntimeTool` /
-    MCP `tools/call`) over `runProjectShellCommand` `sed`/`awk`/`python`
-    one-liners — it is safer and refuses to write on a missing/ambiguous match.
-    Use `write_project_file` to create new files (or overwrite with an
-    `expected_sha256` guard).
+10. For simple text edits, prefer `replaceProjectFileText` / `replace_in_file`
+    over `runProjectShellCommand` `sed`/`awk`/`python` one-liners — it is safer
+    and refuses to write on a missing/ambiguous match. Use `write_project_file`
+    (via `callRuntimeTool` / MCP `tools/call`) to create new files (or overwrite
+    with an `expected_sha256` guard). `replace_in_file` is a dedicated GPT
+    Action; `write_project_file` remains runtime-only.
 11. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
     `getRuntimeJobLog`, when Codex CLI is installed and a larger delegated
     task is desired.
@@ -130,13 +132,16 @@ complete the full core coding loop using only dedicated typed actions; reach for
 - `list_project_files`, `search_project_text`
 - `validate_patch`, `apply_patch_checked`, `apply_patch`
 - `delete_project_files`, `git_restore_paths`, `discard_untracked`
-- `replace_in_file`, `write_project_file` (Phase 4 structured-edit tools;
-  runtime-only — not dedicated GPT Actions, reachable via `callRuntimeTool` /
-  MCP `tools/call`). Prefer `replace_in_file` over `run_shell` `sed`/`awk`/
-  `python` one-liners for simple text edits: the command is a fixed helper,
-  `old`/`new` travel over stdin (never interpolated into the shell command),
-  sensitive paths are rejected, and the file is left untouched when `old` is
-  missing or ambiguous.
+- `replace_in_file` (Phase 4 structured-edit tool; now a dedicated GPT Action
+  `replaceProjectFileText`, also reachable via `callRuntimeTool` / MCP
+  `tools/call`). Prefer it over `run_shell` `sed`/`awk`/`python` one-liners for
+  simple text edits: the command is a fixed helper, `old`/`new` travel over
+  stdin (never interpolated into the shell command), sensitive paths are
+  rejected, and the file is left untouched when `old` is missing or ambiguous.
+- `write_project_file` (Phase 4 structured-edit tool; runtime-only — not a
+  dedicated GPT Action, reachable via `callRuntimeTool` / MCP `tools/call`).
+  Use it to create new files or overwrite with an `expected_sha256` /
+  `expected_content_prefix` guard.
 
 ### Request shapes
 
@@ -271,13 +276,13 @@ business logic is duplicated, and owner/capability checks stay centralized in
 
 Tests in `src/openapi.rs` assert:
 
-- The operation-id set matches the documented set exactly (22 operations).
-- The operation count is exactly 22 and never exceeds 30. Phase 4 adds
-  `replace_in_file` / `write_project_file` as **runtime-only** tools (reachable
-  via `callRuntimeTool` / MCP `tools/call`); they are intentionally NOT promoted
-  to dedicated GPT Actions, so the count stays 22. The runtime-only endpoints
-  `POST /api/projects/replace_in_file` and `POST /api/projects/write_file` are
-  listed in the forbidden-paths guard so they can never leak into the schema.
+- The operation-id set matches the documented set exactly (23 operations).
+- The operation count is exactly 23 and never exceeds 30. Phase 5 promotes
+  `replace_in_file` to a dedicated GPT Action (`replaceProjectFileText`).
+  `write_project_file` remains a **runtime-only** tool (reachable via
+  `callRuntimeTool` / MCP `tools/call`) and is intentionally NOT promoted to a
+  dedicated GPT Action; its endpoint `POST /api/projects/write_file` is listed
+  in the forbidden-paths guard so it can never leak into the schema.
 - Every `$ref` resolves to a defined schema.
 - Every path is POST-only.
 - Bearer auth is present and globally enabled.

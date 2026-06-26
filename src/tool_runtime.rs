@@ -41,13 +41,35 @@ pub enum ToolCall {
     /// Apply a unified diff patch to a project.
     ApplyPatch { project: String, patch: String },
 
+    /// Validate then apply a unified diff patch in one safer full-auto step.
+    ApplyPatchChecked {
+        project: String,
+        patch: String,
+        #[serde(default)]
+        deny_sensitive_paths: Option<bool>,
+    },
+
+    /// Delete project-relative files only (not directories).
+    DeleteProjectFiles { project: String, paths: Vec<String> },
+
+    /// Restore tracked paths with `git restore -- <paths>`.
+    GitRestorePaths { project: String, paths: Vec<String> },
+
+    /// Discard selected untracked files with `git clean -f -- <paths>`.
+    DiscardUntracked { project: String, paths: Vec<String> },
+
     /// Validate (preflight) a unified diff patch against an agent-registered
     /// project **without applying it**. Dry-run only: runs `git apply --check`
     /// and `git apply --stat` through the owning agent. Never modifies the
     /// worktree and never falls back to a real apply. Intended for full-auto
     /// coding agent loops that want to check a generated patch before calling
     /// `apply_patch`.
-    ValidatePatch { project: String, patch: String },
+    ValidatePatch {
+        project: String,
+        patch: String,
+        #[serde(default)]
+        deny_sensitive_paths: Option<bool>,
+    },
 
     /// Run `git status` on a project.
     GitStatus { project: String },
@@ -497,7 +519,12 @@ impl ToolRuntime {
     /// client. Non-agent tools (and tools without a project) require nothing.
     fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
         match call {
-            ToolCall::RunShell { .. } | ToolCall::ApplyPatch { .. } => Some(AgentCapability::Shell),
+            ToolCall::RunShell { .. }
+            | ToolCall::ApplyPatch { .. }
+            | ToolCall::ApplyPatchChecked { .. }
+            | ToolCall::DeleteProjectFiles { .. }
+            | ToolCall::GitRestorePaths { .. }
+            | ToolCall::DiscardUntracked { .. } => Some(AgentCapability::Shell),
             // validate_patch runs read-only `git apply --check`/`--stat` via
             // the agent shell path; it requires the same shell capability as
             // apply_patch but never mutates the worktree.
@@ -539,6 +566,10 @@ impl ToolRuntime {
         let project = match call {
             ToolCall::RunShell { project, .. }
             | ToolCall::ApplyPatch { project, .. }
+            | ToolCall::ApplyPatchChecked { project, .. }
+            | ToolCall::DeleteProjectFiles { project, .. }
+            | ToolCall::GitRestorePaths { project, .. }
+            | ToolCall::DiscardUntracked { project, .. }
             | ToolCall::ValidatePatch { project, .. }
             | ToolCall::GitStatus { project }
             | ToolCall::GitDiff { project, .. }
@@ -656,7 +687,35 @@ impl ToolRuntime {
 
             ToolCall::ApplyPatch { project, patch } => self.apply_patch(project, patch).await,
 
-            ToolCall::ValidatePatch { project, patch } => self.validate_patch(project, patch).await,
+            ToolCall::ApplyPatchChecked {
+                project,
+                patch,
+                deny_sensitive_paths,
+            } => {
+                self.apply_patch_checked(project, patch, deny_sensitive_paths)
+                    .await
+            }
+
+            ToolCall::DeleteProjectFiles { project, paths } => {
+                self.delete_project_files(project, paths).await
+            }
+
+            ToolCall::GitRestorePaths { project, paths } => {
+                self.git_restore_paths(project, paths).await
+            }
+
+            ToolCall::DiscardUntracked { project, paths } => {
+                self.discard_untracked(project, paths).await
+            }
+
+            ToolCall::ValidatePatch {
+                project,
+                patch,
+                deny_sensitive_paths,
+            } => {
+                self.validate_patch(project, patch, deny_sensitive_paths)
+                    .await
+            }
 
             ToolCall::GitStatus { project } => self.git_status(project).await,
 
@@ -993,17 +1052,45 @@ impl ToolRuntime {
                 ]),
             },
             ToolSpec {
+                name: "apply_patch_checked".to_string(),
+                description: "Validate a patch, apply it only if it can apply, then return the post-apply diff summary.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("patch", "string", "Unified diff patch.", true),
+                    ("deny_sensitive_paths", "boolean", "Block sensitive path warnings before applying.", false),
+                ]),
+            },
+            ToolSpec {
+                name: "delete_project_files".to_string(),
+                description: "Delete selected project-relative files only; safer than arbitrary rm for cleanup.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("paths", "array", "Project-relative file paths to delete.", true),
+                ]),
+            },
+            ToolSpec {
+                name: "git_restore_paths".to_string(),
+                description: "Restore selected tracked paths with git restore; does not remove untracked files.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("paths", "array", "Project-relative tracked paths to restore.", true),
+                ]),
+            },
+            ToolSpec {
+                name: "discard_untracked".to_string(),
+                description: "Discard selected untracked files with git clean -f -- <paths>.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("paths", "array", "Project-relative untracked paths to remove.", true),
+                ]),
+            },
+            ToolSpec {
                 name: "validate_patch".to_string(),
-                description: "Validate (preflight) a unified diff patch against an "
-                    .to_string()
-                    + "agent-registered project without applying it. Dry-run only: runs "
-                    + "`git apply --check` and `git apply --stat` through the owning agent. "
-                    + "Returns can_apply, affected_files, stat, stdout, stderr, and warnings. "
-                    + "Never modifies the worktree and never falls back to a real apply. "
-                    + "Intended for full-auto coding agent loops before apply_patch.",
+                description: "Dry-run a unified diff with git apply --check/--stat through the owning agent; never writes files.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("patch", "string", "Unified diff patch to validate.", true),
+                    ("deny_sensitive_paths", "boolean", "Block sensitive path warnings.", false),
                 ]),
             },
         ]
@@ -1391,6 +1478,97 @@ impl ToolRuntime {
         }
     }
 
+    async fn apply_patch_checked(
+        &self,
+        project: String,
+        patch: String,
+        deny_sensitive_paths: Option<bool>,
+    ) -> ToolResult {
+        let deny = deny_sensitive_paths.unwrap_or(true);
+        let validate = self
+            .validate_patch(project.clone(), patch.clone(), Some(deny))
+            .await;
+        if !validate.success {
+            return validate;
+        }
+        let can_apply = validate.output["can_apply"].as_bool().unwrap_or(false);
+        if !can_apply {
+            return ToolResult::ok(json!({
+                "applied": false,
+                "validate": validate.output,
+                "apply": Value::Null,
+                "diff_summary": Value::Null,
+            }));
+        }
+        let apply = self.apply_patch(project.clone(), patch).await;
+        if !apply.success {
+            return ToolResult::ok(json!({
+                "applied": false,
+                "validate": validate.output,
+                "apply": apply,
+                "diff_summary": Value::Null,
+            }));
+        }
+        let diff_summary = self.git_diff_summary(project).await;
+        ToolResult::ok(json!({
+            "applied": apply.output["success"].as_bool().unwrap_or(false),
+            "validate": validate.output,
+            "apply": apply.output,
+            "diff_summary": diff_summary.output,
+        }))
+    }
+
+    async fn delete_project_files(&self, project: String, paths: Vec<String>) -> ToolResult {
+        let paths = match validate_limited_cleanup_paths(&paths, true) {
+            Ok(paths) => paths,
+            Err(e) => return ToolResult::err(e),
+        };
+        let command = format!("rm -f -- {}", shell_join_paths(&paths));
+        let result = self.run_shell(project, command, Some(30), None).await;
+        if result.success {
+            ToolResult::ok(json!({
+                "deleted_paths": paths,
+                "command_result": result.output,
+            }))
+        } else {
+            result
+        }
+    }
+
+    async fn git_restore_paths(&self, project: String, paths: Vec<String>) -> ToolResult {
+        let paths = match validate_limited_cleanup_paths(&paths, true) {
+            Ok(paths) => paths,
+            Err(e) => return ToolResult::err(e),
+        };
+        let command = format!("git restore -- {}", shell_join_paths(&paths));
+        let result = self.run_shell(project, command, Some(30), None).await;
+        if result.success {
+            ToolResult::ok(json!({
+                "restored_paths": paths,
+                "command_result": result.output,
+            }))
+        } else {
+            result
+        }
+    }
+
+    async fn discard_untracked(&self, project: String, paths: Vec<String>) -> ToolResult {
+        let paths = match validate_limited_cleanup_paths(&paths, true) {
+            Ok(paths) => paths,
+            Err(e) => return ToolResult::err(e),
+        };
+        let command = format!("git clean -f -- {}", shell_join_paths(&paths));
+        let result = self.run_shell(project, command, Some(30), None).await;
+        if result.success {
+            ToolResult::ok(json!({
+                "discarded_untracked_paths": paths,
+                "command_result": result.output,
+            }))
+        } else {
+            result
+        }
+    }
+
     /// Validate (preflight) a unified diff patch against an agent-registered
     /// project without applying it.
     ///
@@ -1406,7 +1584,12 @@ impl ToolRuntime {
     /// of routing. Sensitive filenames produce `warnings` rather than a hard
     /// reject; absolute paths and `..` traversal are hard-rejected so the
     /// preflight never escapes the project boundary.
-    async fn validate_patch(&self, project: String, patch: String) -> ToolResult {
+    async fn validate_patch(
+        &self,
+        project: String,
+        patch: String,
+        deny_sensitive_paths: Option<bool>,
+    ) -> ToolResult {
         // ---- Input validation (before any project resolution) ----
         if patch.is_empty() {
             return ToolResult::err("Patch cannot be empty");
@@ -1436,13 +1619,28 @@ impl ToolRuntime {
             return ToolResult::err("Patch does not declare any changed files");
         }
         // Hard-reject paths that escape the project boundary. Collect warnings
-        // for sensitive filenames without blocking the preflight.
+        // for sensitive filenames. Callers can request a hard policy block so
+        // full-auto loops do not accidentally ignore sensitive-path warnings.
         let mut warnings: Vec<String> = Vec::new();
         for file in &affected {
             if let Err(e) = validate_preflight_path(file) {
                 return ToolResult::err(e);
             }
             warnings.extend(sensitive_path_warnings(file));
+        }
+        warnings.sort();
+        warnings.dedup();
+        let deny_sensitive = deny_sensitive_paths.unwrap_or(false);
+        if deny_sensitive && !warnings.is_empty() {
+            return ToolResult::ok(json!({
+                "can_apply": false,
+                "policy_blocked": true,
+                "affected_files": affected,
+                "stat": Value::Null,
+                "stdout": Value::Null,
+                "stderr": "sensitive path policy blocked patch preflight",
+                "warnings": warnings,
+            }));
         }
 
         // ---- Agent routing ----
@@ -1535,6 +1733,7 @@ impl ToolRuntime {
         // not a tool error, so the agent loop can read it and regenerate.
         ToolResult::ok(json!({
             "can_apply": can_apply,
+            "policy_blocked": false,
             "affected_files": affected,
             "stat": stat_resp,
             "stdout": check_stdout,
@@ -2255,12 +2454,15 @@ impl ToolRuntime {
                 Ok(Ok(resp)) => {
                     let stdout = resp.stdout.unwrap_or_default();
                     let (porcelain, diff_stat) = split_diff_summary(&stdout);
-                    let changed_files = parse_porcelain_files(&porcelain);
+                    let porcelain_summary = parse_porcelain_summary(&porcelain);
                     ToolResult::ok(json!({
                         "porcelain": porcelain,
                         "diff_stat": diff_stat,
-                        "changed_files": changed_files,
-                        "changed_files_count": changed_files.len(),
+                        "changed_files": porcelain_summary.changed_files,
+                        "changed_files_count": porcelain_summary.changed_files_count,
+                        "tracked_changed_files": porcelain_summary.tracked_changed_files,
+                        "untracked_files": porcelain_summary.untracked_files,
+                        "ignored_files": porcelain_summary.ignored_files,
                         "exit_code": resp.exit_code,
                     }))
                 }
@@ -2279,12 +2481,15 @@ impl ToolRuntime {
         match result {
             Ok((exit_code, stdout, _stderr, _)) => {
                 let (porcelain, diff_stat) = split_diff_summary(&stdout);
-                let changed_files = parse_porcelain_files(&porcelain);
+                let porcelain_summary = parse_porcelain_summary(&porcelain);
                 ToolResult::ok(json!({
                     "porcelain": porcelain,
                     "diff_stat": diff_stat,
-                    "changed_files": changed_files,
-                    "changed_files_count": changed_files.len(),
+                    "changed_files": porcelain_summary.changed_files,
+                    "changed_files_count": porcelain_summary.changed_files_count,
+                    "tracked_changed_files": porcelain_summary.tracked_changed_files,
+                    "untracked_files": porcelain_summary.untracked_files,
+                    "ignored_files": porcelain_summary.ignored_files,
                     "exit_code": exit_code,
                 }))
             }
@@ -2806,15 +3011,24 @@ fn split_diff_summary(stdout: &str) -> (String, String) {
     }
 }
 
-/// Parse `git status --porcelain` output into a list of changed file paths.
+#[derive(Debug, Clone, Default)]
+struct PorcelainSummary {
+    changed_files: Vec<String>,
+    tracked_changed_files: Vec<String>,
+    untracked_files: Vec<String>,
+    ignored_files: Vec<String>,
+    changed_files_count: usize,
+}
+
+/// Parse `git status --porcelain` output into tracked/untracked buckets.
 /// Handles renames (`R  old -> new` -> `new`) and quoted paths.
-fn parse_porcelain_files(porcelain: &str) -> Vec<String> {
-    let mut files = Vec::new();
+fn parse_porcelain_summary(porcelain: &str) -> PorcelainSummary {
+    let mut summary = PorcelainSummary::default();
     for line in porcelain.lines() {
-        // Porcelain format: "XY <path>" (2 status chars + 1 space + path).
         if line.len() < 4 {
             continue;
         }
+        let status = &line[..2];
         let path_part = &line[3..];
         let path = if let Some((_, dst)) = path_part.split_once(" -> ") {
             dst
@@ -2822,11 +3036,66 @@ fn parse_porcelain_files(porcelain: &str) -> Vec<String> {
             path_part
         };
         let path = path.trim().trim_matches('"');
-        if !path.is_empty() {
-            files.push(path.to_string());
+        if path.is_empty() {
+            continue;
+        }
+        match status {
+            "??" => summary.untracked_files.push(path.to_string()),
+            "!!" => summary.ignored_files.push(path.to_string()),
+            _ => summary.tracked_changed_files.push(path.to_string()),
+        }
+        summary.changed_files.push(path.to_string());
+    }
+    summary.changed_files_count = summary.changed_files.len();
+    summary
+}
+
+/// Backward-compatible helper for older tests/callers that only need all paths.
+#[allow(dead_code)]
+fn parse_porcelain_files(porcelain: &str) -> Vec<String> {
+    parse_porcelain_summary(porcelain).changed_files
+}
+
+fn validate_limited_cleanup_paths(
+    paths: &[String],
+    deny_sensitive: bool,
+) -> Result<Vec<String>, String> {
+    if paths.is_empty() {
+        return Err("paths cannot be empty".to_string());
+    }
+    if paths.len() > 64 {
+        return Err("paths may contain at most 64 entries".to_string());
+    }
+    let mut clean = Vec::new();
+    for raw in paths {
+        validate_project_relative_path(raw)?;
+        let path = raw.trim().trim_start_matches("./").trim_end_matches('/');
+        if path.is_empty() || path == "." {
+            return Err("path must name a file or tracked path, not the project root".to_string());
+        }
+        if deny_sensitive {
+            let warnings = sensitive_path_warnings(path);
+            if !warnings.is_empty() {
+                return Err(format!(
+                    "refusing sensitive cleanup path '{}': {}",
+                    path,
+                    warnings.join("; ")
+                ));
+            }
+        }
+        if !clean.iter().any(|p: &String| p == path) {
+            clean.push(path.to_string());
         }
     }
-    files
+    Ok(clean)
+}
+
+fn shell_join_paths(paths: &[String]) -> String {
+    paths
+        .iter()
+        .map(|p| shell_escape_simple(p))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Build a bounded job summary `Value` for an agent-known job. Never includes
@@ -3705,12 +3974,30 @@ mod tests {
             "git_status",
             "git_diff",
             "apply_patch",
+            "apply_patch_checked",
+            "validate_patch",
+            "delete_project_files",
+            "git_restore_paths",
+            "discard_untracked",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),
                 "expected tool '{}' in specs: {:?}",
                 expected,
                 names
+            );
+        }
+    }
+
+    #[test]
+    fn tool_specs_descriptions_fit_gpt_action_limit() {
+        let runtime = test_runtime();
+        for spec in runtime.tool_specs() {
+            assert!(
+                spec.description.chars().count() <= 300,
+                "{} description is too long: {} chars",
+                spec.name,
+                spec.description.chars().count()
             );
         }
     }
@@ -5738,6 +6025,70 @@ new file mode 100644\n\
     // =========================================================================
 
     #[test]
+    fn from_tool_name_parses_checked_and_cleanup_tools() {
+        let checked = ToolCall::from_tool_name(
+            "apply_patch_checked",
+            json!({"project":"agent:c:p","patch":"diff","deny_sensitive_paths":true}),
+        )
+        .unwrap();
+        assert!(matches!(
+            checked,
+            ToolCall::ApplyPatchChecked { project, patch, deny_sensitive_paths }
+                if project == "agent:c:p" && patch == "diff" && deny_sensitive_paths == Some(true)
+        ));
+
+        let delete = ToolCall::from_tool_name(
+            "delete_project_files",
+            json!({"project":"agent:c:p","paths":["tmp.txt"]}),
+        )
+        .unwrap();
+        assert!(
+            matches!(delete, ToolCall::DeleteProjectFiles { project, paths } if project == "agent:c:p" && paths == vec!["tmp.txt"])
+        );
+
+        let restore = ToolCall::from_tool_name(
+            "git_restore_paths",
+            json!({"project":"agent:c:p","paths":["README.md"]}),
+        )
+        .unwrap();
+        assert!(
+            matches!(restore, ToolCall::GitRestorePaths { project, paths } if project == "agent:c:p" && paths == vec!["README.md"])
+        );
+
+        let discard = ToolCall::from_tool_name(
+            "discard_untracked",
+            json!({"project":"agent:c:p","paths":["tmp.txt"]}),
+        )
+        .unwrap();
+        assert!(
+            matches!(discard, ToolCall::DiscardUntracked { project, paths } if project == "agent:c:p" && paths == vec!["tmp.txt"])
+        );
+    }
+
+    #[test]
+    fn parse_porcelain_summary_buckets_untracked_files() {
+        let summary = parse_porcelain_summary(
+            " M README.md\n?? tmp.txt\nR  old.rs -> new.rs\n!! ignored.log\n",
+        );
+        assert_eq!(summary.tracked_changed_files, vec!["README.md", "new.rs"]);
+        assert_eq!(summary.untracked_files, vec!["tmp.txt"]);
+        assert_eq!(summary.ignored_files, vec!["ignored.log"]);
+        assert_eq!(summary.changed_files_count, 4);
+    }
+
+    #[test]
+    fn cleanup_paths_reject_sensitive_and_project_root() {
+        let root = vec![".".to_string()];
+        assert!(validate_limited_cleanup_paths(&root, true).is_err());
+        let sensitive = vec!["agent.toml".to_string()];
+        assert!(validate_limited_cleanup_paths(&sensitive, true).is_err());
+        let safe = vec!["tmp_web_codex_smoke.txt".to_string()];
+        assert_eq!(
+            validate_limited_cleanup_paths(&safe, true).unwrap(),
+            vec!["tmp_web_codex_smoke.txt".to_string()]
+        );
+    }
+    #[test]
     fn from_tool_name_parses_validate_patch() {
         let call = ToolCall::from_tool_name(
             "validate_patch",
@@ -5745,7 +6096,7 @@ new file mode 100644\n\
         )
         .unwrap();
         assert!(
-            matches!(call, ToolCall::ValidatePatch { project, patch } if project == "agent:c:p" && patch == "diff")
+            matches!(call, ToolCall::ValidatePatch { project, patch, .. } if project == "agent:c:p" && patch == "diff")
         );
     }
 
@@ -5815,7 +6166,7 @@ new file mode 100644\n\
     async fn validate_patch_rejects_empty_patch() {
         let runtime = test_runtime();
         let result = runtime
-            .validate_patch("agent:c:p".to_string(), "".to_string())
+            .validate_patch("agent:c:p".to_string(), "".to_string(), None)
             .await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("empty"));
@@ -5825,7 +6176,7 @@ new file mode 100644\n\
     async fn validate_patch_rejects_nul_byte_patch() {
         let runtime = test_runtime();
         let result = runtime
-            .validate_patch("agent:c:p".to_string(), "diff\0--- a/f\n".to_string())
+            .validate_patch("agent:c:p".to_string(), "diff\0--- a/f\n".to_string(), None)
             .await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("NUL"));
@@ -5837,7 +6188,7 @@ new file mode 100644\n\
         // Build a patch one byte over the limit.
         let oversized = "x".repeat(MAX_VALIDATE_PATCH_BYTES + 1);
         let result = runtime
-            .validate_patch("agent:c:p".to_string(), oversized)
+            .validate_patch("agent:c:p".to_string(), oversized, None)
             .await;
         assert!(!result.success);
         let err = result.error.unwrap();
@@ -5852,7 +6203,7 @@ new file mode 100644\n\
         let runtime = test_runtime();
         let patch = "--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\nhello\n+world\n";
         let result = runtime
-            .validate_patch("agent:nope:nope".to_string(), patch.to_string())
+            .validate_patch("agent:nope:nope".to_string(), patch.to_string(), None)
             .await;
         assert!(!result.success);
         let err = result.error.unwrap();

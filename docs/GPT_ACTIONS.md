@@ -38,9 +38,12 @@ DROP_PUBLIC_URL="https://drop.example.com" cargo run --bin private-drop
 ## Operations
 
 The schema exposes a small, stable set of operation ids, grouped by recommended
-call flow. Codex is an **optional advanced capability**: the inspection,
-mutation, and shell actions work without Codex installed — only `runCodexTask`
-requires the Codex CLI on the agent host.
+call flow. GPT Actions and MCP are peer surfaces over the same `ToolRuntime`:
+GPT Actions expose selected typed OpenAPI operations, while MCP exposes the
+runtime tool set directly through `tools/list` and `tools/call`. Codex is an
+**optional advanced capability**: the inspection, mutation, and shell actions
+work without Codex installed — only `runCodexTask` requires the Codex CLI on the
+agent host.
 
 | Flow step | operationId | Path | Purpose |
 |-----------|-------------|------|---------|
@@ -73,7 +76,9 @@ requires the Codex CLI on the agent host.
    is desired.
 
 The dedicated inspection and execution actions are the robust default path for
-ChatGPT-assisted development. Codex is optional and should not be required for
+ChatGPT-assisted development. MCP clients can drive the same loop with the
+snake_case runtime tool names (`read_file`, `git_diff`, `validate_patch`,
+`apply_patch_checked`, `apply_patch`, `run_shell`). Codex is optional and should not be required for
 basic read/diff/patch/test workflows.
 
 ## `callRuntimeTool` (advanced)
@@ -85,7 +90,18 @@ basic read/diff/patch/test workflows.
 - `run_shell`, `run_job`, `run_codex`
 - `job_status`, `job_log`
 - `read_file`, `git_status`, `git_diff`
-- `apply_patch`
+- `validate_patch`, `apply_patch_checked`, `apply_patch`
+- `delete_project_files`, `git_restore_paths`, `discard_untracked`
+
+`validate_patch` is a runtime/MCP tool rather than a dedicated GPT Action today.
+It is a dry-run patch preflight: it does not modify the worktree and is suitable
+for full-auto coding loops before `apply_patch`. `apply_patch_checked` combines
+preflight, apply, and post-apply diff summary for MCP/runtime clients that want
+a safer one-call mutation path. `delete_project_files`, `git_restore_paths`, and
+`discard_untracked` are restricted cleanup tools intended to reduce ad hoc `rm`
+and broad shell usage. GPT Actions can still discover these through
+`listRuntimeTools`; promote any of them to dedicated actions later if the
+OpenAPI surface should expose them directly.
 
 `params` is an OpenAPI 3.1 object (`type: object`, `additionalProperties: true`)
 that carries tool-specific arguments. **Prefer the dedicated actions when they

@@ -265,7 +265,7 @@ Acceptance:
 > preflight / dry-run (Phase D backend). It runs `git apply --check` and
 > `git apply --stat` through the owning agent, returns `can_apply`,
 > `affected_files`, `stat`, `stdout`, `stderr`, and `warnings`, and never
-> modifies the worktree. It is exposed via MCP `tools/list` (19 tools) and
+> modifies the worktree. It is exposed via MCP `tools/list` (23 tools) and
 > `POST /api/projects/validate_patch`, but is intentionally **not** a GPT
 > Action (`/openapi.json` stays at 12 ops). It is designed for full-auto
 > coding agent loops (`validate_patch -> applyProjectPatch`), not as a human
@@ -274,7 +274,9 @@ Acceptance:
 > sensitive filenames produce warnings; absolute paths and `..` traversal are
 > hard-rejected. Patch payloads are sent through `ShellRunRequest.stdin`, not
 > embedded in shell commands. Local E2E passes 44/44 over both transports;
-> `cargo test` passes 397 main + 23 agent tests.
+> `cargo test` passes 401 main + 23 agent tests. `apply_patch_checked`,
+> `delete_project_files`, `git_restore_paths`, and `discard_untracked` are
+> runtime/MCP-only cleanup tools.
 
 ## Phase E: Command And Job Panels
 

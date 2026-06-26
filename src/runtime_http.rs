@@ -83,6 +83,8 @@ struct ApplyPatchRequest {
 struct ValidatePatchRequest {
     pub project: String,
     pub patch: String,
+    #[serde(default)]
+    pub deny_sensitive_paths: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -567,6 +569,7 @@ pub async fn projects_validate_patch(req: &mut Request, depot: &mut Depot, res: 
             ToolCall::ValidatePatch {
                 project: body.project,
                 patch: body.patch,
+                deny_sensitive_paths: body.deny_sensitive_paths,
             },
             auth.as_ref(),
         )
@@ -839,6 +842,10 @@ fn tool_project(call: &ToolCall) -> Option<String> {
     match call {
         ToolCall::RunShell { project, .. }
         | ToolCall::ApplyPatch { project, .. }
+        | ToolCall::ApplyPatchChecked { project, .. }
+        | ToolCall::DeleteProjectFiles { project, .. }
+        | ToolCall::GitRestorePaths { project, .. }
+        | ToolCall::DiscardUntracked { project, .. }
         | ToolCall::ValidatePatch { project, .. }
         | ToolCall::GitStatus { project }
         | ToolCall::GitDiff { project, .. }

@@ -73,12 +73,14 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       worktree. Returns `can_apply`, `affected_files`, `stat`, `stdout`,
       `stderr`, `warnings`. Input validation rejects empty/NUL/oversized
       patches (256 KiB cap); sensitive filenames warn; absolute paths and `..`
-      traversal are hard-rejected. Exposed via MCP `tools/list` (19 tools) and
+      traversal are hard-rejected. Exposed via MCP `tools/list` (23 tools) and
       `POST /api/projects/validate_patch`; **not** a GPT Action
       (`/openapi.json` stays at 12 ops). Designed for full-auto coding agent
       loops, not human approval. Patch payloads use `ShellRunRequest.stdin`,
       not shell command embedding. Local E2E passes 44/44 over both transports;
-      `cargo test` passes 397 main + 23 agent tests. See
+      `cargo test` passes 401 main + 23 agent tests. `apply_patch_checked`,
+      `delete_project_files`, `git_restore_paths`, and `discard_untracked`
+      are runtime/MCP-only cleanup tools. See
       [docs/MCP_APP_CONSOLE_PLAN.md](docs/MCP_APP_CONSOLE_PLAN.md).
 
 ### Deprecated (not active features)

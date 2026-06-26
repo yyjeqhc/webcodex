@@ -23,7 +23,7 @@ runtime project source again.
 Latest known baseline when this file was written:
 
 - Branch: `v2-mcp-runtime`
-- Commit: current `HEAD` (`Add agent-backed validate patch preflight`)
+- Commit: current `HEAD` (`Add safer runtime patch and cleanup tools`)
 - Main binary: `private-drop`
 - Agent binary: `private-drop-agent`
 
@@ -89,6 +89,14 @@ MCP App console read-only tools (Phase A; thin REST wrappers over
 - `POST /api/projects/git_diff_summary`
 - `POST /api/jobs/list`
 - `POST /api/jobs/tail`
+
+Runtime/MCP-only patch and cleanup tools (not GPT Actions yet):
+
+- `apply_patch_checked`: validates with `validate_patch`, applies only when
+  `can_apply=true`, then returns `git_diff_summary`.
+- `delete_project_files`: deletes selected project-relative files only.
+- `git_restore_paths`: restores selected tracked paths with `git restore --`.
+- `discard_untracked`: removes selected untracked files with `git clean -f --`.
 
 MCP App console (Phase B; read-only status console. Public static HTML/JS/CSS
 entry, NOT behind Bearer auth — like `/openapi.json`. Data is fetched by the
@@ -178,7 +186,7 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 397 tests passing, agent binary 23 tests passing.
+- `cargo test`: main binary 401 tests passing, agent binary 23 tests passing.
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -230,9 +238,11 @@ Behavior:
 - Absolute paths and `..` traversal are hard-rejected; sensitive filenames
   (`agent.toml`, `private-drop.env`, `.env`, `projects.d`, `.git`, `target`,
   `node_modules`) produce `warnings` rather than blocking the preflight.
+- `deny_sensitive_paths=true` turns sensitive-path warnings into a structured
+  policy block (`can_apply=false`, `policy_blocked=true`) without running git.
 - Output: `can_apply` (bool), `affected_files` (array), `stat`, `stdout`,
   `stderr`, `warnings` (array).
-- Exposed via MCP `tools/list` (19 tools) and `POST /api/projects/validate_patch`.
+- Exposed via MCP `tools/list` (23 tools) and `POST /api/projects/validate_patch`.
 - **Not** a GPT Action: `/openapi.json` stays at 12 ops. The route is in the
   `LEGACY_FORBIDDEN_PATHS` guard so it can never leak into the GPT Actions
   schema.

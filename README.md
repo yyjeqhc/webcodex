@@ -29,7 +29,9 @@ Current direction:
 - The old file-drop / Web UI / workflow / SSH product direction is removed from
   the active server surface.
 
-## Build
+## Build and install
+
+Private Drop needs a Rust toolchain with `cargo`:
 
 ```bash
 cargo build --release
@@ -41,6 +43,9 @@ The release build produces:
 target/release/private-drop
 target/release/private-drop-agent
 ```
+
+See [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) for the short build, install,
+server, agent, GPT Actions, and MCP setup guide.
 
 ## Run the server locally
 
@@ -148,6 +153,11 @@ value:
 Bearer <DROP_TOKEN>
 ```
 
+GPT Actions and MCP are peer surfaces over the same `ToolRuntime`. GPT
+Actions expose a small typed OpenAPI surface with stable operation ids; MCP
+exposes the runtime tool set directly. The underlying project/agent execution
+path is the same.
+
 Dedicated GPT Actions:
 
 | operationId | Purpose |
@@ -165,16 +175,27 @@ Dedicated GPT Actions:
 | `listRuntimeTools` | Advanced runtime tool discovery. |
 | `callRuntimeTool` | Generic escape hatch; prefer typed actions above. |
 
-Recommended ChatGPT-assisted development flow:
+Recommended tool-driven development flow, whether driven through GPT Actions
+or MCP:
 
-1. `getRuntimeStatus` — confirm the runtime is healthy and the agent is online.
-2. `listProjects` — select the runtime project id.
-3. `getProjectGitStatus` / `getProjectGitDiff` — inspect repository state.
-4. `readProjectFile` — read focused source, config, and docs.
-5. `runProjectShellCommand` — run diagnostics such as `cargo check`,
-   `cargo test`, or script syntax checks.
-6. `applyProjectPatch` — apply small reviewed patches.
-7. `runCodexTask` — optional advanced path when Codex CLI is installed.
+1. `getRuntimeStatus` / `runtime_status` — confirm the runtime is healthy and
+   the agent is online.
+2. `listProjects` / `list_projects` — select the runtime project id.
+3. `getProjectGitStatus` / `git_status` and `getProjectGitDiff` / `git_diff` —
+   inspect repository state.
+4. `readProjectFile` / `read_file` — read focused source, config, and docs.
+5. `runProjectShellCommand` / `run_shell` — run diagnostics such as
+   `cargo check`, `cargo test`, or script syntax checks.
+6. `validate_patch` — MCP/runtime dry-run patch preflight; it does not modify
+   the worktree and is suitable for full-auto loops before `apply_patch`.
+7. `apply_patch_checked` — validate, apply, and return the post-apply diff
+   summary in one safer runtime/MCP step.
+8. `delete_project_files`, `git_restore_paths`, or `discard_untracked` — use
+   restricted cleanup tools instead of ad hoc `rm` when possible.
+9. `applyProjectPatch` / `apply_patch` — apply small patches directly when the
+   caller already performed preflight checks.
+10. `runCodexTask` / `run_codex` — optional advanced path when Codex CLI is
+    installed.
 
 See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for examples, schema guarantees,
 and executable-action risk notes.

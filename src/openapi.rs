@@ -454,7 +454,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Accepted values: list_tools, list_projects, list_agents, runtime_status, run_shell, run_job, run_codex, job_status, job_log, read_file, git_status, git_diff, apply_patch."
+                    "description": "Runtime tool name. Common values: list_tools, list_projects, runtime_status, read_file, git_status, git_diff, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log. Use listRuntimeTools for all names."
                 },
                 "params": {
                     "type": "object",

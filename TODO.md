@@ -183,6 +183,21 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       stays 23 and MCP `tools/list` stays 25. Added a "Recommended full-auto
       coding loop" example to `docs/GPT_ACTIONS.md`. Local E2E passes 98/98
       over both transports; `cargo test` passes 473 main + 23 agent tests.
+- [x] Release readiness / install & import validation (Phase 8): added
+      `scripts/release_check.sh`, a single local pre-release gate that runs
+      `cargo fmt --check`, `cargo check`, `cargo check --tests`, `cargo test`,
+      the WebSocket E2E, the polling E2E, and a static check that no sensitive
+      files (`agent.toml`, `private-drop.env`, `.env`, `projects.d`) are tracked
+      or staged by git. The op/tool-count invariants (OpenAPI ops == 23, MCP
+      `tools/list` == 25) are asserted by the E2E harness rather than re-counted
+      statically, keeping the gate fast, network-free, and never touching real
+      tokens. Added a short GPT Actions import checklist to
+      `docs/BUILD_INSTALL.md` and referenced the gate from `README.md`,
+      `docs/BUILD_INSTALL.md`, and `docs/AGENT_HANDOFF.md`. No new runtime tool,
+      no new OpenAPI operation, no new `ToolCall` variant, no `operationId`
+      change; OpenAPI op count stays 23 and MCP `tools/list` stays 25. Local
+      E2E passes 98/98 over both transports; `cargo test` passes 473 main + 23
+      agent tests; `bash scripts/release_check.sh` passes.
 
 ### Deprecated (not active features)
 

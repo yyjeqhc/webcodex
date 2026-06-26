@@ -144,6 +144,13 @@ cargo check --tests
 cargo test
 ```
 
+Release readiness gate (runs the above plus both WebSocket and polling E2E
+transports, and a static check that no sensitive files are tracked/staged):
+
+```bash
+bash scripts/release_check.sh
+```
+
 Deployment smoke, when a public endpoint and token are available:
 
 ```bash
@@ -151,3 +158,21 @@ DROP_PUBLIC_URL="https://drop.example.com" \
 DROP_TOKEN="change-me" \
 bash scripts/smoke_deployment.sh
 ```
+
+## GPT Actions import checklist
+
+Run through this short checklist before importing `/openapi.json` into ChatGPT
+GPT Actions:
+
+- [ ] Public HTTPS URL is reachable (e.g. `https://drop.example.com`).
+- [ ] `GET /openapi.json` returns a valid schema.
+- [ ] Schema exposes 23 operations (`scripts/e2e_zero_config_ws.sh` asserts
+      this against the live schema).
+- [ ] Every operation is POST-only (asserted by the E2E schema check).
+- [ ] `DROP_TOKEN` is set on the server; GPT Action auth is configured as an
+      HTTP API key in the `Authorization` header with value `Bearer <DROP_TOKEN>`.
+- [ ] At least one agent is `online` (`POST /api/runtime/status`).
+- [ ] `POST /api/projects/list` shows `agent:<client_id>:<project_id>`.
+- [ ] Local full-auto loop E2E passes:
+      `bash scripts/e2e_zero_config_ws.sh`
+      (and `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`).

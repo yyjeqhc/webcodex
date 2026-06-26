@@ -283,6 +283,13 @@ Polling transport smoke:
 E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
 ```
 
+Release readiness gate (fmt, check, check --tests, test, both E2E transports,
+and a static check that no sensitive files are tracked/staged):
+
+```bash
+bash scripts/release_check.sh
+```
+
 Deployment smoke against a live public instance:
 
 ```bash

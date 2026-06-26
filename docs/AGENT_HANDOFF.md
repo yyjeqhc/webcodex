@@ -204,6 +204,17 @@ cargo check --tests
 cargo test
 ```
 
+A single pre-release gate runs all of the above plus both E2E transports and a
+static check that no sensitive files are tracked/staged:
+
+```bash
+bash scripts/release_check.sh
+```
+
+The release gate does not re-count operations statically; the E2E harness
+asserts the invariants: `/openapi.json` has exactly 23 operations and MCP
+`tools/list` has exactly 25 tools.
+
 Expected current result:
 
 - `cargo check`: 0 warnings.
@@ -379,7 +390,7 @@ Prefer this order:
    `runtime_status` keeps the agent `online` across idle periods. If it flips
    to `stale`, inspect reverse-proxy WebSocket upgrade/timeouts and agent logs
    before changing code.
-3. Import `/openapi.json` into ChatGPT GPT Actions and verify the 12 operation
+3. Import `/openapi.json` into ChatGPT GPT Actions and verify the 23 operation
    schema works against the public deployment.
 4. Test the optional real Codex CLI path with a low-risk prompt. Codex remains
    optional; most development work should still function through typed

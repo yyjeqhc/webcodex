@@ -113,7 +113,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation(
                     "getRuntimeStatus",
                     "Get runtime status",
-                    "Returns a structured runtime health/observability summary: service metadata, projects config status, agent client summaries, and job counts. Read-only; never exposes tokens, secrets, full env, or stdout/stderr. Recommended first call when troubleshooting whether the runtime is healthy and correctly configured.",
+                    "Read-only runtime health/observability summary with service metadata, registered agents, project counts, and job counts. Never exposes tokens, secrets, full env, or stdout/stderr. Call first when troubleshooting.",
                     "EmptyRequest",
                     "ToolResult"
                 )
@@ -122,7 +122,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "runCodexTask",
                     "Run Codex CLI task",
-                    "Recommended primary action for code tasks. Starts Codex CLI asynchronously inside an agent-registered project and returns a job_id plus status/log endpoint hints. The runtime constructs the Codex command for the caller; GPT should NOT assemble raw shell to run Codex. After calling this, poll the returned job_id with getRuntimeJobStatus and read output with getRuntimeJobLog.",
+                    "Recommended primary code action. Starts Codex CLI asynchronously in an agent-registered project and returns a job_id. Do not assemble raw shell to run Codex; poll with getRuntimeJobStatus and read output with getRuntimeJobLog.",
                     "CodexRunRequest",
                     "ToolResult",
                     json!({
@@ -233,7 +233,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced/generic entry point: calls one runtime tool by name with a params object. Prefer the dedicated actions (listProjects, runCodexTask, readProjectFile, getProjectGitStatus, getRuntimeJobStatus, getRuntimeJobLog) when they cover the task. Use listRuntimeTools to discover every accepted tool name. Accepted tool names include: list_tools, list_projects, list_agents, runtime_status, run_shell, run_job, run_codex, job_status, job_log, read_file, git_status, git_diff, apply_patch.",
+                    "Advanced generic entry point for calling any runtime tool by name with params. Prefer dedicated actions when available. Use listRuntimeTools to discover accepted tool names.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
@@ -725,6 +725,25 @@ mod tests {
             "duplicate operation ids detected: {:?}",
             ids
         );
+    }
+
+    #[test]
+    fn openapi_operation_descriptions_fit_chatgpt_limit() {
+        let spec = build_openapi_spec();
+        for (path, methods) in spec["paths"].as_object().unwrap() {
+            for (method, op) in methods.as_object().unwrap() {
+                let operation_id = op["operationId"].as_str().unwrap_or("<missing>");
+                let desc = op["description"].as_str().unwrap_or("");
+                assert!(
+                    desc.chars().count() <= 300,
+                    "{} {} operationId {} description has length {}",
+                    method,
+                    path,
+                    operation_id,
+                    desc.chars().count()
+                );
+            }
+        }
     }
 
     #[test]

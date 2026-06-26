@@ -709,7 +709,7 @@ impl ToolRuntime {
                     (
                         "approval_mode",
                         "string",
-                        "Codex approval mode, default full-auto.",
+                        "Codex approval mode. Empty/none/off/disabled omit --approval-mode.",
                         false,
                     ),
                     (
@@ -1844,12 +1844,18 @@ fn build_codex_command(
     extra_args: Option<Vec<String>>,
 ) -> Result<String, String> {
     validate_cli_arg(&codex.bin, "CODEX_BIN")?;
-    let approval_mode = approval_mode
-        .map(str::trim)
-        .filter(|v| !v.is_empty())
-        .map(str::to_string)
-        .unwrap_or_else(|| codex.approval_mode.clone());
-    validate_cli_arg(&approval_mode, "approval_mode")?;
+    // Resolve the effective approval mode. An explicit request value wins over
+    // the config default. Empty/blank, none, off, and disabled all mean "do not
+    // pass --approval-mode" so the runtime stays compatible with Codex CLI
+    // builds that do not support the flag.
+    let resolved_approval_mode = match approval_mode {
+        Some(v) => v.trim().to_string(),
+        None => codex.approval_mode.clone(),
+    };
+    if resolved_approval_mode.contains('\0') {
+        return Err("approval_mode cannot contain NUL bytes".to_string());
+    }
+    let approval_disabled = is_approval_mode_disabled(&resolved_approval_mode);
     let extra_args = extra_args.unwrap_or_default();
     if extra_args.len() > 32 {
         return Err("extra_args may contain at most 32 arguments".to_string());
@@ -1863,16 +1869,24 @@ fn build_codex_command(
             ));
         }
     }
-    let mut parts = vec![
-        shell_escape_simple(&codex.bin),
-        "--approval-mode".to_string(),
-        shell_escape_simple(&approval_mode),
-    ];
+    let mut parts = vec![shell_escape_simple(&codex.bin)];
+    if !approval_disabled {
+        parts.push("--approval-mode".to_string());
+        parts.push(shell_escape_simple(&resolved_approval_mode));
+    }
     for arg in &extra_args {
         parts.push(shell_escape_simple(arg));
     }
     parts.push(shell_escape_simple(prompt));
     Ok(parts.join(" "))
+}
+
+/// Returns true when an approval-mode value means "do not pass --approval-mode".
+/// Empty/whitespace, `none`, `off`, and `disabled` (case-insensitive) disable
+/// the flag so the runtime works with Codex CLI builds that lack it.
+fn is_approval_mode_disabled(value: &str) -> bool {
+    let v = value.trim().to_ascii_lowercase();
+    v.is_empty() || v == "none" || v == "off" || v == "disabled"
 }
 
 fn validate_cli_arg(value: &str, field: &str) -> Result<(), String> {
@@ -3326,7 +3340,7 @@ mod tests {
     fn codex_config_with_allowlist(allowlist: &[&str]) -> CodexConfig {
         CodexConfig {
             bin: "codex".to_string(),
-            approval_mode: "full-auto".to_string(),
+            approval_mode: String::new(),
             default_timeout_secs: 3600,
             max_prompt_bytes: 100_000,
             allowed_extra_args: allowlist.iter().map(|s| s.to_string()).collect(),
@@ -3353,8 +3367,15 @@ mod tests {
     fn build_codex_command_uses_default_bin_and_approval_mode() {
         let codex = CodexConfig::default();
         let cmd = build_codex_command(&codex, "fix tests", None, None).unwrap();
-        // Expected: 'codex' --approval-mode 'full-auto' 'fix tests'
-        assert!(cmd.starts_with("'codex' --approval-mode 'full-auto' "));
+        // Default approval_mode is disabled (empty), so --approval-mode is not
+        // emitted. This keeps the runtime compatible with Codex CLI builds
+        // that do not support the flag.
+        assert!(
+            !cmd.contains("--approval-mode"),
+            "default command must not include --approval-mode, got: {}",
+            cmd
+        );
+        assert!(cmd.starts_with("'codex' "));
         assert!(cmd.ends_with("'fix tests'"));
     }
 
@@ -3372,11 +3393,74 @@ mod tests {
     }
 
     #[test]
-    fn build_codex_command_request_approval_mode_overrides_config() {
-        let codex = CodexConfig::default();
-        let cmd = build_codex_command(&codex, "hi", Some("suggest"), None).unwrap();
+    fn build_codex_command_config_suggest_emits_flag() {
+        // CODEX_APPROVAL_MODE=suggest should include --approval-mode suggest.
+        let codex = CodexConfig {
+            approval_mode: "suggest".to_string(),
+            ..CodexConfig::default()
+        };
+        let cmd = build_codex_command(&codex, "hi", None, None).unwrap();
         assert!(cmd.contains("--approval-mode 'suggest'"));
-        assert!(!cmd.contains("full-auto"));
+    }
+
+    #[test]
+    fn build_codex_command_config_none_omits_flag() {
+        // CODEX_APPROVAL_MODE=none must not emit --approval-mode.
+        for value in ["none", "off", "disabled", "NONE", "Off"] {
+            let codex = CodexConfig {
+                approval_mode: value.to_string(),
+                ..CodexConfig::default()
+            };
+            let cmd = build_codex_command(&codex, "hi", None, None).unwrap();
+            assert!(
+                !cmd.contains("--approval-mode"),
+                "CODEX_APPROVAL_MODE={:?} should omit --approval-mode, got: {}",
+                value,
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn build_codex_command_request_approval_mode_overrides_config() {
+        // A config with suggest is overridden by an explicit request value.
+        let codex = CodexConfig {
+            approval_mode: "suggest".to_string(),
+            ..CodexConfig::default()
+        };
+        let cmd = build_codex_command(&codex, "hi", Some("full-auto"), None).unwrap();
+        assert!(cmd.contains("--approval-mode 'full-auto'"));
+        assert!(!cmd.contains("'suggest'"));
+    }
+
+    #[test]
+    fn build_codex_command_request_approval_mode_none_omits_flag() {
+        // request approval_mode=none overrides a non-empty config and omits the
+        // flag entirely.
+        let codex = CodexConfig {
+            approval_mode: "suggest".to_string(),
+            ..CodexConfig::default()
+        };
+        for value in ["none", "off", "disabled", ""] {
+            let cmd = build_codex_command(&codex, "hi", Some(value), None).unwrap();
+            assert!(
+                !cmd.contains("--approval-mode"),
+                "request approval_mode={:?} should omit --approval-mode, got: {}",
+                value,
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn build_codex_command_request_approval_mode_blank_omits_flag() {
+        // A blank request value means disabled (not "fall back to config").
+        let codex = CodexConfig {
+            approval_mode: "suggest".to_string(),
+            ..CodexConfig::default()
+        };
+        let cmd = build_codex_command(&codex, "hi", Some("   "), None).unwrap();
+        assert!(!cmd.contains("--approval-mode"));
     }
 
     #[test]
@@ -3596,6 +3680,7 @@ mod tests {
     async fn run_codex_agent_uses_configured_command_builder() {
         let codex = CodexConfig {
             default_timeout_secs: 42,
+            approval_mode: "suggest".to_string(),
             ..CodexConfig::default()
         };
         let mut runtime = runtime_with_agent_project("oe");
@@ -3616,9 +3701,40 @@ mod tests {
         assert!(result.success, "{:?}", result.error);
         let jobs = runtime.shell_clients.list_jobs(None).await;
         assert_eq!(jobs.len(), 1);
+        // The configured approval_mode flows through build_codex_command into
+        // the agent job's command preview.
         assert!(
-            jobs[0].command_preview.contains("--approval-mode"),
+            jobs[0].command_preview.contains("--approval-mode 'suggest'"),
             "{}",
+            jobs[0].command_preview
+        );
+    }
+
+    #[tokio::test]
+    async fn run_codex_agent_omits_approval_mode_when_disabled() {
+        // Default (disabled) approval_mode must not emit --approval-mode.
+        let codex = CodexConfig::default();
+        let mut runtime = runtime_with_agent_project("om");
+        runtime.codex = Arc::new(codex);
+        let mut caps = ShellClientCapabilities::default();
+        caps.async_shell_jobs = true;
+        register_agent(&runtime, "om", None, caps).await;
+        let result = runtime
+            .run_codex(
+                agent_test_project_id("om"),
+                "echo hi".to_string(),
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        let jobs = runtime.shell_clients.list_jobs(None).await;
+        assert_eq!(jobs.len(), 1);
+        assert!(
+            !jobs[0].command_preview.contains("--approval-mode"),
+            "disabled approval_mode must omit --approval-mode, got: {}",
             jobs[0].command_preview
         );
     }

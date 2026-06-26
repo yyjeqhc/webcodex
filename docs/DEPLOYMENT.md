@@ -69,15 +69,16 @@ sudo install -m 0755 target/release/private-drop-agent  /opt/private-drop/
 | `DROP_PUBLIC_URL` | `http://localhost:8080` | **Yes (production)** | Public base URL used as `servers[0].url` in `/openapi.json`. Set to the externally reachable HTTPS URL (e.g. `https://drop.example.com`) so ChatGPT imports actions against the right host. |
 | `DROP_ENV_FILE` | _(unset)_ | No | Optional path to an env file loaded at startup (KEY=value lines, `#` comments, optional `export ` prefix). If unset, the server also auto-loads `./private-drop.env`, `/opt/private-drop/private-drop.env`, and `/etc/private-drop/private-drop.env` if present. |
 | `DROP_ENABLE_SSH` | `false` | No | Reserved SSH executor toggle. Not used by the zero-config runtime; leave unset. |
-| `CODEX_BIN` | `codex` | No | Codex CLI binary name or path. Must be installed and on `PATH` on the **agent** host (the server only forwards requests; the agent runs Codex). |
-| `CODEX_APPROVAL_MODE` | `full-auto` | No | Approval mode passed via `--approval-mode`. |
+| `CODEX_BIN` | `codex` | No | Codex CLI binary name or path. Must be installed and on `PATH` on the **agent** host (the server only forwards requests; the agent runs Codex). **Codex is optional**: when not installed, the runtime still serves `read_file`, `git_status`, `git_diff`, `apply_patch`, and `run_shell` through the agent. Only `run_codex` requires the Codex CLI. |
+| `CODEX_APPROVAL_MODE` | _(empty/disabled)_ | No | Approval mode passed via `--approval-mode`. Empty/blank/`none`/`off`/`disabled` omit the flag entirely — use this if the installed Codex CLI does not support `--approval-mode`. Other values (e.g. `full-auto`, `suggest`) enable it. A request `approval_mode` overrides this per call. |
 | `CODEX_DEFAULT_TIMEOUT_SECS` | `3600` | No | Default job timeout when a request omits `timeout_secs`. |
 | `CODEX_MAX_PROMPT_BYTES` | `100000` | No | Maximum prompt size in bytes. Larger prompts are rejected. |
 | `CODEX_ALLOWED_EXTRA_ARGS` | _(empty)_ | No | Comma-separated allowlist of accepted Codex `extra_args`. Empty (default) means no extra args are allowed. |
 
 > Codex runs on the **agent** host, not the server. `CODEX_*` env vars are read
 > by the agent process that actually spawns Codex. The server validates prompts
-> and forwards `run_codex` to the owning agent.
+> and forwards `run_codex` to the owning agent. Codex is an optional advanced
+> capability, not a runtime dependency.
 
 ### Minimal production server invocation
 
@@ -261,9 +262,9 @@ Then configure Action authentication as **API Key**, type **HTTP**, header
 `Authorization`, value `Bearer <DROP_TOKEN>`.
 
 `/openapi.json` is the only GPT-Actions entry point. It is a `GET` route and is
-not listed inside the schema `paths` (which is POST-only). The schema exposes
-exactly 9 operation ids; see [GPT_ACTIONS.md](GPT_ACTIONS.md) for the full list
-and the recommended call flow.
+not listed inside the schema `paths` (which is POST-only). The schema exposes a
+small, stable operation set; see [GPT_ACTIONS.md](GPT_ACTIONS.md) for the full
+list and the recommended call flow.
 
 ## 6. MCP endpoint
 
@@ -356,6 +357,49 @@ See [E2E_VALIDATION.md](E2E_VALIDATION.md) for what that harness covers.
   `Authorization: Bearer <token>`.
 - Long Codex jobs cut off: raise the proxy read/connect timeouts and body size
   limit (see the nginx sample's `proxy_read_timeout` / `client_max_body_size`).
+
+### WebSocket agent online/stale troubleshooting
+
+A WebSocket agent can flip between `online` and `stale`/`offline` if the
+long-lived connection drops. The runtime never leaves an agent permanently
+`online` or a job permanently `running` (on disconnect the server marks the
+agent's running jobs `lost` and removes its push notifier). Use this checklist
+when an agent won't stay `online`:
+
+1. **Is the agent a long-lived systemd service?** A WebSocket agent must stay
+   running to keep the connection. Confirm
+   `systemctl status private-drop-agent` is `active (running)` and
+   `Restart=always` is set in the unit. A cron-launched or one-shot agent will
+   not hold the connection.
+2. **Does nginx forward the WebSocket upgrade?** `/api/agents/ws` must receive
+   `Upgrade: websocket` / `Connection: upgrade` and use an HTTP/1.1 upstream.
+   A `200` (not `101 Switching Protocols`) response means the upgrade headers
+   were stripped. See `deploy/nginx.private-drop.example.conf`.
+3. **Reverse-proxy timeout.** Idle WebSocket connections are closed by proxies
+   with short read timeouts. Raise `proxy_read_timeout` (e.g. `3600s`) and keep
+   the agent's ping interval below it. A connection that silently drops every
+   N seconds usually points here.
+4. **Agent logs: handshake / auth / ping-pong / reconnect.** In
+   `journalctl -u private-drop-agent -f`, look for the TLS/handshake step, the
+   `Authorization: Bearer` handshake result, periodic `ping`/`pong` keepalives,
+   and reconnect attempts. A repeating `handshake failed` or `401` means a
+   wrong `token` or `server_url`; a repeating reconnect loop with no `pong`
+   points at the proxy timeout.
+5. **Temporarily switch to polling to isolate the link.** Set
+   `transport = "polling"` in the agent config (or omit `transport`) and
+   restart the agent. If the agent stays `online` over polling but not over
+   WebSocket, the WebSocket-specific path (proxy upgrade / timeout) is the
+   cause, not auth or project registration. If polling also fails, check
+   `server_url`/`token`/TLS first.
+6. **Interpreting `runtime_status`.** `POST /api/runtime/status` exposes, per
+   agent: `transport` (`websocket` / `polling`), `status`
+   (`online` / `stale` / `offline`), `last_seen` (timestamp of the last
+   heartbeat/result), and `pending_requests` (depth of the per-client request
+   queue, capped at 256). `online` = live connection and recent heartbeat;
+   `stale` = registered but `last_seen` is older than the decay window;
+   `offline` = no current registration. A non-zero `pending_requests` with
+   `online` means the agent is not draining its queue (agent process stalled or
+   a long-running command is blocking it).
 
 ## 9. What the server does NOT need
 

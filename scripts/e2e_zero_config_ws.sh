@@ -285,9 +285,10 @@ mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$TEST_REPO"
 log "temp root: $TMP_ROOT"
 
 # A stub Codex CLI. The server builds a command like:
-#   <CODEX_BIN> --approval-mode <mode> <prompt>
-# and the agent runs it via `sh -c`. The stub just echoes and exits 0 so the
-# job completes successfully without depending on the real Codex CLI.
+#   <CODEX_BIN> [--approval-mode <mode>] <prompt>
+# `--approval-mode` is only emitted when CODEX_APPROVAL_MODE (or the request
+# approval_mode) is a non-disabled value. The stub just echoes and exits 0 so
+# the job completes successfully without depending on the real Codex CLI.
 cat > "$CODEX_STUB" <<'STUB'
 #!/usr/bin/env bash
 # Private Drop E2E stub for CODEX_BIN. NOT the real Codex CLI.
@@ -432,6 +433,20 @@ else
     fail "readProjectFile content mismatch (got: ${readme_content:0:120})"
 fi
 
+# getProjectGitDiff — routes to the agent, runs `git diff`.
+body="$(api_post /api/projects/git_diff "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+assert_success "getProjectGitDiff" "$body" || true
+
+# runProjectShellCommand — runs `echo hi` through the agent.
+body="$(api_post /api/projects/run_shell "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"echo hi\"}")"
+assert_success "runProjectShellCommand" "$body" || true
+shell_stdout="$(json_get "$body" output.stdout)"
+if echo "$shell_stdout" | grep -q "hi"; then
+    pass "runProjectShellCommand returns echo output"
+else
+    fail "runProjectShellCommand output mismatch (got: ${shell_stdout:0:120})"
+fi
+
 # runCodexTask — starts an async job on the agent using the stub CODEX_BIN.
 body="$(api_post /api/codex/run "{\"project\":\"$RUNTIME_PROJECT_ID\",\"prompt\":\"Summarize this repo in one line.\",\"timeout_secs\":20}")"
 assert_success "runCodexTask" "$body" || true
@@ -541,7 +556,8 @@ ops_set = set(ops)
 expected_ops = {
     "listRuntimeTools", "listProjects", "getRuntimeStatus",
     "runCodexTask", "getRuntimeJobStatus", "getRuntimeJobLog",
-    "readProjectFile", "getProjectGitStatus", "callRuntimeTool",
+    "readProjectFile", "getProjectGitStatus", "getProjectGitDiff",
+    "applyProjectPatch", "runProjectShellCommand", "callRuntimeTool",
 }
 missing = expected_ops - ops_set
 extra = ops_set - expected_ops

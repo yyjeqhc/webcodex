@@ -15,8 +15,14 @@ fn public_url() -> String {
 /// Order is grouped by recommended GPT call flow:
 /// 1. discovery (`listRuntimeTools`, `listProjects`, `getRuntimeStatus`)
 /// 2. code tasks (`runCodexTask`, `getRuntimeJobStatus`, `getRuntimeJobLog`)
-/// 3. project inspection (`readProjectFile`, `getProjectGitStatus`)
-/// 4. advanced/generic entry point (`callRuntimeTool`)
+/// 3. project inspection (`readProjectFile`, `getProjectGitStatus`,
+///    `getProjectGitDiff`)
+/// 4. project mutation/execution (`applyProjectPatch`, `runProjectShellCommand`)
+/// 5. advanced/generic entry point (`callRuntimeTool`)
+///
+/// Codex is an optional advanced capability: the dedicated inspection /
+/// mutation / shell actions work without Codex installed. `callRuntimeTool` is
+/// kept as an advanced escape hatch; prefer the dedicated typed actions.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
@@ -27,6 +33,9 @@ const GPT_ACTION_OPS: &[&str] = &[
     "getRuntimeJobLog",
     "readProjectFile",
     "getProjectGitStatus",
+    "getProjectGitDiff",
+    "applyProjectPatch",
+    "runProjectShellCommand",
     "callRuntimeTool",
 ];
 
@@ -229,6 +238,74 @@ fn build_openapi_spec() -> Value {
                     })
                 )
             },
+            "/api/projects/git_diff": {
+                "post": operation_with_examples(
+                    "getProjectGitDiff",
+                    "Get project git diff",
+                    "Runs `git diff` in an agent-registered project and returns stdout, stderr, and exit_code. Optional `args` scopes paths or adds flags (e.g. [\"--stat\"]). Read-only inspection; routes to the owning agent.",
+                    "ProjectGitDiffRequest",
+                    "ToolResult",
+                    json!({
+                        "byProject": {
+                            "summary": "Full diff of a project",
+                            "value": {
+                                "project": "private-drop"
+                            }
+                        },
+                        "withStat": {
+                            "summary": "Diffstat of a project",
+                            "value": {
+                                "project": "private-drop",
+                                "args": ["--stat"]
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/apply_patch": {
+                "post": operation_with_examples(
+                    "applyProjectPatch",
+                    "Apply a patch to a project",
+                    "Applies a unified diff patch to an agent-registered project through the owning agent. Executable mutation with side effects; requires Bearer auth and the agent must allow patching. Prefer runCodexTask for exploratory edits.",
+                    "ApplyPatchRequest",
+                    "ToolResult",
+                    json!({
+                        "example": {
+                            "summary": "Apply a small unified diff",
+                            "value": {
+                                "project": "private-drop",
+                                "patch": "--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# Private Drop\n+edited\n"
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/run_shell": {
+                "post": operation_with_examples(
+                    "runProjectShellCommand",
+                    "Run a shell command in a project",
+                    "Runs a shell command in an agent-registered project through the owning agent and returns stdout, stderr, and exit_code. Executable with side effects; requires Bearer auth and the agent shell capability. Use for build/test/diagnostic commands.",
+                    "RunShellRequest",
+                    "ToolResult",
+                    json!({
+                        "tests": {
+                            "summary": "Run the test suite",
+                            "value": {
+                                "project": "private-drop",
+                                "command": "cargo test"
+                            }
+                        },
+                        "withCwd": {
+                            "summary": "Run a command in a subdirectory",
+                            "value": {
+                                "project": "private-drop",
+                                "command": "ls",
+                                "cwd": "src"
+                            }
+                        }
+                    })
+                )
+            },
             "/api/tools/call": {
                 "post": operation_with_examples(
                     "callRuntimeTool",
@@ -392,7 +469,7 @@ fn schemas() -> Value {
                 },
                 "approval_mode": {
                     "type": "string",
-                    "description": "Codex approval mode. Defaults to CODEX_APPROVAL_MODE or full-auto. Common values: full-auto, suggest."
+                    "description": "Optional Codex approval mode. Empty/none/off/disabled omit --approval-mode (use this if the Codex CLI does not support the flag). Other values (e.g. full-auto, suggest) are passed via --approval-mode."
                 },
                 "timeout_secs": {
                     "type": "integer",
@@ -476,6 +553,63 @@ fn schemas() -> Value {
                 "project": {
                     "type": "string",
                     "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                }
+            }
+        },
+        "ProjectGitDiffRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project"],
+            "description": "Run `git diff` in an agent-registered project. Optional `args` scopes paths or adds git diff flags.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "args": {
+                    "type": "array",
+                    "items": { "type": "string" },
+                    "description": "Optional git diff arguments / path specs (e.g. [\"--stat\"] or [\"src/main.rs\"])."
+                }
+            }
+        },
+        "ApplyPatchRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "patch"],
+            "description": "Apply a unified diff patch to an agent-registered project. Executable mutation; the owning agent must allow patching.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "patch": {
+                    "type": "string",
+                    "description": "Unified diff patch content. Applied by the owning agent."
+                }
+            }
+        },
+        "RunShellRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["project", "command"],
+            "description": "Run a shell command in an agent-registered project. Executable with side effects; requires the agent shell capability.",
+            "properties": {
+                "project": {
+                    "type": "string",
+                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Shell command to run in the project directory."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Optional maximum runtime in seconds."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Optional project-relative working directory. The owning agent enforces its cwd policy."
                 }
             }
         },
@@ -621,6 +755,9 @@ mod tests {
             "/api/jobs/log",
             "/api/projects/read_file",
             "/api/projects/git_status",
+            "/api/projects/git_diff",
+            "/api/projects/apply_patch",
+            "/api/projects/run_shell",
             "/api/tools/call",
         ] {
             assert!(
@@ -810,6 +947,9 @@ mod tests {
             ("/api/jobs/log", "getRuntimeJobLog"),
             ("/api/projects/read_file", "readProjectFile"),
             ("/api/projects/git_status", "getProjectGitStatus"),
+            ("/api/projects/git_diff", "getProjectGitDiff"),
+            ("/api/projects/apply_patch", "applyProjectPatch"),
+            ("/api/projects/run_shell", "runProjectShellCommand"),
             ("/api/tools/call", "callRuntimeTool"),
         ] {
             let examples = &spec["paths"][path]["post"]["requestBody"]["content"]
@@ -842,6 +982,71 @@ mod tests {
             spec["paths"]["/api/projects/git_status"]["post"]["operationId"],
             "getProjectGitStatus"
         );
+        assert_eq!(
+            spec["paths"]["/api/projects/git_diff"]["post"]["operationId"],
+            "getProjectGitDiff"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/apply_patch"]["post"]["operationId"],
+            "applyProjectPatch"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/run_shell"]["post"]["operationId"],
+            "runProjectShellCommand"
+        );
+    }
+
+    #[test]
+    fn openapi_mutation_actions_describe_execution_risk_and_auth() {
+        // applyProjectPatch and runProjectShellCommand are executable actions
+        // with side effects; their descriptions must call out the execution
+        // risk and the Bearer-auth requirement so GPT callers understand they
+        // are not read-only inspection.
+        let spec = build_openapi_spec();
+        for path in ["/api/projects/apply_patch", "/api/projects/run_shell"] {
+            let desc = spec["paths"][path]["post"]["description"]
+                .as_str()
+                .unwrap_or("");
+            assert!(
+                desc.to_lowercase().contains("executable")
+                    || desc.to_lowercase().contains("side effect"),
+                "{} description should mention execution risk/side effects, got: {}",
+                path,
+                desc
+            );
+            assert!(
+                desc.to_lowercase().contains("bearer auth") || desc.to_lowercase().contains("auth"),
+                "{} description should mention Bearer auth, got: {}",
+                path,
+                desc
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_call_runtime_tool_params_is_explicit_object() {
+        // callRuntimeTool's ToolCallRequest must declare `params` as a property
+        // that is an OpenAPI 3.1 object accepting arbitrary tool arguments.
+        // GPT Actions sometimes mishandles free-form object params, which is
+        // why dedicated typed actions are preferred; this test pins the schema
+        // so `params` stays present and object-typed for advanced callers.
+        let spec = build_openapi_spec();
+        let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
+        let properties = tool_call["properties"].as_object().unwrap();
+        assert!(
+            properties.contains_key("params"),
+            "ToolCallRequest must declare a `params` property"
+        );
+        let params = &properties["params"];
+        assert_eq!(params["type"], "object", "params must be type object");
+        assert_eq!(
+            params["additionalProperties"], true,
+            "params must allow arbitrary object properties"
+        );
+        // `tool` remains required; `params` is optional (advanced callers may
+        // omit it for argument-less tools).
+        let required = tool_call["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "tool"));
     }
 
     #[test]

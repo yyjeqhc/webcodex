@@ -129,6 +129,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("projects/list").post(runtime_http::projects_list))
             .push(Router::with_path("projects/read_file").post(runtime_http::projects_read_file))
             .push(Router::with_path("projects/git_status").post(runtime_http::projects_git_status))
+            .push(Router::with_path("projects/git_diff").post(runtime_http::projects_git_diff))
+            .push(
+                Router::with_path("projects/apply_patch").post(runtime_http::projects_apply_patch),
+            )
+            .push(Router::with_path("projects/run_shell").post(runtime_http::projects_run_shell))
             .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
             .push(Router::with_path("shell/run").post(shell_run))
             .push(Router::with_path("shell/file").post(shell_file_op))
@@ -277,7 +282,7 @@ mod tests {
         assert_eq!(config.max_text_size, 2 * 1024 * 1024);
         assert_eq!(config.max_file_size, 100 * 1024 * 1024);
         assert_eq!(config.codex.bin, "codex");
-        assert_eq!(config.codex.approval_mode, "full-auto");
+        assert_eq!(config.codex.approval_mode, "");
         assert_eq!(config.codex.default_timeout_secs, 3600);
         assert_eq!(config.codex.max_prompt_bytes, 100_000);
         assert!(config.codex.allowed_extra_args.is_empty());

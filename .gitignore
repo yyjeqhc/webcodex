@@ -1,6 +1,27 @@
+# Build artifacts
 /target
-.codex
+
+# Local runtime data (SQLite DB, uploads, job metadata)
 data*
-docs*
+
+# Local Codex CLI workspace
+.codex
+
+# Generated patch files
 *.patch
+
+# Frontend dependencies
 /frontend/node_modules
+
+# Local sensitive deployment config — NEVER commit these.
+# They contain real server URLs, tokens, and host paths. If a token was ever
+# committed or exposed, rotate DROP_TOKEN immediately.
+/agent.toml
+/projects.d/
+/*.local.toml
+/private-drop.env
+
+# Generated documentation output (explicit rules, so docs/ stays tracked).
+/docs-generated/
+/docs-tmp/
+/site/

@@ -12,11 +12,19 @@ pub struct Config {
 }
 
 /// Codex CLI execution configuration, sourced from `CODEX_*` env vars.
+///
+/// Codex is an **optional advanced capability**. When Codex is not installed,
+/// the runtime still serves `read_file`, `git_status`, `git_diff`,
+/// `apply_patch`, and `run_shell` through the agent. Only `run_codex` requires
+/// the Codex CLI on the agent host.
 #[derive(Debug, Clone)]
 pub struct CodexConfig {
     /// Path/name of the Codex CLI binary. Default `codex`.
     pub bin: String,
-    /// Approval mode passed via `--approval-mode`. Default `full-auto`.
+    /// Approval mode passed via `--approval-mode`. Default is **empty**
+    /// (disabled): no `--approval-mode` flag is emitted. This keeps the runtime
+    /// compatible with Codex CLI builds that do not understand the flag. Set
+    /// `CODEX_APPROVAL_MODE` (e.g. `full-auto`, `suggest`) to enable it.
     pub approval_mode: String,
     /// Default job timeout in seconds. Default `3600`.
     pub default_timeout_secs: i64,
@@ -30,7 +38,7 @@ impl Default for CodexConfig {
     fn default() -> Self {
         Self {
             bin: "codex".to_string(),
-            approval_mode: "full-auto".to_string(),
+            approval_mode: String::new(),
             default_timeout_secs: 3600,
             max_prompt_bytes: 100_000,
             allowed_extra_args: Vec::new(),
@@ -41,8 +49,14 @@ impl Default for CodexConfig {
 impl CodexConfig {
     pub fn from_env() -> Self {
         let bin = std::env::var("CODEX_BIN").unwrap_or_else(|_| "codex".to_string());
-        let approval_mode =
-            std::env::var("CODEX_APPROVAL_MODE").unwrap_or_else(|_| "full-auto".to_string());
+        // CODEX_APPROVAL_MODE defaults to empty (disabled). An empty/blank
+        // value, or the sentinels none/off/disabled, mean "do not pass
+        // --approval-mode" so the runtime works with Codex CLI builds that do
+        // not support the flag.
+        let approval_mode = std::env::var("CODEX_APPROVAL_MODE")
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let default_timeout_secs = std::env::var("CODEX_DEFAULT_TIMEOUT_SECS")
             .ok()
             .and_then(|v| v.trim().parse::<i64>().ok())
@@ -213,7 +227,8 @@ mod tests {
     fn codex_config_defaults() {
         let cfg = CodexConfig::default();
         assert_eq!(cfg.bin, "codex");
-        assert_eq!(cfg.approval_mode, "full-auto");
+        // Default approval mode is empty (disabled): no --approval-mode flag.
+        assert_eq!(cfg.approval_mode, "");
         assert_eq!(cfg.default_timeout_secs, 3600);
         assert_eq!(cfg.max_prompt_bytes, 100_000);
         assert!(cfg.allowed_extra_args.is_empty());
@@ -231,7 +246,8 @@ mod tests {
 
         let cfg = CodexConfig::from_env();
         assert_eq!(cfg.bin, "codex");
-        assert_eq!(cfg.approval_mode, "full-auto");
+        // Unset CODEX_APPROVAL_MODE means disabled (empty), not full-auto.
+        assert_eq!(cfg.approval_mode, "");
         assert_eq!(cfg.default_timeout_secs, 3600);
         assert_eq!(cfg.max_prompt_bytes, 100_000);
         assert!(cfg.allowed_extra_args.is_empty());
@@ -265,6 +281,23 @@ mod tests {
         std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
         std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
         std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
+    }
+
+    #[test]
+    fn codex_config_from_env_trims_approval_mode_whitespace() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("CODEX_APPROVAL_MODE", "  suggest  ");
+        let cfg = CodexConfig::from_env();
+        assert_eq!(cfg.approval_mode, "suggest");
+
+        // An unset/blank value normalizes to empty (disabled). The disabled
+        // sentinels (none/off/disabled) are recognized later by
+        // build_codex_command, so the config keeps the trimmed token.
+        std::env::set_var("CODEX_APPROVAL_MODE", "   ");
+        let cfg = CodexConfig::from_env();
+        assert_eq!(cfg.approval_mode, "");
+
+        std::env::remove_var("CODEX_APPROVAL_MODE");
     }
 
     #[test]

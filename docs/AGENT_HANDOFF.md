@@ -69,6 +69,9 @@ Important runtime endpoints:
 - `POST /api/projects/list`
 - `POST /api/projects/read_file`
 - `POST /api/projects/git_status`
+- `POST /api/projects/git_diff`
+- `POST /api/projects/apply_patch`
+- `POST /api/projects/run_shell`
 - `POST /api/codex/run`
 - `POST /api/jobs/status`
 - `POST /api/jobs/log`
@@ -92,6 +95,18 @@ specific safety review.
 - MCP and REST wrappers stay thin: auth/protocol envelope/deserialization only.
 - Runtime project discovery comes from agent registration, not server-side
   project config.
+- **Codex is an optional advanced capability, not a runtime dependency.** When
+  the Codex CLI is not installed, the runtime still serves `read_file`,
+  `git_status`, `git_diff`, `apply_patch`, and `run_shell` through the agent.
+  Only `run_codex` requires the Codex CLI on the agent host.
+- `CODEX_APPROVAL_MODE` defaults to empty (disabled): `--approval-mode` is not
+  emitted unless a non-disabled value (`full-auto`, `suggest`, ...) is set in
+  config or the request. This keeps the runtime compatible with Codex CLI
+  builds that lack the flag.
+- **Never commit local deployment config.** `agent.toml` and `projects.d/*.toml`
+  contain real server URLs, tokens, and host paths. They are git-ignored
+  (`/agent.toml`, `/projects.d/`, `/*.local.toml`, `/private-drop.env`). Do not
+  `git add` them. If a token was ever committed or exposed, rotate `DROP_TOKEN`.
 - Do not create a second Codex runner, shell runner, or MCP-specific business
   path.
 - Project file access is routed to the owning registered agent; server-side
@@ -99,8 +114,11 @@ specific safety review.
 - Agent tools must keep owner and capability checks centralized.
 - Do not log or return tokens, API keys, full secrets, full prompts containing
   credentials, or unbounded stdout/stderr.
-- Keep GPT Actions small and stable. Prefer dedicated safe read-only actions
-  plus `runCodexTask`; keep `callRuntimeTool` advanced.
+- Keep GPT Actions small and stable. Prefer dedicated typed actions
+  (`readProjectFile`, `getProjectGitStatus`, `getProjectGitDiff`,
+  `applyProjectPatch`, `runProjectShellCommand`) plus optional `runCodexTask`;
+  keep `callRuntimeTool` advanced. Executable actions require Bearer auth and
+  the relevant agent capability.
 
 ## Job Lifecycle Notes
 

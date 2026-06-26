@@ -6,13 +6,16 @@ surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
 1. [README.md](../README.md) — runtime overview, build/run, current endpoints,
    project config, MCP, and agent setup.
 2. [GPT_ACTIONS.md](GPT_ACTIONS.md) — ChatGPT GPT Actions import guide: import
-   URL, Bearer auth, the 9 operation ids, and the recommended call flow.
+   URL, Bearer auth, the operation ids, and the recommended call flow.
 3. [RUNTIME_STATUS.md](RUNTIME_STATUS.md) — `runtime_status` /
    `getRuntimeStatus` observability: response shape, field notes, and what is
    intentionally not exposed.
-4. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — the polling agent wire protocol
-   (`polling-v1`): register / poll / result / job_update, capabilities, owner
-   boundary, and known limitations.
+4. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — the shared agent wire protocol used
+   by both transports: the transport-neutral `AgentEnvelope` (register /
+   request / result / job_update / ping-pong / error), capabilities, owner
+   boundary, backpressure/reconnect, and the WebSocket lifecycle. Polling
+   (`polling-v1`) and WebSocket (`websocket-v1`) are two carriers of the same
+   protocol.
 5. [AUDIT_API.md](AUDIT_API.md) — the read-only admin/debug audit query API
    (`/api/audit/sessions`, `/api/audit/session`, `/api/audit/stats`): endpoints,
    limit bounds, and secret-sanitization guarantees. Not a GPT Action.
@@ -22,19 +25,16 @@ surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
 7. [ZERO_CONFIG_AGENT_RUNTIME.md](ZERO_CONFIG_AGENT_RUNTIME.md) — current
    zero-server-project-config direction: agent-registered projects, runtime id
    format, and WebSocket/QUIC transport sequence.
-8. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — agent wire protocol for the
-   polling and WebSocket transports, including the transport-neutral
-   `AgentEnvelope` and the WebSocket lifecycle.
-9. [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — compact handoff notes for future
+8. [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — compact handoff notes for future
    coding agents after context compaction or a new window.
-10. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation
-    harness (`scripts/e2e_zero_config_ws.sh`): how to run it, env vars, MCP
-    smoke, GPT Actions schema smoke, and mapping to a real ChatGPT import.
-11. [DEPLOYMENT.md](DEPLOYMENT.md) — production deployment: server env vars,
+9. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation
+   harness (`scripts/e2e_zero_config_ws.sh`): how to run it, env vars, MCP
+   smoke, GPT Actions schema smoke, and mapping to a real ChatGPT import.
+10. [DEPLOYMENT.md](DEPLOYMENT.md) — production deployment: server env vars,
     agent config (WebSocket preferred / polling fallback), reverse proxy / HTTPS,
     ChatGPT GPT Actions import URL, MCP endpoint URL, smoke tests, and
     troubleshooting order. The server is a zero-project-config relay.
-12. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — historical
+11. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — historical
     phase-by-phase development plan retained for context.
 
 ## Scope and architecture

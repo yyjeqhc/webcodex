@@ -39,10 +39,15 @@ cargo build --release
 
 ```bash
 DROP_TOKEN="change-me" \
-PROJECTS_CONFIG="./projects.toml" \
 DROP_ADDR="127.0.0.1:8080" \
 cargo run --bin private-drop
 ```
+
+The server is a **zero-project-config relay**: it does not need a `projects.toml`
+as a runtime project source. Do not set `PROJECTS_CONFIG` expecting it to
+register projects on the runtime surface — projects come from agent
+registration. (`PROJECTS_CONFIG` may still exist as a legacy/internal hook; it
+is **not** the normal runtime project path.)
 
 OpenAPI for GPT Actions:
 
@@ -130,8 +135,12 @@ curl -H "Authorization: Bearer change-me" \
 ## GPT Actions (dedicated endpoints)
 
 `/openapi.json` exposes a small, stable set of GPT Actions. Beyond the generic
-`callRuntimeTool`, dedicated read-only actions give ChatGPT named
-operations without guessing tool names:
+`callRuntimeTool`, dedicated actions give ChatGPT named operations without
+guessing tool names. Codex is an **optional advanced capability**: the
+inspection, mutation, and shell actions below work without Codex installed —
+only `runCodexTask` requires the Codex CLI on the agent host.
+
+Read-only inspection:
 
 - `POST /api/runtime/status` → `getRuntimeStatus`: structured runtime
   health/observability summary (service metadata, projects config status, agent
@@ -141,11 +150,26 @@ operations without guessing tool names:
   project through the owning agent.
 - `POST /api/projects/git_status` → `getProjectGitStatus`: run
   `git status --porcelain` in a project.
+- `POST /api/projects/git_diff` → `getProjectGitDiff`: run `git diff` in a
+  project (optional `args` for path/flag scoping).
 
-All are thin HTTP wrappers that dispatch to the same `ToolRuntime`
-variants used by MCP. See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the
-full import guide and recommended call flow, and
-[docs/RUNTIME_STATUS.md](docs/RUNTIME_STATUS.md) for the observability guide.
+Executable mutation / shell (side effects; require Bearer auth + agent
+capability):
+
+- `POST /api/projects/apply_patch` → `applyProjectPatch`: apply a unified diff
+  patch to a project through the owning agent.
+- `POST /api/projects/run_shell` → `runProjectShellCommand`: run a shell command
+  in a project (build/test/diagnostics) and return stdout/stderr/exit_code.
+
+Codex (optional advanced):
+
+- `POST /api/codex/run` → `runCodexTask`: start a Codex CLI task asynchronously
+  and return a `job_id`. Requires the Codex CLI on the agent host.
+
+All are thin HTTP wrappers that dispatch to the same `ToolRuntime` variants used
+by MCP. See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the full import guide
+and recommended call flow, and [docs/RUNTIME_STATUS.md](docs/RUNTIME_STATUS.md)
+for the observability guide.
 
 ### Recommended troubleshooting flow
 
@@ -176,9 +200,12 @@ stdout/stderr/diff; no full prompts or secrets are ever returned. See
 
 ## Codex CLI Jobs
 
-`run_codex` starts Codex CLI asynchronously and returns a `job_id`. It is the
-recommended high-level action for ChatGPT-driven Codex tasks. It constructs the
-Codex command for the caller — GPT should not assemble raw shell to run Codex.
+`run_codex` starts Codex CLI asynchronously and returns a `job_id`. It is an
+**optional advanced action** for ChatGPT-driven Codex tasks. Codex is not a
+runtime dependency: when the Codex CLI is not installed, the runtime still
+serves `read_file`, `git_status`, `git_diff`, `apply_patch`, and `run_shell`
+through the agent. It constructs the Codex command for the caller — GPT should
+not assemble raw shell to run Codex.
 
 ```bash
 curl -H "Authorization: Bearer change-me" \
@@ -202,7 +229,7 @@ Codex behavior is controlled by `CODEX_*` environment variables:
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `CODEX_BIN` | `codex` | Codex CLI binary name or path. |
-| `CODEX_APPROVAL_MODE` | `full-auto` | Approval mode passed via `--approval-mode`. |
+| `CODEX_APPROVAL_MODE` | _(empty/disabled)_ | Approval mode passed via `--approval-mode`. Empty/blank/`none`/`off`/`disabled` omit the flag (use this if the Codex CLI does not support `--approval-mode`). Other values (e.g. `full-auto`, `suggest`) enable it. |
 | `CODEX_DEFAULT_TIMEOUT_SECS` | `3600` | Default job timeout when the request omits `timeout_secs`. |
 | `CODEX_MAX_PROMPT_BYTES` | `100000` | Maximum prompt size in bytes. Larger prompts are rejected. |
 | `CODEX_ALLOWED_EXTRA_ARGS` | _(empty)_ | Comma-separated allowlist of accepted `extra_args`. |

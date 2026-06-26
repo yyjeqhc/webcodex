@@ -61,6 +61,29 @@ struct ReadProjectFileRequest {
     pub limit: Option<usize>,
 }
 
+#[derive(Debug, Deserialize)]
+struct ProjectGitDiffRequest {
+    pub project: String,
+    #[serde(default)]
+    pub args: Option<Vec<String>>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ApplyPatchRequest {
+    pub project: String,
+    pub patch: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct RunShellRequest {
+    pub project: String,
+    pub command: String,
+    #[serde(default)]
+    pub timeout_secs: Option<u64>,
+    #[serde(default)]
+    pub cwd: Option<String>,
+}
+
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
     depot.obtain::<Arc<ToolRuntime>>().ok().cloned()
 }
@@ -384,6 +407,129 @@ pub async fn projects_git_status(req: &mut Request, depot: &mut Depot, res: &mut
     render_result(res, &audit, "git_status", project, result);
 }
 
+/// `POST /api/projects/git_diff` — thin GPT Actions wrapper over
+/// `ToolCall::GitDiff`. Read-only inspection routed to the owning agent.
+#[handler]
+pub async fn projects_git_diff(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/projects/git_diff", "getProjectGitDiff");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: ProjectGitDiffRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::GitDiff {
+                project: body.project,
+                args: body.args,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "git_diff", project, result);
+}
+
+/// `POST /api/projects/apply_patch` — thin GPT Actions wrapper over
+/// `ToolCall::ApplyPatch`. Executable mutation; requires the owning agent to
+/// allow patching and the caller to pass Bearer auth.
+#[handler]
+pub async fn projects_apply_patch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/projects/apply_patch", "applyProjectPatch");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: ApplyPatchRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ApplyPatch {
+                project: body.project,
+                patch: body.patch,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "apply_patch", project, result);
+}
+
+/// `POST /api/projects/run_shell` — thin GPT Actions wrapper over
+/// `ToolCall::RunShell`. Executable with side effects; requires the owning
+/// agent's shell capability and Bearer auth.
+#[handler]
+pub async fn projects_run_shell(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/projects/run_shell",
+        "runProjectShellCommand",
+    );
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: RunShellRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::RunShell {
+                project: body.project,
+                command: body.command,
+                timeout_secs: body.timeout_secs,
+                cwd: body.cwd,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "run_shell", project, result);
+}
+
 #[handler]
 pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/runtime/status", "getRuntimeStatus");
@@ -503,6 +649,9 @@ mod tests {
                     .push(Router::with_path("projects/list").post(projects_list))
                     .push(Router::with_path("projects/read_file").post(projects_read_file))
                     .push(Router::with_path("projects/git_status").post(projects_git_status))
+                    .push(Router::with_path("projects/git_diff").post(projects_git_diff))
+                    .push(Router::with_path("projects/apply_patch").post(projects_apply_patch))
+                    .push(Router::with_path("projects/run_shell").post(projects_run_shell))
                     .push(Router::with_path("runtime/status").post(runtime_status)),
             )
     }
@@ -668,6 +817,126 @@ mod tests {
         let mut resp = TestClient::post("http://localhost/api/projects/git_status")
             .bearer_auth("secret")
             .json(&json!({"project": "demo"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
+    }
+
+    // =========================================================================
+    // getProjectGitDiff
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_projects_git_diff_requires_bearer_auth() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let resp = TestClient::post("http://localhost/api/projects/git_diff")
+            .json(&json!({"project": "demo"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn http_projects_git_diff_rejects_server_configured_project() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let root = tmp_proj.path();
+        std::process::Command::new("git")
+            .args(["init"])
+            .current_dir(root)
+            .output()
+            .expect("git init");
+        let runtime = Arc::new(runtime_with_local_project(root, "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/projects/git_diff")
+            .bearer_auth("secret")
+            .json(&json!({"project": "demo"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
+    }
+
+    // =========================================================================
+    // applyProjectPatch
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_projects_apply_patch_requires_bearer_auth() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let resp = TestClient::post("http://localhost/api/projects/apply_patch")
+            .json(&json!({"project": "demo", "patch": "diff"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn http_projects_apply_patch_rejects_server_configured_project() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/projects/apply_patch")
+            .bearer_auth("secret")
+            .json(&json!({"project": "demo", "patch": "diff"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
+    }
+
+    // =========================================================================
+    // runProjectShellCommand
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_projects_run_shell_requires_bearer_auth() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let resp = TestClient::post("http://localhost/api/projects/run_shell")
+            .json(&json!({"project": "demo", "command": "echo hi"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn http_projects_run_shell_rejects_server_configured_project() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/projects/run_shell")
+            .bearer_auth("secret")
+            .json(&json!({"project": "demo", "command": "echo hi"}))
             .send(&service)
             .await;
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);

@@ -101,7 +101,12 @@ requires the Codex CLI on the agent host.
    bounded tails.
 9. For cleanup, prefer `deleteProjectFiles`, `gitRestorePaths`, and
    `discardUntrackedFiles` over ad hoc `rm` or broad shell.
-10. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
+10. For simple text edits, prefer `replace_in_file` (via `callRuntimeTool` /
+    MCP `tools/call`) over `runProjectShellCommand` `sed`/`awk`/`python`
+    one-liners — it is safer and refuses to write on a missing/ambiguous match.
+    Use `write_project_file` to create new files (or overwrite with an
+    `expected_sha256` guard).
+11. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
     `getRuntimeJobLog`, when Codex CLI is installed and a larger delegated
     task is desired.
 
@@ -125,6 +130,13 @@ complete the full core coding loop using only dedicated typed actions; reach for
 - `list_project_files`, `search_project_text`
 - `validate_patch`, `apply_patch_checked`, `apply_patch`
 - `delete_project_files`, `git_restore_paths`, `discard_untracked`
+- `replace_in_file`, `write_project_file` (Phase 4 structured-edit tools;
+  runtime-only — not dedicated GPT Actions, reachable via `callRuntimeTool` /
+  MCP `tools/call`). Prefer `replace_in_file` over `run_shell` `sed`/`awk`/
+  `python` one-liners for simple text edits: the command is a fixed helper,
+  `old`/`new` travel over stdin (never interpolated into the shell command),
+  sensitive paths are rejected, and the file is left untouched when `old` is
+  missing or ambiguous.
 
 ### Request shapes
 
@@ -260,7 +272,12 @@ business logic is duplicated, and owner/capability checks stay centralized in
 Tests in `src/openapi.rs` assert:
 
 - The operation-id set matches the documented set exactly (22 operations).
-- The operation count is exactly 22 and never exceeds 30.
+- The operation count is exactly 22 and never exceeds 30. Phase 4 adds
+  `replace_in_file` / `write_project_file` as **runtime-only** tools (reachable
+  via `callRuntimeTool` / MCP `tools/call`); they are intentionally NOT promoted
+  to dedicated GPT Actions, so the count stays 22. The runtime-only endpoints
+  `POST /api/projects/replace_in_file` and `POST /api/projects/write_file` are
+  listed in the forbidden-paths guard so they can never leak into the schema.
 - Every `$ref` resolves to a defined schema.
 - Every path is POST-only.
 - Bearer auth is present and globally enabled.

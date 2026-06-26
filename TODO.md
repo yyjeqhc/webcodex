@@ -104,6 +104,24 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       describe side effects + Bearer auth + agent shell capability;
       read-only actions marked read-only. Local E2E passes 61/61 over both
       transports; `cargo test` passes 433 main + 23 agent tests.
+- [x] Structured file-edit runtime tools (Phase 4): added `replace_in_file`
+      and `write_project_file` as runtime/MCP tools. Both run a FIXED python3
+      helper on the owning agent (`old`/`new`/`content` travel over stdin as
+      JSON; the command string is a compile-time constant — no caller content
+      is interpolated, so there is no shell-injection surface). The server
+      never reads/writes the agent fs directly. `replace_in_file` replaces a
+      unique substring and refuses to write when `old` is missing or ambiguous
+      (`allow_multiple` + `expected_replacements` for multi-replace);
+      `write_project_file` creates files and overwrites only with an
+      `expected_sha256` / `expected_content_prefix` guard. Sensitive paths
+      (`agent.toml`, `private-drop.env`, `.env`, `projects.d`, `.git`,
+      `target`, `node_modules`) are hard-rejected; absolute/`..`/NUL rejected.
+      New runtime-only REST wrappers `POST /api/projects/replace_in_file` and
+      `POST /api/projects/write_file` (NOT dedicated GPT Actions; listed in the
+      OpenAPI forbidden-paths guard). OpenAPI op count stays 22; MCP
+      `tools/list` grows from 23 to 25. Capability: requires agent `shell`.
+      Local E2E adds a Phase 4 probe smoke (write → replace → read → delete)
+      via `callRuntimeTool`; `cargo test` passes 466 main + 23 agent tests.
 
 ### Deprecated (not active features)
 

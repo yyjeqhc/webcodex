@@ -208,9 +208,15 @@ fall back to `callRuntimeTool` only for tools without a dedicated action:
 9. For cleanup, prefer `deleteProjectFiles` / `delete_project_files`,
    `gitRestorePaths` / `git_restore_paths`, and `discardUntrackedFiles` /
    `discard_untracked` over ad hoc `rm`.
-10. `applyProjectPatch` / `apply_patch` — apply small patches directly when the
+10. For simple text edits, prefer `replace_in_file` (via `callRuntimeTool` /
+    MCP `tools/call`) over `run_shell` `sed`/`awk`/`python` one-liners — it
+    replaces a unique substring safely and refuses to write when `old` is
+    missing or ambiguous. Use `write_project_file` to create new files (or
+    overwrite with an `expected_sha256` guard). Both are runtime-only tools
+    (not dedicated GPT Actions).
+11. `applyProjectPatch` / `apply_patch` — apply small patches directly when the
     caller already performed preflight checks.
-11. `runCodexTask` / `run_codex` — optional advanced path when Codex CLI is
+12. `runCodexTask` / `run_codex` — optional advanced path when Codex CLI is
     installed.
 
 See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for examples, schema guarantees,

@@ -165,6 +165,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Router::with_path("projects/discard_untracked")
                     .post(runtime_http::projects_discard_untracked),
             )
+            .push(
+                Router::with_path("projects/replace_in_file")
+                    .post(runtime_http::projects_replace_in_file),
+            )
+            .push(Router::with_path("projects/write_file").post(runtime_http::projects_write_file))
             .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
             .push(Router::with_path("shell/run").post(shell_run))
             .push(Router::with_path("shell/file").post(shell_file_op))

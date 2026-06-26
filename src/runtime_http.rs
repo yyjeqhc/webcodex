@@ -133,6 +133,40 @@ struct DiscardUntrackedRequest {
     pub paths: Vec<String>,
 }
 
+/// `POST /api/projects/replace_in_file` — thin REST wrapper over
+/// `ToolCall::ReplaceInFile`. Mutation with side effects: replaces a substring
+/// in a project file via the owning agent using a fixed helper (old/new travel
+/// over stdin, never interpolated into the shell command). NOT a GPT Action
+/// (excluded from `/openapi.json`); reachable via callRuntimeTool / MCP as well.
+#[derive(Debug, Deserialize)]
+struct ReplaceInFileRequest {
+    pub project: String,
+    pub path: String,
+    pub old: String,
+    pub new: String,
+    #[serde(default)]
+    pub expected_replacements: Option<i64>,
+    #[serde(default)]
+    pub allow_multiple: Option<bool>,
+}
+
+/// `POST /api/projects/write_file` — thin REST wrapper over
+/// `ToolCall::WriteProjectFile`. Mutation with side effects: writes a UTF-8
+/// file via the owning agent with optional overwrite guards. NOT a GPT Action
+/// (excluded from `/openapi.json`); reachable via callRuntimeTool / MCP as well.
+#[derive(Debug, Deserialize)]
+struct WriteProjectFileRequest {
+    pub project: String,
+    pub path: String,
+    pub content: String,
+    #[serde(default)]
+    pub overwrite: Option<bool>,
+    #[serde(default)]
+    pub expected_sha256: Option<String>,
+    #[serde(default)]
+    pub expected_content_prefix: Option<String>,
+}
+
 #[derive(Debug, Deserialize)]
 struct ListProjectFilesRequest {
     pub project: String,
@@ -856,6 +890,96 @@ pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, re
     render_result(res, &audit, "discard_untracked", project, result);
 }
 
+/// `POST /api/projects/replace_in_file` — thin REST wrapper over
+/// `ToolCall::ReplaceInFile`. Mutation with side effects: replaces a substring
+/// in a project file via the owning agent's fixed helper. Requires Bearer auth
+/// and the agent shell capability. NOT a GPT Action (excluded from
+/// `/openapi.json`); also reachable via callRuntimeTool / MCP tools/call.
+#[handler]
+pub async fn projects_replace_in_file(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/projects/replace_in_file", "replaceInFile");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: ReplaceInFileRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReplaceInFile {
+                project: body.project,
+                path: body.path,
+                old: body.old,
+                new: body.new,
+                expected_replacements: body.expected_replacements,
+                allow_multiple: body.allow_multiple,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "replace_in_file", project, result);
+}
+
+/// `POST /api/projects/write_file` — thin REST wrapper over
+/// `ToolCall::WriteProjectFile`. Mutation with side effects: writes a UTF-8
+/// file via the owning agent with optional overwrite guards. Requires Bearer
+/// auth and the agent shell capability. NOT a GPT Action (excluded from
+/// `/openapi.json`); also reachable via callRuntimeTool / MCP tools/call.
+#[handler]
+pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(req, depot, "/api/projects/write_file", "writeProjectFile");
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: WriteProjectFileRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::WriteProjectFile {
+                project: body.project,
+                path: body.path,
+                content: body.content,
+                overwrite: body.overwrite,
+                expected_sha256: body.expected_sha256,
+                expected_content_prefix: body.expected_content_prefix,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "write_project_file", project, result);
+}
+
 /// `POST /api/projects/run_shell` — thin GPT Actions wrapper over
 /// `ToolCall::RunShell`. Executable with side effects; requires the owning
 /// agent's shell capability and Bearer auth.
@@ -1126,6 +1250,8 @@ fn tool_project(call: &ToolCall) -> Option<String> {
         | ToolCall::GitRestorePaths { project, .. }
         | ToolCall::DiscardUntracked { project, .. }
         | ToolCall::ValidatePatch { project, .. }
+        | ToolCall::ReplaceInFile { project, .. }
+        | ToolCall::WriteProjectFile { project, .. }
         | ToolCall::GitStatus { project }
         | ToolCall::GitDiff { project, .. }
         | ToolCall::GitDiffSummary { project }
@@ -1240,6 +1366,11 @@ mod tests {
                         Router::with_path("projects/discard_untracked")
                             .post(projects_discard_untracked),
                     )
+                    .push(
+                        Router::with_path("projects/replace_in_file")
+                            .post(projects_replace_in_file),
+                    )
+                    .push(Router::with_path("projects/write_file").post(projects_write_file))
                     .push(Router::with_path("projects/list_files").post(projects_list_files))
                     .push(Router::with_path("projects/search_text").post(projects_search_text))
                     .push(
@@ -2103,6 +2234,126 @@ mod tests {
                 body["error"].as_str().is_some_and(|e| !e.is_empty()),
                 "{} should return a structured runtime error",
                 path
+            );
+        }
+    }
+
+    // =========================================================================
+    // Phase 4: runtime-only structured-edit endpoints (replace_in_file,
+    // write_file) — auth gate + dispatch wiring. NOT GPT Actions (excluded
+    // from /openapi.json); also reachable via callRuntimeTool / MCP.
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_phase4_edit_endpoints_require_bearer_auth() {
+        let (_tmp, service) = phase2_service();
+        for (path, body) in [
+            (
+                "/api/projects/replace_in_file",
+                json!({"project": "demo", "path": "x.txt", "old": "a", "new": "b"}),
+            ),
+            (
+                "/api/projects/write_file",
+                json!({"project": "demo", "path": "x.txt", "content": "a"}),
+            ),
+        ] {
+            let resp = TestClient::post(&format!("http://localhost{}", path))
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::UNAUTHORIZED,
+                "{} should require auth",
+                path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_phase4_edit_endpoints_dispatch_to_runtime() {
+        // With a correct bearer token the edit routes reach the runtime. The
+        // project id is not agent-registered, so the runtime returns a
+        // structured error (not a 401/404) — proving the request was
+        // authenticated, deserialized, and dispatched to ToolRuntime.
+        let (_tmp, service) = phase2_service();
+        for (path, body, tool) in [
+            (
+                "/api/projects/replace_in_file",
+                json!({"project": "agent:nope:nope", "path": "x.txt", "old": "a", "new": "b"}),
+                "replace_in_file",
+            ),
+            (
+                "/api/projects/write_file",
+                json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}),
+                "write_project_file",
+            ),
+        ] {
+            let mut resp = TestClient::post(&format!("http://localhost{}", path))
+                .bearer_auth("secret")
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::BAD_REQUEST,
+                "{} should reach runtime and return structured error",
+                path
+            );
+            let body: Value = resp.take_json().await.unwrap();
+            assert_eq!(body["success"], false);
+            assert!(
+                body["error"].as_str().is_some_and(|e| !e.is_empty()),
+                "{} should return a structured runtime error",
+                tool
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_tools_list_includes_phase4_edit_tools() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/list")
+            .bearer_auth("secret")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        let names = body["names"].as_array().unwrap();
+        assert!(names.iter().any(|n| n == "replace_in_file"));
+        assert!(names.iter().any(|n| n == "write_project_file"));
+        assert_eq!(body["count"], names.len());
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_dispatches_phase4_edit_tools() {
+        // callRuntimeTool routes replace_in_file / write_project_file to the
+        // runtime. With a non-agent project the runtime returns a structured
+        // error (not a 401/404), proving the generic path dispatches them.
+        let (_tmp, service) = phase2_service();
+        for (tool, params) in [
+            (
+                "replace_in_file",
+                json!({"project": "agent:nope:nope", "path": "x.txt", "old": "a", "new": "b"}),
+            ),
+            (
+                "write_project_file",
+                json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}),
+            ),
+        ] {
+            let mut resp = TestClient::post("http://localhost/api/tools/call")
+                .bearer_auth("secret")
+                .json(&json!({"tool": tool, "params": params}))
+                .send(&service)
+                .await;
+            assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+            let body: Value = resp.take_json().await.unwrap();
+            assert_eq!(body["success"], false);
+            assert!(
+                body["error"].as_str().is_some_and(|e| !e.is_empty()),
+                "{} should return a structured runtime error",
+                tool
             );
         }
     }

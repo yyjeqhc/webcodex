@@ -176,6 +176,39 @@ pub enum ToolCall {
         tail_lines: Option<usize>,
     },
 
+    /// Replace a (unique) substring in a project file via the owning agent.
+    /// Safer than `run_shell` sed/awk/python one-liners for text edits: the
+    /// command is a fixed helper, old/new travel over stdin (never interpolated
+    /// into the shell command), sensitive paths are rejected, and the file is
+    /// left untouched whenever `old` is missing or ambiguous.
+    ReplaceInFile {
+        project: String,
+        path: String,
+        old: String,
+        new: String,
+        #[serde(default)]
+        expected_replacements: Option<i64>,
+        #[serde(default)]
+        allow_multiple: Option<bool>,
+    },
+
+    /// Write a UTF-8 file in a project via the owning agent. Creates new files
+    /// and (with `overwrite`) replaces existing ones, gating overwrites on an
+    /// optional `expected_sha256` / `expected_content_prefix` so a stale caller
+    /// cannot clobber a file that changed underneath it. The server never reads
+    /// the agent filesystem directly; the fixed helper runs on the agent.
+    WriteProjectFile {
+        project: String,
+        path: String,
+        content: String,
+        #[serde(default)]
+        overwrite: Option<bool>,
+        #[serde(default)]
+        expected_sha256: Option<String>,
+        #[serde(default)]
+        expected_content_prefix: Option<String>,
+    },
+
     /// List all agent-registered runtime projects.
     ListProjects,
 
@@ -204,6 +237,8 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "git_restore_paths",
     "discard_untracked",
     "validate_patch",
+    "replace_in_file",
+    "write_project_file",
     "git_status",
     "git_diff",
     "read_file",
@@ -579,6 +614,12 @@ impl ToolRuntime {
             // the agent shell path; it requires the same shell capability as
             // apply_patch but never mutates the worktree.
             ToolCall::ValidatePatch { .. } => Some(AgentCapability::Shell),
+            // replace_in_file / write_project_file run a fixed python3 helper
+            // over the agent shell path (old/new/content travel via stdin, the
+            // command itself is a constant). They require the shell capability.
+            ToolCall::ReplaceInFile { .. } | ToolCall::WriteProjectFile { .. } => {
+                Some(AgentCapability::Shell)
+            }
             ToolCall::ReadFile { .. } | ToolCall::ListProjectFiles { .. } => {
                 Some(AgentCapability::FileRead)
             }
@@ -621,6 +662,8 @@ impl ToolRuntime {
             | ToolCall::GitRestorePaths { project, .. }
             | ToolCall::DiscardUntracked { project, .. }
             | ToolCall::ValidatePatch { project, .. }
+            | ToolCall::ReplaceInFile { project, .. }
+            | ToolCall::WriteProjectFile { project, .. }
             | ToolCall::GitStatus { project }
             | ToolCall::GitDiff { project, .. }
             | ToolCall::GitDiffSummary { project }
@@ -833,6 +876,44 @@ impl ToolRuntime {
             ToolCall::ListJobs { limit, status } => self.list_jobs(limit, status).await,
 
             ToolCall::JobTail { job_id, tail_lines } => self.job_tail(job_id, tail_lines).await,
+
+            ToolCall::ReplaceInFile {
+                project,
+                path,
+                old,
+                new,
+                expected_replacements,
+                allow_multiple,
+            } => {
+                self.replace_in_file(
+                    project,
+                    path,
+                    old,
+                    new,
+                    expected_replacements,
+                    allow_multiple,
+                )
+                .await
+            }
+
+            ToolCall::WriteProjectFile {
+                project,
+                path,
+                content,
+                overwrite,
+                expected_sha256,
+                expected_content_prefix,
+            } => {
+                self.write_project_file(
+                    project,
+                    path,
+                    content,
+                    overwrite,
+                    expected_sha256,
+                    expected_content_prefix,
+                )
+                .await
+            }
         }
     }
 
@@ -1143,6 +1224,55 @@ impl ToolRuntime {
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings.", false),
                 ]),
             },
+            ToolSpec {
+                name: "replace_in_file".to_string(),
+                description: "Replace a unique substring in a project file via the owning agent. Safer than run_shell sed/awk for text edits. Rejects sensitive paths; fails without writing when old is missing or ambiguous.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("old", "string", "Non-empty substring to replace.", true),
+                    ("new", "string", "Replacement string.", true),
+                    (
+                        "expected_replacements",
+                        "integer",
+                        "Expected occurrence count (default 1).",
+                        false,
+                    ),
+                    (
+                        "allow_multiple",
+                        "boolean",
+                        "Allow replacing multiple occurrences (default false).",
+                        false,
+                    ),
+                ]),
+            },
+            ToolSpec {
+                name: "write_project_file".to_string(),
+                description: "Write a UTF-8 file in a project via the owning agent. Creates or overwrites; rejects sensitive paths. Provide expected_sha256 for safe overwrites. Server never reads the agent filesystem directly.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("content", "string", "UTF-8 file content (no NUL).", true),
+                    (
+                        "overwrite",
+                        "boolean",
+                        "Allow overwriting an existing file (default false).",
+                        false,
+                    ),
+                    (
+                        "expected_sha256",
+                        "string",
+                        "Required sha256 of the current file when overwriting.",
+                        false,
+                    ),
+                    (
+                        "expected_content_prefix",
+                        "string",
+                        "Required prefix of the current file when overwriting.",
+                        false,
+                    ),
+                ]),
+            },
         ]
     }
 
@@ -1173,6 +1303,7 @@ impl ToolRuntime {
                 "git_restore_paths", "discard_untracked"
             ]),
             "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
+            "edit": pick(&["replace_in_file", "write_project_file"]),
             "shell": pick(&["run_shell", "run_job"]),
             "jobs": pick(&[
                 "run_codex", "run_job", "job_status", "job_log",
@@ -1843,6 +1974,244 @@ impl ToolRuntime {
             "stderr": check_stderr,
             "warnings": warnings,
         }))
+    }
+
+    // -------------------------------------------------------------------------
+    // Phase 4: structured file edit tools (replace_in_file / write_project_file)
+    // -------------------------------------------------------------------------
+    //
+    // Both tools mutate the worktree through the owning agent only. The server
+    // never reads or writes the agent project filesystem directly. Instead a
+    // FIXED python3 helper is sent as the shell `command` and the tool
+    // arguments (path/old/new/content/...) travel as a JSON document over the
+    // process stdin. The command string is a compile-time constant — no caller
+    // content is ever interpolated into it — so there is no shell-injection
+    // surface. The helper performs all validation + the atomic write on the
+    // agent side and prints a single JSON line on stdout.
+
+    async fn replace_in_file(
+        &self,
+        project: String,
+        path: String,
+        old: String,
+        new: String,
+        expected_replacements: Option<i64>,
+        allow_multiple: Option<bool>,
+    ) -> ToolResult {
+        // ---- Input validation (before project resolution) ----
+        if let Err(e) = validate_edit_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        if old.is_empty() {
+            return ToolResult::err("old must be non-empty");
+        }
+        if old.contains('\0') || new.contains('\0') {
+            return ToolResult::err("old and new cannot contain NUL bytes");
+        }
+        if old.len() > MAX_REPLACE_FIELD_BYTES || new.len() > MAX_REPLACE_FIELD_BYTES {
+            return ToolResult::err(format!(
+                "old/new too large; maximum is {} bytes each",
+                MAX_REPLACE_FIELD_BYTES
+            ));
+        }
+        let expected = expected_replacements.unwrap_or(1);
+        if expected < 1 {
+            return ToolResult::err("expected_replacements must be >= 1");
+        }
+        let allow_multi = allow_multiple.unwrap_or(false);
+        if !allow_multi && expected != 1 {
+            return ToolResult::err("expected_replacements must be 1 when allow_multiple is false");
+        }
+
+        // ---- Project resolution (agent-registered only) ----
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "replace_in_file requires an agent-registered project; \
+                 server-configured projects are not supported",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+
+        let payload = json!({
+            "path": path,
+            "old": old,
+            "new": new,
+            "expected_replacements": expected,
+            "allow_multiple": allow_multi,
+        });
+        let command = format!("python3 -c '{}'", REPLACE_IN_FILE_HELPER);
+        let obj = match self
+            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(err),
+            };
+        }
+        ToolResult::ok(obj)
+    }
+
+    async fn write_project_file(
+        &self,
+        project: String,
+        path: String,
+        content: String,
+        overwrite: Option<bool>,
+        expected_sha256: Option<String>,
+        expected_content_prefix: Option<String>,
+    ) -> ToolResult {
+        // ---- Input validation (before project resolution) ----
+        if let Err(e) = validate_edit_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        if content.contains('\0') {
+            return ToolResult::err("content cannot contain NUL bytes");
+        }
+        if content.len() > MAX_WRITE_CONTENT_BYTES {
+            return ToolResult::err(format!(
+                "content too large; maximum is {} bytes",
+                MAX_WRITE_CONTENT_BYTES
+            ));
+        }
+        if let Some(hash) = expected_sha256.as_deref() {
+            if !is_hex_sha256(hash) {
+                return ToolResult::err(
+                    "expected_sha256 must be a lowercase 64-char hex sha256 digest",
+                );
+            }
+        }
+
+        // ---- Project resolution (agent-registered only) ----
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "write_project_file requires an agent-registered project; \
+                 server-configured projects are not supported",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+
+        let payload = json!({
+            "path": path,
+            "content": content,
+            "overwrite": overwrite.unwrap_or(false),
+            "expected_sha256": expected_sha256,
+            "expected_content_prefix": expected_content_prefix,
+        });
+        let command = format!("python3 -c '{}'", WRITE_PROJECT_FILE_HELPER);
+        let obj = match self
+            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(err),
+            };
+        }
+        ToolResult::ok(obj)
+    }
+
+    /// Run a fixed agent-side helper `command` with a JSON `payload` on stdin
+    /// and return the parsed JSON object the helper prints on stdout. Shared by
+    /// `replace_in_file` and `write_project_file` so the enqueue/timeout/error
+    /// handling stays in one place. The command is always a compile-time
+    /// constant supplied by the caller; only the JSON payload varies.
+    async fn run_agent_helper(
+        &self,
+        client_id: String,
+        cwd: String,
+        command: String,
+        payload: Value,
+    ) -> Result<Value, String> {
+        let stdin = serde_json::to_string(&payload)
+            .map_err(|e| format!("failed to serialize helper payload: {}", e))?;
+        if stdin.len() > RUN_HELPER_STDIN_BUDGET {
+            return Err(format!(
+                "helper payload too large for the agent stdin transport ({} bytes; max {}). \
+                 Reduce the old/new/content size.",
+                stdin.len(),
+                RUN_HELPER_STDIN_BUDGET
+            ));
+        }
+        let wait_timeout = 60_u64;
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id,
+                    cwd: Some(cwd),
+                    command,
+                    stdin: Some(stdin),
+                    timeout_secs: wait_timeout,
+                    wait_timeout_secs: wait_timeout + 2,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return Err(e),
+        };
+        let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return Err("agent helper request was dropped".to_string());
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return Err("timed out waiting for agent helper".to_string());
+            }
+        };
+        if let Some(e) = resp.error {
+            return Err(e);
+        }
+        if resp.exit_code != Some(0) {
+            return Err(resp
+                .stderr
+                .unwrap_or_else(|| format!("agent helper exited with code {:?}", resp.exit_code)));
+        }
+        let stdout = resp.stdout.unwrap_or_default();
+        let stdout = stdout.trim();
+        serde_json::from_str(stdout).map_err(|e| {
+            format!(
+                "agent helper returned invalid JSON: {} (got: {})",
+                e,
+                &stdout[..stdout.len().min(200)]
+            )
+        })
     }
 
     async fn git_status(&self, project: String) -> ToolResult {
@@ -3648,6 +4017,235 @@ fn sensitive_path_warnings(path: &str) -> Vec<String> {
     }
     warnings
 }
+
+/// Maximum accepted size for a single `replace_in_file` `old`/`new` field.
+/// Generous for text edits while bounding memory and the agent stdin payload.
+const MAX_REPLACE_FIELD_BYTES: usize = 256 * 1024; // 256 KiB
+
+/// Maximum accepted size for `write_project_file` `content`. Bounded by the
+/// agent run-shell stdin transport (`RUN_HELPER_STDIN_BUDGET`).
+const MAX_WRITE_CONTENT_BYTES: usize = 256 * 1024; // 256 KiB
+
+/// Hard cap on the serialized helper payload sent to the agent over the
+/// run-shell stdin transport. Mirrors `MAX_RUN_STDIN_BYTES` in shell_client
+/// without coupling this module to that private constant.
+const RUN_HELPER_STDIN_BUDGET: usize = 512 * 1024; // 512 KiB
+
+/// Validate a project-relative file path for the Phase 4 structured edit
+/// tools (`replace_in_file`, `write_project_file`). Unlike the patch preflight
+/// path validator, this HARD-rejects sensitive path components (the task spec
+/// for these tools says "拒绝敏感路径", not "warn"). Absolute paths, `..`
+/// traversal, empty paths, NUL bytes, and sensitive components are all rejected
+/// so the helper never touches secrets, version control, or build output.
+fn validate_edit_file_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    if path.contains('\0') {
+        return Err("path cannot contain NUL bytes".to_string());
+    }
+    let p = Path::new(path);
+    if p.is_absolute() {
+        return Err("path must be project-relative".to_string());
+    }
+    if p.components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("path cannot contain parent traversal".to_string());
+    }
+    if is_sensitive_edit_path(path) {
+        return Err(format!(
+            "refusing sensitive path '{}': touches agent.toml, private-drop.env, \
+             .env, projects.d, .git, target, or node_modules",
+            path
+        ));
+    }
+    Ok(())
+}
+
+/// True if `path` contains a sensitive component for the structured edit
+/// tools. Matching is component-wise (split on `/`) so legitimate filenames
+/// that merely contain a sensitive substring (e.g. `targeting.md`) are NOT
+/// rejected. A component is sensitive if it equals one of the guarded names or
+/// starts with `.env` / `agent.toml` / `private-drop.env` (catching backups
+/// like `.env.local` or `agent.toml.bak`).
+fn is_sensitive_edit_path(path: &str) -> bool {
+    for comp in path.to_lowercase().split('/') {
+        if matches!(
+            comp,
+            ".git"
+                | "target"
+                | "node_modules"
+                | "projects.d"
+                | "agent.toml"
+                | "private-drop.env"
+                | ".env"
+        ) {
+            return true;
+        }
+        if comp.starts_with(".env")
+            || comp.starts_with("agent.toml")
+            || comp.starts_with("private-drop.env")
+        {
+            return true;
+        }
+    }
+    false
+}
+
+/// True if `s` is a lowercase 64-character hex string (a sha256 digest).
+fn is_hex_sha256(s: &str) -> bool {
+    s.len() == 64
+        && s.bytes()
+            .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
+}
+
+/// Fixed python3 helper run on the owning agent for `replace_in_file`.
+///
+/// The script is wrapped in single quotes (`python3 -c '<script>'`), so it
+/// MUST NOT contain single quotes — all Python string literals use double
+/// quotes. `old`/`new`/`path` arrive over stdin as JSON (never interpolated
+/// into the command). The helper counts occurrences, refuses to write on a
+/// missing or ambiguous match, and writes atomically via tempfile + os.replace
+/// in the file's directory. It always prints exactly one JSON object on stdout
+/// and exits 0 (logical failures carry an `error` field in that object).
+const REPLACE_IN_FILE_HELPER: &str = r#"
+import sys, json, hashlib, os, tempfile
+NUL = "\x00"
+def emit(obj):
+    sys.stdout.write(json.dumps(obj))
+    sys.exit(0)
+try:
+    req = json.load(sys.stdin)
+except Exception as e:
+    emit({"changed": False, "error": "invalid json: " + str(e)})
+path = req.get("path", "")
+old = req.get("old", "")
+new = req.get("new", "")
+expected = req.get("expected_replacements", 1)
+allow_multi = bool(req.get("allow_multiple", False))
+if not isinstance(path, str) or not path or path.startswith("/") or NUL in path or ".." in path.split("/"):
+    emit({"changed": False, "error": "invalid path"})
+if not isinstance(old, str) or old == "" or NUL in old:
+    emit({"changed": False, "error": "old must be a non-empty string without NUL"})
+if not isinstance(new, str) or NUL in new:
+    emit({"changed": False, "error": "new must be a string without NUL"})
+try:
+    expected = int(expected)
+except Exception:
+    emit({"changed": False, "error": "expected_replacements must be an integer"})
+if expected < 1:
+    emit({"changed": False, "error": "expected_replacements must be >= 1"})
+if not allow_multi and expected != 1:
+    emit({"changed": False, "error": "expected_replacements must be 1 when allow_multiple is false"})
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+except FileNotFoundError:
+    emit({"changed": False, "error": "file not found", "path": path})
+except UnicodeDecodeError:
+    emit({"changed": False, "error": "file is not valid UTF-8", "path": path})
+except Exception as e:
+    emit({"changed": False, "error": "read failed: " + str(e)})
+before = hashlib.sha256(content.encode("utf-8")).hexdigest()
+count = content.count(old)
+if count == 0:
+    emit({"changed": False, "path": path, "before_sha256": before, "occurrences": 0, "error": "old not found in file"})
+if count > 1 and not allow_multi:
+    emit({"changed": False, "path": path, "before_sha256": before, "occurrences": count, "error": "old appears multiple times and allow_multiple is false"})
+if allow_multi:
+    if count != expected:
+        emit({"changed": False, "path": path, "before_sha256": before, "occurrences": count, "expected": expected, "error": "expected_replacements mismatch"})
+    reps = expected
+    replaced = content.replace(old, new, expected)
+else:
+    reps = 1
+    replaced = content.replace(old, new, 1)
+after_bytes = len(replaced.encode("utf-8"))
+base_dir = os.path.dirname(path) or "."
+tmp = None
+try:
+    os.makedirs(base_dir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-rep-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(replaced)
+    os.replace(tmp, path)
+except Exception as e:
+    if tmp is not None:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    emit({"changed": False, "path": path, "before_sha256": before, "error": "write failed: " + str(e)})
+after = hashlib.sha256(replaced.encode("utf-8")).hexdigest()
+emit({"changed": True, "path": path, "replacements": reps, "before_sha256": before, "after_sha256": after, "bytes_written": after_bytes})
+"#;
+
+/// Fixed python3 helper run on the owning agent for `write_project_file`.
+///
+/// Same single-quote wrapping rules as `REPLACE_IN_FILE_HELPER` (no single
+/// quotes inside). Enforces create-vs-overwrite semantics with optional
+/// `expected_sha256` / `expected_content_prefix` guards and writes atomically.
+/// Always prints exactly one JSON object on stdout and exits 0.
+const WRITE_PROJECT_FILE_HELPER: &str = r#"
+import sys, json, hashlib, os, tempfile
+NUL = "\x00"
+def emit(obj):
+    sys.stdout.write(json.dumps(obj))
+    sys.exit(0)
+try:
+    req = json.load(sys.stdin)
+except Exception as e:
+    emit({"path": None, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "invalid json: " + str(e)})
+path = req.get("path", "")
+content = req.get("content", "")
+overwrite = bool(req.get("overwrite", False))
+exp_sha = req.get("expected_sha256", None)
+exp_prefix = req.get("expected_content_prefix", None)
+if not isinstance(path, str) or not path or path.startswith("/") or NUL in path or ".." in path.split("/"):
+    emit({"path": path if isinstance(path, str) else None, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "invalid path"})
+if not isinstance(content, str) or NUL in content:
+    emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "content must be a UTF-8 string without NUL"})
+exists = os.path.lexists(path)
+warning = None
+if exists and not overwrite:
+    emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "file exists and overwrite is false"})
+if exists and overwrite:
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            current = f.read()
+    except UnicodeDecodeError:
+        emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "existing file is not valid UTF-8"})
+    except Exception as e:
+        emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "read failed: " + str(e)})
+    if exp_sha is not None:
+        cur_sha = hashlib.sha256(current.encode("utf-8")).hexdigest()
+        if cur_sha != exp_sha:
+            emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": cur_sha, "warning": None, "error": "expected_sha256 mismatch"})
+    if exp_prefix is not None:
+        if not isinstance(exp_prefix, str) or not current.startswith(exp_prefix):
+            emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "expected_content_prefix mismatch"})
+    if exp_sha is None and exp_prefix is None:
+        warning = "overwrite without expected_sha256 or expected_content_prefix; provide expected_sha256 for safer overwrites"
+base_dir = os.path.dirname(path) or "."
+written_bytes = len(content.encode("utf-8"))
+tmp = None
+try:
+    os.makedirs(base_dir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-write-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(content)
+    os.replace(tmp, path)
+except Exception as e:
+    if tmp is not None:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "write failed: " + str(e)})
+sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
+emit({"path": path, "created": not exists, "overwritten": exists, "bytes_written": written_bytes, "sha256": sha, "warning": warning})
+"#;
 
 fn apply_patch_local(root: &Path, patch: &str) -> Result<(bool, String, String), String> {
     if !root.exists() {
@@ -5462,6 +6060,37 @@ mod tests {
         ToolRuntime::agent_project_runtime_id(client_id, "agent-proj")
     }
 
+    /// Build a ToolRuntime backed by a single server-configured (local) project
+    /// rooted at `root`. Used to assert the runtime surface rejects
+    /// server-configured projects in favor of agent-registered ones.
+    fn runtime_with_local_project(root: &Path, project_id: &str) -> ToolRuntime {
+        let mut projects = HashMap::new();
+        projects.insert(
+            project_id.to_string(),
+            ProjectConfig {
+                path: root.to_string_lossy().to_string(),
+                executor: Executor::Local,
+                client_id: None,
+                allow_patch: true,
+                allow_command_requests: false,
+                allow_raw_command_requests: false,
+                default_apply_patch_backend: None,
+                allowed_checks: Vec::new(),
+                checks: None,
+                commands: HashMap::new(),
+                hooks: HashMap::new(),
+            },
+        );
+        let config = ProjectsConfig { projects };
+        let state = ProjectsState::loaded(config, "test".to_string());
+        ToolRuntime::new(
+            Arc::new(state),
+            Arc::new(ShellClientRegistry::default()),
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        )
+    }
+
     fn registered_project(id: &str, path: &str) -> ShellAgentProjectSummary {
         ShellAgentProjectSummary {
             id: id.to_string(),
@@ -7020,5 +7649,870 @@ new file mode 100644\n\
                 err
             );
         }
+    }
+
+    // =========================================================================
+    // Phase 4: replace_in_file / write_project_file
+    // =========================================================================
+
+    #[test]
+    fn from_tool_name_parses_phase4_edit_tools() {
+        let replace = ToolCall::from_tool_name(
+            "replace_in_file",
+            json!({
+                "project": "agent:c:p",
+                "path": "src/main.rs",
+                "old": "foo",
+                "new": "bar",
+                "expected_replacements": 3,
+                "allow_multiple": true
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            replace,
+            ToolCall::ReplaceInFile { project, path, old, new, expected_replacements, allow_multiple }
+                if project == "agent:c:p"
+                && path == "src/main.rs"
+                && old == "foo"
+                && new == "bar"
+                && expected_replacements == Some(3)
+                && allow_multiple == Some(true)
+        ));
+
+        let write = ToolCall::from_tool_name(
+            "write_project_file",
+            json!({
+                "project": "agent:c:p",
+                "path": "new.txt",
+                "content": "hello"
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            write,
+            ToolCall::WriteProjectFile { project, path, content, overwrite, expected_sha256, expected_content_prefix }
+                if project == "agent:c:p"
+                && path == "new.txt"
+                && content == "hello"
+                && overwrite.is_none()
+                && expected_sha256.is_none()
+                && expected_content_prefix.is_none()
+        ));
+    }
+
+    #[test]
+    fn known_tool_names_includes_phase4_edit_tools() {
+        assert!(KNOWN_TOOL_NAMES.contains(&"replace_in_file"));
+        assert!(KNOWN_TOOL_NAMES.contains(&"write_project_file"));
+    }
+
+    #[test]
+    fn tool_specs_include_phase4_edit_tools() {
+        let runtime = test_runtime();
+        let names: Vec<String> = runtime
+            .tool_specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "replace_in_file"),
+            "tool_specs must include replace_in_file: {:?}",
+            names
+        );
+        assert!(
+            names.iter().any(|n| n == "write_project_file"),
+            "tool_specs must include write_project_file: {:?}",
+            names
+        );
+        for spec in runtime.tool_specs() {
+            assert!(
+                spec.description.chars().count() <= 300,
+                "{} description too long ({} chars)",
+                spec.name,
+                spec.description.chars().count()
+            );
+        }
+    }
+
+    #[test]
+    fn tool_categories_include_edit_group() {
+        let runtime = test_runtime();
+        let cats = runtime.tool_categories();
+        let edit = cats["edit"].as_array().expect("edit category present");
+        assert!(edit.iter().any(|v| v == "replace_in_file"));
+        assert!(edit.iter().any(|v| v == "write_project_file"));
+    }
+
+    #[test]
+    fn validate_edit_file_path_rejects_unsafe_and_sensitive_paths() {
+        // Safe relative paths accepted.
+        assert!(validate_edit_file_path("README.md").is_ok());
+        assert!(validate_edit_file_path("src/main.rs").is_ok());
+        assert!(validate_edit_file_path("a/b/c.txt").is_ok());
+        // Empty / NUL / absolute / traversal rejected.
+        assert!(validate_edit_file_path("").is_err());
+        assert!(validate_edit_file_path("src\0main.rs").is_err());
+        assert!(validate_edit_file_path("/etc/passwd").is_err());
+        assert!(validate_edit_file_path("../outside").is_err());
+        assert!(validate_edit_file_path("src/../../outside").is_err());
+        // Sensitive paths hard-rejected.
+        for sensitive in [
+            "agent.toml",
+            "config/agent.toml",
+            "agent.toml.bak",
+            "private-drop.env",
+            ".env",
+            ".env.local",
+            "secrets/projects.d/x",
+            "projects.d",
+            ".git/config",
+            "target/debug/bin",
+            "node_modules/pkg/index.js",
+        ] {
+            assert!(
+                validate_edit_file_path(sensitive).is_err(),
+                "sensitive path should be rejected: {}",
+                sensitive
+            );
+        }
+    }
+
+    #[test]
+    fn is_sensitive_edit_path_is_component_wise_not_substring() {
+        // Component-wise: a filename that merely contains a sensitive token
+        // as a substring is NOT rejected.
+        assert!(!is_sensitive_edit_path("targeting.md"));
+        assert!(!is_sensitive_edit_path("enviroment.rs"));
+        assert!(!is_sensitive_edit_path("docs/agent-toml-notes.md"));
+        // Exact component matches ARE rejected.
+        assert!(is_sensitive_edit_path("target/foo"));
+        assert!(is_sensitive_edit_path(".git/HEAD"));
+        assert!(is_sensitive_edit_path("node_modules/x"));
+        assert!(is_sensitive_edit_path("a/b/.env"));
+    }
+
+    #[test]
+    fn is_hex_sha256_validates_lowercase_digest() {
+        assert!(is_hex_sha256(
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ));
+        assert!(!is_hex_sha256("abc"));
+        assert!(!is_hex_sha256(
+            "E3B0C44298FC1C149AFBF4C8996FB92427AE41E4649B934CA495991B7852B855"
+        ));
+        assert!(!is_hex_sha256(
+            "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ));
+    }
+
+    #[tokio::test]
+    async fn replace_in_file_rejects_invalid_input_before_agent_dispatch() {
+        // Call the method directly (bypassing authorize_agent_tool, which would
+        // otherwise resolve the project first) so we prove input validation
+        // fires before any agent request is enqueued. A test_runtime() has no
+        // registered agents, so a request that reached dispatch would hang;
+        // these all return early with a validation error.
+        let runtime = test_runtime();
+        let cases: Vec<(String, String, String)> = vec![
+            // empty old
+            (
+                "EDIT_PROBE.txt".to_string(),
+                "".to_string(),
+                "x".to_string(),
+            ),
+            // NUL in old
+            (
+                "EDIT_PROBE.txt".to_string(),
+                "a\0b".to_string(),
+                "x".to_string(),
+            ),
+            // NUL in new
+            (
+                "EDIT_PROBE.txt".to_string(),
+                "a".to_string(),
+                "x\0y".to_string(),
+            ),
+            // sensitive path
+            ("agent.toml".to_string(), "a".to_string(), "b".to_string()),
+            // absolute path
+            ("/etc/passwd".to_string(), "a".to_string(), "b".to_string()),
+            // traversal path
+            ("../x".to_string(), "a".to_string(), "b".to_string()),
+        ];
+        for (path, old, new) in cases {
+            let result = runtime
+                .replace_in_file("agent:c:p".to_string(), path, old, new, None, None)
+                .await;
+            assert!(!result.success, "expected validation failure");
+            let err = result.error.unwrap();
+            // Must NOT be the project-resolution error — proves early reject.
+            assert!(
+                !err.contains("shell client") && !err.contains("projects.toml"),
+                "should fail input validation before project resolution: {}",
+                err
+            );
+        }
+        // expected_replacements < 1 rejected.
+        let result = runtime
+            .replace_in_file(
+                "agent:c:p".to_string(),
+                "EDIT_PROBE.txt".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+                Some(0),
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("expected_replacements"));
+
+        // expected_replacements > 1 requires allow_multiple=true, otherwise
+        // the caller's requested count would be ambiguous.
+        let result = runtime
+            .replace_in_file(
+                "agent:c:p".to_string(),
+                "EDIT_PROBE.txt".to_string(),
+                "a".to_string(),
+                "b".to_string(),
+                Some(2),
+                Some(false),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("allow_multiple"));
+    }
+
+    #[tokio::test]
+    async fn write_project_file_rejects_invalid_input_before_agent_dispatch() {
+        let runtime = test_runtime();
+        // NUL content
+        let result = runtime
+            .write_project_file(
+                "agent:c:p".to_string(),
+                "EDIT_PROBE.txt".to_string(),
+                "a\0b".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("NUL"));
+        // sensitive path
+        let result = runtime
+            .write_project_file(
+                "agent:c:p".to_string(),
+                ".env".to_string(),
+                "x".to_string(),
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("sensitive"));
+        // bad expected_sha256 format
+        let result = runtime
+            .write_project_file(
+                "agent:c:p".to_string(),
+                "EDIT_PROBE.txt".to_string(),
+                "x".to_string(),
+                Some(true),
+                Some("not-a-hash".to_string()),
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("expected_sha256"));
+    }
+
+    #[tokio::test]
+    async fn replace_in_file_rejects_server_configured_project() {
+        // A server-configured (local) project is not an agent-registered
+        // runtime surface; replace_in_file must refuse it.
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_local_project(tmp.path(), "demo");
+        std::fs::write(tmp.path().join("EDIT_PROBE.txt"), "hello").unwrap();
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ReplaceInFile {
+                    project: "demo".to_string(),
+                    path: "EDIT_PROBE.txt".to_string(),
+                    old: "hello".to_string(),
+                    new: "world".to_string(),
+                    expected_replacements: None,
+                    allow_multiple: None,
+                },
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(
+            err.contains("agent-registered") || err.contains("projects.toml"),
+            "should reject server-configured project: {}",
+            err
+        );
+        // File must be unchanged — the server never wrote it.
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("EDIT_PROBE.txt")).unwrap(),
+            "hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn replace_in_file_routes_to_owning_agent_with_fixed_helper() {
+        let runtime = runtime_with_agent_project("editor");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "editor", None, caps).await;
+        let project = agent_test_project_id("editor");
+
+        let runtime_for_task = runtime.clone();
+        let project_for_task = project.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .replace_in_file(
+                    project_for_task,
+                    "EDIT_PROBE.txt".to_string(),
+                    "foo".to_string(),
+                    "bar".to_string(),
+                    None,
+                    None,
+                )
+                .await
+        });
+
+        // Drain requests until the helper run arrives.
+        let mut req = None;
+        for _ in 0..20 {
+            req = runtime
+                .shell_clients
+                .poll(ShellAgentPollRequest {
+                    client_id: "editor".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap();
+            if req.is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let req = req.expect("replace_in_file should enqueue a helper run for the agent");
+        // The command is the FIXED python3 helper — no caller content interpolated.
+        assert!(
+            req.command.starts_with("python3 -c '"),
+            "command must be the fixed helper, got: {}",
+            req.command
+        );
+        assert!(
+            !req.command.contains("foo") && !req.command.contains("EDIT_PROBE"),
+            "caller content must not be interpolated into the command: {}",
+            req.command
+        );
+        // old/new/path travel over stdin as JSON.
+        let stdin = req.stdin.expect("helper payload on stdin");
+        assert!(stdin.contains("EDIT_PROBE.txt"));
+        assert!(stdin.contains("foo"));
+        assert!(stdin.contains("bar"));
+        assert!(stdin.contains("\"expected_replacements\":1"));
+        assert!(stdin.contains("\"allow_multiple\":false"));
+        // The agent (server side) never reads the agent fs: respond with a
+        // canned JSON result that the runtime forwards verbatim.
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "editor".to_string(),
+                request_id: req.request_id,
+                exit_code: Some(0),
+                stdout: Some(
+                    "{\"changed\":true,\"path\":\"EDIT_PROBE.txt\",\"replacements\":1,\
+                     \"before_sha256\":\"b\",\"after_sha256\":\"a\",\"bytes_written\":3}"
+                        .to_string(),
+                ),
+                stderr: Some(String::new()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["changed"], true);
+        assert_eq!(result.output["replacements"], 1);
+        assert_eq!(result.output["path"], "EDIT_PROBE.txt");
+    }
+
+    #[tokio::test]
+    async fn replace_in_file_requires_shell_capability() {
+        let runtime = runtime_with_agent_project("editor");
+        // Register WITHOUT shell capability (default has shell=true, so set
+        // shell=false explicitly).
+        register_agent(
+            &runtime,
+            "editor",
+            None,
+            ShellClientCapabilities {
+                shell: false,
+                ..Default::default()
+            },
+        )
+        .await;
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ReplaceInFile {
+                    project: agent_test_project_id("editor"),
+                    path: "EDIT_PROBE.txt".to_string(),
+                    old: "foo".to_string(),
+                    new: "bar".to_string(),
+                    expected_replacements: None,
+                    allow_multiple: None,
+                },
+                Some(&auth_context(None, true)),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("shell"));
+    }
+
+    // -------------------------------------------------------------------------
+    // Python helper integration: run the actual fixed helper scripts locally
+    // against temp files (python3 is required by the e2e suite and the agent
+    // host; these tests skip gracefully when python3 is not on PATH so cargo
+    // test stays green on minimal CI).
+    // -------------------------------------------------------------------------
+
+    fn python3_available() -> bool {
+        std::process::Command::new("python3")
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    /// Run a fixed helper script locally with a JSON payload on stdin, in the
+    /// given cwd, and return the parsed JSON object the helper prints.
+    fn run_helper_locally(helper: &str, payload: &Value, cwd: &Path) -> Value {
+        let stdin = serde_json::to_string(payload).unwrap();
+        let mut child = std::process::Command::new("python3")
+            .arg("-c")
+            .arg(helper)
+            .current_dir(cwd)
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn python3");
+        use std::io::Write;
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(stdin.as_bytes())
+            .unwrap();
+        let output = child.wait_with_output().unwrap();
+        assert!(
+            output.status.success(),
+            "helper exited {:?}: stderr={}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+            panic!(
+                "helper returned invalid JSON: {} (got: {})",
+                e,
+                stdout.trim()
+            )
+        })
+    }
+
+    #[test]
+    fn helper_replace_in_file_single_replacement_success() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "hello world").unwrap();
+        let payload = json!({
+            "path": "f.txt",
+            "old": "world",
+            "new": "rust",
+            "expected_replacements": 1,
+            "allow_multiple": false
+        });
+        let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["replacements"], 1);
+        assert_eq!(out["before_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(out["after_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
+            "hello rust"
+        );
+    }
+
+    #[test]
+    fn helper_replace_in_file_old_missing_leaves_file_unchanged() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "hello world").unwrap();
+        let payload = json!({
+            "path": "f.txt",
+            "old": "missing",
+            "new": "x",
+            "expected_replacements": 1,
+            "allow_multiple": false
+        });
+        let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], false);
+        assert!(out["error"].as_str().unwrap().contains("not found"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn helper_replace_in_file_multiple_without_allow_multiple_fails() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "a a a").unwrap();
+        let payload = json!({
+            "path": "f.txt",
+            "old": "a",
+            "new": "b",
+            "expected_replacements": 1,
+            "allow_multiple": false
+        });
+        let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], false);
+        assert!(out["error"].as_str().unwrap().contains("multiple"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
+            "a a a"
+        );
+    }
+
+    #[test]
+    fn helper_replace_in_file_rejects_expected_multiple_without_allow_multiple() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "hello world").unwrap();
+        let payload = json!({
+            "path": "f.txt",
+            "old": "world",
+            "new": "rust",
+            "expected_replacements": 2,
+            "allow_multiple": false
+        });
+        let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], false);
+        assert!(out["error"].as_str().unwrap().contains("allow_multiple"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
+            "hello world"
+        );
+    }
+
+    #[test]
+    fn helper_replace_in_file_allow_multiple_exact_count_succeeds() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "a a a").unwrap();
+        let payload = json!({
+            "path": "f.txt",
+            "old": "a",
+            "new": "b",
+            "expected_replacements": 3,
+            "allow_multiple": true
+        });
+        let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["replacements"], 3);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
+            "b b b"
+        );
+    }
+
+    #[test]
+    fn helper_replace_in_file_allow_multiple_count_mismatch_fails() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "a a a").unwrap();
+        let payload = json!({
+            "path": "f.txt",
+            "old": "a",
+            "new": "b",
+            "expected_replacements": 2,
+            "allow_multiple": true
+        });
+        let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], false);
+        assert!(out["error"].as_str().unwrap().contains("mismatch"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
+            "a a a"
+        );
+    }
+
+    #[test]
+    fn helper_replace_in_file_rejects_empty_old_and_nul() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("f.txt"), "x").unwrap();
+        let payload = json!({
+            "path": "f.txt",
+            "old": "",
+            "new": "y",
+            "expected_replacements": 1,
+            "allow_multiple": false
+        });
+        let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], false);
+        assert!(out["error"].as_str().unwrap().contains("old"));
+        // File unchanged.
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("f.txt")).unwrap(),
+            "x"
+        );
+    }
+
+    #[test]
+    fn helper_replace_in_file_rejects_non_utf8_file() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("f.bin"), [0xFF, 0xFE, 0xFD]).unwrap();
+        let payload = json!({
+            "path": "f.bin",
+            "old": "x",
+            "new": "y",
+            "expected_replacements": 1,
+            "allow_multiple": false
+        });
+        let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], false);
+        assert!(out["error"].as_str().unwrap().contains("UTF-8"));
+    }
+
+    #[test]
+    fn helper_write_project_file_creates_new_file() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let payload = json!({
+            "path": "EDIT_PROBE.txt",
+            "content": "line1\nline2\n",
+            "overwrite": false,
+            "expected_sha256": null,
+            "expected_content_prefix": null
+        });
+        let out = run_helper_locally(WRITE_PROJECT_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["created"], true);
+        assert_eq!(out["overwritten"], false);
+        assert_eq!(out["bytes_written"], 12);
+        assert_eq!(out["sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(out["warning"], Value::Null);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("EDIT_PROBE.txt")).unwrap(),
+            "line1\nline2\n"
+        );
+    }
+
+    #[test]
+    fn helper_write_project_file_existing_without_overwrite_fails() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("EDIT_PROBE.txt"), "original").unwrap();
+        let payload = json!({
+            "path": "EDIT_PROBE.txt",
+            "content": "new",
+            "overwrite": false,
+            "expected_sha256": null,
+            "expected_content_prefix": null
+        });
+        let out = run_helper_locally(WRITE_PROJECT_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["created"], false);
+        assert!(out["error"].as_str().unwrap().contains("overwrite"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("EDIT_PROBE.txt")).unwrap(),
+            "original"
+        );
+    }
+
+    #[test]
+    fn helper_write_project_file_overwrite_with_matching_sha256_succeeds() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("EDIT_PROBE.txt"), "original").unwrap();
+        let sha = sha256_hex("original");
+        let payload = json!({
+            "path": "EDIT_PROBE.txt",
+            "content": "replaced",
+            "overwrite": true,
+            "expected_sha256": sha,
+            "expected_content_prefix": null
+        });
+        let out = run_helper_locally(WRITE_PROJECT_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["overwritten"], true);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("EDIT_PROBE.txt")).unwrap(),
+            "replaced"
+        );
+    }
+
+    #[test]
+    fn helper_write_project_file_overwrite_with_mismatched_sha256_fails() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("EDIT_PROBE.txt"), "original").unwrap();
+        let payload = json!({
+            "path": "EDIT_PROBE.txt",
+            "content": "replaced",
+            "overwrite": true,
+            "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "expected_content_prefix": null
+        });
+        let out = run_helper_locally(WRITE_PROJECT_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["created"], false);
+        assert!(out["error"].as_str().unwrap().contains("sha256"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("EDIT_PROBE.txt")).unwrap(),
+            "original"
+        );
+    }
+
+    #[test]
+    fn helper_write_project_file_overwrite_with_matching_prefix_succeeds() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("EDIT_PROBE.txt"), "v1 content").unwrap();
+        let payload = json!({
+            "path": "EDIT_PROBE.txt",
+            "content": "v1 replaced",
+            "overwrite": true,
+            "expected_sha256": null,
+            "expected_content_prefix": "v1 "
+        });
+        let out = run_helper_locally(WRITE_PROJECT_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["overwritten"], true);
+        assert_eq!(out["warning"], Value::Null);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("EDIT_PROBE.txt")).unwrap(),
+            "v1 replaced"
+        );
+    }
+
+    #[test]
+    fn helper_write_project_file_overwrite_with_mismatched_prefix_fails() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("EDIT_PROBE.txt"), "v2 content").unwrap();
+        let payload = json!({
+            "path": "EDIT_PROBE.txt",
+            "content": "x",
+            "overwrite": true,
+            "expected_sha256": null,
+            "expected_content_prefix": "v1 "
+        });
+        let out = run_helper_locally(WRITE_PROJECT_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["created"], false);
+        assert!(out["error"].as_str().unwrap().contains("prefix"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("EDIT_PROBE.txt")).unwrap(),
+            "v2 content"
+        );
+    }
+
+    #[test]
+    fn helper_write_project_file_overwrite_without_guards_warns() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("EDIT_PROBE.txt"), "original").unwrap();
+        let payload = json!({
+            "path": "EDIT_PROBE.txt",
+            "content": "replaced",
+            "overwrite": true,
+            "expected_sha256": null,
+            "expected_content_prefix": null
+        });
+        let out = run_helper_locally(WRITE_PROJECT_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["overwritten"], true);
+        assert!(
+            out["warning"].as_str().unwrap().contains("expected_sha256"),
+            "should warn about missing guard: {:?}",
+            out["warning"]
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("EDIT_PROBE.txt")).unwrap(),
+            "replaced"
+        );
+    }
+
+    #[test]
+    fn helper_write_project_file_rejects_nul_content() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let payload = json!({
+            "path": "EDIT_PROBE.txt",
+            "content": "a\u{0000}b",
+            "overwrite": false,
+            "expected_sha256": null,
+            "expected_content_prefix": null
+        });
+        let out = run_helper_locally(WRITE_PROJECT_FILE_HELPER, &payload, tmp.path());
+        assert_eq!(out["created"], false);
+        assert!(out["error"].as_str().unwrap().contains("NUL"));
+        assert!(!tmp.path().join("EDIT_PROBE.txt").exists());
+    }
+
+    /// Compute a lowercase hex sha256 of a string (test helper).
+    fn sha256_hex(s: &str) -> String {
+        // Use the same approach as the python helper: sha256 of utf-8 bytes.
+        // We shell out to python3 to avoid pulling a sha256 crate into tests.
+        let child = std::process::Command::new("python3")
+            .arg("-c")
+            .arg("import sys,hashlib;sys.stdout.write(hashlib.sha256(sys.argv[1].encode()).hexdigest())")
+            .arg(s)
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn python3");
+        let output = child.wait_with_output().unwrap();
+        String::from_utf8(output.stdout).unwrap()
     }
 }

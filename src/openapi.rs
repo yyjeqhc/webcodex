@@ -84,6 +84,12 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/shell/jobs/stop",
     "/api/jobs/stop",
     "/api/shell/jobs/list",
+    // Phase 4 runtime-only structured-edit endpoints. They are thin REST
+    // wrappers over ToolRuntime and are also reachable via callRuntimeTool /
+    // MCP tools/call; they are intentionally NOT promoted to dedicated GPT
+    // Actions so the OpenAPI operation count stays at 22.
+    "/api/projects/replace_in_file",
+    "/api/projects/write_file",
     "/api/shell/agent/register",
     "/api/shell/agent/poll",
     "/api/shell/agent/result",
@@ -1653,6 +1659,8 @@ mod tests {
     fn openapi_operation_count_is_twenty_two() {
         // Phase 3 promotes 10 core runtime tools to dedicated GPT Actions,
         // bringing the schema from 12 to 22 ops. The surface must stay <= 30.
+        // Phase 4 adds replace_in_file / write_project_file as runtime-only
+        // tools (NOT dedicated GPT Actions), so the operation count stays 22.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
             .as_object()
@@ -1662,6 +1670,26 @@ mod tests {
             .sum();
         assert_eq!(count, 22, "GPT Actions schema must be 22 operations");
         assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
+    }
+
+    #[test]
+    fn openapi_forbids_phase4_runtime_only_edit_endpoints() {
+        // Phase 4 runtime-only structured-edit endpoints must NOT appear in the
+        // GPT Actions schema (they stay reachable via callRuntimeTool / MCP).
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        assert!(
+            !paths.contains_key("/api/projects/replace_in_file"),
+            "replace_in_file must stay runtime-only (not a dedicated GPT Action)"
+        );
+        assert!(
+            !paths.contains_key("/api/projects/write_file"),
+            "write_file must stay runtime-only (not a dedicated GPT Action)"
+        );
+        // They are listed in the forbidden guard so future edits catch
+        // accidental promotion.
+        assert!(LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/replace_in_file"));
+        assert!(LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/write_file"));
     }
 
     #[test]

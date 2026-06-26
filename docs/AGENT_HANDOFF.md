@@ -105,6 +105,17 @@ Phase 3):
 - `POST /api/projects/git_restore_paths` → `gitRestorePaths` (mutation GPT Action)
 - `POST /api/projects/discard_untracked` → `discardUntrackedFiles` (mutation GPT Action)
 
+Phase 4 structured-edit runtime tools (runtime-only; NOT dedicated GPT Actions —
+reachable via `callRuntimeTool` / MCP `tools/call`. `/openapi.json` stays at 22
+ops; the REST wrappers are listed in the forbidden-paths guard):
+
+- `POST /api/projects/replace_in_file` → `replaceInFile` (mutation; thin REST
+  wrapper over `ToolCall::ReplaceInFile`). Fixed python3 helper on the owning
+  agent; `old`/`new` travel over stdin, never interpolated into the command.
+- `POST /api/projects/write_file` → `writeProjectFile` (mutation; thin REST
+  wrapper over `ToolCall::WriteProjectFile`). Create/overwrite with optional
+  `expected_sha256` / `expected_content_prefix` guards.
+
 MCP App console (Phase B; read-only status console. Public static HTML/JS/CSS
 entry, NOT behind Bearer auth — like `/openapi.json`. Data is fetched by the
 browser from the protected `POST /api/runtime/status`. Not a GPT Action; the
@@ -193,7 +204,10 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 433 tests passing, agent binary 23 tests passing.
+- `cargo test`: main binary 466 tests passing, agent binary 23 tests passing.
+  (Phase 4 added tests covering `replace_in_file` / `write_project_file`
+  parsing, path validation, agent routing, capability checks, helper-script
+  semantics, and the runtime-only REST wrappers.)
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -249,9 +263,11 @@ Behavior:
   policy block (`can_apply=false`, `policy_blocked=true`) without running git.
 - Output: `can_apply` (bool), `affected_files` (array), `stat`, `stdout`,
   `stderr`, `warnings` (array).
-- Exposed via MCP `tools/list` (23 tools) and `POST /api/projects/validate_patch`.
+- Exposed via MCP `tools/list` (25 tools as of Phase 4) and `POST /api/projects/validate_patch`.
 - As of Phase 3, **also** a dedicated read-only GPT Action
-  (`validateProjectPatch`); `/openapi.json` grew from 12 to 22 ops.
+  (`validateProjectPatch`); `/openapi.json` grew from 12 to 22 ops. Phase 4 adds
+  `replace_in_file` / `write_project_file` as runtime-only tools (no new GPT
+  Actions), so the OpenAPI op count stays 22 and MCP `tools/list` is 25.
 - Capability: requires the agent `shell` capability (same as `apply_patch`,
   since the dry-run runs `git apply --check` via the agent shell path). Owner
   boundary checks are reused from `authorize_agent_tool`.

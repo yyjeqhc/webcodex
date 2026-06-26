@@ -545,6 +545,20 @@ if [ "${tools_count:-0}" -gt 0 ]; then
 else
     fail "MCP tools/list returned no tools (body: ${body:0:300})"
 fi
+# Phase 4: MCP tools/list must expose replace_in_file / write_project_file and
+# the count must be 25 (23 Phase 3 tools + 2 Phase 4 structured-edit tools).
+if [ "${tools_count:-0}" = "25" ]; then
+    pass "MCP tools/list count is 25 (Phase 4 parity)"
+else
+    fail "MCP tools/list count expected 25, got ${tools_count:-0}"
+fi
+for tname in replace_in_file write_project_file; do
+    if echo "$TOOLS_LIST_BODY" | grep -q "\"$tname\""; then
+        pass "MCP tools/list exposes $tname"
+    else
+        fail "MCP tools/list missing $tname"
+    fi
+done
 
 # tools/call list_projects — must return structuredContent with the agent project.
 body="$(api_post /mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}')"
@@ -823,6 +837,7 @@ for path, methods in schema.get("paths", {}).items():
 # forbidden.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
              "/api/jobs/stop",
+             "/api/projects/replace_in_file", "/api/projects/write_file",
              "/api/messages", "/api/files", "/api/desktop/task_op", "/api/desktop/task",
              "/api/shell/run", "/api/shell/job", "/api/shell/file",
              "/mcp", "/openapi.json", "/console", "/console/app.js", "/console/styles.css"]
@@ -1104,6 +1119,113 @@ fi
 
 # Clean up the tracked probe file so the worktree returns to a clean state.
 body="$(api_post /api/projects/run_shell "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"git rm -f RESTORE_PROBE.txt >/dev/null 2>&1 && git commit -m cleanup-probe >/dev/null 2>&1\"}")" || true
+
+# ----------------------------------------------------------------------------
+# 7e. Phase 4: structured edit tools (replace_in_file / write_project_file)
+#     via callRuntimeTool and MCP, against probe files only
+# ----------------------------------------------------------------------------
+
+log "---- Phase 4: structured edit tools (probe files only) ----"
+
+# write_project_file via callRuntimeTool — create EDIT_PROBE.txt.
+wpf_body="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "tool": "write_project_file",
+    "params": {
+        "project": sys.argv[1],
+        "path": "EDIT_PROBE.txt",
+        "content": "hello world\n"
+    }
+}))
+' "$RUNTIME_PROJECT_ID")"
+body="$(api_post /api/tools/call "$wpf_body")"
+wpf_success="$(json_get "$body" success)"
+wpf_created="$(json_get "$body" output.created)"
+if [ "$wpf_success" = "True" ] && [ "$wpf_created" = "True" ]; then
+    pass "callRuntimeTool(write_project_file) creates EDIT_PROBE.txt"
+else
+    fail "callRuntimeTool(write_project_file) did not create probe (success=$wpf_success created=$wpf_created body=${body:0:300})"
+fi
+wpf_sha="$(json_get "$body" output.sha256)"
+if [ -n "$wpf_sha" ] && [ "$wpf_sha" != "None" ] && [ ${#wpf_sha} -eq 64 ]; then
+    pass "write_project_file returns 64-char sha256"
+else
+    fail "write_project_file missing sha256 (got: $wpf_sha)"
+fi
+
+# readProjectFile confirms the probe content.
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"EDIT_PROBE.txt\"}")"
+if echo "$(json_get "$body" output.content)" | grep -q "hello world"; then
+    pass "readProjectFile confirms EDIT_PROBE.txt content"
+else
+    fail "readProjectFile did not confirm probe content (got: ${body:0:200})"
+fi
+
+# replace_in_file via callRuntimeTool — change "world" -> "rust".
+rif_body="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "tool": "replace_in_file",
+    "params": {
+        "project": sys.argv[1],
+        "path": "EDIT_PROBE.txt",
+        "old": "world",
+        "new": "rust"
+    }
+}))
+' "$RUNTIME_PROJECT_ID")"
+body="$(api_post /api/tools/call "$rif_body")"
+rif_success="$(json_get "$body" success)"
+rif_changed="$(json_get "$body" output.changed)"
+if [ "$rif_success" = "True" ] && [ "$rif_changed" = "True" ]; then
+    pass "callRuntimeTool(replace_in_file) edits EDIT_PROBE.txt"
+else
+    fail "callRuntimeTool(replace_in_file) did not edit probe (success=$rif_success changed=$rif_changed body=${body:0:300})"
+fi
+
+# readProjectFile confirms the edited content.
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"EDIT_PROBE.txt\"}")"
+if echo "$(json_get "$body" output.content)" | grep -q "hello rust"; then
+    pass "readProjectFile confirms replace_in_file edit"
+else
+    fail "readProjectFile did not confirm edit (got: ${body:0:200})"
+fi
+
+# replace_in_file with a missing old must fail WITHOUT modifying the file.
+rif_miss="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "tool": "replace_in_file",
+    "params": {
+        "project": sys.argv[1],
+        "path": "EDIT_PROBE.txt",
+        "old": "does-not-exist",
+        "new": "x"
+    }
+}))
+' "$RUNTIME_PROJECT_ID")"
+body="$(api_post /api/tools/call "$rif_miss")"
+if [ "$(json_get "$body" success)" = "False" ]; then
+    pass "replace_in_file(missing old) fails"
+else
+    fail "replace_in_file(missing old) unexpectedly succeeded (body: ${body:0:200})"
+fi
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"EDIT_PROBE.txt\"}")"
+if echo "$(json_get "$body" output.content)" | grep -q "hello rust"; then
+    pass "replace_in_file(missing old) left file unchanged"
+else
+    fail "replace_in_file(missing old) modified the file (got: ${body:0:200})"
+fi
+
+# deleteProjectFiles removes the probe so the worktree returns to clean.
+del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"EDIT_PROBE.txt\"]}")"
+body="$(api_post /api/projects/delete_files "$del_body")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "deleteProjectFiles removes EDIT_PROBE.txt"
+else
+    fail "deleteProjectFiles did not remove probe (body: ${body:0:300})"
+fi
 
 # ----------------------------------------------------------------------------
 # 8. Summary

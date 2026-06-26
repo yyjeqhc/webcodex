@@ -201,6 +201,18 @@ They require:
 
 Treat them as development-collaboration capabilities with execution risk.
 
+Patch payload transport: `applyProjectPatch` / `applyProjectPatchChecked` /
+`validateProjectPatch` send the patch body to the owning agent over the shell
+request `stdin` field — never inside the shell `command` string. The command
+is a fixed `git apply` invocation (`git apply --check -`, `git apply --stat -`,
+`git apply -`), and the working directory is supplied via the shell request
+`cwd` field (not a `cd` prefix). This means patches larger than the shell
+command length limit still validate and apply, and there is no
+`echo '<patch>' | cd <path> && git apply` shape that could drop the patch.
+`applyProjectPatchChecked` runs the read-only preflight first and skips the
+apply step when the check fails, so a non-applicable patch never mutates the
+worktree.
+
 ## Examples
 
 Start a Codex task (optional advanced; requires Codex CLI on the agent host):

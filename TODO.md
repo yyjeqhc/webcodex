@@ -137,6 +137,30 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       smoke (write probe → replaceProjectFileText → read → missing-old fail →
       cleanup). Local E2E passes 78/78 over both transports; `cargo test`
       passes 466 main + 23 agent tests.
+- [x] Harden patch application agent execution chain (Phase 6): tightened the
+      agent-backed `apply_patch` / `apply_patch_checked` / `validate_patch`
+      path so the patch payload always travels over `ShellRunRequest.stdin`
+      and the working directory is supplied via the shell request `cwd` field.
+      The `command` string is a fixed `git apply` invocation and never
+      contains patch content, an `echo <patch>` / `cat` splice, a heredoc, or
+      a `cd <path> && ...` prefix (the historical
+      `echo '<patch>' | cd <path> && git apply --check -` shape is structurally
+      impossible). `validate_patch` stays read-only (only `git apply --check` /
+      `--stat`, never a mutating `git apply -`). `apply_patch_checked` runs the
+      preflight first and skips apply on check failure (no partial
+      application; `git apply` is itself atomic). `apply_patch` now rejects
+      server-configured (non-agent) projects like `validate_patch` already did,
+      and the legacy server-local `apply_patch_local` path was removed so the
+      server never touches the agent filesystem directly. `deny_sensitive_paths`
+      semantics unchanged. External API unchanged: OpenAPI op count stays 23,
+      MCP `tools/list` stays 25. Added unit tests pinning the invariants
+      (command excludes patch content, patch via stdin, cwd via field,
+      check-failure skips apply, validate enqueues no mutating command, large
+      patch over the command limit still validates/applies, server-configured
+      projects rejected). E2E smoke adds a large-patch `applyProjectPatchChecked`
+      check and a check-failed worktree immutability check. Local E2E passes
+      83/83 over both transports; `cargo test` passes 472 main + 23 agent
+      tests.
 
 ### Deprecated (not active features)
 

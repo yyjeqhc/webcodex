@@ -1294,6 +1294,86 @@ else
 fi
 
 # ----------------------------------------------------------------------------
+# 7g. Patch chain hardening: large patch via applyProjectPatchChecked, and a
+#     check-failed patch must NOT mutate the worktree. The patch payload
+#     travels over the agent shell request stdin, never inside the command
+#     string, so a patch larger than the shell command limit still applies.
+# ----------------------------------------------------------------------------
+
+log "---- patch chain hardening (large + check-failed) ----"
+
+# Capture the worktree state before the hardening probes (should be clean).
+pre_harden_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+pre_harden_porcelain="$(json_get "$pre_harden_status" output.stdout)"
+
+# A LARGE patch (well over the 8 KiB shell command limit) that creates a new
+# file. It must still validate + apply because the patch travels over stdin,
+# not the command string.
+LARGE_APPLY_PATCH="$(python3 - <<'PY'
+print("diff --git a/LARGE_APPLY_PROBE.md b/LARGE_APPLY_PROBE.md")
+print("new file mode 100644")
+print("--- /dev/null")
+print("+++ b/LARGE_APPLY_PROBE.md")
+print("@@ -0,0 +1,300 @@")
+for i in range(300):
+    print(f"+large-line-{i:04d}-" + ("x" * 48))
+PY
+)"
+LARGE_APPLY_PATCH="${LARGE_APPLY_PATCH}"$'\n'
+lap_bytes="$(printf '%s' "$LARGE_APPLY_PATCH" | wc -c | tr -d ' ')"
+if [ "${lap_bytes:-0}" -gt 8000 ] 2>/dev/null; then
+    pass "LARGE_APPLY_PATCH is ${lap_bytes} bytes (> 8000 command limit)"
+else
+    fail "LARGE_APPLY_PATCH must exceed the 8000-byte command limit (got ${lap_bytes} bytes)"
+fi
+lap_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$LARGE_APPLY_PATCH")"
+body="$(api_post /api/projects/apply_patch_checked "$lap_body")"
+lap_success="$(json_get "$body" success)"
+lap_applied="$(json_get "$body" output.applied)"
+if [ "$lap_success" = "True" ] && [ "$lap_applied" = "True" ]; then
+    pass "applyProjectPatchChecked applies large patch over command limit"
+else
+    fail "applyProjectPatchChecked large patch did not apply (success=$lap_success applied=$lap_applied body=${body:0:300})"
+fi
+# Verify the large probe file now shows up in the worktree.
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+if echo "$(json_get "$body" output.changed_files)" | grep -q "LARGE_APPLY_PROBE.md"; then
+    pass "large apply probe file visible in git_diff_summary"
+else
+    fail "large apply probe file not visible (got: ${body:0:200})"
+fi
+# Clean up the large probe so the worktree returns to a clean state.
+del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"LARGE_APPLY_PROBE.md\"]}")"
+body="$(api_post /api/projects/delete_files "$del_body")" || true
+
+# A patch whose context does not match — applyProjectPatchChecked must NOT
+# apply it (check fails first) and must NOT modify the worktree.
+BAD_CHECKED_PATCH='--- a/README.md
++++ b/README.md
+@@ -1,1 +1,1 @@
+-NONEXISTENT_CONTEXT_LINE_FOR_CHECKED
++replacement
+'
+bcp_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$BAD_CHECKED_PATCH")"
+body="$(api_post /api/projects/apply_patch_checked "$bcp_body")"
+bcp_success="$(json_get "$body" success)"
+bcp_applied="$(json_get "$body" output.applied)"
+bcp_can_apply="$(json_get "$body" output.validate.can_apply)"
+if [ "$bcp_success" = "True" ] && [ "$bcp_applied" = "False" ] && [ "$bcp_can_apply" = "False" ]; then
+    pass "applyProjectPatchChecked(check-failed) does not apply"
+else
+    fail "applyProjectPatchChecked(check-failed) should not apply (success=$bcp_success applied=$bcp_applied can_apply=$bcp_can_apply body=${body:0:300})"
+fi
+# Worktree must be unchanged after the check-failed probe (no mutation).
+post_harden_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+post_harden_porcelain="$(json_get "$post_harden_status" output.stdout)"
+if [ "$pre_harden_porcelain" = "$post_harden_porcelain" ]; then
+    pass "check-failed patch leaves worktree unchanged"
+else
+    fail "check-failed patch mutated the worktree (pre=${pre_harden_porcelain:0:120} post=${post_harden_porcelain:0:120})"
+fi
+
+# ----------------------------------------------------------------------------
 # 8. Summary
 # ----------------------------------------------------------------------------
 

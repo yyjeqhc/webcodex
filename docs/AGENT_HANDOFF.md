@@ -208,10 +208,17 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 466 tests passing, agent binary 23 tests passing.
+- `cargo test`: main binary 472 tests passing, agent binary 23 tests passing.
   (Phase 4 added tests covering `replace_in_file` / `write_project_file`
   parsing, path validation, agent routing, capability checks, helper-script
-  semantics, and the runtime-only REST wrappers.)
+  semantics, and the runtime-only REST wrappers. Phase 6 hardening added
+  tests pinning the agent-backed patch chain: patch content travels over
+  `ShellRunRequest.stdin` (never in the command string), `cwd` is supplied via
+  the shell request field (no `cd` prefix), `apply_patch_checked` skips the
+  apply step when the preflight fails, `validate_patch` never enqueues a
+  mutating `git apply -`, large patches over the command limit still
+  validate/apply, and server-configured projects are rejected by every patch
+  tool.)
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -233,8 +240,8 @@ bash -n scripts/smoke_deployment.sh
 
 Current E2E smoke result:
 
-- `bash scripts/e2e_zero_config_ws.sh`: 78 passed / 0 failed.
-- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 78 passed / 0
+- `bash scripts/e2e_zero_config_ws.sh`: 83 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 83 passed / 0
   failed.
 
 ## validate_patch (patch preflight / dry-run)
@@ -279,6 +286,51 @@ Behavior:
   boundary checks are reused from `authorize_agent_tool`.
 - Server and agent should be upgraded together for stdin-backed
   `validate_patch` / `apply_patch` behavior.
+
+## Patch Application Agent Chain Hardening
+
+The agent-backed patch application chain (`ApplyPatch` / `ApplyPatchChecked` /
+`ValidatePatch`) was hardened so the patch payload and working directory are
+never passed through the shell command string:
+
+- The patch body always travels over `ShellRunRequest.stdin`. The `command`
+  string is a fixed `git apply` invocation (`git apply --check -`,
+  `git apply --check - && echo OK`, `git apply --stat -`, `git apply -`) and
+  never contains patch content, an `echo <patch>` / `cat` splice, a heredoc,
+  or a `cd <path> && ...` prefix.
+- The working directory is supplied via the shell request `cwd` field (set to
+  the owning agent's project path), never via `cd` in the command. The
+  historical `echo '<patch>' | cd <path> && git apply --check -` shape is
+  structurally impossible now.
+- `validate_patch` stays read-only: it only ever enqueues `git apply --check`
+  and `git apply --stat` (both dry-run) and never a bare mutating
+  `git apply -`. It never modifies the worktree.
+- `apply_patch` / `apply_patch_checked` route to the owning agent only.
+  Server-configured (non-agent) projects are rejected by every patch tool, so
+  the server never reads or writes the agent filesystem directly. The legacy
+  server-local `apply_patch_local` path was removed for this reason.
+- `apply_patch_checked` runs the preflight first and skips the apply step when
+  the check fails (`can_apply=false`), so a non-applicable patch never mutates
+  the worktree. `git apply` (without `--reject`) is itself atomic, so a failed
+  apply does not partially apply.
+- Patches larger than the agent shell command limit (`MAX_COMMAND_LEN` = 8000
+  bytes) still validate and apply because they travel over stdin, not the
+  command string. `validate_patch` caps preflight input at
+  `MAX_VALIDATE_PATCH_BYTES` (256 KiB).
+- `deny_sensitive_paths` semantics are unchanged: sensitive filenames warn by
+  default and become a structured policy block (`can_apply=false`,
+  `policy_blocked=true`) when `deny_sensitive_paths=true`.
+- External API is unchanged: `/api/projects/apply_patch`,
+  `/api/projects/apply_patch_checked`, `/api/projects/validate_patch` keep
+  their schemas; OpenAPI operation count stays 23 and MCP `tools/list` stays
+  25.
+
+Unit tests pin these invariants (command never contains the patch marker;
+patch equals `stdin`; `cwd` is the project path; check-failure skips apply;
+`validate_patch` enqueues no mutating command; large patch over the limit
+still validates/applies; server-configured projects rejected). E2E smoke adds
+a large-patch `applyProjectPatchChecked` check and a check-failed worktree
+immutability check over both transports.
 
 ## Documentation Map
 

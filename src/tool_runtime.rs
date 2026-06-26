@@ -1599,6 +1599,9 @@ impl ToolRuntime {
         if patch.is_empty() {
             return ToolResult::err("Patch cannot be empty");
         }
+        if patch.contains('\0') {
+            return ToolResult::err("Patch contains NUL byte");
+        }
         let changed = parse_changed_files_from_patch(&patch);
         if changed.is_empty() {
             return ToolResult::err("Patch does not declare any changed files");
@@ -1608,106 +1611,99 @@ impl ToolRuntime {
                 return ToolResult::err(e);
             }
         }
-        if proj.is_agent() {
-            let client_id = match proj.agent_client_id() {
-                Ok(id) => id.to_string(),
-                Err(e) => return ToolResult::err(e),
-            };
-            let (check_req_id, check_rx) = match self
-                .shell_clients
-                .enqueue_run(
-                    ShellRunRequest {
-                        client_id: client_id.clone(),
-                        cwd: Some(proj.path.clone()),
-                        command: "git apply --check - && echo OK".to_string(),
-                        stdin: Some(patch.clone()),
-                        timeout_secs: 60,
-                        wait_timeout_secs: 62,
-                    },
-                    "tool_runtime".to_string(),
-                )
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return ToolResult::err(e),
-            };
-            let check_result = tokio::time::timeout(Duration::from_secs(64), check_rx).await;
-            match check_result {
-                Ok(Ok(resp)) if resp.exit_code != Some(0) => {
-                    return ToolResult::ok(json!({
-                        "success": false,
-                        "changed_files": changed,
-                        "stdout": resp.stdout,
-                        "stderr": resp.stderr,
-                        "error": "git apply --check failed",
-                    }));
-                }
-                Err(_) => {
-                    self.shell_clients.cancel_request(&check_req_id).await;
-                    return ToolResult::err("timed out during patch validation");
-                }
-                Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&check_req_id).await;
-                    return ToolResult::err("patch validation request dropped");
-                }
-                _ => {}
+        // ---- Agent routing ----
+        // apply_patch mutates the worktree through the owning agent only. The
+        // server never reads or writes the agent project filesystem directly,
+        // and server-configured legacy projects are not a supported runtime
+        // surface for this tool (consistent with `validate_patch`). The patch
+        // payload always travels over `ShellRunRequest.stdin`; the command
+        // string is a fixed `git apply` invocation and never contains patch
+        // content, `echo <patch>`, heredocs, or a `cd` prefix — the working
+        // directory is supplied via the shell request `cwd` field.
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "apply_patch requires an agent-registered project; \
+                 server-configured projects are not supported",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+        let (check_req_id, check_rx) = match self
+            .shell_clients
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: client_id.clone(),
+                    cwd: Some(proj.path.clone()),
+                    command: "git apply --check - && echo OK".to_string(),
+                    stdin: Some(patch.clone()),
+                    timeout_secs: 60,
+                    wait_timeout_secs: 62,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(e),
+        };
+        let check_result = tokio::time::timeout(Duration::from_secs(64), check_rx).await;
+        match check_result {
+            Ok(Ok(resp)) if resp.exit_code != Some(0) => {
+                return ToolResult::ok(json!({
+                    "success": false,
+                    "changed_files": changed,
+                    "stdout": resp.stdout,
+                    "stderr": resp.stderr,
+                    "error": "git apply --check failed",
+                }));
             }
-            let (apply_req_id, apply_rx) = match self
-                .shell_clients
-                .enqueue_run(
-                    ShellRunRequest {
-                        client_id,
-                        cwd: Some(proj.path.clone()),
-                        command: "git apply -".to_string(),
-                        stdin: Some(patch.clone()),
-                        timeout_secs: 60,
-                        wait_timeout_secs: 62,
-                    },
-                    "tool_runtime".to_string(),
-                )
-                .await
-            {
-                Ok(r) => r,
-                Err(e) => return ToolResult::err(e),
-            };
-            match tokio::time::timeout(Duration::from_secs(64), apply_rx).await {
-                Ok(Ok(resp)) => {
-                    let success = resp.exit_code == Some(0);
-                    ToolResult::ok(json!({
-                        "success": success,
-                        "changed_files": changed,
-                        "stdout": resp.stdout,
-                        "stderr": resp.stderr,
-                    }))
-                }
-                Ok(Err(_)) => {
-                    self.shell_clients.cancel_request(&apply_req_id).await;
-                    ToolResult::err("apply request dropped")
-                }
-                Err(_) => {
-                    self.shell_clients.cancel_request(&apply_req_id).await;
-                    ToolResult::err("timed out applying patch")
-                }
+            Err(_) => {
+                self.shell_clients.cancel_request(&check_req_id).await;
+                return ToolResult::err("timed out during patch validation");
             }
-        } else {
-            let root = proj.root();
-            if !root.exists() {
-                return ToolResult::err("Project root does not exist");
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&check_req_id).await;
+                return ToolResult::err("patch validation request dropped");
             }
-            let patch_clone = patch.clone();
-            let root_clone = root.clone();
-            let result =
-                tokio::task::spawn_blocking(move || apply_patch_local(&root_clone, &patch_clone))
-                    .await;
-            match result {
-                Ok(Ok((success, stdout, stderr))) => ToolResult::ok(json!({
+            _ => {}
+        }
+        let (apply_req_id, apply_rx) = match self
+            .shell_clients
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id,
+                    cwd: Some(proj.path.clone()),
+                    command: "git apply -".to_string(),
+                    stdin: Some(patch.clone()),
+                    timeout_secs: 60,
+                    wait_timeout_secs: 62,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(e),
+        };
+        match tokio::time::timeout(Duration::from_secs(64), apply_rx).await {
+            Ok(Ok(resp)) => {
+                let success = resp.exit_code == Some(0);
+                ToolResult::ok(json!({
                     "success": success,
                     "changed_files": changed,
-                    "stdout": stdout,
-                    "stderr": stderr,
-                })),
-                Ok(Err(e)) => ToolResult::err(e),
-                Err(e) => ToolResult::err(format!("task join error: {}", e)),
+                    "stdout": resp.stdout,
+                    "stderr": resp.stderr,
+                }))
+            }
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&apply_req_id).await;
+                ToolResult::err("apply request dropped")
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&apply_req_id).await;
+                ToolResult::err("timed out applying patch")
             }
         }
     }
@@ -4247,37 +4243,6 @@ sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
 emit({"path": path, "created": not exists, "overwritten": exists, "bytes_written": written_bytes, "sha256": sha, "warning": warning})
 "#;
 
-fn apply_patch_local(root: &Path, patch: &str) -> Result<(bool, String, String), String> {
-    if !root.exists() {
-        return Err("Project root does not exist".to_string());
-    }
-    let patch_file = root.join(format!(".codex-patch-{}.diff", uuid::Uuid::new_v4()));
-    std::fs::write(&patch_file, patch)
-        .map_err(|e| format!("Failed to write temp patch file: {}", e))?;
-    let check = run_command_sync(
-        &format!(
-            "git apply --check {}",
-            shell_escape_simple(&patch_file.display().to_string())
-        ),
-        root,
-        60,
-    );
-    if check.0 != 0 {
-        let _ = std::fs::remove_file(&patch_file);
-        return Ok((false, check.1, check.2));
-    }
-    let apply = run_command_sync(
-        &format!(
-            "git apply {}",
-            shell_escape_simple(&patch_file.display().to_string())
-        ),
-        root,
-        60,
-    );
-    let _ = std::fs::remove_file(&patch_file);
-    Ok((apply.0 == 0, apply.1, apply.2))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5990,7 +5955,7 @@ mod tests {
 
     use crate::shell_protocol::{
         ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-        ShellClientCapabilities, ShellClientRegisterRequest,
+        ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
     };
 
     fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
@@ -6223,6 +6188,421 @@ new file mode 100644\n\
             .unwrap()
             .iter()
             .any(|v| v.as_str() == Some("REMOTE_ONLY.md")));
+    }
+
+    // -------------------------------------------------------------------------
+    // Patch chain hardening (agent-backed apply/validate invariants)
+    // -------------------------------------------------------------------------
+    //
+    // These tests pin the agent-backed patch execution invariants:
+    //   * patch content travels over `ShellRunRequest.stdin`, never inside the
+    //     command string (no `echo <patch>`, no heredoc, no raw interpolation);
+    //   * the working directory is supplied via the shell request `cwd` field,
+    //     never via a `cd <path> && ...` prefix in the command;
+    //   * `apply_patch_checked` checks before applying and skips the apply step
+    //     when the preflight fails (no partial application);
+    //   * `validate_patch` only ever enqueues read-only `git apply --check` /
+    //     `--stat` commands, never a bare mutating `git apply -`;
+    //   * server-configured (non-agent) projects are rejected by every patch
+    //     tool, so the server never touches the filesystem directly.
+
+    async fn next_patch_agent_request(
+        runtime: &ToolRuntime,
+        client_id: &str,
+    ) -> Option<ShellAgentShellRequest> {
+        for _ in 0..20 {
+            let req = runtime
+                .shell_clients
+                .poll(ShellAgentPollRequest {
+                    client_id: client_id.to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap();
+            if req.is_some() {
+                return req;
+            }
+            tokio::task::yield_now().await;
+        }
+        None
+    }
+
+    async fn complete_patch_agent_request(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        request_id: &str,
+        exit_code: i32,
+        stdout: &str,
+        stderr: &str,
+    ) {
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: client_id.to_string(),
+                request_id: request_id.to_string(),
+                exit_code: Some(exit_code),
+                stdout: Some(stdout.to_string()),
+                stderr: Some(stderr.to_string()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    /// A small patch carrying a distinctive marker line so tests can prove the
+    /// patch body never leaks into the shell `command` string.
+    fn marker_patch(filename: &str, marker: &str) -> String {
+        format!(
+            "diff --git a/{f} b/{f}\nnew file mode 100644\n--- /dev/null\n+++ b/{f}\n\
+             @@ -0,0 +1 @@\n+{m}\n",
+            f = filename,
+            m = marker,
+        )
+    }
+
+    /// A patch deliberately larger than the agent shell command limit
+    /// (`MAX_COMMAND_LEN` = 8000 bytes) so tests can prove the patch still
+    /// validates/applies via `stdin` rather than the command string.
+    fn large_marker_patch(filename: &str, marker: &str) -> String {
+        let mut s = String::new();
+        s.push_str(&format!(
+            "diff --git a/{f} b/{f}\nnew file mode 100644\n--- /dev/null\n+++ b/{f}\n\
+             @@ -0,0 +1,200 @@\n",
+            f = filename,
+        ));
+        s.push_str(&format!("+{m}\n", m = marker));
+        for i in 0..199 {
+            s.push_str(&format!("+line-{:04}-{}\n", i, "x".repeat(48)));
+        }
+        s
+    }
+
+    /// Assert a patch-related agent command is one of the fixed, known-safe
+    /// invocations and never carries patch content, a `cd` prefix, a heredoc,
+    /// or an `echo`/`cat` splice of the patch body.
+    fn assert_safe_patch_command(command: &str, marker: &str) {
+        let allowed = [
+            "git apply --check -",
+            "git apply --check - && echo OK",
+            "git apply --stat -",
+            "git apply -",
+        ];
+        assert!(
+            allowed.contains(&command),
+            "unexpected patch command (must be a fixed git apply invocation): {}",
+            command
+        );
+        assert!(
+            !command.contains(marker),
+            "patch content leaked into command: {}",
+            command
+        );
+        assert!(
+            !command.contains("cd "),
+            "command must not use a cd prefix (cwd is supplied via the shell request): {}",
+            command
+        );
+        assert!(
+            !command.contains("<<"),
+            "command must not use a heredoc: {}",
+            command
+        );
+        // The only permitted `echo` is the fixed `echo OK` success marker; it
+        // never carries patch content. `cat` must never appear (no splicing).
+        if command.contains("echo ") {
+            assert_eq!(command, "git apply --check - && echo OK");
+        }
+        assert!(
+            !command.contains("cat "),
+            "command must not splice the patch via cat: {}",
+            command
+        );
+    }
+
+    #[tokio::test]
+    async fn apply_patch_agent_command_excludes_patch_content_and_uses_stdin_and_cwd() {
+        let runtime = runtime_with_agent_project("patcher");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "patcher", None, caps).await;
+
+        let project = agent_test_project_id("patcher");
+        let marker = "ZZZ_PATCH_MARKER_APPLY_ZZZ";
+        let patch = marker_patch("APPLY_MARKER.md", marker);
+        let runtime_for_task = runtime.clone();
+        let patch_for_apply = patch.clone();
+        let apply_task =
+            tokio::spawn(
+                async move { runtime_for_task.apply_patch(project, patch_for_apply).await },
+            );
+
+        // 1) preflight check: `git apply --check - && echo OK`
+        let check_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("apply_patch should enqueue a git apply --check request");
+        assert_safe_patch_command(&check_req.command, marker);
+        assert_eq!(check_req.command, "git apply --check - && echo OK");
+        assert_eq!(check_req.stdin.as_deref(), Some(patch.as_str()));
+        assert_eq!(check_req.cwd.as_deref(), Some("/tmp/agent-proj"));
+        complete_patch_agent_request(&runtime, "patcher", &check_req.request_id, 0, "OK\n", "")
+            .await;
+
+        // 2) apply: `git apply -`
+        let apply_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("apply_patch should enqueue a git apply request");
+        assert_safe_patch_command(&apply_req.command, marker);
+        assert_eq!(apply_req.command, "git apply -");
+        assert_eq!(apply_req.stdin.as_deref(), Some(patch.as_str()));
+        assert_eq!(apply_req.cwd.as_deref(), Some("/tmp/agent-proj"));
+        complete_patch_agent_request(&runtime, "patcher", &apply_req.request_id, 0, "", "").await;
+
+        let result = apply_task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["success"], true);
+    }
+
+    #[tokio::test]
+    async fn apply_patch_rejects_nul_byte_patch() {
+        let runtime = runtime_with_agent_project("patcher");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "patcher", None, caps).await;
+        let project = agent_test_project_id("patcher");
+        let patch = "diff --git a/A b/A\n--- a/A\n+++ b/A\n@@ -1 +1 @@\n-a\n\0+b\n";
+        let result = runtime.apply_patch(project, patch.to_string()).await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("NUL"));
+    }
+
+    #[tokio::test]
+    async fn apply_patch_checked_does_not_apply_when_check_fails() {
+        let runtime = runtime_with_agent_project("patcher");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "patcher", None, caps).await;
+
+        let project = agent_test_project_id("patcher");
+        let marker = "ZZZ_PATCH_MARKER_CHECKFAIL_ZZZ";
+        let patch = marker_patch("CHECKFAIL_PROBE.md", marker);
+        let runtime_for_task = runtime.clone();
+        let patch_for_task = patch.clone();
+        let checked_task = tokio::spawn(async move {
+            runtime_for_task
+                .apply_patch_checked(project, patch_for_task, Some(true))
+                .await
+        });
+
+        // 1) validate preflight check: fails (exit 1) -> can_apply=false.
+        let check_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("apply_patch_checked should enqueue a validate check request");
+        assert_safe_patch_command(&check_req.command, marker);
+        assert_eq!(check_req.command, "git apply --check -");
+        assert_eq!(check_req.stdin.as_deref(), Some(patch.as_str()));
+        complete_patch_agent_request(&runtime, "patcher", &check_req.request_id, 1, "", "bad")
+            .await;
+
+        // 2) validate stat summary still runs (read-only, regardless of can_apply).
+        let stat_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("validate_patch should enqueue a git apply --stat request");
+        assert_safe_patch_command(&stat_req.command, marker);
+        assert_eq!(stat_req.command, "git apply --stat -");
+        complete_patch_agent_request(&runtime, "patcher", &stat_req.request_id, 0, "stat", "")
+            .await;
+
+        // 3) No apply step must be enqueued because the preflight failed.
+        let leaked_apply = next_patch_agent_request(&runtime, "patcher").await;
+        assert!(
+            leaked_apply.is_none(),
+            "apply_patch_checked must not apply when the check fails (got: {:?})",
+            leaked_apply.map(|r| r.command)
+        );
+
+        let result = checked_task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["applied"], false);
+        assert_eq!(result.output["validate"]["can_apply"], false);
+    }
+
+    #[tokio::test]
+    async fn apply_patch_checked_applies_large_patch_over_command_limit_via_stdin() {
+        let runtime = runtime_with_agent_project("patcher");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "patcher", None, caps).await;
+
+        let project = agent_test_project_id("patcher");
+        let marker = "ZZZ_PATCH_MARKER_LARGE_CHECKED_ZZZ";
+        let patch = large_marker_patch("LARGE_CHECKED_PROBE.md", marker);
+        // Prove the patch exceeds the agent shell command length limit; it must
+        // still validate + apply because it travels over stdin, not the command.
+        assert!(patch.len() > 8_000, "patch must exceed command limit");
+        assert!(patch.len() <= MAX_VALIDATE_PATCH_BYTES);
+
+        let runtime_for_task = runtime.clone();
+        let patch_for_task = patch.clone();
+        let checked_task = tokio::spawn(async move {
+            runtime_for_task
+                .apply_patch_checked(project, patch_for_task, Some(true))
+                .await
+        });
+
+        // 1) validate check.
+        let check_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("validate check request");
+        assert_safe_patch_command(&check_req.command, marker);
+        assert_eq!(check_req.stdin.as_deref(), Some(patch.as_str()));
+        complete_patch_agent_request(&runtime, "patcher", &check_req.request_id, 0, "", "").await;
+
+        // 2) validate stat.
+        let stat_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("validate stat request");
+        assert_safe_patch_command(&stat_req.command, marker);
+        complete_patch_agent_request(&runtime, "patcher", &stat_req.request_id, 0, "stat", "")
+            .await;
+
+        // 3) apply preflight check.
+        let apply_check_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("apply check request");
+        assert_safe_patch_command(&apply_check_req.command, marker);
+        assert_eq!(apply_check_req.command, "git apply --check - && echo OK");
+        assert_eq!(apply_check_req.stdin.as_deref(), Some(patch.as_str()));
+        complete_patch_agent_request(
+            &runtime,
+            "patcher",
+            &apply_check_req.request_id,
+            0,
+            "OK\n",
+            "",
+        )
+        .await;
+
+        // 4) apply.
+        let apply_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("apply request");
+        assert_safe_patch_command(&apply_req.command, marker);
+        assert_eq!(apply_req.command, "git apply -");
+        assert_eq!(apply_req.stdin.as_deref(), Some(patch.as_str()));
+        complete_patch_agent_request(&runtime, "patcher", &apply_req.request_id, 0, "", "").await;
+
+        // 5) post-apply git_diff_summary (drain + complete generically).
+        if let Some(diff_req) = next_patch_agent_request(&runtime, "patcher").await {
+            complete_patch_agent_request(&runtime, "patcher", &diff_req.request_id, 0, "", "")
+                .await;
+        }
+
+        let result = checked_task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["applied"], true);
+        assert_eq!(result.output["validate"]["can_apply"], true);
+    }
+
+    #[tokio::test]
+    async fn validate_patch_never_enqueues_mutating_apply_command() {
+        let runtime = runtime_with_agent_project("patcher");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "patcher", None, caps).await;
+
+        let project = agent_test_project_id("patcher");
+        let marker = "ZZZ_PATCH_MARKER_VALIDATE_ZZZ";
+        let patch = marker_patch("VALIDATE_MARKER.md", marker);
+        let runtime_for_task = runtime.clone();
+        let patch_for_task = patch.clone();
+        let validate_task = tokio::spawn(async move {
+            runtime_for_task
+                .validate_patch(project, patch_for_task, None)
+                .await
+        });
+
+        // 1) `git apply --check -` (read-only applicability test).
+        let check_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("validate_patch should enqueue a check request");
+        assert_safe_patch_command(&check_req.command, marker);
+        assert_eq!(check_req.command, "git apply --check -");
+        assert_ne!(check_req.command, "git apply -");
+        assert_eq!(check_req.stdin.as_deref(), Some(patch.as_str()));
+        complete_patch_agent_request(&runtime, "patcher", &check_req.request_id, 0, "", "").await;
+
+        // 2) `git apply --stat -` (read-only summary).
+        let stat_req = next_patch_agent_request(&runtime, "patcher")
+            .await
+            .expect("validate_patch should enqueue a stat request");
+        assert_safe_patch_command(&stat_req.command, marker);
+        assert_eq!(stat_req.command, "git apply --stat -");
+        complete_patch_agent_request(&runtime, "patcher", &stat_req.request_id, 0, "stat", "")
+            .await;
+
+        // 3) No mutating apply must be enqueued — validate_patch is dry-run only.
+        let leaked_apply = next_patch_agent_request(&runtime, "patcher").await;
+        assert!(
+            leaked_apply.is_none(),
+            "validate_patch enqueued a mutating command (got: {:?})",
+            leaked_apply.map(|r| r.command)
+        );
+
+        let result = validate_task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["can_apply"], true);
+    }
+
+    #[tokio::test]
+    async fn patch_tools_reject_server_configured_project() {
+        // A server-configured (local) project must NOT be a runtime surface for
+        // any patch tool: the server never reads/writes its filesystem directly.
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_local_project(tmp.path(), "local-proj");
+        let patch = marker_patch("LOCAL_PROBE.md", "marker");
+
+        let apply = runtime
+            .apply_patch("local-proj".to_string(), patch.clone())
+            .await;
+        assert!(!apply.success);
+        let apply_err = apply.error.unwrap();
+        assert!(
+            apply_err.contains("agent-registered")
+                || apply_err.contains("server-configured")
+                || apply_err.contains("Unknown project")
+                || apply_err.contains("projects.toml"),
+            "apply_patch should reject a server-configured project: {}",
+            apply_err
+        );
+
+        let checked = runtime
+            .apply_patch_checked("local-proj".to_string(), patch.clone(), Some(true))
+            .await;
+        assert!(!checked.success);
+        let checked_err = checked.error.unwrap();
+        assert!(
+            checked_err.contains("agent-registered")
+                || checked_err.contains("server-configured")
+                || checked_err.contains("Unknown project")
+                || checked_err.contains("projects.toml"),
+            "apply_patch_checked should reject a server-configured project: {}",
+            checked_err
+        );
+
+        let validate = runtime
+            .validate_patch("local-proj".to_string(), patch.clone(), None)
+            .await;
+        assert!(!validate.success);
+        let validate_err = validate.error.unwrap();
+        assert!(
+            validate_err.contains("agent-registered")
+                || validate_err.contains("server-configured")
+                || validate_err.contains("Unknown project")
+                || validate_err.contains("projects.toml"),
+            "validate_patch should reject a server-configured project: {}",
+            validate_err
+        );
     }
 
     async fn register_agent_with_projects(

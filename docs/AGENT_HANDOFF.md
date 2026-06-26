@@ -146,6 +146,14 @@ The previous hang was caused by holding `local_jobs` across recovery in
 `stop_job`; that is fixed. Env-var tests use a shared test lock to avoid
 parallel pollution.
 
+Shell scripts should be syntax-checked with `bash -n` (and Python snippets
+with `python3 -m py_compile` if changed):
+
+```bash
+bash -n scripts/e2e_zero_config_ws.sh
+bash -n scripts/smoke_deployment.sh
+```
+
 ## Documentation Map
 
 Start with:
@@ -193,5 +201,20 @@ Codex CLI, no ChatGPT) and exercises the GPT Actions + MCP surface. See
 [docs/E2E_VALIDATION.md](E2E_VALIDATION.md) for details. If it fails, inspect
 the printed server/agent log paths before touching code — the failure is often
 a local environment issue, not a regression.
+
+For an already-deployed instance, run the deployment smoke (no server/agent
+started; verifies the public surface of a live deployment):
+
+```bash
+DROP_PUBLIC_URL="https://drop.example.com" \
+DROP_TOKEN="<your-secret>" \
+bash scripts/smoke_deployment.sh
+```
+
+It checks `GET /openapi.json`, `POST /api/runtime/status`,
+`POST /api/projects/list`, `POST /mcp initialize`, and `POST /mcp tools/list`
+using only `curl` + `python3` and never prints the token. See
+[docs/DEPLOYMENT.md](DEPLOYMENT.md) for the full deployment guide (env vars,
+agent config, reverse proxy, ChatGPT import, troubleshooting order).
 
 Avoid broad refactors until real ChatGPT integration has been exercised.

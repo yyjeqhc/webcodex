@@ -1,5 +1,21 @@
+# systemd unit for the Private Drop agent.
+#
+# Copy to /etc/systemd/system/private-drop-agent.service, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now private-drop-agent
+#
+# The agent owns local machine knowledge (project id/path/policy/capabilities)
+# and registers it with the server at startup. The server is a zero-project-
+# config relay and does NOT need a server-side projects.toml for runtime project
+# discovery; project ids are exposed as agent:<client_id>:<project_id>.
+#
+# The default agent.toml below sets transport = "websocket" (preferred). Polling
+# is the fallback for restricted networks; set transport = "polling" there to
+# use it. Both transports reuse the same execution path and server-side
+# registry/queue/job state.
+
 [Unit]
-Description=Private Drop shell agent
+Description=Private Drop agent (WebSocket preferred, polling fallback)
 After=network-online.target
 Wants=network-online.target
 

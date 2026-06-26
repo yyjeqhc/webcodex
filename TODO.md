@@ -35,6 +35,19 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       starts from agent-registered project summaries using ids like
       `agent:<client_id>:<project_id>`; server-side project config is no longer
       the intended runtime project source.
+- [x] WebSocket agent transport as the primary long-lived transport (Phase 13),
+      reusing the existing registry/queue/job_update semantics. Hardened in
+      Phase 14 (per-client pending queue cap, conservative `lost`
+      reconciliation on disconnect, `owner`/auth binding at registration).
+      Polling remains the fallback transport.
+- [x] Local E2E validation harness (Phase 15): `scripts/e2e_zero_config_ws.sh`
+      boots a real server + WebSocket agent with a stub Codex CLI and exercises
+      the GPT Actions + MCP surface. See [docs/E2E_VALIDATION.md](docs/E2E_VALIDATION.md).
+- [x] Deployment hardening (Phase 16): deployment guide (`docs/DEPLOYMENT.md`),
+      systemd + env samples, nginx reverse proxy sample, and a deployment smoke
+      script (`scripts/smoke_deployment.sh`). The server is a zero-project-
+      config relay; WebSocket is preferred, polling is fallback, QUIC is not
+      implemented. See [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### Deprecated (not active features)
 
@@ -48,15 +61,11 @@ removed. They are intentionally not tracked as future work.
 - [ ] Finish zero-config agent runtime cleanup: remove remaining docs/tests that
       present `PROJECTS_CONFIG` as the normal runtime project source, and add
       agent-registered happy-path tests for read/git/Codex routing.
-- [ ] WebSocket agent transport as the primary long-lived transport, reusing the
-      existing registry/queue/job_update semantics.
-- [ ] Keep polling as fallback transport for restricted networks and old agents.
 - [ ] QUIC transport design after the WebSocket message envelope is stable.
 - [ ] Real ChatGPT GPT Actions import test (import `/openapi.json` and run the
       recommended call flow against a live deployment with an agent-registered
       project)
 - [ ] Real ChatGPT MCP connection test (connect a ChatGPT MCP client to `/mcp`)
-- [ ] Deployment hardening: reverse proxy / HTTPS guide, systemd notes
 - [ ] Rate limiting
 - [ ] Audit retention / cleanup policy for long-running deployments
 - [ ] Persistent agent job queue (survive server restart for in-flight agent

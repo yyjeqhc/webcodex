@@ -1,17 +1,41 @@
 # Example config for private-drop-agent.
-# Copy to /etc/private-drop-agent/agent.toml and edit token/client_id.
+# Copy to /etc/private-drop-agent/agent.toml and edit token/client_id/server_url.
 
-server_url = "https://your-server.example"
+# Public server URL. Must match the server's DROP_PUBLIC_URL so TLS validates.
+server_url = "https://drop.example.com"
+
+# Bearer token. Must equal the server's DROP_TOKEN (or a valid API key).
+# NEVER commit a real token; replace this placeholder.
 token = "REPLACE_WITH_DROP_TOKEN_OR_AGENT_TOKEN"
+
+# Stable unique id for this agent host. Used in runtime ids:
+#   agent:<client_id>:<project_id>
 client_id = "workstation-1"
 display_name = "Workstation"
+
+# Owner principal. A bootstrap DROP_TOKEN may register any owner; a normal API
+# key may only register owner == <username>. Applied identically to polling and
+# WebSocket.
 owner = "you"
+
+# Preferred long-lived transport. WebSocket is preferred; polling is the
+# fallback for restricted networks or older agents. Omit (or set "polling") to
+# use polling. Both transports reuse the same execution path and the same
+# server-side registry/queue/job state.
+transport = "websocket"
+
+# Polling interval (only used by the polling transport).
 poll_interval_ms = 1000
 
-# The agent announces agent_protocol_version = "polling-v1" automatically during
-# registration. There is no config field for it; it is reported back by
-# list_agents and runtime_status for observability and future capability
-# negotiation.
+# Directory of agent-side project files (one *.toml per project). The agent
+# reads these and reports them to the server at registration; the server never
+# needs a matching server-side [projects.<id>] block.
+projects_dir = "/etc/private-drop-agent/projects.d"
+
+# The agent announces agent_protocol_version = "websocket-v1" (or "polling-v1")
+# automatically during registration. There is no config field for it; it is
+# reported back by list_agents and runtime_status for observability and future
+# capability negotiation.
 
 [capabilities]
 # These must match what the agent host is allowed to do. The current

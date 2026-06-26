@@ -1,0 +1,49 @@
+# systemd unit for the Private Drop server.
+#
+# Copy to /etc/systemd/system/private-drop.service, then:
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now private-drop
+#
+# The server is a zero-project-config relay: it does NOT read a projects.toml
+# for runtime project discovery. Projects are registered by agents as
+# agent:<client_id>:<project_id>. Do not restore PROJECTS_CONFIG as the runtime
+# project source.
+#
+# Keep the server bound to 127.0.0.1 behind a reverse proxy that terminates
+# TLS. DROP_TOKEN is the application-layer gate; TLS is the transport gate.
+
+[Unit]
+Description=Private Drop runtime server (zero-config relay)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=private-drop
+Group=private-drop
+
+# Runtime data lives here (SQLite DB, uploads, job metadata). Persistent.
+StateDirectory=private-drop
+WorkingDirectory=/opt/private-drop
+
+ExecStart=/opt/private-drop/private-drop
+
+# Load secrets + public URL from the env file (chmod 0600, owner root).
+# See private-drop.env.example for the full set.
+EnvironmentFile=/etc/private-drop/private-drop.env
+
+# Sensible defaults; override in the env file if needed.
+Environment=RUST_LOG=info
+
+Restart=always
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+ReadWritePaths=/var/lib/private-drop
+
+[Install]
+WantedBy=multi-user.target

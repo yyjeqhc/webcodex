@@ -442,3 +442,29 @@ bash scripts/e2e_zero_config_ws.sh
 
 See [docs/E2E_VALIDATION.md](docs/E2E_VALIDATION.md) for what it covers, env
 vars, and how to map the same flow to a real ChatGPT GPT Action import.
+
+## Deployment
+
+To deploy the runtime so a real ChatGPT can reach it, see
+[docs/DEPLOYMENT.md](docs/DEPLOYMENT.md). It covers server environment variables
+(`DROP_ADDR`, `DROP_TOKEN`, `DROP_DATA`, `DROP_PUBLIC_URL`, `CODEX_*`), agent
+configuration (`server_url`, `token`, `client_id`, `owner`,
+`transport = "websocket"`, `projects_dir`), reverse proxy / HTTPS, ChatGPT GPT
+Actions import URL (`/openapi.json`), MCP endpoint URL (`/mcp`), smoke tests,
+and the troubleshooting order.
+
+Deployment helpers in this repo:
+
+- systemd + env samples: [`deploy/`](deploy/) —
+  `private-drop.service.example`, `private-drop.env.example`,
+  `private-drop-agent.service.example`, `private-drop-agent.toml.example`,
+  `agent-project.toml.example`, `projects.d/private-drop.toml.example`.
+- nginx reverse proxy sample: `deploy/nginx.private-drop.example.conf`.
+- Deployment smoke (against a live instance):
+  `bash scripts/smoke_deployment.sh` (uses `DROP_PUBLIC_URL` + `DROP_TOKEN`).
+- Local full E2E smoke: `bash scripts/e2e_zero_config_ws.sh`.
+
+The server is a **zero-project-config relay**: it does not need a `projects.toml`
+as a runtime project source. Projects are registered by agents as
+`agent:<client_id>:<project_id>`. QUIC is a future transport and is not
+implemented.

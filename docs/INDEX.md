@@ -30,7 +30,11 @@ surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
 10. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation
     harness (`scripts/e2e_zero_config_ws.sh`): how to run it, env vars, MCP
     smoke, GPT Actions schema smoke, and mapping to a real ChatGPT import.
-11. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — historical
+11. [DEPLOYMENT.md](DEPLOYMENT.md) — production deployment: server env vars,
+    agent config (WebSocket preferred / polling fallback), reverse proxy / HTTPS,
+    ChatGPT GPT Actions import URL, MCP endpoint URL, smoke tests, and
+    troubleshooting order. The server is a zero-project-config relay.
+12. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — historical
     phase-by-phase development plan retained for context.
 
 ## Scope and architecture

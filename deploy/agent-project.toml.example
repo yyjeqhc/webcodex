@@ -1,0 +1,17 @@
+# Agent-side project file.
+#
+# Place one *.toml per project under the agent's projects_dir (default
+# ~/.config/private-drop-agent/projects.d, or whatever projects_dir is set to
+# in agent.toml). The agent reads these and reports them to the server at
+# registration; the server exposes them as runtime ids
+# agent:<client_id>:<project_id>.
+#
+# The server does NOT need a matching server-side [projects.<id>] block.
+# Project paths and policies come from this file, registered by the agent.
+
+id = "private-drop"
+path = "/root/git/private-drop"
+name = "Private Drop"
+allow_patch = true
+kind = "rust"
+description = "Private Drop Runtime repository"

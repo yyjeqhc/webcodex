@@ -1,6 +1,6 @@
 # Deployment
 
-This document covers deploying Private Drop Runtime from "runs locally" to "a
+This document covers deploying WebCodex Runtime from "runs locally" to "a
 real ChatGPT can talk to it": server environment, agent configuration, reverse
 proxy / HTTPS, ChatGPT GPT Actions import, MCP endpoint, smoke tests, and
 troubleshooting.
@@ -23,14 +23,14 @@ ChatGPT GPT Action      ChatGPT MCP client
    /openapi.json              /mcp            (public, behind reverse proxy + TLS)
         \                       /
          v                     v
-              private-drop server             (DROP_ADDR, Bearer auth)
+              webcodex server             (WEBCODEX_ADDR, Bearer auth)
                       |
                       v
             GET /api/agents/ws (WebSocket, preferred)
             POST /api/shell/agent/* (polling, fallback)
                       |
                       v
-            private-drop-agent (one or more)
+            webcodex-agent (one or more)
                       |
                       v
             local project working tree + Codex CLI
@@ -47,28 +47,28 @@ path for WebSocket.
 ```bash
 cargo build --release
 # Binaries:
-#   target/release/private-drop        (server)
-#   target/release/private-drop-agent  (agent)
+#   target/release/webcodex        (server)
+#   target/release/webcodex-agent  (agent)
 ```
 
 Install them (example layout used by the systemd samples):
 
 ```bash
-sudo install -d /opt/private-drop
-sudo install -m 0755 target/release/private-drop        /opt/private-drop/
-sudo install -m 0755 target/release/private-drop-agent  /opt/private-drop/
+sudo install -d /opt/webcodex
+sudo install -m 0755 target/release/webcodex        /opt/webcodex/
+sudo install -m 0755 target/release/webcodex-agent  /opt/webcodex/
 ```
 
 ### Environment variables
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `DROP_TOKEN` | _(unset)_ | **Yes (production)** | Bearer token for all protected endpoints and the agent handshake. When unset the server runs in **development mode without authentication** — never do this in production. |
-| `DROP_ADDR` | `0.0.0.0:8080` | No | Bind address for the HTTP server. Behind a reverse proxy, bind to `127.0.0.1:8080` and let the proxy terminate TLS. |
-| `DROP_DATA` | `./data` | No | Runtime data directory: SQLite DB (`drop.db`), uploads, job metadata (`.codex/jobs/`). Use a persistent, backed-up path in production. |
-| `DROP_PUBLIC_URL` | `http://localhost:8080` | **Yes (production)** | Public base URL used as `servers[0].url` in `/openapi.json`. Set to the externally reachable HTTPS URL (e.g. `https://drop.example.com`) so ChatGPT imports actions against the right host. |
-| `DROP_ENV_FILE` | _(unset)_ | No | Optional path to an env file loaded at startup (KEY=value lines, `#` comments, optional `export ` prefix). If unset, the server also auto-loads `./private-drop.env`, `/opt/private-drop/private-drop.env`, and `/etc/private-drop/private-drop.env` if present. |
-| `DROP_ENABLE_SSH` | `false` | No | Reserved SSH executor toggle. Not used by the zero-config runtime; leave unset. |
+| `WEBCODEX_TOKEN` | _(unset)_ | **Yes (production)** | Bearer token for all protected endpoints and the agent handshake. When unset the server runs in **development mode without authentication** — never do this in production. |
+| `WEBCODEX_ADDR` | `0.0.0.0:8080` | No | Bind address for the HTTP server. Behind a reverse proxy, bind to `127.0.0.1:8080` and let the proxy terminate TLS. |
+| `WEBCODEX_DATA` | `./data` | No | Runtime data directory: SQLite DB (`drop.db`), uploads, job metadata (`.codex/jobs/`). Use a persistent, backed-up path in production. |
+| `WEBCODEX_PUBLIC_URL` | `http://localhost:8080` | **Yes (production)** | Public base URL used as `servers[0].url` in `/openapi.json`. Set to the externally reachable HTTPS URL (e.g. `https://drop.example.com`) so ChatGPT imports actions against the right host. |
+| `WEBCODEX_ENV_FILE` | _(unset)_ | No | Optional path to an env file loaded at startup (KEY=value lines, `#` comments, optional `export ` prefix). If unset, the server also auto-loads `./webcodex.env`, `/opt/webcodex/webcodex.env`, and `/etc/webcodex/webcodex.env` if present. |
+| `WEBCODEX_ENABLE_SSH` | `false` | No | Reserved SSH executor toggle. Not used by the zero-config runtime; leave unset. |
 | `CODEX_BIN` | `codex` | No | Codex CLI binary name or path. Must be installed and on `PATH` on the **agent** host (the server only forwards requests; the agent runs Codex). **Codex is optional**: when not installed, the runtime still serves `read_file`, `git_status`, `git_diff`, `apply_patch`, and `run_shell` through the agent. Only `run_codex` requires the Codex CLI. |
 | `CODEX_APPROVAL_MODE` | _(empty/disabled)_ | No | Approval mode passed via `--approval-mode`. Empty/blank/`none`/`off`/`disabled` omit the flag entirely — use this if the installed Codex CLI does not support `--approval-mode`. Other values (e.g. `full-auto`, `suggest`) enable it. A request `approval_mode` overrides this per call. |
 | `CODEX_DEFAULT_TIMEOUT_SECS` | `3600` | No | Default job timeout when a request omits `timeout_secs`. |
@@ -83,12 +83,12 @@ sudo install -m 0755 target/release/private-drop-agent  /opt/private-drop/
 ### Minimal production server invocation
 
 ```bash
-DROP_TOKEN="<long-random-secret>" \
-DROP_ADDR="127.0.0.1:8080" \
-DROP_DATA="/var/lib/private-drop" \
-DROP_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_TOKEN="<long-random-secret>" \
+WEBCODEX_ADDR="127.0.0.1:8080" \
+WEBCODEX_DATA="/var/lib/webcodex" \
+WEBCODEX_PUBLIC_URL="https://drop.example.com" \
 RUST_LOG="info" \
-/opt/private-drop/private-drop
+/opt/webcodex/webcodex
 ```
 
 The server **does not** read a `projects.toml` for runtime project discovery. Do
@@ -97,17 +97,17 @@ surface — projects come from agent registration.
 
 ### systemd
 
-See [`deploy/private-drop.service.example`](../deploy/private-drop.service.example)
-and [`deploy/private-drop.env.example`](../deploy/private-drop.env.example). Copy
-the service file to `/etc/systemd/system/private-drop.service`, copy the env
-file to `/etc/private-drop/private-drop.env`, fill in `DROP_TOKEN` and
-`DROP_PUBLIC_URL`, then:
+See [`deploy/webcodex.service.example`](../deploy/webcodex.service.example)
+and [`deploy/webcodex.env.example`](../deploy/webcodex.env.example). Copy
+the service file to `/etc/systemd/system/webcodex.service`, copy the env
+file to `/etc/webcodex/webcodex.env`, fill in `WEBCODEX_TOKEN` and
+`WEBCODEX_PUBLIC_URL`, then:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now private-drop
-sudo systemctl status private-drop
-sudo journalctl -u private-drop -f
+sudo systemctl enable --now webcodex
+sudo systemctl status webcodex
+sudo journalctl -u webcodex -f
 ```
 
 ## 2. Agent
@@ -123,11 +123,11 @@ Full field reference (TOML, loaded via `--config <path>`):
 | Field | Required | Description |
 |-------|----------|-------------|
 | `server_url` | **Yes** | Server base URL (e.g. `https://drop.example.com`). Must match the server's public URL for TLS to validate. |
-| `token` | **Yes** | Bearer token. Must equal the server's `DROP_TOKEN` (or a valid API key on the server). Sent in the `Authorization: Bearer <token>` header, including the WebSocket handshake. |
+| `token` | **Yes** | Bearer token. Must equal the server's `WEBCODEX_TOKEN` (or a valid API key on the server). Sent in the `Authorization: Bearer <token>` header, including the WebSocket handshake. |
 | `client_id` | **Yes** | Stable unique id for this agent host (e.g. `workstation-1`). Used in runtime ids `agent:<client_id>:<project_id>`. |
-| `owner` | No | Owner principal. A bootstrap `DROP_TOKEN` may register any `owner`; a normal API key may only register `owner == <username>`. |
+| `owner` | No | Owner principal. A bootstrap `WEBCODEX_TOKEN` may register any `owner`; a normal API key may only register `owner == <username>`. |
 | `transport` | No | `"websocket"` (preferred) or `"polling"` (fallback). Omitting it defaults to `"polling"`. **Prefer `"websocket"`** for deployments. |
-| `projects_dir` | No | Directory of agent-side project files (one `*.toml` per project). Defaults to `~/.config/private-drop-agent/projects.d`. |
+| `projects_dir` | No | Directory of agent-side project files (one `*.toml` per project). Defaults to `~/.config/webcodex/projects.d`. |
 | `poll_interval_ms` | No | Polling interval (only used by the polling transport). Default `1000`. |
 | `display_name` | No | Human label shown in `list_agents` / `runtime_status`. |
 | `hostname` | No | Override hostname reported during registration. |
@@ -139,13 +139,13 @@ Full field reference (TOML, loaded via `--config <path>`):
 
 ```toml
 server_url = "https://drop.example.com"
-token = "REPLACE_WITH_DROP_TOKEN"
+token = "REPLACE_WITH_WEBCODEX_TOKEN"
 client_id = "workstation-1"
 display_name = "Workstation"
 owner = "you"
 transport = "websocket"
 poll_interval_ms = 1000
-projects_dir = "/etc/private-drop-agent/projects.d"
+projects_dir = "/etc/webcodex/projects.d"
 
 [capabilities]
 shell = true
@@ -171,36 +171,36 @@ Omit `transport` (or set `transport = "polling"`) to use the polling fallback.
 Each project is one TOML file under `projects_dir`:
 
 ```toml
-# /etc/private-drop-agent/projects.d/private-drop.toml
-id = "private-drop"
-path = "/root/git/private-drop"
-name = "Private Drop"
+# /etc/webcodex/projects.d/webcodex.toml
+id = "webcodex"
+path = "/root/git/webcodex"
+name = "WebCodex"
 allow_patch = true
 kind = "rust"
-description = "Private Drop Runtime repository"
+description = "WebCodex Runtime repository"
 ```
 
 At registration the agent reports this to the server, which exposes it as the
-runtime id `agent:workstation-1:private-drop`. The server never needs the
-matching server-side `[projects.private-drop]` block.
+runtime id `agent:workstation-1:webcodex`. The server never needs the
+matching server-side `[projects.webcodex]` block.
 
 See
 [`deploy/agent-project.toml.example`](../deploy/agent-project.toml.example)
-and [`deploy/projects.d/private-drop.toml.example`](../deploy/projects.d/private-drop.toml.example).
+and [`deploy/projects.d/webcodex.toml.example`](../deploy/projects.d/webcodex.toml.example).
 
 ### Agent systemd
 
 See
-[`deploy/private-drop-agent.service.example`](../deploy/private-drop-agent.service.example)
+[`deploy/webcodex-agent.service.example`](../deploy/webcodex-agent.service.example)
 and
-[`deploy/private-drop-agent.toml.example`](../deploy/private-drop-agent.toml.example).
-Install to `/etc/systemd/system/private-drop-agent.service` and
-`/etc/private-drop-agent/agent.toml` respectively, then:
+[`deploy/webcodex-agent.toml.example`](../deploy/webcodex-agent.toml.example).
+Install to `/etc/systemd/system/webcodex-agent.service` and
+`/etc/webcodex/agent.toml` respectively, then:
 
 ```bash
 sudo systemctl daemon-reload
-sudo systemctl enable --now private-drop-agent
-sudo journalctl -u private-drop-agent -f
+sudo systemctl enable --now webcodex-agent
+sudo journalctl -u webcodex-agent -f
 ```
 
 ## 3. Transport selection: WebSocket preferred, polling fallback
@@ -235,7 +235,7 @@ Key requirements for the reverse proxy:
 - Preserve `Host`, `X-Real-IP`, `X-Forwarded-For`, `X-Forwarded-Proto`.
 
 See
-[`deploy/nginx.private-drop.example.conf`](../deploy/nginx.private-drop.example.conf)
+[`deploy/nginx.webcodex.example.conf`](../deploy/nginx.webcodex.example.conf)
 for a complete nginx sample (HTTPS server block, WebSocket upgrade headers,
 `/mcp`, `/openapi.json`, `/api/agents/ws`, body size and timeout tuning). The
 sample uses `drop.example.com` as a placeholder — replace it with your domain.
@@ -245,9 +245,9 @@ sample uses `drop.example.com` as a placeholder — replace it with your domain.
 - Obtain a certificate (e.g. via Let's Encrypt / certbot) for your domain.
 - Redirect plain HTTP to HTTPS.
 - Keep the server bound to `127.0.0.1:8080` so only the proxy is publicly
-  reachable. `DROP_TOKEN` is the application-layer gate; TLS is the transport
+  reachable. `WEBCODEX_TOKEN` is the application-layer gate; TLS is the transport
   gate. Both are required for production.
-- Set `DROP_PUBLIC_URL` to the `https://` URL so `/openapi.json` advertises the
+- Set `WEBCODEX_PUBLIC_URL` to the `https://` URL so `/openapi.json` advertises the
   correct server URL to ChatGPT.
 
 ## 5. ChatGPT GPT Actions import
@@ -259,7 +259,7 @@ https://drop.example.com/openapi.json
 ```
 
 Then configure Action authentication as **API Key**, type **HTTP**, header
-`Authorization`, value `Bearer <DROP_TOKEN>`.
+`Authorization`, value `Bearer <WEBCODEX_TOKEN>`.
 
 `/openapi.json` is the only GPT-Actions entry point. It is a `GET` route and is
 not listed inside the schema `paths` (which is POST-only). The schema exposes a
@@ -275,7 +275,7 @@ https://drop.example.com/mcp
 ```
 
 `/mcp` speaks JSON-RPC 2.0 over HTTP (streamable-http-jsonrpc transport),
-protected by the same Bearer token (`DROP_TOKEN`). Supported methods:
+protected by the same Bearer token (`WEBCODEX_TOKEN`). Supported methods:
 `initialize`, `ping`, `tools/list`, `tools/call`,
 `notifications/initialized`. MCP and GPT Actions share a single `ToolRuntime` —
 there is no separate business logic for either surface. See
@@ -287,8 +287,8 @@ there is no separate business logic for either surface. See
 After deploying, run the deployment smoke script against the live instance:
 
 ```bash
-DROP_PUBLIC_URL="https://drop.example.com" \
-DROP_TOKEN="<your-secret>" \
+WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_TOKEN="<your-secret>" \
 bash scripts/smoke_deployment.sh
 ```
 
@@ -316,24 +316,24 @@ See [E2E_VALIDATION.md](E2E_VALIDATION.md) for what that harness covers.
 
 ### Log locations
 
-- **Server (systemd)**: `journalctl -u private-drop -f` (or the file you
+- **Server (systemd)**: `journalctl -u webcodex -f` (or the file you
   configured if not using the journal).
-- **Agent (systemd)**: `journalctl -u private-drop-agent -f`.
-- **Runtime data**: under `DROP_DATA` (default `./data`): `drop.db` (SQLite),
+- **Agent (systemd)**: `journalctl -u webcodex-agent -f`.
+- **Runtime data**: under `WEBCODEX_DATA` (default `./data`): `drop.db` (SQLite),
   `uploads/`, `.codex/jobs/<job_id>/metadata.json` and per-job stdout/stderr.
 - **Local E2E harness**: prints `server.log` and `agent.log` paths on failure.
 
 ### Troubleshooting order
 
 1. **Server up?** `curl -sS https://drop.example.com/openapi.json | head` —
-   should return JSON. If not, check `systemctl status private-drop` and the
+   should return JSON. If not, check `systemctl status webcodex` and the
    reverse proxy.
 2. **Auth working?** `POST /api/runtime/status` with
-   `Authorization: Bearer <DROP_TOKEN>` should return `success: true`. A `401`
+   `Authorization: Bearer <WEBCODEX_TOKEN>` should return `success: true`. A `401`
    means the token header is missing or wrong.
 3. **Agent registered?** `POST /api/runtime/status` → `output.agents.count`
    should be `>= 1` and the agent's `status` should be `online`. If `0`, check
-   the agent service log (`journalctl -u private-drop-agent`) — common causes:
+   the agent service log (`journalctl -u webcodex-agent`) — common causes:
    wrong `server_url`, wrong `token`, TLS failure, or the agent cannot reach
    `/api/agents/ws` through the proxy (WebSocket upgrade not forwarded).
 4. **Projects visible?** `POST /api/projects/list` should include
@@ -352,7 +352,7 @@ See [E2E_VALIDATION.md](E2E_VALIDATION.md) for what that harness covers.
 - WebSocket `/api/agents/ws` returns `200` instead of `101`: the proxy is not
   forwarding the `Upgrade` / `Connection` headers, or it is using HTTP/2 to the
   upstream (use HTTP/1.1 upstream for WebSocket).
-- `/openapi.json` works but Actions fail: `DROP_PUBLIC_URL` is wrong, so
+- `/openapi.json` works but Actions fail: `WEBCODEX_PUBLIC_URL` is wrong, so
   ChatGPT calls the wrong host; or the GPT Action auth is not set to
   `Authorization: Bearer <token>`.
 - Long Codex jobs cut off: raise the proxy read/connect timeouts and body size
@@ -368,19 +368,19 @@ when an agent won't stay `online`:
 
 1. **Is the agent a long-lived systemd service?** A WebSocket agent must stay
    running to keep the connection. Confirm
-   `systemctl status private-drop-agent` is `active (running)` and
+   `systemctl status webcodex-agent` is `active (running)` and
    `Restart=always` is set in the unit. A cron-launched or one-shot agent will
    not hold the connection.
 2. **Does nginx forward the WebSocket upgrade?** `/api/agents/ws` must receive
    `Upgrade: websocket` / `Connection: upgrade` and use an HTTP/1.1 upstream.
    A `200` (not `101 Switching Protocols`) response means the upgrade headers
-   were stripped. See `deploy/nginx.private-drop.example.conf`.
+   were stripped. See `deploy/nginx.webcodex.example.conf`.
 3. **Reverse-proxy timeout.** Idle WebSocket connections are closed by proxies
    with short read timeouts. Raise `proxy_read_timeout` (e.g. `3600s`) and keep
    the agent's ping interval below it. A connection that silently drops every
    N seconds usually points here.
 4. **Agent logs: handshake / auth / ping-pong / reconnect.** In
-   `journalctl -u private-drop-agent -f`, look for the TLS/handshake step, the
+   `journalctl -u webcodex-agent -f`, look for the TLS/handshake step, the
    `Authorization: Bearer` handshake result, periodic `ping`/`pong` keepalives,
    and reconnect attempts. A repeating `handshake failed` or `401` means a
    wrong `token` or `server_url`; a repeating reconnect loop with no `pong`

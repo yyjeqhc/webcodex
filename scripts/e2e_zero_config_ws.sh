@@ -2,14 +2,14 @@
 set -euo pipefail
 
 # ============================================================================
-# Private Drop — Zero-Config WebSocket Agent E2E Smoke
+# WebCodex — Zero-Config WebSocket Agent E2E Smoke
 #
-# Starts a real `private-drop` server and a `private-drop-agent` connected over
+# Starts a real `webcodex` server and a `webcodex-agent` connected over
 # the WebSocket transport, then exercises the full GPT Actions + MCP surface via
 # curl to prove the runtime is wired end-to-end on a single host.
 #
 # What this proves:
-#   - Server boots with DROP_TOKEN auth and no server-side projects.toml.
+#   - Server boots with WEBCODEX_TOKEN auth and no server-side projects.toml.
 #   - Agent registers over WebSocket and announces a project.
 #   - listProjects / getRuntimeStatus see the agent-registered project.
 #   - readProjectFile / getProjectGitStatus route to the agent.
@@ -275,7 +275,7 @@ fi
 PORT="${E2E_PORT:-$(find_free_port)}"
 BASE="http://127.0.0.1:${PORT}"
 
-TMP_ROOT="$(mktemp -d -t private-drop-e2e-XXXXXX)"
+TMP_ROOT="$(mktemp -d -t webcodex-e2e-XXXXXX)"
 DATA_DIR="$TMP_ROOT/data"
 PROJECTS_DIR="$TMP_ROOT/projects.d"
 CODEX_STUB="$TMP_ROOT/codex-stub.sh"
@@ -294,7 +294,7 @@ log "temp root: $TMP_ROOT"
 # the job completes successfully without depending on the real Codex CLI.
 cat > "$CODEX_STUB" <<'STUB'
 #!/usr/bin/env bash
-# Private Drop E2E stub for CODEX_BIN. NOT the real Codex CLI.
+# WebCodex E2E stub for CODEX_BIN. NOT the real Codex CLI.
 echo "codex-stub: invoked with $# arg(s)"
 echo "codex-stub: prompt preview: ${*: -1}"
 echo "codex-stub: completed"
@@ -308,7 +308,7 @@ chmod +x "$CODEX_STUB"
     git init -b main >/dev/null 2>&1
     git config user.email "e2e@test.local"
     git config user.name "E2E Smoke"
-    printf '# Smoke Project\n\nUsed by the private-drop E2E harness.\n' > README.md
+    printf '# Smoke Project\n\nUsed by the webcodex E2E harness.\n' > README.md
     printf 'fn main() { println!("smoke"); }\n' > src.rs 2>/dev/null || {
         mkdir -p src
         printf 'fn main() { println!("smoke"); }\n' > src/main.rs
@@ -328,7 +328,7 @@ description = "E2E smoke project"
 EOF
 
 # Agent config: WebSocket preferred transport. owner is arbitrary because
-# DROP_TOKEN auth marks the principal as bootstrap (any owner allowed).
+# WEBCODEX_TOKEN auth marks the principal as bootstrap (any owner allowed).
 cat > "$AGENT_TOML" <<EOF
 server_url = "http://127.0.0.1:${PORT}"
 token = "${TOKEN}"
@@ -354,15 +354,15 @@ log "runtime project id: $RUNTIME_PROJECT_ID"
 # 3. Start the server
 # ----------------------------------------------------------------------------
 
-log "starting server (cargo run --bin private-drop)"
-DROP_ADDR="127.0.0.1:${PORT}" \
-DROP_DATA="$DATA_DIR" \
-DROP_TOKEN="$TOKEN" \
+log "starting server (cargo run --bin webcodex)"
+WEBCODEX_ADDR="127.0.0.1:${PORT}" \
+WEBCODEX_DATA="$DATA_DIR" \
+WEBCODEX_TOKEN="$TOKEN" \
 CODEX_BIN="$CODEX_STUB" \
 CODEX_DEFAULT_TIMEOUT_SECS="30" \
 CODEX_APPROVAL_MODE="full-auto" \
 RUST_LOG="info" \
-"$CARGO_BIN" run --quiet --bin private-drop >"$SERVER_LOG" 2>&1 &
+"$CARGO_BIN" run --quiet --bin webcodex >"$SERVER_LOG" 2>&1 &
 SERVER_PID=$!
 
 if ! wait_for_port "$PORT" 40; then
@@ -376,8 +376,8 @@ pass "server listening on $PORT"
 # 4. Start the agent
 # ----------------------------------------------------------------------------
 
-log "starting agent (cargo run --bin private-drop-agent, transport=$TRANSPORT)"
-"$CARGO_BIN" run --quiet --bin private-drop-agent -- --config "$AGENT_TOML" >"$AGENT_LOG" 2>&1 &
+log "starting agent (cargo run --bin webcodex-agent, transport=$TRANSPORT)"
+"$CARGO_BIN" run --quiet --bin webcodex-agent -- --config "$AGENT_TOML" >"$AGENT_LOG" 2>&1 &
 AGENT_PID=$!
 
 # Wait for the agent to register by polling runtime_status for the client.
@@ -968,7 +968,7 @@ log "---- MCP App console (/console) ----"
 # The console HTML shell is public (no Bearer auth) and must reference the
 # bundled assets. It never embeds the token.
 console_html="$(curl -sS --max-time 10 "http://127.0.0.1:${PORT}/console" 2>/dev/null)"
-if echo "$console_html" | grep -q "Runtime Console" && \
+if echo "$console_html" | grep -q "WebCodex" && \
    echo "$console_html" | grep -q "/console/app.js"; then
     pass "GET /console serves public HTML shell"
 else
@@ -983,11 +983,11 @@ else
     fail "GET /console/app.js missing status endpoint reference (got: ${console_js:0:200})"
 fi
 
-# The bundle must never embed the DROP_TOKEN env var name in the DOM.
-if echo "$console_html" | grep -qi "drop_token"; then
-    fail "console HTML leaked DROP_TOKEN literal"
+# The bundle must never embed the token key in the DOM.
+if echo "$console_html" | grep -qi "webcodex_token"; then
+    fail "console HTML leaked WEBCODEX_TOKEN literal"
 else
-    pass "console HTML does not leak DROP_TOKEN literal"
+    pass "console HTML does not leak WEBCODEX_TOKEN literal"
 fi
 
 # The protected data API must still reject unauthenticated requests even though

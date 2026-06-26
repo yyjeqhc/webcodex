@@ -1,7 +1,7 @@
 # Runtime Status (Observability)
 
 `runtime_status` is a read-only observability tool that lets deployers and
-ChatGPT quickly determine whether Private Drop Runtime is healthy, which
+ChatGPT quickly determine whether WebCodex Runtime is healthy, which
 projects/agents/jobs exist, and whether the current configuration is correct.
 It never exposes tokens, API keys, full env, or stdout/stderr.
 
@@ -14,7 +14,7 @@ POST /api/runtime/status
 ```
 
 Operation id: `getRuntimeStatus`. Request body: `{}` (empty). Requires Bearer
-auth when `DROP_TOKEN` is set.
+auth when `WEBCODEX_TOKEN` is set.
 
 ```bash
 curl -H "Authorization: Bearer change-me" \
@@ -52,7 +52,7 @@ The output is a structured JSON object:
 
 ```json
 {
-  "service": "private-drop",
+  "service": "webcodex",
   "version": "0.1.0",
   "server_time": 1719337980,
   "pid": 12345,
@@ -98,8 +98,8 @@ The output is a structured JSON object:
 
 ### Field notes
 
-- `auth_enabled`: whether `DROP_TOKEN` is set. `true` when auth is required.
-- `configured_public_url`: the value of `DROP_PUBLIC_URL`, or `null` when unset.
+- `auth_enabled`: whether `WEBCODEX_TOKEN` is set. `true` when auth is required.
+- `configured_public_url`: the value of `WEBCODEX_PUBLIC_URL`, or `null` when unset.
   This lets a deployer immediately see that the public URL has not been
   configured.
 - `projects.configured`: `false` when `projects.toml` failed to load or is
@@ -122,7 +122,7 @@ The output is a structured JSON object:
 
 To avoid leaking sensitive information, `runtime_status` never returns:
 
-- `DROP_TOKEN` or any token value
+- `WEBCODEX_TOKEN` or any token value
 - API keys or secrets
 - The full process environment
 - Complete project path lists (use `list_projects` for that)

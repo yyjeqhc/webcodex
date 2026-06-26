@@ -450,7 +450,7 @@ pub(crate) enum AgentCapability {
 /// tools (e.g. `runtime_status`) can report auth/public-url state without the
 /// runtime holding a full `Config` (which would couple it to HTTP/fs details).
 ///
-/// `configured_public_url` is `None` when `DROP_PUBLIC_URL` is unset; the
+/// `configured_public_url` is `None` when `WEBCODEX_PUBLIC_URL` is unset; the
 /// observability output reports this as `null` so a deployer can immediately
 /// see that the public URL has not been configured.
 #[derive(Debug, Clone)]
@@ -460,16 +460,17 @@ pub struct RuntimeInfo {
 }
 
 impl RuntimeInfo {
-    /// Build `RuntimeInfo` from the process environment. Reads `DROP_TOKEN`
-    /// (presence) and `DROP_PUBLIC_URL`.
+    /// Build `RuntimeInfo` from the process environment. Reads
+    /// `WEBCODEX_TOKEN` (presence) and `WEBCODEX_PUBLIC_URL`, with deprecated
+    /// `DROP_*` fallbacks.
     pub fn from_env() -> Self {
-        let auth_enabled = std::env::var("DROP_TOKEN")
+        let auth_enabled = crate::config::env_with_legacy("WEBCODEX_TOKEN", "DROP_TOKEN")
             .map(|v| !v.trim().is_empty())
             .unwrap_or(false);
-        let configured_public_url = std::env::var("DROP_PUBLIC_URL")
-            .ok()
-            .map(|s| s.trim().trim_end_matches('/').to_string())
-            .filter(|s| !s.is_empty());
+        let configured_public_url =
+            crate::config::env_with_legacy("WEBCODEX_PUBLIC_URL", "DROP_PUBLIC_URL")
+                .map(|s| s.trim().trim_end_matches('/').to_string())
+                .filter(|s| !s.is_empty());
         Self {
             auth_enabled,
             configured_public_url,

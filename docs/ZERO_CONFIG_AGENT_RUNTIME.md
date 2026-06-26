@@ -1,6 +1,6 @@
 # Zero-Config Agent Runtime
 
-This document defines the deployment direction for Private Drop Runtime before
+This document defines the deployment direction for WebCodex Runtime before
 WebSocket/QUIC transport work.
 
 ## Goal
@@ -27,7 +27,7 @@ The agent owns local machine knowledge:
 The runtime project surface has started moving to agent registration:
 
 - `ShellAgentProjectSummary` includes `allow_patch`.
-- `private-drop-agent` reads `allow_patch` from project files and reports it
+- `webcodex-agent` reads `allow_patch` from project files and reports it
   during registration.
 - `listProjects` returns agent-registered projects using ids:
   `agent:<client_id>:<project_id>`.
@@ -49,7 +49,7 @@ agent:<client_id>:<project_id>
 Example:
 
 ```text
-agent:workstation-1:private-drop
+agent:workstation-1:webcodex
 ```
 
 This makes routing explicit and avoids collisions between agents.
@@ -59,21 +59,21 @@ This makes routing explicit and avoids collisions between agents.
 Agent-side project files should describe local projects. Example:
 
 ```toml
-id = "private-drop"
-path = "/root/git/private-drop"
-name = "Private Drop"
+id = "webcodex"
+path = "/root/git/webcodex"
+name = "WebCodex"
 allow_patch = true
 kind = "rust"
-description = "Private Drop Runtime repository"
+description = "WebCodex Runtime repository"
 ```
 
 The server should not need the matching server-side block:
 
 ```toml
-[projects.private-drop]
+[projects.webcodex]
 executor = "agent"
 client_id = "workstation-1"
-path = "/root/git/private-drop"
+path = "/root/git/webcodex"
 ```
 
 ## Transport Direction

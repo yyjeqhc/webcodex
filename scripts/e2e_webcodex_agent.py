@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test for the real private-drop-agent binary.
+"""End-to-end smoke test for the real webcodex-agent binary.
 
 DEPRECATED. This script exercises a mix of current and removed routes. It still
 uses /api/shell/run, /api/shell/file, /api/shell/job (mounted), but also calls
@@ -8,7 +8,7 @@ removed routes such as /api/health, /api/shell/clients, /api/codex/command,
 current runtime. It is kept only as a historical reference. For the current
 agent protocol, see docs/AGENT_PROTOCOL.md.
 
-Starts a temporary private-drop server and a real private-drop-agent process,
+Starts a temporary webcodex server and a real webcodex-agent process,
 then submits runShell and verifies the agent executes the command and returns
 stdout/stderr/exit_code.
 """
@@ -71,7 +71,7 @@ def wait_for_client(port: int, token: str, client_id: str) -> None:
 
 def main() -> None:
     root = Path.cwd()
-    port = int(os.environ.get("PRIVATE_DROP_E2E_PORT", "18081"))
+    port = int(os.environ.get("WEBCODEX_E2E_PORT", "18081"))
     token = "test-agent"
     client_id = "e2e-agent"
     with tempfile.TemporaryDirectory() as tmp:
@@ -84,7 +84,7 @@ def main() -> None:
         (project_dir / "marker.txt").write_text("project-marker\n")
         subprocess.run(["git", "init"], cwd=project_dir, check=True, stdout=subprocess.DEVNULL)
         subprocess.run(["git", "config", "user.email", "e2e@example.invalid"], cwd=project_dir, check=True)
-        subprocess.run(["git", "config", "user.name", "Private Drop E2E"], cwd=project_dir, check=True)
+        subprocess.run(["git", "config", "user.name", "WebCodex E2E"], cwd=project_dir, check=True)
         subprocess.run(["git", "add", "marker.txt"], cwd=project_dir, check=True)
         subprocess.run(["git", "commit", "-m", "initial"], cwd=project_dir, check=True, stdout=subprocess.DEVNULL)
         projects_config = tmp_path / "projects.toml"
@@ -125,15 +125,15 @@ max_output_bytes = 262144
         server_env = os.environ.copy()
         server_env.update(
             {
-                "DROP_ADDR": f"127.0.0.1:{port}",
-                "DROP_TOKEN": token,
-                "DROP_DATA": str(tmp_path / "data"),
+                "WEBCODEX_ADDR": f"127.0.0.1:{port}",
+                "WEBCODEX_TOKEN": token,
+                "WEBCODEX_DATA": str(tmp_path / "data"),
                 "PROJECTS_CONFIG": str(projects_config),
             }
         )
         with server_log.open("wb") as slog, agent_log.open("wb") as alog:
             server = subprocess.Popen(
-                [str(root / "target" / "release" / "private-drop")],
+                [str(root / "target" / "release" / "webcodex")],
                 stdout=slog,
                 stderr=subprocess.STDOUT,
                 env=server_env,
@@ -143,7 +143,7 @@ max_output_bytes = 262144
                 wait_for_health(port, server, server_log)
                 agent = subprocess.Popen(
                     [
-                        str(root / "target" / "release" / "private-drop-agent"),
+                        str(root / "target" / "release" / "webcodex-agent"),
                         "--config",
                         str(agent_config),
                     ],
@@ -344,7 +344,7 @@ max_output_bytes = 262144
                 assert git_log["success"], git_log
                 assert "agent git e2e" in git_log["stdout_tail"], git_log
 
-                file_path = "/tmp/private-drop-agent-e2e-file.txt"
+                file_path = "/tmp/webcodex-agent-e2e-file.txt"
                 file_write = post(
                     port,
                     token,
@@ -390,7 +390,7 @@ max_output_bytes = 262144
                 )
                 assert not stale_write["success"], stale_write
                 assert "expected_sha256 mismatch" in stale_write["error"], stale_write
-                nested_path = "/tmp/private-drop-agent-e2e-dir/nested/file.txt"
+                nested_path = "/tmp/webcodex-agent-e2e-dir/nested/file.txt"
                 nested_write = post(
                     port,
                     token,
@@ -429,7 +429,7 @@ max_output_bytes = 262144
                     },
                 )
                 assert file_list["success"], file_list
-                assert "private-drop-agent-e2e-file.txt" in file_list["entries"], file_list
+                assert "webcodex-agent-e2e-file.txt" in file_list["entries"], file_list
 
                 job_start = post(
                     port,

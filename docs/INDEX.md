@@ -1,6 +1,6 @@
 # Documentation Index
 
-Recommended reading order for the current Private Drop Runtime. The authoritative
+Recommended reading order for the current WebCodex Runtime. The authoritative
 API surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
 
 1. [README.md](../README.md) — quick project overview, current endpoints,

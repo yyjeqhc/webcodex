@@ -1,8 +1,8 @@
-# Private Drop v2 — Remote Tool Runtime
+# WebCodex v2 — Remote Tool Runtime
 
 ## Vision
 
-Private Drop v2 is a **self-hosted tool runtime for ChatGPT**: a server that
+WebCodex v2 is a **self-hosted tool runtime for ChatGPT**: a server that
 exposes local machine capabilities (shell, git, file, patch, jobs, Codex CLI)
 as standardized tool endpoints, consumable by both **MCP clients** and
 **GPT Actions**. Both access layers call the same `ToolRuntime` — there is no
@@ -71,7 +71,7 @@ only frames the JSON-RPC envelope; the GPT Actions wrapper only maps HTTP to
 | Codex CLI jobs | `tool_runtime.rs`, `codex` | `run_codex` async jobs with bounded logs |
 | Local job recovery | `tool_runtime.rs` | `.codex/jobs/<id>/metadata.json` recovery |
 | Agent connection | `shell_client.rs`, `shell_protocol.rs` | Polling (`polling-v1`) |
-| Agent binary | `bin/private-drop-agent.rs` | Polling execution client |
+| Agent binary | `bin/webcodex-agent.rs` | Polling execution client |
 | Runtime observability | `tool_runtime.rs`, `runtime_http.rs` | `runtime_status` tool + `POST /api/runtime/status` |
 | Action audit (internal) | `action_sessions.rs`, `action_audit.rs` | Metadata-only audit for legacy codex routes |
 

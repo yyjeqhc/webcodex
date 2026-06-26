@@ -2716,21 +2716,18 @@ mod tests {
                 owner: Some("alice".to_string()),
                 hostname: None,
                 capabilities: None,
-                projects: Some(vec![project_summary(
-                    "private-drop",
-                    "/root/git/private-drop",
-                )]),
+                projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
                 agent_protocol_version: None,
             })
             .await
             .unwrap();
         let clients = registry.list_clients().await;
         assert_eq!(clients[0].projects.len(), 1);
-        assert_eq!(clients[0].projects[0].id, "private-drop");
+        assert_eq!(clients[0].projects[0].id, "webcodex");
 
         let projects = registry.list_client_projects("oe").await.unwrap();
         assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].path, "/root/git/private-drop");
+        assert_eq!(projects[0].path, "/root/git/webcodex");
     }
 
     #[tokio::test]
@@ -2776,10 +2773,7 @@ mod tests {
                 owner: Some("alice".to_string()),
                 hostname: None,
                 capabilities: None,
-                projects: Some(vec![project_summary(
-                    "private-drop",
-                    "/root/git/private-drop",
-                )]),
+                projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
                 agent_protocol_version: None,
             })
             .await

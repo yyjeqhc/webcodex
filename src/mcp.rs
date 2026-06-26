@@ -54,7 +54,7 @@ pub async fn mcp_info(depot: &mut Depot, res: &mut Response) {
         .map(|c| c.is_auth_enabled())
         .unwrap_or(false);
     res.render(Json(json!({
-        "name": "private-drop",
+        "name": "webcodex",
         "version": env!("CARGO_PKG_VERSION"),
         "protocol": "mcp",
         "protocolVersion": MCP_PROTOCOL_VERSION,
@@ -70,7 +70,7 @@ pub async fn mcp_info(depot: &mut Depot, res: &mut Response) {
         "auth": {
             "type": "bearer",
             "required": auth_required,
-            "header": "Authorization: Bearer <DROP_TOKEN>"
+            "header": "Authorization: Bearer <WEBCODEX_TOKEN>"
         }
     })));
 }
@@ -142,7 +142,7 @@ async fn handle_mcp_request(
                     }
                 },
                 "serverInfo": {
-                    "name": "private-drop",
+                    "name": "webcodex",
                     "version": env!("CARGO_PKG_VERSION")
                 }
             }),
@@ -288,7 +288,7 @@ mod tests {
                 assert_eq!(value["jsonrpc"], "2.0");
                 assert_eq!(value["id"], 1);
                 assert_eq!(value["result"]["protocolVersion"], MCP_PROTOCOL_VERSION);
-                assert_eq!(value["result"]["serverInfo"]["name"], "private-drop");
+                assert_eq!(value["result"]["serverInfo"]["name"], "webcodex");
                 assert!(value["result"]["serverInfo"]["version"].is_string());
                 assert_eq!(
                     value["result"]["capabilities"]["tools"]["listChanged"],
@@ -599,7 +599,7 @@ mod tests {
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["jsonrpc"], "2.0");
         assert_eq!(body["id"], 1);
-        assert_eq!(body["result"]["serverInfo"]["name"], "private-drop");
+        assert_eq!(body["result"]["serverInfo"]["name"], "webcodex");
         assert!(body["result"]["protocolVersion"].is_string());
         assert_eq!(
             body["result"]["capabilities"]["tools"]["listChanged"],
@@ -835,7 +835,7 @@ mod tests {
             .await;
         assert_eq!(effective_status(&resp), StatusCode::OK);
         let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["name"], "private-drop");
+        assert_eq!(body["name"], "webcodex");
         assert!(body["version"].is_string());
         assert_eq!(body["protocol"], "mcp");
         assert!(body["protocolVersion"].is_string());
@@ -935,7 +935,7 @@ mod tests {
         assert!(value["result"]["structuredContent"].is_object());
         assert_eq!(value["result"]["structuredContent"]["success"], true);
         let out = &value["result"]["structuredContent"]["output"];
-        assert_eq!(out["service"], "private-drop");
+        assert_eq!(out["service"], "webcodex");
         assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
         // runtime_status never errors on a failed-projects runtime — it
         // reports configured=false instead.

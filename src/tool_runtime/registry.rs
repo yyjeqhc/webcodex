@@ -37,7 +37,7 @@ impl ToolRuntime {
         vec![
             ToolSpec {
                 name: "list_tools".to_string(),
-                description: "List tools exposed by this Private Drop runtime.".to_string(),
+                description: "List tools exposed by this WebCodex runtime.".to_string(),
                 input_schema: object_schema(vec![]),
             },
             ToolSpec {

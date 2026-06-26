@@ -21,9 +21,12 @@ fn is_blocked_ip(ip: IpAddr) -> bool {
 }
 
 fn allow_private_source_urls() -> bool {
-    std::env::var("DROP_ALLOW_PRIVATE_SOURCE_URLS")
-        .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
-        .unwrap_or(false)
+    crate::config::env_with_legacy(
+        "WEBCODEX_ALLOW_PRIVATE_SOURCE_URLS",
+        "DROP_ALLOW_PRIVATE_SOURCE_URLS",
+    )
+    .map(|value| matches!(value.to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
+    .unwrap_or(false)
 }
 
 pub(super) fn is_allowed_chatgpt_estuary_url(url: &reqwest::Url) -> bool {

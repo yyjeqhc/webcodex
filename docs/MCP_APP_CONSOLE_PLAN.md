@@ -53,7 +53,7 @@ smoke before starting implementation in a new agent window.
 - Prefer read-only backend additions before mutation or execution additions.
 - Treat patch application and shell execution as high-risk UI actions.
 - Never display tokens, API keys, Authorization headers, full env vars, or real
-  `agent.toml` / `private-drop.env` content.
+  `agent.toml` / `webcodex.env` content.
 - Keep app state project-centered: select a current runtime project id, then
   default file, diff, command, and job panels to that project.
 
@@ -210,7 +210,7 @@ Acceptance:
   `grep`, or `sed`.
 - File reads are bounded and project-relative.
 - The UI does not reveal secret files by default. Sensitive filenames such as
-  `agent.toml`, `private-drop.env`, `.env`, and local `projects.d` entries
+  `agent.toml`, `webcodex.env`, `.env`, and local `projects.d` entries
   should carry a warning or be hidden unless explicitly opened by a trusted
   user flow.
 
@@ -370,12 +370,12 @@ Use one prompt per implementation stage. Before each prompt, tell GLM to read
 ### Prompt 1: Backend Read-Only Tools
 
 ```text
-You are working in /root/git/private-drop on branch v2-mcp-runtime.
+You are working in /root/git/webcodex on branch v2-mcp-runtime.
 First read docs/AGENT_HANDOFF.md, docs/INDEX.md, docs/DEPLOYMENT.md, and
 docs/MCP_APP_CONSOLE_PLAN.md. Run `git status --short --untracked-files=all`
 and `bash scripts/e2e_zero_config_ws.sh` before editing.
 
-Implement Phase A read-only console backend tools for Private Drop Runtime.
+Implement Phase A read-only console backend tools for WebCodex Runtime.
 Keep ToolRuntime as the single business layer and keep REST/MCP wrappers thin.
 Add bounded agent-backed tools for list_project_files, search_project_text,
 git_diff_summary, list_jobs, and job_tail. Reuse existing read_file pagination
@@ -395,14 +395,14 @@ cargo test, and bash scripts/e2e_zero_config_ws.sh.
 ```text
 Continue from the clean Phase A baseline. Read docs/MCP_APP_CONSOLE_PLAN.md and
 inspect the existing frontend directory before editing. Build Phase B: a
-read-only Private Drop console screen for runtime and agent status. It should
+read-only WebCodex console screen for runtime and agent status. It should
 show public URL, auth_enabled, active jobs, project count, and agent rows with
 status, transport, last_seen, connected, pending_requests, protocol version,
 owner, and projects_count.
 
 Do not revive the old file-drop/message/workflow dashboard. Use the active
-runtime APIs only. Never display DROP_TOKEN, Authorization headers, API keys,
-full env, agent.toml token values, private-drop.env values, or real projects.d
+runtime APIs only. Never display WEBCODEX_TOKEN, Authorization headers, API keys,
+full env, agent.toml token values, webcodex.env values, or real projects.d
 secret contents. Make stale WebSocket agents visually obvious and distinguish
 websocket from polling.
 
@@ -421,7 +421,7 @@ default later panels to the selected current project.
 
 Use structured backend tools from Phase A. Avoid shelling out to find/grep/sed
 from the UI. Keep file reads bounded and project-relative. Warn or hide
-sensitive filenames such as agent.toml, private-drop.env, .env, and local
+sensitive filenames such as agent.toml, webcodex.env, .env, and local
 projects.d files unless the user explicitly opens them in a trusted flow.
 
 Update tests/docs. Verify frontend checks/builds and the normal Rust/E2E checks.
@@ -503,7 +503,7 @@ npm run check:dist
 For deployment validation when a live endpoint is available:
 
 ```bash
-DROP_PUBLIC_URL="https://drop.example.com" \
-DROP_TOKEN="<your-secret>" \
+WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_TOKEN="<your-secret>" \
 bash scripts/smoke_deployment.sh
 ```

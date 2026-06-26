@@ -228,7 +228,7 @@ fn local_apply_codex_patch(
         );
     }
     let patch_file = std::env::temp_dir().join(format!(
-        "private-drop-codex-patch-{}.patch",
+        "webcodex-codex-patch-{}.patch",
         uuid::Uuid::new_v4()
     ));
     if let Err(e) = std::fs::write(&patch_file, patch) {

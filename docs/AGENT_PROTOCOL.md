@@ -1,7 +1,7 @@
 # Agent Protocol
 
-This document describes the wire protocol between `private-drop-agent` and the
-Private Drop server. There are two transports, but they share the same
+This document describes the wire protocol between `webcodex-agent` and the
+WebCodex server. There are two transports, but they share the same
 business semantics: the server authenticates and routes; the agent owns local
 execution; the server never executes local repository commands as the normal
 path.
@@ -20,7 +20,7 @@ There is no second business-logic path for WebSocket.
 
 ## Authentication
 
-Both transports require Bearer auth (`DROP_TOKEN` or an API key):
+Both transports require Bearer auth (`WEBCODEX_TOKEN` or an API key):
 
 - Polling: `Authorization: Bearer <token>` on every request (or `?token=`).
 - WebSocket: `Authorization: Bearer <token>` in the handshake request headers.

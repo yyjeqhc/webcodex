@@ -1,6 +1,6 @@
 # GPT Actions
 
-Private Drop Runtime exposes a small, stable OpenAPI 3.1 schema for ChatGPT
+WebCodex Runtime exposes a small, stable OpenAPI 3.1 schema for ChatGPT
 GPT Actions. GPT Actions and the MCP endpoint (`/mcp`) share a single
 `ToolRuntime` — there is no separate business logic for either surface.
 
@@ -18,21 +18,21 @@ is **not** listed inside the schema `paths` (which is POST-only).
 ## Authentication
 
 - Scheme: HTTP Bearer (`Authorization: Bearer <token>`).
-- Token: the value of the `DROP_TOKEN` environment variable on the server.
+- Token: the value of the `WEBCODEX_TOKEN` environment variable on the server.
 - Bearer auth is enabled globally on the schema (`security` + `bearerAuth`).
-- When `DROP_TOKEN` is unset, the server runs in development mode and auth is
+- When `WEBCODEX_TOKEN` is unset, the server runs in development mode and auth is
   bypassed — never do this in production.
 
 Configure the GPT Action authentication as **API Key**, type **HTTP**,
-header `Authorization`, value `Bearer <DROP_TOKEN>`.
+header `Authorization`, value `Bearer <WEBCODEX_TOKEN>`.
 
 ## Server URL
 
 The `servers[0].url` in the schema defaults to `http://localhost:8080`. Override
-it for deployments by setting `DROP_PUBLIC_URL` on the server, for example:
+it for deployments by setting `WEBCODEX_PUBLIC_URL` on the server, for example:
 
 ```bash
-DROP_PUBLIC_URL="https://drop.example.com" cargo run --bin private-drop
+WEBCODEX_PUBLIC_URL="https://drop.example.com" cargo run --bin webcodex
 ```
 
 ## Operations
@@ -261,7 +261,7 @@ They are deliberately exposed as dedicated, typed operations — not via the
 generic `callRuntimeTool` escape hatch — so GPT has clear, named operations.
 They require:
 
-- Bearer auth (`DROP_TOKEN`) on every call.
+- Bearer auth (`WEBCODEX_TOKEN`) on every call.
 - The owning agent's capability (`shell` for `runProjectShellCommand`; patching
   allowed for `applyProjectPatch`).
 
@@ -287,7 +287,7 @@ Start a Codex task (optional advanced; requires Codex CLI on the agent host):
 curl -H "Authorization: Bearer change-me" \
   -X POST http://127.0.0.1:8080/api/codex/run \
   -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","prompt":"Inspect the codebase and summarize the runtime architecture."}'
+  -d '{"project":"webcodex","prompt":"Inspect the codebase and summarize the runtime architecture."}'
 ```
 
 Poll status:
@@ -305,7 +305,7 @@ Read a project file:
 curl -H "Authorization: Bearer change-me" \
   -X POST http://127.0.0.1:8080/api/projects/read_file \
   -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","path":"README.md"}'
+  -d '{"project":"webcodex","path":"README.md"}'
 ```
 
 Check git status / git diff:
@@ -314,12 +314,12 @@ Check git status / git diff:
 curl -H "Authorization: Bearer change-me" \
   -X POST http://127.0.0.1:8080/api/projects/git_status \
   -H "Content-Type: application/json" \
-  -d '{"project":"private-drop"}'
+  -d '{"project":"webcodex"}'
 
 curl -H "Authorization: Bearer change-me" \
   -X POST http://127.0.0.1:8080/api/projects/git_diff \
   -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","args":["--stat"]}'
+  -d '{"project":"webcodex","args":["--stat"]}'
 ```
 
 Run a shell command (executable; Bearer auth required):
@@ -328,7 +328,7 @@ Run a shell command (executable; Bearer auth required):
 curl -H "Authorization: Bearer change-me" \
   -X POST http://127.0.0.1:8080/api/projects/run_shell \
   -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","command":"cargo test"}'
+  -d '{"project":"webcodex","command":"cargo test"}'
 ```
 
 Apply a patch (executable mutation; Bearer auth required):
@@ -337,7 +337,7 @@ Apply a patch (executable mutation; Bearer auth required):
 curl -H "Authorization: Bearer change-me" \
   -X POST http://127.0.0.1:8080/api/projects/apply_patch \
   -H "Content-Type: application/json" \
-  -d '{"project":"private-drop","patch":"--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# Private Drop\n+edited\n"}'
+  -d '{"project":"webcodex","patch":"--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# WebCodex\n+edited\n"}'
 ```
 
 ## Shared ToolRuntime

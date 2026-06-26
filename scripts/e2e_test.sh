@@ -467,13 +467,13 @@ echo "  Log file: $LOGFILE"
 
 ENV_FILE="$TMPDIR_DATA/private-drop.env"
 cat > "$ENV_FILE" << EOF
-DROP_TOKEN=$TOKEN
-DROP_ADDR=127.0.0.1:$PORT
-DROP_DATA=$TMPDIR_DATA
+WEBCODEX_TOKEN=$TOKEN
+WEBCODEX_ADDR=127.0.0.1:$PORT
+WEBCODEX_DATA=$TMPDIR_DATA
 PROJECTS_CONFIG=$PROJECTS_TOML
 EOF
 
-FAKE_SSH_LOG="$FAKE_SSH_LOG" PATH="$FAKE_SSH_DIR:$PATH" CODEX_APPLY_PATCH_BIN="$CODEX_APPLY_PATCH_FAKE" DROP_ENV_FILE="$ENV_FILE" ./target/release/private-drop > "$LOGFILE" 2>&1 &
+FAKE_SSH_LOG="$FAKE_SSH_LOG" PATH="$FAKE_SSH_DIR:$PATH" CODEX_APPLY_PATCH_BIN="$CODEX_APPLY_PATCH_FAKE" WEBCODEX_ENV_FILE="$ENV_FILE" ./target/release/private-drop > "$LOGFILE" 2>&1 &
 SERVER_PID=$!
 echo "  Server PID: $SERVER_PID"
 
@@ -759,7 +759,7 @@ RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks" \
     -H "Content-Type: application/json" \
     -d '{"title":"Worker demo task https://example.com","instructions":"type: hello from desktop worker\npress_enter: true","priority":3}')
 DESKTOP_WORKER_ID=$(pyget "$RESP" "task.id")
-DROP_TOKEN="$TOKEN" python3 scripts/desktop_worker.py --base "$BASE" --worker e2e-demo-worker --once --dry-run --no-screenshot > "$TMPDIR_DATA/desktop-worker.log"
+WEBCODEX_TOKEN="$TOKEN" python3 scripts/desktop_worker.py --base "$BASE" --worker e2e-demo-worker --once --dry-run --no-screenshot > "$TMPDIR_DATA/desktop-worker.log"
 assert_contains "Desktop worker claims task" "Claimed task: $DESKTOP_WORKER_ID" "$(cat "$TMPDIR_DATA/desktop-worker.log")"
 assert_contains "Desktop worker updates task" "Updated task: $DESKTOP_WORKER_ID -> completed" "$(cat "$TMPDIR_DATA/desktop-worker.log")"
 RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks?status=completed&limit=10")
@@ -775,14 +775,14 @@ RESP=$(curl -sf -X POST "$BASE/api/desktop/tasks" \
     -H "Content-Type: application/json" \
     -d '{"title":"WeChat dry-run","instructions":"wechat_to: Alice\nwechat_message: hello from e2e\nwechat_send: true","priority":4}')
 DESKTOP_WECHAT_ID=$(pyget "$RESP" "task.id")
-DROP_TOKEN="$TOKEN" python3 scripts/desktop_worker.py --base "$BASE" --worker e2e-demo-worker --once --dry-run --no-screenshot > "$TMPDIR_DATA/desktop-worker-wechat.log"
+WEBCODEX_TOKEN="$TOKEN" python3 scripts/desktop_worker.py --base "$BASE" --worker e2e-demo-worker --once --dry-run --no-screenshot > "$TMPDIR_DATA/desktop-worker-wechat.log"
 assert_contains "Desktop worker WeChat claims task" "Claimed task: $DESKTOP_WECHAT_ID" "$(cat "$TMPDIR_DATA/desktop-worker-wechat.log")"
 assert_contains "Desktop worker WeChat updates task" "Updated task: $DESKTOP_WECHAT_ID -> completed" "$(cat "$TMPDIR_DATA/desktop-worker-wechat.log")"
 RESP=$(curl -sf -H "Authorization: Bearer $TOKEN" "$BASE/api/desktop/tasks/$DESKTOP_WECHAT_ID")
 DESKTOP_WECHAT_EVENT=$(pyget "$RESP" "task.last_event")
 assert_contains "Desktop worker WeChat dry-run recipient" "WeChat message to Alice" "$DESKTOP_WECHAT_EVENT"
 assert_contains "Desktop worker WeChat defaults to draft" "as draft" "$DESKTOP_WECHAT_EVENT"
-DROP_TOKEN="$TOKEN" python3 scripts/desktop_worker_demo.py --base "$BASE" --worker e2e-demo-worker > "$TMPDIR_DATA/desktop-worker-empty.log"
+WEBCODEX_TOKEN="$TOKEN" python3 scripts/desktop_worker_demo.py --base "$BASE" --worker e2e-demo-worker > "$TMPDIR_DATA/desktop-worker-empty.log"
 assert_contains "Desktop worker demo handles empty queue" "No pending desktop tasks." "$(cat "$TMPDIR_DATA/desktop-worker-empty.log")"
 
 # --- 13. Web UI: Login page ---
@@ -796,7 +796,7 @@ assert_contains "Login page references frontend JS" "/assets/app.js" "$BODY"
 assert_contains "Login page redirects to /c/inbox" "/c/inbox" "$BODY"
 ASSET_JS=$(curl -sf "$BASE/assets/app.js")
 ASSET_CSS=$(curl -sf "$BASE/assets/styles.css")
-assert_contains "Frontend asset references drop_token" "drop_token" "$ASSET_JS"
+assert_contains "Frontend asset references webcodex_token" "webcodex_token" "$ASSET_JS"
 assert_contains "Frontend asset adds Authorization" "Authorization" "$ASSET_JS"
 assert_contains "Frontend asset uses Bearer" "Bearer" "$ASSET_JS"
 assert_contains "Frontend CSS has card styles" ".card" "$ASSET_CSS"

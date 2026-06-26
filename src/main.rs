@@ -59,19 +59,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .init();
     for load in &env_loads {
         tracing::info!(
-            "Loaded env file {} ({} variables set)",
+            "Loaded env file {} ({} variables set{})",
             load.path.display(),
-            load.loaded_count
+            load.loaded_count,
+            if load.legacy {
+                ", legacy deprecated path"
+            } else {
+                ""
+            }
         );
     }
     let config = Config::from_env();
     if !config.is_auth_enabled() {
         tracing::warn!(
-            "DROP_TOKEN is not set! Running in development mode without authentication."
+            "WEBCODEX_TOKEN is not set! Running in development mode without authentication."
         );
-        tracing::warn!("Set DROP_TOKEN environment variable to enable authentication.");
+        tracing::warn!("Set WEBCODEX_TOKEN environment variable to enable authentication.");
     }
-    tracing::info!("Starting Private Drop v{}", env!("CARGO_PKG_VERSION"));
+    tracing::info!("Starting WebCodex v{}", env!("CARGO_PKG_VERSION"));
     tracing::info!("Data directory: {:?}", config.data_dir);
     let addr = config.addr.clone();
     tracing::info!("Listening on: {}", addr);
@@ -264,10 +269,10 @@ mod tests {
 
     #[test]
     fn test_parse_env_file_line_basic() {
-        let parsed = parse_env_file_line("DROP_ADDR=127.0.0.1:8080")
+        let parsed = parse_env_file_line("WEBCODEX_ADDR=127.0.0.1:8080")
             .unwrap()
             .unwrap();
-        assert_eq!(parsed.0, "DROP_ADDR");
+        assert_eq!(parsed.0, "WEBCODEX_ADDR");
         assert_eq!(parsed.1, "127.0.0.1:8080");
     }
 
@@ -288,7 +293,7 @@ mod tests {
 
     #[test]
     fn test_parse_env_file_line_rejects_invalid_key() {
-        assert!(parse_env_file_line("drop_token=x").unwrap().is_err());
+        assert!(parse_env_file_line("webcodex_token=x").unwrap().is_err());
         assert!(parse_env_file_line("DROP TOKEN=x").unwrap().is_err());
     }
 
@@ -311,10 +316,10 @@ mod tests {
     fn test_config_from_env_defaults() {
         let _guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
         // Clear env vars to test defaults
-        std::env::remove_var("DROP_ADDR");
-        std::env::remove_var("DROP_DATA");
-        std::env::remove_var("DROP_TOKEN");
-        std::env::remove_var("DROP_ENABLE_SSH");
+        std::env::remove_var("WEBCODEX_ADDR");
+        std::env::remove_var("WEBCODEX_DATA");
+        std::env::remove_var("WEBCODEX_TOKEN");
+        std::env::remove_var("WEBCODEX_ENABLE_SSH");
         std::env::remove_var("CODEX_BIN");
         std::env::remove_var("CODEX_APPROVAL_MODE");
         std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");

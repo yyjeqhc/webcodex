@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="680" viewBox="0 0 1120 680" role="img" aria-labelledby="title desc">
-<title id="title">Private Drop goal-scoped command workflow</title>
+<title id="title">WebCodex goal-scoped command workflow</title>
 <desc id="desc">Goal starts pending, becomes active only after explicit user approval, then permits bounded audited work until closed.</desc>
 <defs><style>.bg{fill:#f8fafc}.box{fill:#fff;stroke:#334155;stroke-width:2}.pending{fill:#fff7ed;stroke:#ea580c}.active{fill:#ecfdf5;stroke:#059669}.action{fill:#eff6ff;stroke:#2563eb}.audit{fill:#f5f3ff;stroke:#7c3aed}.deny{fill:#fef2f2;stroke:#dc2626}.t{font-family:Arial,sans-serif;font-size:16px;fill:#0f172a}.s{font-size:13px;fill:#475569}.h{font-size:28px;font-weight:700}.a{stroke:#334155;stroke-width:2;fill:none;marker-end:url(#arr)}.d{stroke-dasharray:7 7}</style><marker id="arr" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3 z" fill="#334155"/></marker></defs>
 <rect class="bg" width="1120" height="680"/><text class="t h" x="48" y="54">Goal-scoped command workflow</text><text class="t s" x="48" y="82">create_goal proposes work; approve_goal activates a bounded permission window.</text>

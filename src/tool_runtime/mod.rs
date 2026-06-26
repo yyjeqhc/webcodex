@@ -587,7 +587,7 @@ impl ToolRuntime {
         });
 
         ToolResult::ok(json!({
-            "service": "private-drop",
+            "service": "webcodex",
             "version": env!("CARGO_PKG_VERSION"),
             "server_time": chrono::Utc::now().timestamp(),
             "pid": std::process::id(),
@@ -2453,7 +2453,7 @@ mod tests {
                 capabilities: Some(caps),
                 projects: Some(vec![registered_project(
                     "agent-proj",
-                    "/definitely/not/on/server/private-drop-agent-only",
+                    "/definitely/not/on/server/webcodex-agent-only",
                 )]),
                 agent_protocol_version: Some("polling-v1".to_string()),
             })
@@ -3000,7 +3000,7 @@ new file mode 100644\n\
             "workstation-1",
             None,
             ShellClientCapabilities::default(),
-            vec![registered_project("private-drop", "/root/git/private-drop")],
+            vec![registered_project("webcodex", "/root/git/webcodex")],
         )
         .await;
 
@@ -3008,8 +3008,8 @@ new file mode 100644\n\
         assert!(result.success, "{:?}", result.error);
         let projects = result.output.as_array().unwrap();
         assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0]["id"], "agent:workstation-1:private-drop");
-        assert_eq!(projects[0]["agent_project_id"], "private-drop");
+        assert_eq!(projects[0]["id"], "agent:workstation-1:webcodex");
+        assert_eq!(projects[0]["agent_project_id"], "webcodex");
         assert_eq!(projects[0]["executor"], "agent");
         assert_eq!(projects[0]["source"], "agent_registered");
     }
@@ -3319,7 +3319,7 @@ new file mode 100644\n\
         let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
         assert!(result.success, "{:?}", result.error);
         let out = &result.output;
-        assert_eq!(out["service"], "private-drop");
+        assert_eq!(out["service"], "webcodex");
         assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
         assert!(out["server_time"].is_i64());
         assert!(out["pid"].is_i64());
@@ -3354,7 +3354,7 @@ new file mode 100644\n\
         // The summary must never contain secret-like field names.
         for forbidden in [
             "token",
-            "DROP_TOKEN",
+            "WEBCODEX_TOKEN",
             "api_key",
             "apikey",
             "secret",
@@ -3397,6 +3397,27 @@ new file mode 100644\n\
             result.output["configured_public_url"],
             "https://drop.example.com"
         );
+    }
+
+    #[test]
+    fn runtime_info_from_env_prefers_new_public_url() {
+        let _guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_TOKEN", "new-token");
+        std::env::set_var("DROP_TOKEN", "old-token");
+        std::env::set_var("WEBCODEX_PUBLIC_URL", "https://new.example.com");
+        std::env::set_var("DROP_PUBLIC_URL", "https://old.example.com");
+
+        let info = RuntimeInfo::from_env();
+        assert!(info.auth_enabled);
+        assert_eq!(
+            info.configured_public_url.as_deref(),
+            Some("https://new.example.com")
+        );
+
+        std::env::remove_var("WEBCODEX_TOKEN");
+        std::env::remove_var("DROP_TOKEN");
+        std::env::remove_var("WEBCODEX_PUBLIC_URL");
+        std::env::remove_var("DROP_PUBLIC_URL");
     }
 
     #[tokio::test]
@@ -3853,9 +3874,9 @@ new file mode 100644\n\
         assert!(sensitive_path_warnings("config/agent.toml")
             .iter()
             .any(|w| w.contains("agent.toml")));
-        assert!(sensitive_path_warnings("private-drop.env")
+        assert!(sensitive_path_warnings("webcodex.env")
             .iter()
-            .any(|w| w.contains("private-drop.env")));
+            .any(|w| w.contains("webcodex.env")));
         assert!(sensitive_path_warnings("projects.d/x.toml")
             .iter()
             .any(|w| w.contains("projects.d")));
@@ -4085,7 +4106,7 @@ new file mode 100644\n\
             "demo",
             &root.to_string_lossy(),
             "completed",
-            "DROP_TOKEN=supersecret\nline2",
+            "WEBCODEX_TOKEN=supersecret\nline2",
             "Authorization: Bearer xyz",
             json!({}),
         );
@@ -4506,7 +4527,7 @@ new file mode 100644\n\
             "agent.toml",
             "config/agent.toml",
             "agent.toml.bak",
-            "private-drop.env",
+            "webcodex.env",
             ".env",
             ".env.local",
             "secrets/projects.d/x",

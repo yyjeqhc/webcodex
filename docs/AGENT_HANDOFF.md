@@ -5,7 +5,7 @@ window. Read it before making changes.
 
 ## Project Identity
 
-Private Drop Runtime is now a self-hosted tool runtime for ChatGPT. ChatGPT can
+WebCodex Runtime is now a self-hosted tool runtime for ChatGPT. ChatGPT can
 connect through:
 
 - GPT Actions: `GET /openapi.json`
@@ -24,8 +24,8 @@ Latest known baseline when this file was written:
 
 - Branch: `v2-mcp-runtime`
 - Commit: current `HEAD` (`Harden generic runtime tool calls`)
-- Main binary: `private-drop`
-- Agent binary: `private-drop-agent`
+- Main binary: `webcodex`
+- Agent binary: `webcodex-agent`
 
 Always run `git status --short --untracked-files=all` first. The user often has
 uncommitted work from another agent window; do not overwrite or revert it.
@@ -48,7 +48,7 @@ uncommitted work from another agent window; do not overwrite or revert it.
   translates between `AgentEnvelope` and `ShellClientRegistry` calls.
 - `src/shell_protocol.rs`: shared protocol types including the transport-neutral
   `AgentEnvelope`.
-- `src/bin/private-drop-agent.rs`: agent process. Selects `polling` (default) or
+- `src/bin/webcodex-agent.rs`: agent process. Selects `polling` (default) or
   `websocket` transport via config; both reuse `dispatch_request` / `JobManager`
   through an `AgentSink` abstraction.
 - `src/action_sessions.rs`, `src/action_audit.rs`, `src/audit_http.rs`: audit
@@ -161,8 +161,8 @@ specific safety review.
   builds that lack the flag.
 - **Never commit local deployment config.** `agent.toml` and `projects.d/*.toml`
   contain real server URLs, tokens, and host paths. They are git-ignored
-  (`/agent.toml`, `/projects.d/`, `/*.local.toml`, `/private-drop.env`). Do not
-  `git add` them. If a token was ever committed or exposed, rotate `DROP_TOKEN`.
+  (`/agent.toml`, `/projects.d/`, `/*.local.toml`, `/webcodex.env`). Do not
+  `git add` them. If a token was ever committed or exposed, rotate `WEBCODEX_TOKEN`.
 - Do not create a second Codex runner, shell runner, or MCP-specific business
   path.
 - Project file access is routed to the owning registered agent; server-side
@@ -296,7 +296,7 @@ read/search -> generate patch -> validate_patch -> applyProjectPatch
 Behavior:
 
 - Dry-run only: runs `git apply --check -` and `git apply --stat -` through the
-  owning `private-drop-agent`, passing the patch as `ShellRunRequest.stdin`.
+  owning `webcodex-agent`, passing the patch as `ShellRunRequest.stdin`.
   Never invokes the real `git apply` application mode and never falls back to
   `apply_patch`.
 - Do not embed patch text in the shell command. `ShellRunRequest.command` is
@@ -307,7 +307,7 @@ Behavior:
 - Input validation rejects empty patches, NUL bytes, and patches over
   `MAX_VALIDATE_PATCH_BYTES` (256 KiB) before project resolution.
 - Absolute paths and `..` traversal are hard-rejected; sensitive filenames
-  (`agent.toml`, `private-drop.env`, `.env`, `projects.d`, `.git`, `target`,
+  (`agent.toml`, `webcodex.env`, `.env`, `projects.d`, `.git`, `target`,
   `node_modules`) produce `warnings` rather than blocking the preflight.
 - `deny_sensitive_paths=true` turns sensitive-path warnings into a structured
   policy block (`can_apply=false`, `policy_blocked=true`) without running git.
@@ -431,8 +431,8 @@ For an already-deployed instance, run the deployment smoke (no server/agent
 started; verifies the public surface of a live deployment):
 
 ```bash
-DROP_PUBLIC_URL="https://drop.example.com" \
-DROP_TOKEN="<your-secret>" \
+WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_TOKEN="<your-secret>" \
 bash scripts/smoke_deployment.sh
 ```
 

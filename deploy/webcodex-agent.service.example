@@ -1,8 +1,8 @@
-# systemd unit for the Private Drop agent.
+# systemd unit for the WebCodex agent.
 #
-# Copy to /etc/systemd/system/private-drop-agent.service, then:
+# Copy to /etc/systemd/system/webcodex-agent.service, then:
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now private-drop-agent
+#   sudo systemctl enable --now webcodex-agent
 #
 # The agent owns local machine knowledge (project id/path/policy/capabilities)
 # and registers it with the server at startup. The server is a zero-project-
@@ -15,7 +15,7 @@
 # registry/queue/job state.
 
 [Unit]
-Description=Private Drop agent (WebSocket preferred, polling fallback)
+Description=WebCodex agent (WebSocket preferred, polling fallback)
 After=network-online.target
 Wants=network-online.target
 
@@ -23,7 +23,7 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-ExecStart=/opt/private-drop/private-drop-agent --config /etc/private-drop-agent/agent.toml
+ExecStart=/opt/webcodex/webcodex-agent --config /etc/webcodex/agent.toml
 Restart=always
 RestartSec=5
 

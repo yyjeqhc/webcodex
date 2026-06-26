@@ -1,14 +1,14 @@
 # E2E Validation
 
 This document describes the local end-to-end validation harness that proves the
-Private Drop runtime — server + WebSocket agent + GPT Actions schema + MCP
+WebCodex runtime — server + WebSocket agent + GPT Actions schema + MCP
 JSON-RPC — runs correctly on a single host **before** pointing real ChatGPT at
 it. It does not depend on the ChatGPT web UI or the real Codex CLI.
 
 ## Why this exists
 
 Phase 15 is about "can it run before deploy?", not new features. The harness
-boots a real `private-drop` server and a real `private-drop-agent` on the same
+boots a real `webcodex` server and a real `webcodex-agent` on the same
 machine, wires them over the WebSocket transport, and exercises every public
 surface with `curl`. If the harness passes, the same flow is what a real
 ChatGPT GPT Action import will drive.
@@ -42,8 +42,8 @@ what went wrong:
 
 ```
 [e2e] ---- log locations ----
-[e2e] server log: /tmp/private-drop-e2e-XXXXXX/server.log
-[e2e] agent log:  /tmp/private-drop-e2e-XXXXXX/agent.log
+[e2e] server log: /tmp/webcodex-e2e-XXXXXX/server.log
+[e2e] agent log:  /tmp/webcodex-e2e-XXXXXX/agent.log
 ```
 
 ## Environment variables
@@ -51,7 +51,7 @@ what went wrong:
 | Variable | Default | Purpose |
 |----------|---------|---------|
 | `E2E_PORT` | auto-pick | Bind port for the server. |
-| `E2E_TOKEN` | `e2e-smoke-token` | Bearer token (`DROP_TOKEN`) for both server and agent. |
+| `E2E_TOKEN` | `e2e-smoke-token` | Bearer token (`WEBCODEX_TOKEN`) for both server and agent. |
 | `E2E_CLIENT_ID` | `e2e-agent` | Agent `client_id`. |
 | `E2E_PROJECT_ID` | `smoke-proj` | Agent-side project id. The runtime id becomes `agent:e2e-agent:smoke-proj`. |
 | `E2E_TRANSPORT` | `websocket` | Agent transport. Set to `polling` to exercise the fallback path. |
@@ -65,9 +65,9 @@ what went wrong:
    stub Codex CLI binary under a fresh `mktemp -d`.
 2. Initializes a tiny git repo as the agent project so `getProjectGitStatus`
    has something real to report.
-3. Starts the server: `cargo run --bin private-drop` with `DROP_TOKEN`,
-   `DROP_DATA`, `DROP_ADDR`, and `CODEX_BIN` pointing at the stub.
-4. Starts the agent: `cargo run --bin private-drop-agent -- --config <tmp>`
+3. Starts the server: `cargo run --bin webcodex` with `WEBCODEX_TOKEN`,
+   `WEBCODEX_DATA`, `WEBCODEX_ADDR`, and `CODEX_BIN` pointing at the stub.
+4. Starts the agent: `cargo run --bin webcodex-agent -- --config <tmp>`
    with `transport = "websocket"`.
 5. Waits for the agent to register by polling `POST /api/runtime/status` until
    `output.agents.count == 1`.
@@ -153,18 +153,18 @@ standard library (no `jq` required). It asserts:
 The harness proves the server side. To validate with real ChatGPT:
 
 1. Deploy the server somewhere reachable from ChatGPT (e.g. a public host or a
-   tunnel). Set `DROP_TOKEN` and `DROP_PUBLIC_URL`:
+   tunnel). Set `WEBCODEX_TOKEN` and `WEBCODEX_PUBLIC_URL`:
    ```bash
-   DROP_TOKEN="<your-secret>" \
-   DROP_PUBLIC_URL="https://your-server.example" \
-   cargo run --bin private-drop
+   WEBCODEX_TOKEN="<your-secret>" \
+   WEBCODEX_PUBLIC_URL="https://your-server.example" \
+   cargo run --bin webcodex
    ```
 2. Start the agent on the machine that owns the project, pointing at the public
    server URL with `transport = "websocket"`.
 3. In ChatGPT: **Settings → Actions → Import from URL**, enter
    `https://your-server.example/openapi.json`.
 4. Configure Action authentication as **API Key**, type **HTTP**, header
-   `Authorization`, value `Bearer <DROP_TOKEN>`.
+   `Authorization`, value `Bearer <WEBCODEX_TOKEN>`.
 5. Drive the same call flow the harness exercises:
    - `getRuntimeStatus` → is the agent online?
    - `listProjects` → copy a project id like `agent:<client_id>:<project_id>`.

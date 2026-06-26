@@ -2330,7 +2330,7 @@ mod tests {
         let mut depot = Depot::new();
         depot.inject(registry.clone());
         depot.inject(auth_context(None, true));
-        let proj = test_agent_project("/tmp/private-drop-agent-job");
+        let proj = test_agent_project("/tmp/webcodex-agent-job");
 
         let job = create_agent_job(
             &depot,
@@ -2362,7 +2362,7 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(request.kind, "start_job");
-        assert_eq!(request.cwd.as_deref(), Some("/tmp/private-drop-agent-job"));
+        assert_eq!(request.cwd.as_deref(), Some("/tmp/webcodex-agent-job"));
         assert_eq!(request.command, "printf hello");
 
         registry
@@ -2449,7 +2449,7 @@ mod tests {
                 ShellJobOpRequest {
                     op: "start".to_string(),
                     client_id: Some("bob-client".to_string()),
-                    cwd: Some("/tmp/private-drop-bob".to_string()),
+                    cwd: Some("/tmp/webcodex-bob".to_string()),
                     command: Some("printf secret".to_string()),
                     timeout_secs: Some(60),
                     job_id: None,
@@ -2477,7 +2477,7 @@ mod tests {
         let mut depot = Depot::new();
         depot.inject(registry.clone());
         depot.inject(auth_context(Some("alice"), false));
-        let mut proj = test_agent_project("/tmp/private-drop-alice");
+        let mut proj = test_agent_project("/tmp/webcodex-alice");
         proj.client_id = Some("alice-client".to_string());
 
         let err = agent_job_info_basic(&depot, &proj, "agent-project", &bob_job.job_id)

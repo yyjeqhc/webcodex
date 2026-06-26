@@ -99,6 +99,7 @@ pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(()
 pub(crate) struct EnvFileLoad {
     pub(crate) path: PathBuf,
     pub(crate) loaded_count: usize,
+    pub(crate) legacy: bool,
 }
 
 pub(crate) fn parse_env_file_line(line: &str) -> Option<Result<(String, String), String>> {
@@ -153,22 +154,64 @@ fn load_env_file(path: &Path) -> Result<EnvFileLoad, String> {
     Ok(EnvFileLoad {
         path: path.to_path_buf(),
         loaded_count,
+        legacy: false,
     })
 }
 
+fn load_env_file_candidate(path: &Path, legacy: bool) -> Result<EnvFileLoad, String> {
+    let mut loaded = load_env_file(path)?;
+    loaded.legacy = legacy;
+    Ok(loaded)
+}
+
+pub(crate) fn env_with_legacy(new_key: &str, legacy_key: &str) -> Option<String> {
+    if let Ok(value) = std::env::var(new_key) {
+        return Some(value);
+    }
+    match std::env::var(legacy_key) {
+        Ok(value) => {
+            tracing::warn!("{} is deprecated; use {} instead.", legacy_key, new_key);
+            Some(value)
+        }
+        Err(_) => None,
+    }
+}
+
+pub(crate) fn env_flag_with_legacy(new_key: &str, legacy_key: &str) -> Option<bool> {
+    let value = env_with_legacy(new_key, legacy_key)?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" => Some(false),
+        _ => None,
+    }
+}
+
 pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
+    if let Ok(path) = std::env::var("WEBCODEX_ENV_FILE") {
+        return Ok(vec![load_env_file_candidate(Path::new(&path), false)?]);
+    }
     if let Ok(path) = std::env::var("DROP_ENV_FILE") {
-        return Ok(vec![load_env_file(Path::new(&path))?]);
+        eprintln!("DROP_ENV_FILE is deprecated; use WEBCODEX_ENV_FILE instead.");
+        return Ok(vec![load_env_file_candidate(Path::new(&path), true)?]);
     }
     let candidates = [
-        PathBuf::from("./private-drop.env"),
-        PathBuf::from("/opt/private-drop/private-drop.env"),
-        PathBuf::from("/etc/private-drop/private-drop.env"),
+        (PathBuf::from("./webcodex.env"), false),
+        (PathBuf::from("/opt/webcodex/webcodex.env"), false),
+        (PathBuf::from("/etc/webcodex/webcodex.env"), false),
+        (PathBuf::from("./private-drop.env"), true),
+        (PathBuf::from("/opt/private-drop/private-drop.env"), true),
+        (PathBuf::from("/etc/private-drop/private-drop.env"), true),
     ];
     let mut loaded = Vec::new();
-    for path in candidates {
+    for (path, legacy) in candidates {
         if path.exists() {
-            loaded.push(load_env_file(&path)?);
+            if legacy {
+                tracing::warn!(
+                    "Legacy env file {} is deprecated; use webcodex.env paths instead.",
+                    path.display()
+                );
+            }
+            loaded.push(load_env_file_candidate(&path, legacy)?);
         }
     }
     Ok(loaded)
@@ -177,12 +220,14 @@ pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
 impl Config {
     pub fn from_env() -> Self {
         Self {
-            addr: std::env::var("DROP_ADDR").unwrap_or_else(|_| "0.0.0.0:8080".to_string()),
-            data_dir: std::env::var("DROP_DATA")
+            addr: env_with_legacy("WEBCODEX_ADDR", "DROP_ADDR")
+                .unwrap_or_else(|| "0.0.0.0:8080".to_string()),
+            data_dir: env_with_legacy("WEBCODEX_DATA", "DROP_DATA")
                 .map(PathBuf::from)
-                .unwrap_or_else(|_| PathBuf::from("./data")),
-            token: std::env::var("DROP_TOKEN").ok(),
-            enable_ssh: env_flag("DROP_ENABLE_SSH").unwrap_or(false),
+                .unwrap_or_else(|| PathBuf::from("./data")),
+            token: env_with_legacy("WEBCODEX_TOKEN", "DROP_TOKEN"),
+            enable_ssh: env_flag_with_legacy("WEBCODEX_ENABLE_SSH", "DROP_ENABLE_SSH")
+                .unwrap_or(false),
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: CodexConfig::from_env(),
@@ -207,15 +252,6 @@ impl Config {
 
     pub fn validate_token(&self, token: &str) -> bool {
         self.token.as_ref().map(|t| t == token).unwrap_or(false)
-    }
-}
-
-fn env_flag(key: &str) -> Option<bool> {
-    let value = std::env::var(key).ok()?;
-    match value.trim().to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
     }
 }
 
@@ -323,5 +359,99 @@ mod tests {
         assert_eq!(cfg.allowed_extra_args, vec!["--verbose", "--json"]);
 
         std::env::remove_var("CODEX_ALLOWED_EXTRA_ARGS");
+    }
+
+    #[test]
+    fn env_with_legacy_prefers_new_value() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_TOKEN", "new");
+        std::env::set_var("DROP_TOKEN", "old");
+
+        assert_eq!(
+            env_with_legacy("WEBCODEX_TOKEN", "DROP_TOKEN").as_deref(),
+            Some("new")
+        );
+
+        std::env::remove_var("WEBCODEX_TOKEN");
+        std::env::remove_var("DROP_TOKEN");
+    }
+
+    #[test]
+    fn env_with_legacy_falls_back_to_legacy_value() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_TOKEN");
+        std::env::set_var("DROP_TOKEN", "legacy");
+
+        assert_eq!(
+            env_with_legacy("WEBCODEX_TOKEN", "DROP_TOKEN").as_deref(),
+            Some("legacy")
+        );
+
+        std::env::remove_var("DROP_TOKEN");
+    }
+
+    #[test]
+    fn env_with_legacy_prefers_public_url_new_over_legacy() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_PUBLIC_URL", "https://new.example.com");
+        std::env::set_var("DROP_PUBLIC_URL", "https://old.example.com");
+
+        assert_eq!(
+            env_with_legacy("WEBCODEX_PUBLIC_URL", "DROP_PUBLIC_URL").as_deref(),
+            Some("https://new.example.com")
+        );
+
+        std::env::remove_var("WEBCODEX_PUBLIC_URL");
+        std::env::remove_var("DROP_PUBLIC_URL");
+    }
+
+    #[test]
+    fn load_startup_env_files_prefers_new_env_file_over_legacy() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let old_cwd = std::env::current_dir().unwrap();
+        std::env::set_current_dir(cwd.path()).unwrap();
+        std::fs::write("webcodex.env", "WEBCODEX_TOKEN=new\n").unwrap();
+        std::fs::write("private-drop.env", "WEBCODEX_TOKEN=old\n").unwrap();
+        std::env::remove_var("WEBCODEX_TOKEN");
+        std::env::remove_var("DROP_TOKEN");
+        std::env::remove_var("WEBCODEX_ENV_FILE");
+        std::env::remove_var("DROP_ENV_FILE");
+
+        let loads = load_startup_env_files().unwrap();
+        assert_eq!(loads.len(), 2);
+        assert_eq!(
+            loads[0].path.file_name().and_then(|s| s.to_str()),
+            Some("webcodex.env")
+        );
+        assert_eq!(
+            loads[1].path.file_name().and_then(|s| s.to_str()),
+            Some("private-drop.env")
+        );
+        assert_eq!(std::env::var("WEBCODEX_TOKEN").unwrap(), "new");
+
+        std::env::set_current_dir(old_cwd).unwrap();
+    }
+
+    #[test]
+    fn load_startup_env_files_explicit_new_path_wins_over_legacy() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let new_file = dir.path().join("webcodex.env");
+        let old_file = dir.path().join("private-drop.env");
+        std::fs::write(&new_file, "WEBCODEX_TOKEN=new\n").unwrap();
+        std::fs::write(&old_file, "WEBCODEX_TOKEN=old\n").unwrap();
+        std::env::set_var("WEBCODEX_ENV_FILE", &new_file);
+        std::env::set_var("DROP_ENV_FILE", &old_file);
+        std::env::remove_var("WEBCODEX_TOKEN");
+        std::env::remove_var("DROP_TOKEN");
+
+        let loads = load_startup_env_files().unwrap();
+        assert_eq!(loads.len(), 1);
+        assert_eq!(loads[0].path, new_file);
+        assert_eq!(std::env::var("WEBCODEX_TOKEN").unwrap(), "new");
+
+        std::env::remove_var("WEBCODEX_ENV_FILE");
+        std::env::remove_var("DROP_ENV_FILE");
     }
 }

@@ -82,7 +82,7 @@ pub(crate) fn sensitive_path_warnings(path: &str) -> Vec<String> {
     let lower = path.to_lowercase();
     let sensitive = [
         "agent.toml",
-        "private-drop.env",
+        "webcodex.env",
         ".env",
         "projects.d",
         ".git",

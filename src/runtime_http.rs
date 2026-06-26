@@ -1786,7 +1786,7 @@ mod tests {
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], true);
         let out = &body["output"];
-        assert_eq!(out["service"], "private-drop");
+        assert_eq!(out["service"], "webcodex");
         assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
         assert_eq!(out["projects"]["configured"], true);
         assert_eq!(out["projects"]["count"], 1);

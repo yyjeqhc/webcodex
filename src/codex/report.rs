@@ -65,9 +65,9 @@ pub async fn codex_report(req: &mut Request, depot: &mut Depot, res: &mut Respon
     let now = chrono::Utc::now();
     let timestamp = now.format("%Y%m%d_%H%M%S").to_string();
     let filename = format!("{}_{}.json", timestamp, &report_id[..8]);
-    let report_dir = std::env::var("DROP_DATA")
+    let report_dir = crate::config::env_with_legacy("WEBCODEX_DATA", "DROP_DATA")
         .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("./data"))
+        .unwrap_or_else(|| std::path::PathBuf::from("./data"))
         .join("reports");
 
     if let Err(e) = std::fs::create_dir_all(&report_dir) {

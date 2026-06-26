@@ -2,8 +2,7 @@ use salvo::prelude::*;
 use serde_json::{json, Value};
 
 fn public_url() -> String {
-    std::env::var("DROP_PUBLIC_URL")
-        .ok()
+    crate::config::env_with_legacy("WEBCODEX_PUBLIC_URL", "DROP_PUBLIC_URL")
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "http://localhost:8080".to_string())
@@ -123,14 +122,14 @@ pub(crate) fn build_openapi_spec() -> Value {
     json!({
         "openapi": "3.1.0",
         "info": {
-            "title": "Private Drop Runtime API",
+            "title": "WebCodex Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Self-hosted tool runtime for ChatGPT. Recommended flow: call listProjects (or listRuntimeTools) to discover available projects, then runCodexTask to start a Codex CLI task, then getRuntimeJobStatus / getRuntimeJobLog to poll the returned job_id. Use readProjectFile and getProjectGitStatus for safe project inspection. callRuntimeTool is an advanced generic entry point for any runtime tool; prefer the dedicated actions when available. All endpoints require Bearer auth (DROP_TOKEN). MCP and GPT Actions share the same ToolRuntime."
+            "description": "Self-hosted tool runtime for ChatGPT. Recommended flow: call listProjects (or listRuntimeTools) to discover available projects, then runCodexTask to start a Codex CLI task, then getRuntimeJobStatus / getRuntimeJobLog to poll the returned job_id. Use readProjectFile and getProjectGitStatus for safe project inspection. callRuntimeTool is an advanced generic entry point for any runtime tool; prefer the dedicated actions when available. All endpoints require Bearer auth (WEBCODEX_TOKEN). MCP and GPT Actions share the same ToolRuntime."
         },
         "servers": [
             {
                 "url": public_url(),
-                "description": "Private Drop server"
+                "description": "WebCodex server"
             }
         ],
         "paths": {
@@ -172,14 +171,14 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "projectAndPrompt": {
                             "summary": "Start a Codex task in a project",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "prompt": "Inspect the codebase and summarize the runtime architecture."
                             }
                         },
                         "withTimeout": {
                             "summary": "Start a Codex task with an explicit timeout",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "prompt": "Run the test suite and report failures.",
                                 "timeout_secs": 600
                             }
@@ -279,14 +278,14 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "readme": {
                             "summary": "Read a project README",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "path": "README.md"
                             }
                         },
                         "paginated": {
                             "summary": "Read a slice of a source file",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "path": "src/main.rs",
                                 "start_line": 1,
                                 "limit": 100
@@ -306,7 +305,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Check git status of a project",
                             "value": {
-                                "project": "private-drop"
+                                "project": "webcodex"
                             }
                         }
                     })
@@ -323,13 +322,13 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Full diff of a project",
                             "value": {
-                                "project": "private-drop"
+                                "project": "webcodex"
                             }
                         },
                         "withStat": {
                             "summary": "Diffstat of a project",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "args": ["--stat"]
                             }
                         }
@@ -347,7 +346,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Diff summary of a project",
                             "value": {
-                                "project": "private-drop"
+                                "project": "webcodex"
                             }
                         }
                     })
@@ -364,13 +363,13 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "root": {
                             "summary": "List project root",
                             "value": {
-                                "project": "private-drop"
+                                "project": "webcodex"
                             }
                         },
                         "subdir": {
                             "summary": "List a subdirectory",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "path": "src",
                                 "limit": 100
                             }
@@ -389,7 +388,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byPattern": {
                             "summary": "Search for a pattern",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "pattern": "fn main",
                                 "limit": 20
                             }
@@ -408,8 +407,8 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "example": {
                             "summary": "Apply a small unified diff",
                             "value": {
-                                "project": "private-drop",
-                                "patch": "--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# Private Drop\n+edited\n"
+                                "project": "webcodex",
+                                "patch": "--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# WebCodex\n+edited\n"
                             }
                         }
                     })
@@ -426,14 +425,14 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "tests": {
                             "summary": "Run the test suite",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "command": "cargo test"
                             }
                         },
                         "withCwd": {
                             "summary": "Run a command in a subdirectory",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "command": "ls",
                                 "cwd": "src"
                             }
@@ -452,7 +451,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Dry-run a small patch",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
                             }
                         }
@@ -470,7 +469,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Validate then apply a small patch",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
                             }
                         }
@@ -488,7 +487,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Delete selected files",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "paths": ["tmp_probe.txt"]
                             }
                         }
@@ -506,7 +505,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Restore selected tracked paths",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "paths": ["tmp_probe.txt"]
                             }
                         }
@@ -524,7 +523,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Discard selected untracked files",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "paths": ["tmp_probe.txt"]
                             }
                         }
@@ -542,7 +541,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "byProject": {
                             "summary": "Replace a unique substring in a project file",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "path": "src/main.rs",
                                 "old": "fn main()",
                                 "new": "fn main() -> Result<(), Box<dyn std::error::Error>>"
@@ -562,7 +561,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "createNew": {
                             "summary": "Create a new project file",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "path": "src/new_module.rs",
                                 "content": "// new module\n"
                             }
@@ -570,7 +569,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "overwriteWithGuard": {
                             "summary": "Overwrite an existing file with an expected_sha256 guard",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "path": "src/existing.rs",
                                 "content": "// updated\n",
                                 "overwrite": true,
@@ -591,14 +590,14 @@ pub(crate) fn build_openapi_spec() -> Value {
                         "testCommand": {
                             "summary": "Run a lightweight test command asynchronously",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "command": "cargo test --no-run"
                             }
                         },
                         "withTimeout": {
                             "summary": "Run a check command with a timeout",
                             "value": {
-                                "project": "private-drop",
+                                "project": "webcodex",
                                 "command": "cargo clippy",
                                 "timeout_secs": 300,
                                 "cwd": "src"
@@ -620,7 +619,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                             "value": {
                                 "tool": "git_status",
                                 "params": {
-                                    "project": "private-drop"
+                                    "project": "webcodex"
                                 }
                             }
                         },
@@ -629,7 +628,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                             "value": {
                                 "tool": "read_file",
                                 "params": {
-                                    "project": "private-drop",
+                                    "project": "webcodex",
                                     "path": "README.md"
                                 }
                             }
@@ -639,7 +638,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                             "value": {
                                 "tool": "git_diff_summary",
                                 "arguments": {
-                                    "project": "private-drop"
+                                    "project": "webcodex"
                                 }
                             }
                         },
@@ -658,7 +657,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "bearerAuth": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": "Bearer token. Set DROP_TOKEN on the server and send Authorization: Bearer <DROP_TOKEN>."
+                    "description": "Bearer token. Set WEBCODEX_TOKEN on the server and send Authorization: Bearer <WEBCODEX_TOKEN>."
                 }
             },
             "schemas": schemas()

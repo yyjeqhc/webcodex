@@ -5,13 +5,13 @@
 # connect_timeout_secs = 10
 # control_master = true
 # control_persist = "10m"
-# control_path = "/tmp/private-drop-ssh-%C"
+# control_path = "/tmp/webcodex-ssh-%C"
 # server_alive_interval = 30
 # server_alive_count_max = 3
 
-# Local executor: commands run on the same machine as private-drop
-[projects.private-drop]
-path = "/root/git/private-drop"
+# Local executor: commands run on the same machine as webcodex
+[projects.webcodex]
+path = "/root/git/webcodex"
 # allow_patch defaults to true for projects listed here. Set false for read/check-only use.
 # allow_patch = true
 # Optional: default patch backend for /api/codex/apply_patch when request.backend is omitted.
@@ -22,7 +22,7 @@ allow_raw_command_requests = false
 # If omitted, allowed_checks is inferred from configured [checks].
 # allowed_checks = ["fmt", "test", "build", "e2e", "full"]
 
-[projects.private-drop.checks]
+[projects.webcodex.checks]
 fmt = "cargo fmt --check"
 test = "cargo test"
 build = "cargo build --release"
@@ -31,62 +31,62 @@ full = "cargo fmt --check && cargo test && cargo build --release && bash scripts
 
 # Optional extra project-level commands for /api/codex/command.
 # Requests can only choose one of these ids; they cannot provide arbitrary shell.
-[projects.private-drop.commands]
+[projects.webcodex.commands]
 clippy = "cargo clippy --all-targets -- -D warnings"
 doc = "cargo doc --no-deps"
 
 # SSH executor: commands run on a remote machine via SSH
-# Use this when private-drop is deployed on a gateway (e.g., SG4) but
+# Use this when webcodex is deployed on a gateway (e.g., SG4) but
 # the actual project lives on a different machine (reachable via Tailscale).
 #
 # Before using SSH executor, verify connectivity:
-#   ssh msi 'cd /root/git/private-drop && cargo test'
+#   ssh msi 'cd /root/git/webcodex && cargo test'
 #
-# [projects.private-drop]
+# [projects.webcodex]
 # executor = "ssh"
 # host = "msi"
 # Optional fallback endpoints. Legacy host remains the first endpoint when both are set.
 # ssh_hosts = ["msi-rev4", "msi-rev6"]
 # user = "root"
-# path = "/root/git/private-drop"
+# path = "/root/git/webcodex"
 # allow_patch = true
 # default_apply_patch_backend = "builtin"
 # allow_command_requests = true
 # allow_raw_command_requests = false
 # allowed_checks = ["fmt", "test", "build", "e2e"]
 #
-# [projects.private-drop.checks]
+# [projects.webcodex.checks]
 # fmt = "cargo fmt --check"
 # test = "cargo test"
 # build = "cargo build --release"
 # e2e = "bash scripts/e2e_test.sh"
 #
-# [projects.private-drop.commands]
+# [projects.webcodex.commands]
 # clippy = "cargo clippy --all-targets -- -D warnings"
 # doc = "cargo doc --no-deps"
 
 
-# Agent executor: commands and project APIs run through a registered private-drop-agent.
-# Use this when private-drop runs on a server/gateway but the project lives on an agent machine.
+# Agent executor: commands and project APIs run through a registered webcodex-agent.
+# Use this when webcodex runs on a server/gateway but the project lives on an agent machine.
 # First verify the agent is online:
 #   listShellClients -> client_id should be connected and jobs/file_read/file_write should be true
 #
-# [projects.private-drop-agent]
+# [projects.webcodex-agent]
 # executor = "agent"
 # client_id = "oe"
-# path = "/root/git/private-drop"
+# path = "/root/git/webcodex"
 # allow_patch = true
 # allow_command_requests = true
 # allow_raw_command_requests = false
 # allowed_checks = ["fmt", "test", "build", "full"]
 #
-# [projects.private-drop-agent.checks]
+# [projects.webcodex-agent.checks]
 # fmt = ". /root/.cargo/env && cargo fmt --check"
 # test = ". /root/.cargo/env && cargo test"
 # build = ". /root/.cargo/env && cargo build --release"
 # full = ". /root/.cargo/env && cargo fmt --check && cargo test && cargo build --release"
 #
-# [projects.private-drop-agent.commands]
+# [projects.webcodex-agent.commands]
 # status = "git status --short && git branch --show-current && git log --oneline -5"
 # diffstat = "git diff --stat"
 # lastlog = "git log --oneline -20"

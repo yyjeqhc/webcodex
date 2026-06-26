@@ -11,7 +11,7 @@ use crate::shell_protocol::ShellRunRequest;
 /// Sentinel separating `git status --porcelain` from `git diff --stat` in the
 /// combined `git_diff_summary` command output. Chosen to be extremely unlikely
 /// to appear in real git output.
-pub(crate) const DIFF_SUMMARY_SENTINEL: &str = "@@PRIVATE_DROP_DIFF_SUMMARY_SEP@@";
+pub(crate) const DIFF_SUMMARY_SENTINEL: &str = "@@WEBCODEX_DIFF_SUMMARY_SEP@@";
 
 /// Build the read-only `git_diff_summary` command. Runs `git status
 /// --porcelain` and `git diff --stat` separated by a unique sentinel. No

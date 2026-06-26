@@ -1,6 +1,6 @@
-# Private Drop Runtime
+# WebCodex Runtime
 
-Private Drop is a self-hosted tool runtime for ChatGPT. It exposes local project
+WebCodex is a self-hosted tool runtime for ChatGPT. It exposes local project
 capabilities through a single `ToolRuntime` that is shared by GPT Actions,
 MCP, and the REST wrappers used by this GPT.
 
@@ -14,14 +14,14 @@ ChatGPT GPT Action      ChatGPT MCP client
               ToolRuntime
         read | git | patch | shell | jobs | codex
               |
-    private-drop-agent -> local working tree
+    webcodex-agent -> local working tree
 ```
 
 Current direction:
 
 - GPT Actions import `GET /openapi.json`.
 - MCP clients connect to `POST /mcp`.
-- Projects are registered by `private-drop-agent` clients.
+- Projects are registered by `webcodex-agent` clients.
 - The server is a **zero-project-config relay** for the normal runtime surface;
   do not set `PROJECTS_CONFIG` expecting it to register runtime projects.
 - Codex is an **optional advanced capability**. Read, diff, patch, and shell
@@ -31,7 +31,7 @@ Current direction:
 
 ## Build and install
 
-Private Drop needs a Rust toolchain with `cargo`:
+WebCodex needs a Rust toolchain with `cargo`:
 
 ```bash
 cargo build --release
@@ -40,8 +40,8 @@ cargo build --release
 The release build produces:
 
 ```text
-target/release/private-drop
-target/release/private-drop-agent
+target/release/webcodex
+target/release/webcodex-agent
 ```
 
 See [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) for the short build, install,
@@ -50,10 +50,10 @@ server, agent, GPT Actions, and MCP setup guide.
 ## Run the server locally
 
 ```bash
-DROP_TOKEN="change-me" \
-DROP_ADDR="127.0.0.1:8080" \
-DROP_PUBLIC_URL="http://127.0.0.1:8080" \
-cargo run --bin private-drop
+WEBCODEX_TOKEN="change-me" \
+WEBCODEX_ADDR="127.0.0.1:8080" \
+WEBCODEX_PUBLIC_URL="http://127.0.0.1:8080" \
+cargo run --bin webcodex
 ```
 
 Useful endpoints:
@@ -78,26 +78,26 @@ curl -H "Authorization: Bearer change-me" \
 Agent-side project files live under `projects_dir`, one `*.toml` per project:
 
 ```toml
-# /etc/private-drop-agent/projects.d/private-drop.toml
-id = "private-drop"
-path = "/root/git/private-drop"
-name = "Private Drop"
+# /etc/webcodex/projects.d/webcodex.toml
+id = "webcodex"
+path = "/root/git/webcodex"
+name = "WebCodex"
 allow_patch = true
 kind = "rust"
-description = "Private Drop Runtime repository"
+description = "WebCodex Runtime repository"
 ```
 
 Agent config example:
 
 ```toml
 server_url = "https://drop.example.com"
-token = "REPLACE_WITH_DROP_TOKEN"
+token = "REPLACE_WITH_WEBCODEX_TOKEN"
 client_id = "workstation-1"
 display_name = "Workstation"
 owner = "you"
 transport = "websocket"
 poll_interval_ms = 1000
-projects_dir = "/etc/private-drop-agent/projects.d"
+projects_dir = "/etc/webcodex/projects.d"
 
 [capabilities]
 shell = true
@@ -119,7 +119,7 @@ max_output_bytes = 262144
 Start the agent:
 
 ```bash
-cargo run --bin private-drop-agent -- --config /etc/private-drop-agent/agent.toml
+cargo run --bin webcodex-agent -- --config /etc/webcodex/agent.toml
 ```
 
 `websocket` is the preferred long-lived transport. `polling` remains available
@@ -132,7 +132,7 @@ agent:<client_id>:<project_id>
 For example:
 
 ```text
-agent:workstation-1:private-drop
+agent:workstation-1:webcodex
 ```
 
 Never commit real `agent.toml`, env files, tokens, or machine-local
@@ -150,7 +150,7 @@ Configure authentication as an HTTP API key in the `Authorization` header with
 value:
 
 ```text
-Bearer <DROP_TOKEN>
+Bearer <WEBCODEX_TOKEN>
 ```
 
 GPT Actions and MCP are peer surfaces over the same `ToolRuntime`. GPT
@@ -296,8 +296,8 @@ bash scripts/release_check.sh
 Deployment smoke against a live public instance:
 
 ```bash
-DROP_PUBLIC_URL="https://drop.example.com" \
-DROP_TOKEN="<token>" \
+WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_TOKEN="<token>" \
 bash scripts/smoke_deployment.sh
 ```
 
@@ -305,13 +305,13 @@ bash scripts/smoke_deployment.sh
 
 Deployment samples live under [`deploy/`](deploy/):
 
-- `private-drop.service.example`
-- `private-drop.env.example`
-- `private-drop-agent.service.example`
-- `private-drop-agent.toml.example`
+- `webcodex.service.example`
+- `webcodex.env.example`
+- `webcodex-agent.service.example`
+- `webcodex-agent.toml.example`
 - `agent-project.toml.example`
-- `projects.d/private-drop.toml.example`
-- `nginx.private-drop.example.conf`
+- `projects.d/webcodex.toml.example`
+- `nginx.webcodex.example.conf`
 
 The deployment guide covers server env vars, agent config, reverse proxy / TLS,
 GPT Actions import, MCP, smoke tests, and WebSocket online/stale troubleshooting:

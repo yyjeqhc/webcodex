@@ -15,8 +15,8 @@
 //! Phase B scope: this is a **read-only** status console. There are no
 //! file-browse, diff, patch-approval, command-execution, or job-log UI
 //! controls here; those are deferred to later phases. The console never
-//! displays `DROP_TOKEN`, Authorization headers, API keys, full env, or
-//! `agent.toml` / `private-drop.env` contents — the token is only stored in
+//! displays `WEBCODEX_TOKEN`, Authorization headers, API keys, full env, or
+//! `agent.toml` / `webcodex.env` contents — the token is only stored in
 //! `localStorage` and sent as a Bearer header; it is never rendered into the
 //! DOM, logs, or debug output.
 
@@ -137,7 +137,7 @@ mod tests {
         // JS must call the runtime status endpoint (the only data source).
         assert!(CONSOLE_APP_JS.contains("/api/runtime/status"));
         // The bundle must never embed or echo the token into the DOM.
-        assert!(!CONSOLE_HTML.to_lowercase().contains("drop_token"));
+        assert!(!CONSOLE_HTML.to_lowercase().contains("webcodex_token"));
     }
 
     #[tokio::test]

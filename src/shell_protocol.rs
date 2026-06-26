@@ -35,13 +35,13 @@ fn default_transport_polling() -> String {
     "polling".to_string()
 }
 
-/// Protocol version announced by current `private-drop-agent` builds. Used by
-/// the `private-drop-agent` binary target; allowed dead-code here because the
+/// Protocol version announced by current `webcodex-agent` builds. Used by
+/// the `webcodex-agent` binary target; allowed dead-code here because the
 /// main server binary does not reference it directly.
 #[allow(dead_code)]
 pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
 
-/// Protocol version announced by `private-drop-agent` builds that connect over
+/// Protocol version announced by `webcodex-agent` builds that connect over
 /// WebSocket. Kept in the shared protocol module so both the server and the
 /// agent binary reference the same literal.
 #[allow(dead_code)]
@@ -577,7 +577,7 @@ pub struct ShellClientJobsListResponse {
 // and could be framed over QUIC streams unchanged.
 
 /// One agent transport message. Used by both the server WebSocket handler and
-/// the `private-drop-agent` WebSocket client mode.
+/// the `webcodex-agent` WebSocket client mode.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum AgentEnvelope {

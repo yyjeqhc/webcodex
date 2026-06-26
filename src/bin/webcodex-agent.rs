@@ -21,7 +21,8 @@ use shell_protocol::{
     AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 
-const DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
+const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
+const LEGACY_DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
@@ -322,16 +323,17 @@ enum OutputChunk {
 }
 
 fn usage() -> &'static str {
-    "Usage: private-drop-agent [--config PATH] [--once]\n\n\
+    "Usage: webcodex-agent [--config PATH] [--once]\n\n\
      Environment:\n\
-       PRIVATE_DROP_AGENT_CONFIG  default config path override\n\n\
+       WEBCODEX_AGENT_CONFIG      default config path override\n\
+       PRIVATE_DROP_AGENT_CONFIG  deprecated default config path override\n\n\
      Example agent.toml:\n\
        server_url = \"https://v4.yyjeqhc.cn\"\n\
        token = \"...\"\n\
        client_id = \"xrh\"\n\
        display_name = \"XRH\"\n\
        owner = \"yyjeqhc\"\n\
-       projects_dir = \"/root/.config/private-drop-agent/projects.d\"\n\
+       projects_dir = \"/root/.config/webcodex/projects.d\"\n\
        poll_interval_ms = 1000\n\
 \n\
        [policy]\n\
@@ -342,9 +344,17 @@ fn usage() -> &'static str {
 }
 
 fn parse_args() -> Result<(PathBuf, bool), String> {
-    let mut config_path = std::env::var("PRIVATE_DROP_AGENT_CONFIG")
+    let mut config_path = std::env::var("WEBCODEX_AGENT_CONFIG")
         .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(DEFAULT_CONFIG_PATH));
+        .or_else(|_| {
+            std::env::var("PRIVATE_DROP_AGENT_CONFIG").map(|path| {
+                eprintln!(
+                    "PRIVATE_DROP_AGENT_CONFIG is deprecated; use WEBCODEX_AGENT_CONFIG instead."
+                );
+                PathBuf::from(path)
+            })
+        })
+        .unwrap_or_else(|_| default_config_path());
     let mut once = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
@@ -364,6 +374,39 @@ fn parse_args() -> Result<(PathBuf, bool), String> {
         }
     }
     Ok((config_path, once))
+}
+
+fn default_config_path() -> PathBuf {
+    let home_new = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".config/webcodex/agent.toml"));
+    let system_new = PathBuf::from(DEFAULT_CONFIG_PATH);
+    let home_legacy = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".config/private-drop-agent/agent.toml"));
+    let system_legacy = PathBuf::from(LEGACY_DEFAULT_CONFIG_PATH);
+    for (path, legacy) in [
+        (home_new.clone(), false),
+        (Some(system_new.clone()), false),
+        (home_legacy.clone(), true),
+        (Some(system_legacy.clone()), true),
+    ] {
+        if let Some(path) = path {
+            if path.exists() {
+                if legacy {
+                    eprintln!(
+                        "Legacy config path {} is deprecated; use {} or ~/.config/webcodex/agent.toml instead.",
+                        path.display(),
+                        DEFAULT_CONFIG_PATH
+                    );
+                }
+                return path;
+            }
+        }
+    }
+    home_new
+        .or_else(|| Some(system_new))
+        .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH))
 }
 
 fn load_config(path: &Path) -> Result<AgentConfig, String> {
@@ -402,10 +445,20 @@ fn hostname() -> Option<String> {
 }
 
 fn default_projects_dir() -> PathBuf {
-    std::env::var_os("HOME")
+    let home = std::env::var_os("HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config/private-drop-agent/projects.d")
+        .unwrap_or_else(|| PathBuf::from("."));
+    let new_dir = home.join(".config/webcodex/projects.d");
+    let legacy_dir = home.join(".config/private-drop-agent/projects.d");
+    if new_dir.exists() || !legacy_dir.exists() {
+        return new_dir;
+    }
+    eprintln!(
+        "Legacy projects_dir {} is deprecated; use {} instead.",
+        legacy_dir.display(),
+        new_dir.display()
+    );
+    legacy_dir
 }
 
 fn projects_dir(cfg: &AgentConfig) -> PathBuf {
@@ -511,7 +564,7 @@ fn warn_empty_hook_commands(source: &Path, project: &AgentProjectFile) {
         for (idx, command) in commands.iter().enumerate() {
             if command.trim().is_empty() {
                 eprintln!(
-                    "private-drop-agent project warning: {} hook {} command {} is empty",
+                    "webcodex-agent project warning: {} hook {} command {} is empty",
                     source.display(),
                     hook,
                     idx
@@ -527,7 +580,7 @@ fn load_agent_project_summaries_from_dir(dir: &Path) -> Vec<ShellAgentProjectSum
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
         Err(e) => {
             eprintln!(
-                "private-drop-agent project warning: failed to read {}: {}",
+                "webcodex-agent project warning: failed to read {}: {}",
                 dir.display(),
                 e
             );
@@ -551,7 +604,7 @@ fn load_agent_project_summaries_from_dir(dir: &Path) -> Vec<ShellAgentProjectSum
             Ok(content) => content,
             Err(e) => {
                 eprintln!(
-                    "private-drop-agent project warning: failed to read {}: {}",
+                    "webcodex-agent project warning: failed to read {}: {}",
                     file.display(),
                     e
                 );
@@ -562,7 +615,7 @@ fn load_agent_project_summaries_from_dir(dir: &Path) -> Vec<ShellAgentProjectSum
             Ok(project) => project,
             Err(e) => {
                 eprintln!(
-                    "private-drop-agent project warning: skipping {}: {}",
+                    "webcodex-agent project warning: skipping {}: {}",
                     file.display(),
                     e
                 );
@@ -574,7 +627,7 @@ fn load_agent_project_summaries_from_dir(dir: &Path) -> Vec<ShellAgentProjectSum
         }
         if !seen.insert(project.id.clone()) {
             eprintln!(
-                "private-drop-agent project warning: duplicate project id {} in {}; skipping",
+                "webcodex-agent project warning: duplicate project id {} in {}; skipping",
                 project.id,
                 file.display()
             );
@@ -1530,7 +1583,7 @@ fn dispatch_request(
         "stop_job" => {
             if let Some(job_id) = request.job_id.as_deref() {
                 if let Err(e) = jobs.stop(job_id) {
-                    eprintln!("private-drop-agent stop_job error: {}", e);
+                    eprintln!("webcodex-agent stop_job error: {}", e);
                 }
             }
             Ok(true)
@@ -1606,7 +1659,7 @@ fn run_polling_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
     let mut project_cache = AgentProjectCache::default();
     register(&client, &cfg, &mut project_cache)?;
     eprintln!(
-        "private-drop-agent registered client_id={} server={} transport=polling",
+        "webcodex-agent registered client_id={} server={} transport=polling",
         cfg.client_id, cfg.server_url
     );
     loop {
@@ -1623,7 +1676,7 @@ fn run_polling_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
                 }
             }
             Err(e) => {
-                eprintln!("private-drop-agent poll error: {}", e);
+                eprintln!("webcodex-agent poll error: {}", e);
                 if once {
                     return Err(e);
                 }
@@ -1697,11 +1750,11 @@ fn run_websocket_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
                     if once {
                         return Ok(());
                     }
-                    eprintln!("private-drop-agent websocket session ended; reconnecting");
+                    eprintln!("webcodex-agent websocket session ended; reconnecting");
                     tokio::time::sleep(WS_RECONNECT_BACKOFF).await;
                 }
                 Err(e) => {
-                    eprintln!("private-drop-agent websocket error: {}", e);
+                    eprintln!("webcodex-agent websocket error: {}", e);
                     if once {
                         return Err(e);
                     }
@@ -1760,7 +1813,7 @@ async fn websocket_session(
         other => return Err(format!("expected registered ack, got {}", other.kind())),
     }
     eprintln!(
-        "private-drop-agent registered client_id={} server={} transport=websocket",
+        "webcodex-agent registered client_id={} server={} transport=websocket",
         cfg.client_id, cfg.server_url
     );
 
@@ -1801,7 +1854,7 @@ async fn websocket_session(
                 let msg = match msg {
                     Some(Ok(m)) => m,
                     Some(Err(e)) => {
-                        eprintln!("private-drop-agent websocket read error: {}", e);
+                        eprintln!("webcodex-agent websocket read error: {}", e);
                         break;
                     }
                     None => break,
@@ -1816,7 +1869,7 @@ async fn websocket_session(
                 let env = match AgentEnvelope::from_slice(text.as_bytes()) {
                     Ok(env) => env,
                     Err(e) => {
-                        eprintln!("private-drop-agent websocket malformed envelope: {}", e);
+                        eprintln!("webcodex-agent websocket malformed envelope: {}", e);
                         continue;
                     }
                 };
@@ -1844,14 +1897,14 @@ async fn websocket_session(
                     }
                     AgentEnvelope::Error { code, message } => {
                         eprintln!(
-                            "private-drop-agent websocket server error {}: {}",
+                            "webcodex-agent websocket server error {}: {}",
                             code, message
                         );
                         break;
                     }
                     other => {
                         eprintln!(
-                            "private-drop-agent websocket ignoring unexpected envelope: {}",
+                            "webcodex-agent websocket ignoring unexpected envelope: {}",
                             other.kind()
                         );
                     }
@@ -1906,7 +1959,7 @@ fn main() {
         }
     };
     if let Err(e) = run_agent(cfg, once) {
-        eprintln!("private-drop-agent failed: {}", e);
+        eprintln!("webcodex-agent failed: {}", e);
         std::process::exit(1);
     }
 }
@@ -1936,8 +1989,8 @@ mod tests {
     fn agent_project_toml_parse_sorts_hook_names() {
         let project = parse_agent_project_toml(
             r#"
-id = "private-drop"
-path = "/root/git/private-drop"
+id = "webcodex"
+path = "/root/git/webcodex"
 kind = "rust"
 
 [hooks]
@@ -1947,9 +2000,9 @@ doctor = ["git status --short"]
         )
         .unwrap();
         let summary = agent_project_summary(&project, 123456, false);
-        assert_eq!(summary.id, "private-drop");
-        assert_eq!(summary.name.as_deref(), Some("private-drop"));
-        assert_eq!(summary.path, "/root/git/private-drop");
+        assert_eq!(summary.id, "webcodex");
+        assert_eq!(summary.name.as_deref(), Some("webcodex"));
+        assert_eq!(summary.path, "/root/git/webcodex");
         assert_eq!(summary.kind.as_deref(), Some("rust"));
         assert_eq!(summary.hooks, vec!["doctor", "precommit"]);
         assert_eq!(summary.updated_at, 123456);
@@ -1961,7 +2014,7 @@ doctor = ["git status --short"]
         let err = parse_agent_project_toml(
             r#"
 id = "bad id"
-path = "/tmp/private-drop"
+path = "/tmp/webcodex"
 "#,
         )
         .unwrap_err();

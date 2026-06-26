@@ -30,9 +30,9 @@ fn instance_info(depot: &Depot) -> InstanceInfo {
         .map(|cfg| cfg.data_dir.display().to_string())
         .unwrap_or_else(|| "unknown".to_string());
     InstanceInfo {
-        service: "private-drop".to_string(),
+        service: "webcodex".to_string(),
         api: "codex".to_string(),
-        schema: "private-drop-v2-openapi".to_string(),
+        schema: "webcodex-v2-openapi".to_string(),
         package_version: env!("CARGO_PKG_VERSION").to_string(),
         server_time: chrono::Utc::now().timestamp(),
         pid: std::process::id(),

@@ -1,4 +1,4 @@
-# Private Drop Runtime Roadmap
+# WebCodex Runtime Roadmap
 
 This document is the forward-looking development plan after the initial
 ChatGPT runtime build-out. Historical phase-by-phase planning notes were removed
@@ -63,7 +63,7 @@ Status: implemented.
   installs a push notifier, and pumps pending requests from the shared
   per-client queue. Result / job_update / ping are routed back to the same
   registry methods the polling endpoints use.
-- Agent WebSocket mode in `src/bin/private-drop-agent.rs` selected by
+- Agent WebSocket mode in `src/bin/webcodex-agent.rs` selected by
   `transport = "websocket"`. It reuses the shared `dispatch_request` /
   `JobManager` execution path through an `AgentSink` abstraction; polling mode
   is unchanged and remains the default/fallback.
@@ -136,7 +136,7 @@ tests.
 
 Tasks:
 
-- Start a local or deployed server with a real `DROP_TOKEN`.
+- Start a local or deployed server with a real `WEBCODEX_TOKEN`.
 - Connect an agent and confirm `listProjects` sees agent projects.
 - Import `GET /openapi.json` into a GPT Action.
 - Exercise the recommended GPT Actions flow.

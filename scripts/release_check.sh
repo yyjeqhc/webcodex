@@ -2,12 +2,12 @@
 set -euo pipefail
 
 # ============================================================================
-# Private Drop — Release Readiness Check
+# WebCodex — Release Readiness Check
 #
 # Lightweight pre-release gate. Runs the most important local checks that must
 # pass before tagging/importing GPT Actions. It does NOT boot a public server,
 # does NOT touch the network, and NEVER reads or prints real tokens, secrets,
-# agent.toml, private-drop.env, or .env files.
+# agent.toml, webcodex.env, or .env files.
 #
 # Stages:
 #   1. cargo fmt --check
@@ -20,7 +20,7 @@ set -euo pipefail
 #
 # Invariant notes (verified by stages 5/6, not re-checked statically here to
 # keep the script fast and dependency-free):
-#   - /openapi.json operation count == 23
+#   - /openapi.json operation count == 25
 #   - MCP tools/list count == 25
 # The E2E harness asserts both counts against the live schema.
 #
@@ -135,7 +135,7 @@ stage_start "static: no sensitive files tracked/staged"
 # under the repo root so the deploy/*.example templates are NOT flagged.
 SENSITIVE_PATTERNS=(
     'agent.toml'
-    'private-drop.env'
+    'webcodex.env'
     '.env'
     'projects.d'
 )
@@ -164,7 +164,7 @@ if [ -z "$violations" ]; then
 else
     printf '[release][FAIL] sensitive files must not be tracked or staged:\n' >&2
     printf '%s\n' "$violations" >&2
-    printf '[release][FAIL] remove them from git (git rm --cached) and rotate DROP_TOKEN if exposed.\n' >&2
+    printf '[release][FAIL] remove them from git (git rm --cached) and rotate WEBCODEX_TOKEN if exposed.\n' >&2
     die "sensitive files in git"
 fi
 

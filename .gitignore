@@ -15,11 +15,11 @@ data*
 
 # Local sensitive deployment config — NEVER commit these.
 # They contain real server URLs, tokens, and host paths. If a token was ever
-# committed or exposed, rotate DROP_TOKEN immediately.
+# committed or exposed, rotate WEBCODEX_TOKEN immediately.
 /agent.toml
 /projects.d/
 /*.local.toml
-/private-drop.env
+/webcodex.env
 
 # Generated documentation output (explicit rules, so docs/ stays tracked).
 /docs-generated/

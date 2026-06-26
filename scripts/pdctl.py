@@ -43,15 +43,15 @@ def resolve_url(args):
 
 
 def resolve_token(args):
-    token = args.token or env_first("PRIVATE_DROP_TOKEN", "DROP_TOKEN")
+    token = args.token or env_first("PRIVATE_DROP_TOKEN", "WEBCODEX_TOKEN")
     if not token:
-        raise CliError("missing PRIVATE_DROP_TOKEN or DROP_TOKEN", 2)
+        raise CliError("missing PRIVATE_DROP_TOKEN or WEBCODEX_TOKEN", 2)
     return token
 
 
 def add_common_options(parser):
     parser.add_argument("--url", help="Private Drop base URL. Defaults to PRIVATE_DROP_URL, DROP_URL, then http://127.0.0.1:8000.")
-    parser.add_argument("--token", help="Bearer token. Defaults to PRIVATE_DROP_TOKEN, then DROP_TOKEN.")
+    parser.add_argument("--token", help="Bearer token. Defaults to PRIVATE_DROP_TOKEN, then WEBCODEX_TOKEN.")
     parser.add_argument("--json", action="store_true", help="Print the complete response as pretty JSON.")
     parser.add_argument("--debug", action="store_true", help="Print short exception details on request errors.")
 

@@ -1,19 +1,19 @@
-# Example config for private-drop-agent.
-# Copy to /etc/private-drop-agent/agent.toml and edit token/client_id/server_url.
+# Example config for webcodex-agent.
+# Copy to /etc/webcodex/agent.toml and edit token/client_id/server_url.
 
-# Public server URL. Must match the server's DROP_PUBLIC_URL so TLS validates.
+# Public server URL. Must match the server's WEBCODEX_PUBLIC_URL so TLS validates.
 server_url = "https://drop.example.com"
 
-# Bearer token. Must equal the server's DROP_TOKEN (or a valid API key).
+# Bearer token. Must equal the server's WEBCODEX_TOKEN (or a valid API key).
 # NEVER commit a real token; replace this placeholder.
-token = "REPLACE_WITH_DROP_TOKEN_OR_AGENT_TOKEN"
+token = "REPLACE_WITH_WEBCODEX_TOKEN_OR_AGENT_TOKEN"
 
 # Stable unique id for this agent host. Used in runtime ids:
 #   agent:<client_id>:<project_id>
 client_id = "workstation-1"
 display_name = "Workstation"
 
-# Owner principal. A bootstrap DROP_TOKEN may register any owner; a normal API
+# Owner principal. A bootstrap WEBCODEX_TOKEN may register any owner; a normal API
 # key may only register owner == <username>. Applied identically to polling and
 # WebSocket.
 owner = "you"
@@ -30,7 +30,7 @@ poll_interval_ms = 1000
 # Directory of agent-side project files (one *.toml per project). The agent
 # reads these and reports them to the server at registration; the server never
 # needs a matching server-side [projects.<id>] block.
-projects_dir = "/etc/private-drop-agent/projects.d"
+projects_dir = "/etc/webcodex/projects.d"
 
 # The agent announces agent_protocol_version = "websocket-v1" (or "polling-v1")
 # automatically during registration. There is no config field for it; it is
@@ -39,7 +39,7 @@ projects_dir = "/etc/private-drop-agent/projects.d"
 
 [capabilities]
 # These must match what the agent host is allowed to do. The current
-# private-drop-agent build registers shell=true by default; enable the rest as
+# webcodex-agent build registers shell=true by default; enable the rest as
 # needed. ToolRuntime::authorize_agent_tool enforces these before any
 # agent-backed tool runs.
 shell = true

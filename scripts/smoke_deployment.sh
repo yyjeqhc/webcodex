@@ -2,20 +2,20 @@
 set -euo pipefail
 
 # ============================================================================
-# Private Drop — Deployment Smoke
+# WebCodex — Deployment Smoke
 #
-# Lightweight smoke test against an ALREADY-DEPLOYED Private Drop instance.
+# Lightweight smoke test against an ALREADY-DEPLOYED WebCodex instance.
 # It does NOT start a server or agent. It verifies the public surface is
 # reachable, auth works, and the GPT Actions + MCP endpoints respond.
 #
 # Usage:
-#   DROP_PUBLIC_URL="https://drop.example.com" \
-#   DROP_TOKEN="<your-secret>" \
+#   WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+#   WEBCODEX_TOKEN="<your-secret>" \
 #   bash scripts/smoke_deployment.sh
 #
 # Environment overrides:
-#   DROP_PUBLIC_URL  (or BASE_URL)  base URL of the deployed instance
-#   DROP_TOKEN       (or TOKEN)     bearer token; NEVER printed by this script
+#   WEBCODEX_PUBLIC_URL  (or BASE_URL)  base URL of the deployed instance
+#   WEBCODEX_TOKEN       (or TOKEN)     bearer token; NEVER printed by this script
 #   SMOKE_TIMEOUT    per-curl timeout in seconds (default 15)
 #
 # What it checks:
@@ -37,17 +37,17 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$PROJECT_DIR"
 
-# Resolve base URL (DROP_PUBLIC_URL preferred, BASE_URL fallback).
-BASE_URL="${DROP_PUBLIC_URL:-${BASE_URL:-}}"
-TOKEN="${DROP_TOKEN:-${TOKEN:-}}"
+# Resolve base URL (WEBCODEX_PUBLIC_URL preferred, BASE_URL fallback).
+BASE_URL="${WEBCODEX_PUBLIC_URL:-${BASE_URL:-}}"
+TOKEN="${WEBCODEX_TOKEN:-${TOKEN:-}}"
 TIMEOUT="${SMOKE_TIMEOUT:-15}"
 
 if [ -z "$BASE_URL" ]; then
-    echo "[smoke] DROP_PUBLIC_URL (or BASE_URL) is required" >&2
+    echo "[smoke] WEBCODEX_PUBLIC_URL (or BASE_URL) is required" >&2
     exit 2
 fi
 if [ -z "$TOKEN" ]; then
-    echo "[smoke] DROP_TOKEN (or TOKEN) is required" >&2
+    echo "[smoke] WEBCODEX_TOKEN (or TOKEN) is required" >&2
     exit 2
 fi
 
@@ -72,7 +72,7 @@ fail() { FAIL=$((FAIL + 1)); printf '[smoke][FAIL] %s\n' "$*" >&2; }
 
 # curl wrapper: auth + timeout. The token is passed via a header file to avoid
 # ever leaking it on the command line / process list. Body printed to stdout.
-AUTH_HEADER_FILE="$(mktemp -t private-drop-smoke-auth-XXXXXX)"
+AUTH_HEADER_FILE="$(mktemp -t webcodex-smoke-auth-XXXXXX)"
 trap 'rm -f "$AUTH_HEADER_FILE"' INT TERM EXIT
 printf 'Authorization: Bearer %s\n' "$TOKEN" > "$AUTH_HEADER_FILE"
 chmod 600 "$AUTH_HEADER_FILE"

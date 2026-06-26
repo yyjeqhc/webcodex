@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """End-to-end smoke test for the shell-client HTTP-poll MVP.
 
-Starts a temporary private-drop server on localhost, registers a synthetic client,
+Starts a temporary webcodex server on localhost, registers a synthetic client,
 submits a shell request, simulates agent poll/result, and verifies runShell gets
 that result.
 """
@@ -51,21 +51,21 @@ def main() -> None:
     with tempfile.TemporaryDirectory() as tmp:
         root = Path.cwd()
         tmp_path = Path(tmp)
-        port = int(os.environ.get("PRIVATE_DROP_E2E_PORT", "18080"))
+        port = int(os.environ.get("WEBCODEX_E2E_PORT", "18080"))
         token = "test-shell"
         env = os.environ.copy()
         env.update(
             {
-                "DROP_ADDR": f"127.0.0.1:{port}",
-                "DROP_TOKEN": token,
-                "DROP_DATA": str(tmp_path / "data"),
+                "WEBCODEX_ADDR": f"127.0.0.1:{port}",
+                "WEBCODEX_TOKEN": token,
+                "WEBCODEX_DATA": str(tmp_path / "data"),
                 "PROJECTS_CONFIG": str(root / "projects.toml.example"),
             }
         )
         server_log = tmp_path / "server.log"
         with server_log.open("wb") as log:
             proc = subprocess.Popen(
-                [str(root / "target" / "release" / "private-drop")],
+                [str(root / "target" / "release" / "webcodex")],
                 stdout=log,
                 stderr=subprocess.STDOUT,
                 env=env,

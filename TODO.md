@@ -114,7 +114,7 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       (`allow_multiple` + `expected_replacements` for multi-replace);
       `write_project_file` creates files and overwrites only with an
       `expected_sha256` / `expected_content_prefix` guard. Sensitive paths
-      (`agent.toml`, `private-drop.env`, `.env`, `projects.d`, `.git`,
+      (`agent.toml`, `webcodex.env`, `.env`, `projects.d`, `.git`,
       `target`, `node_modules`) are hard-rejected; absolute/`..`/NUL rejected.
       New runtime-only REST wrappers `POST /api/projects/replace_in_file` and
       `POST /api/projects/write_file` (NOT dedicated GPT Actions; listed in the
@@ -187,7 +187,7 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       `scripts/release_check.sh`, a single local pre-release gate that runs
       `cargo fmt --check`, `cargo check`, `cargo check --tests`, `cargo test`,
       the WebSocket E2E, the polling E2E, and a static check that no sensitive
-      files (`agent.toml`, `private-drop.env`, `.env`, `projects.d`) are tracked
+      files (`agent.toml`, `webcodex.env`, `.env`, `projects.d`) are tracked
       or staged by git. The op/tool-count invariants (OpenAPI ops == 23, MCP
       `tools/list` == 25) are asserted by the E2E harness rather than re-counted
       statically, keeping the gate fast, network-free, and never touching real

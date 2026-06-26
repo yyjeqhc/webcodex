@@ -1,12 +1,12 @@
-# Example projects.toml for the Private Drop runtime.
+# Example projects.toml for the WebCodex runtime.
 #
 # PROJECTS_CONFIG points here. Each project maps a stable id to a local path
 # and an executor. `executor = "local"` runs on the server host;
-# `executor = "agent"` queues work for a registered private-drop-agent
+# `executor = "agent"` queues work for a registered webcodex-agent
 # (identified by `client_id`).
 
-[projects.private-drop]
-path = "/root/git/private-drop"
+[projects.webcodex]
+path = "/root/git/webcodex"
 executor = "local"
 allow_patch = true
 

@@ -180,7 +180,7 @@ pub(crate) fn validate_edit_file_path(path: &str) -> Result<(), String> {
     }
     if is_sensitive_edit_path(path) {
         return Err(format!(
-            "refusing sensitive path '{}': touches agent.toml, private-drop.env, \
+            "refusing sensitive path '{}': touches agent.toml, webcodex.env, \
              .env, projects.d, .git, target, or node_modules",
             path
         ));
@@ -192,7 +192,7 @@ pub(crate) fn validate_edit_file_path(path: &str) -> Result<(), String> {
 /// tools. Matching is component-wise (split on `/`) so legitimate filenames
 /// that merely contain a sensitive substring (e.g. `targeting.md`) are NOT
 /// rejected. A component is sensitive if it equals one of the guarded names or
-/// starts with `.env` / `agent.toml` / `private-drop.env` (catching backups
+/// starts with `.env` / `agent.toml` / `webcodex.env` (catching backups
 /// like `.env.local` or `agent.toml.bak`).
 pub(crate) fn is_sensitive_edit_path(path: &str) -> bool {
     for comp in path.to_lowercase().split('/') {
@@ -203,14 +203,14 @@ pub(crate) fn is_sensitive_edit_path(path: &str) -> bool {
                 | "node_modules"
                 | "projects.d"
                 | "agent.toml"
-                | "private-drop.env"
+                | "webcodex.env"
                 | ".env"
         ) {
             return true;
         }
         if comp.starts_with(".env")
             || comp.starts_with("agent.toml")
-            || comp.starts_with("private-drop.env")
+            || comp.starts_with("webcodex.env")
         {
             return true;
         }

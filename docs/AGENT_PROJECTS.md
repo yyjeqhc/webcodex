@@ -1,6 +1,6 @@
 # Agent Project Registry
 
-The `private-drop-agent` is the source of truth for local project metadata on
+The `webcodex-agent` is the source of truth for local project metadata on
 its host. The server only caches summaries reported by each agent client during
 registration and polling. This registry is still live and is reported through
 the `list_agents` runtime tool / `ShellClientView`.
@@ -10,23 +10,23 @@ the `list_agents` runtime tool / `ShellClientView`.
 By default, the agent scans:
 
 ```bash
-~/.config/private-drop-agent/projects.d/*.toml
+~/.config/webcodex/projects.d/*.toml
 ```
 
 An agent config may override this path:
 
 ```toml
-projects_dir = "/root/.config/private-drop-agent/projects.d"
+projects_dir = "/root/.config/webcodex/projects.d"
 ```
 
 Each file describes one local project:
 
 ```toml
-id = "private-drop"
-path = "/root/git/private-drop"
-name = "private-drop"
+id = "webcodex"
+path = "/root/git/webcodex"
+name = "webcodex"
 kind = "rust"
-description = "Private Drop server and agent"
+description = "WebCodex server and agent"
 disabled = false
 
 [hooks]
@@ -108,21 +108,21 @@ the agent identified by `<client_id>` (`oe` in the example) has a `tmp-hello`
 project file locally.
 
 To find and remove it, on the agent host (the machine running
-`private-drop-agent` for that `client_id`):
+`webcodex-agent` for that `client_id`):
 
 ```bash
 # 1. Find the agent's projects_dir (from its agent.toml).
-grep -n 'projects_dir' /etc/private-drop-agent/agent.toml \
-  ~/.config/private-drop-agent/agent.toml 2>/dev/null
+grep -n 'projects_dir' /etc/webcodex/agent.toml \
+  ~/.config/webcodex/agent.toml 2>/dev/null
 
 # 2. List the project files the agent scans (default shown below).
-ls -1 ~/.config/private-drop-agent/projects.d/*.toml
+ls -1 ~/.config/webcodex/projects.d/*.toml
 
 # 3. Locate the offending id.
-grep -rl 'id = "tmp-hello"' ~/.config/private-drop-agent/projects.d/
+grep -rl 'id = "tmp-hello"' ~/.config/webcodex/projects.d/
 
 # 4. Remove or disable it, then let the agent rescan (next poll/register).
-rm ~/.config/private-drop-agent/projects.d/tmp-hello.toml
+rm ~/.config/webcodex/projects.d/tmp-hello.toml
 #   or set `disabled = true` inside the file.
 ```
 

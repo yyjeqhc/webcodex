@@ -1,8 +1,8 @@
-id = "private-drop"
-path = "/root/git/private-drop"
-name = "private-drop"
+id = "webcodex"
+path = "/root/git/webcodex"
+name = "webcodex"
 kind = "rust"
-description = "Private Drop server and agent"
+description = "WebCodex server and agent"
 disabled = false
 
 [hooks]

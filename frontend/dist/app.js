@@ -1,4 +1,4 @@
-// Private Drop — read-only Runtime / Agent status console (Phase B).
+// WebCodex — read-only Runtime / Agent status console (Phase B).
 //
 // This script drives a single screen: a runtime status panel + an agent table.
 // It fetches `POST /api/runtime/status` with a Bearer token and renders the
@@ -15,7 +15,8 @@
 // (string/number/unknown/boolean + DOM event types). `as <Identifier>` casts
 // are used only after a null check.
 
-const TOKEN_KEY = "drop_token";
+const TOKEN_KEY = "webcodex_token";
+const LEGACY_TOKEN_KEY = "drop_token";
 const STATUS_URL = "/api/runtime/status";
 // Refresh cadence: 8s. Conservative — avoids aggressive polling while keeping
 // stale/online transitions visible in near-real time.
@@ -29,15 +30,25 @@ let autoEnabled = true;
 // ---------------------------------------------------------------------------
 
 function getToken() {
-  return localStorage.getItem(TOKEN_KEY) || "";
+  const token = localStorage.getItem(TOKEN_KEY) || "";
+  if (token) {
+    return token;
+  }
+  const legacyToken = localStorage.getItem(LEGACY_TOKEN_KEY) || "";
+  if (legacyToken) {
+    localStorage.setItem(TOKEN_KEY, legacyToken);
+  }
+  return legacyToken;
 }
 
 function setToken(token) {
   localStorage.setItem(TOKEN_KEY, token);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
 }
 
 function clearToken() {
   localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(LEGACY_TOKEN_KEY);
 }
 
 // ---------------------------------------------------------------------------

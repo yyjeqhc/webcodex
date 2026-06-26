@@ -1,7 +1,7 @@
 # Build and Install
 
-Private Drop is a Rust project. A normal deployment needs the server binary
-(`private-drop`) and at least one agent binary (`private-drop-agent`).
+WebCodex is a Rust project. A normal deployment needs the server binary
+(`webcodex`) and at least one agent binary (`webcodex-agent`).
 
 ## Requirements
 
@@ -26,17 +26,17 @@ cargo build --release
 The release binaries are:
 
 ```text
-target/release/private-drop
-target/release/private-drop-agent
+target/release/webcodex
+target/release/webcodex-agent
 ```
 
 ## Run the server
 
 ```bash
-DROP_TOKEN="change-me" \
-DROP_ADDR="0.0.0.0:8080" \
-DROP_PUBLIC_URL="https://drop.example.com" \
-./target/release/private-drop
+WEBCODEX_TOKEN="change-me" \
+WEBCODEX_ADDR="0.0.0.0:8080" \
+WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+./target/release/webcodex
 ```
 
 Expose the server over HTTPS before connecting ChatGPT GPT Actions or MCP Apps.
@@ -55,10 +55,10 @@ GET  /console        Read-only runtime console
 Create one project file per local repository:
 
 ```toml
-# /etc/private-drop-agent/projects.d/private-drop.toml
-id = "private-drop"
-name = "Private Drop"
-path = "/root/git/private-drop"
+# /etc/webcodex/projects.d/webcodex.toml
+id = "webcodex"
+name = "WebCodex"
+path = "/root/git/webcodex"
 allow_patch = true
 kind = "rust"
 ```
@@ -66,14 +66,14 @@ kind = "rust"
 Create the agent config:
 
 ```toml
-# /etc/private-drop-agent/agent.toml
+# /etc/webcodex/agent.toml
 server_url = "https://drop.example.com"
 token = "change-me"
 client_id = "workstation-1"
 display_name = "Workstation"
 owner = "you"
 transport = "websocket"
-projects_dir = "/etc/private-drop-agent/projects.d"
+projects_dir = "/etc/webcodex/projects.d"
 
 [capabilities]
 shell = true
@@ -95,7 +95,7 @@ max_output_bytes = 262144
 Run the agent:
 
 ```bash
-./target/release/private-drop-agent --config /etc/private-drop-agent/agent.toml
+./target/release/webcodex-agent --config /etc/webcodex/agent.toml
 ```
 
 Registered project ids use this form:
@@ -107,7 +107,7 @@ agent:<client_id>:<project_id>
 Example:
 
 ```text
-agent:workstation-1:private-drop
+agent:workstation-1:webcodex
 ```
 
 ## Connect ChatGPT
@@ -121,7 +121,7 @@ https://drop.example.com/openapi.json
 Use HTTP API key authentication in the `Authorization` header:
 
 ```text
-Bearer <DROP_TOKEN>
+Bearer <WEBCODEX_TOKEN>
 ```
 
 For MCP / Apps, connect to:
@@ -154,8 +154,8 @@ bash scripts/release_check.sh
 Deployment smoke, when a public endpoint and token are available:
 
 ```bash
-DROP_PUBLIC_URL="https://drop.example.com" \
-DROP_TOKEN="change-me" \
+WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_TOKEN="change-me" \
 bash scripts/smoke_deployment.sh
 ```
 
@@ -169,8 +169,8 @@ GPT Actions:
 - [ ] Schema exposes 25 operations (`scripts/e2e_zero_config_ws.sh` asserts
       this against the live schema).
 - [ ] Every operation is POST-only (asserted by the E2E schema check).
-- [ ] `DROP_TOKEN` is set on the server; GPT Action auth is configured as an
-      HTTP API key in the `Authorization` header with value `Bearer <DROP_TOKEN>`.
+- [ ] `WEBCODEX_TOKEN` is set on the server; GPT Action auth is configured as an
+      HTTP API key in the `Authorization` header with value `Bearer <WEBCODEX_TOKEN>`.
 - [ ] At least one agent is `online` (`POST /api/runtime/status`).
 - [ ] `POST /api/projects/list` shows `agent:<client_id>:<project_id>`.
 - [ ] Local full-auto loop E2E passes:

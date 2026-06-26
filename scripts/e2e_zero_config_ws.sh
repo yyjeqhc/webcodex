@@ -869,6 +869,78 @@ for path, methods in schema.get("paths", {}).items():
         if method != "post":
             errors.append(f"non-POST method '{method}' on path {path}")
 
+# Each operationId must be unique (no duplicates across the schema).
+seen_ids = {}
+for path, methods in schema.get("paths", {}).items():
+    for method, op in methods.items():
+        oid = op.get("operationId")
+        if oid in seen_ids:
+            errors.append(f"duplicate operationId '{oid}' on {method} {path} and {seen_ids[oid]}")
+        else:
+            seen_ids[oid] = f"{method} {path}"
+
+# Every requestBody schema must declare additionalProperties=false at the top
+# level so GPT Actions rejects unknown fields. Inner properties (e.g.
+# ToolCallRequest.params) may still allow arbitrary keys.
+schemas = schema.get("components", {}).get("schemas", {})
+for path, methods in schema.get("paths", {}).items():
+    for method, op in methods.items():
+        ref = op.get("requestBody", {}).get("content", {}).get("application/json", {}).get("schema", {}).get("$ref", "")
+        if not ref:
+            continue
+        name = ref.split("/")[-1]
+        sch = schemas.get(name)
+        if sch is None:
+            errors.append(f"{method} {path} requestBody references unknown schema '{name}'")
+            continue
+        if sch.get("additionalProperties") is not False:
+            errors.append(f"{method} {path} requestBody schema '{name}' must have additionalProperties=false")
+
+# Mutation/execution actions must mention side effects and Bearer auth (or
+# equivalent) so GPT callers understand they are not read-only.
+mutation_paths = [
+    "/api/codex/run",
+    "/api/projects/apply_patch",
+    "/api/projects/apply_patch_checked",
+    "/api/projects/run_shell",
+    "/api/projects/delete_files",
+    "/api/projects/git_restore_paths",
+    "/api/projects/discard_untracked",
+    "/api/projects/replace_in_file",
+]
+for path in mutation_paths:
+    op = schema.get("paths", {}).get(path, {}).get("post", {})
+    desc = (op.get("description") or "").lower()
+    if "side effect" not in desc:
+        errors.append(f"{path} mutation description should mention side effects")
+    if "bearer auth" not in desc:
+        errors.append(f"{path} mutation description should mention Bearer auth")
+
+# Read-only actions must explicitly say read-only or never writes so GPT
+# callers can tell them apart from mutations. callRuntimeTool is excluded
+# because it is a generic escape hatch.
+readonly_paths = [
+    "/api/tools/list",
+    "/api/projects/list",
+    "/api/runtime/status",
+    "/api/jobs/status",
+    "/api/jobs/log",
+    "/api/jobs/list",
+    "/api/jobs/tail",
+    "/api/projects/read_file",
+    "/api/projects/git_status",
+    "/api/projects/git_diff",
+    "/api/projects/git_diff_summary",
+    "/api/projects/list_files",
+    "/api/projects/search_text",
+    "/api/projects/validate_patch",
+]
+for path in readonly_paths:
+    op = schema.get("paths", {}).get(path, {}).get("post", {})
+    desc = (op.get("description") or "").lower()
+    if "read-only" not in desc and "never writes" not in desc:
+        errors.append(f"{path} read-only description should mention read-only or never writes")
+
 if errors:
     print("FAIL")
     for e in errors:
@@ -877,7 +949,7 @@ if errors:
 print(f"OK ops={len(ops_set)} paths={len(paths)}")
 PY
 if [ $? -eq 0 ]; then
-    pass "/openapi.json operation set + POST-only + no legacy/admin paths"
+    pass "/openapi.json operation set + POST-only + no legacy/admin paths + additionalProperties=false + mutation/readonly descriptions"
 else
     fail "/openapi.json schema checks failed (see stderr above)"
 fi
@@ -1371,6 +1443,185 @@ if [ "$pre_harden_porcelain" = "$post_harden_porcelain" ]; then
     pass "check-failed patch leaves worktree unchanged"
 else
     fail "check-failed patch mutated the worktree (pre=${pre_harden_porcelain:0:120} post=${post_harden_porcelain:0:120})"
+fi
+
+# ----------------------------------------------------------------------------
+# 7h. Full-auto coding loop smoke (dedicated actions only)
+# ----------------------------------------------------------------------------
+#
+# Simulates a GPT Actions auto coding loop using ONLY dedicated endpoints
+# (no callRuntimeTool escape hatch). Proves a custom GPT can complete a small
+# edit → verify → cleanup cycle through the recommended flow:
+#
+#   1. listProjects              — find the agent project
+#   2. readProjectFile           — read a tracked file (README.md)
+#   3. searchProjectText         — locate the target substring
+#   4. getProjectGitDiffSummary  — confirm initial clean state
+#   5. replaceProjectFileText    — make a small reversible text edit
+#   6. getProjectGitDiffSummary  — confirm the diff is visible
+#   7. runProjectShellCommand    — lightweight check (grep)
+#   8. gitRestorePaths           — restore the modified tracked file
+#   9. getProjectGitDiffSummary  — confirm worktree is clean again
+#
+# Then an optional patch sub-loop:
+#  10. validateProjectPatch      — dry-run a small patch
+#  11. applyProjectPatchChecked  — apply it
+#  12. getProjectGitDiffSummary  — confirm patch visible
+#  13. deleteProjectFiles        — cleanup the probe file
+#  14. getProjectGitDiffSummary  — confirm clean again
+
+log "---- full-auto coding loop smoke (dedicated actions only) ----"
+
+LOOP_MARKER_OLD="Smoke Project"
+LOOP_MARKER_NEW="Smoke Project [auto-loop]"
+
+# Step 1: listProjects — find the agent project (re-check as part of the loop).
+body="$(api_post /api/projects/list '{}')"
+loop_list_json="$(json_get "$body" output)"
+if echo "$loop_list_json" | grep -q "\"$RUNTIME_PROJECT_ID\""; then
+    pass "loop: listProjects found $RUNTIME_PROJECT_ID"
+else
+    fail "loop: listProjects did not find $RUNTIME_PROJECT_ID (got: ${loop_list_json:0:200})"
+fi
+
+# Step 2: readProjectFile — read README.md.
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"README.md\"}")"
+loop_readme="$(json_get "$body" output.content)"
+if echo "$loop_readme" | grep -q "$LOOP_MARKER_OLD"; then
+    pass "loop: readProjectFile sees README.md with target marker"
+else
+    fail "loop: readProjectFile did not find marker in README.md (got: ${loop_readme:0:120})"
+fi
+
+# Step 3: searchProjectText — locate the target substring.
+body="$(api_post /api/projects/search_text "{\"project\":\"$RUNTIME_PROJECT_ID\",\"pattern\":\"$LOOP_MARKER_OLD\",\"limit\":10}")"
+spt_loop_count="$(json_get "$body" output.count)"
+if [ "${spt_loop_count:-0}" -ge 1 ] 2>/dev/null; then
+    pass "loop: searchProjectText located target marker ($spt_loop_count match)"
+else
+    fail "loop: searchProjectText did not locate target marker (got: ${body:0:200})"
+fi
+
+# Step 4: getProjectGitDiffSummary — confirm initial clean state.
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+loop_pre_count="$(json_get "$body" output.changed_files_count)"
+if [ "${loop_pre_count:-0}" = "0" ] 2>/dev/null; then
+    pass "loop: getProjectGitDiffSummary confirms clean initial state"
+else
+    fail "loop: worktree not clean before loop (changed_files_count=$loop_pre_count got: ${body:0:200})"
+fi
+
+# Step 5: replaceProjectFileText — small reversible edit on README.md.
+loop_replace_body="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "project": sys.argv[1],
+    "path": "README.md",
+    "old": sys.argv[2],
+    "new": sys.argv[3]
+}))
+' "$RUNTIME_PROJECT_ID" "$LOOP_MARKER_OLD" "$LOOP_MARKER_NEW")"
+body="$(api_post /api/projects/replace_in_file "$loop_replace_body")"
+if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.changed)" = "True" ]; then
+    pass "loop: replaceProjectFileText edited README.md"
+else
+    fail "loop: replaceProjectFileText did not edit README.md (body: ${body:0:300})"
+fi
+
+# Step 6: getProjectGitDiffSummary — confirm the diff is now visible.
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+loop_post_count="$(json_get "$body" output.changed_files_count)"
+loop_post_files="$(json_get "$body" output.changed_files)"
+if [ "${loop_post_count:-0}" -ge 1 ] 2>/dev/null && echo "$loop_post_files" | grep -q "README.md"; then
+    pass "loop: getProjectGitDiffSummary shows README.md modified"
+else
+    fail "loop: diff summary did not show README.md modified (count=$loop_post_count files=${loop_post_files:0:200})"
+fi
+
+# Step 7: runProjectShellCommand — lightweight check (grep for the edited marker).
+body="$(api_post /api/projects/run_shell "{\"project\":\"$RUNTIME_PROJECT_ID\",\"command\":\"grep -c 'auto-loop' README.md\"}")"
+loop_shell_stdout="$(json_get "$body" output.stdout)"
+if [ "$(json_get "$body" success)" = "True" ] && echo "$loop_shell_stdout" | grep -qE '^[0-9]+'; then
+    pass "loop: runProjectShellCommand confirms edit via grep (matches=$loop_shell_stdout)"
+else
+    fail "loop: runProjectShellCommand grep check failed (stdout=$loop_shell_stdout body=${body:0:200})"
+fi
+
+# Step 8: gitRestorePaths — restore README.md to its committed state.
+loop_restore_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"README.md\"]}")"
+body="$(api_post /api/projects/git_restore_paths "$loop_restore_body")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "loop: gitRestorePaths restored README.md"
+else
+    fail "loop: gitRestorePaths failed (body: ${body:0:300})"
+fi
+
+# Step 9: getProjectGitDiffSummary — confirm worktree is clean again.
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+loop_final_count="$(json_get "$body" output.changed_files_count)"
+if [ "${loop_final_count:-0}" = "0" ] 2>/dev/null; then
+    pass "loop: getProjectGitDiffSummary confirms worktree clean after restore"
+else
+    fail "loop: worktree not clean after restore (changed_files_count=$loop_final_count got: ${body:0:200})"
+fi
+# Double-check via git_status that README.md is back to its committed content.
+body="$(api_post /api/projects/read_file "{\"project\":\"$RUNTIME_PROJECT_ID\",\"path\":\"README.md\"}")"
+if echo "$(json_get "$body" output.content)" | grep -q "$LOOP_MARKER_OLD"; then
+    pass "loop: README.md content restored to original marker"
+else
+    fail "loop: README.md content not restored (got: ${body:0:200})"
+fi
+
+# --- Optional patch sub-loop: validate → apply → diff → cleanup ---
+
+# Step 10: validateProjectPatch — dry-run a small patch that creates a probe file.
+LOOP_PATCH='diff --git a/LOOP_PATCH_PROBE.md b/LOOP_PATCH_PROBE.md
+new file mode 100644
+--- /dev/null
++++ b/LOOP_PATCH_PROBE.md
+@@ -0,0 +1 @@
++loop-patch-probe
+'
+loop_vp_body="$(python3 -c 'import json,sys; print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))' "$RUNTIME_PROJECT_ID" "$LOOP_PATCH")"
+body="$(api_post /api/projects/validate_patch "$loop_vp_body")"
+if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.can_apply)" = "True" ]; then
+    pass "loop: validateProjectPatch confirms patch is applicable"
+else
+    fail "loop: validateProjectPatch did not confirm applicability (body: ${body:0:300})"
+fi
+
+# Step 11: applyProjectPatchChecked — apply the validated patch.
+body="$(api_post /api/projects/apply_patch_checked "$loop_vp_body")"
+if [ "$(json_get "$body" success)" = "True" ] && [ "$(json_get "$body" output.applied)" = "True" ]; then
+    pass "loop: applyProjectPatchChecked applied probe patch"
+else
+    fail "loop: applyProjectPatchChecked did not apply probe patch (body: ${body:0:300})"
+fi
+
+# Step 12: getProjectGitDiffSummary — confirm the probe file is visible.
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+if echo "$(json_get "$body" output.changed_files)" | grep -q "LOOP_PATCH_PROBE.md"; then
+    pass "loop: getProjectGitDiffSummary shows probe file after apply"
+else
+    fail "loop: probe file not visible after apply (got: ${body:0:200})"
+fi
+
+# Step 13: deleteProjectFiles — cleanup the probe file.
+loop_del_body="$(build_body "{\"project\":\"$RUNTIME_PROJECT_ID\",\"paths\":[\"LOOP_PATCH_PROBE.md\"]}")"
+body="$(api_post /api/projects/delete_files "$loop_del_body")"
+if [ "$(json_get "$body" success)" = "True" ]; then
+    pass "loop: deleteProjectFiles removed probe file"
+else
+    fail "loop: deleteProjectFiles did not remove probe file (body: ${body:0:300})"
+fi
+
+# Step 14: getProjectGitDiffSummary — confirm clean again.
+body="$(api_post /api/projects/git_diff_summary "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+loop_patch_final_count="$(json_get "$body" output.changed_files_count)"
+if [ "${loop_patch_final_count:-0}" = "0" ] 2>/dev/null; then
+    pass "loop: getProjectGitDiffSummary confirms clean after patch cleanup"
+else
+    fail "loop: worktree not clean after patch cleanup (changed_files_count=$loop_patch_final_count)"
 fi
 
 # ----------------------------------------------------------------------------

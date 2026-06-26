@@ -208,7 +208,7 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 472 tests passing, agent binary 23 tests passing.
+- `cargo test`: main binary 473 tests passing, agent binary 23 tests passing.
   (Phase 4 added tests covering `replace_in_file` / `write_project_file`
   parsing, path validation, agent routing, capability checks, helper-script
   semantics, and the runtime-only REST wrappers. Phase 6 hardening added
@@ -218,7 +218,9 @@ Expected current result:
   apply step when the preflight fails, `validate_patch` never enqueues a
   mutating `git apply -`, large patches over the command limit still
   validate/apply, and server-configured projects are rejected by every patch
-  tool.)
+  tool. Phase 7 added the `additionalProperties=false` requestBody contract
+  guard and expanded the read-only / mutation description guards to cover
+  every operation.)
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -240,9 +242,25 @@ bash -n scripts/smoke_deployment.sh
 
 Current E2E smoke result:
 
-- `bash scripts/e2e_zero_config_ws.sh`: 83 passed / 0 failed.
-- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 83 passed / 0
+- `bash scripts/e2e_zero_config_ws.sh`: 98 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 98 passed / 0
   failed.
+
+The E2E smoke now includes a "full-auto coding loop smoke" stage (section 7h)
+that simulates a GPT Actions auto-coding loop using ONLY dedicated endpoints
+(no `callRuntimeTool`): `listProjects` → `readProjectFile` →
+`searchProjectText` → `getProjectGitDiffSummary` → `replaceProjectFileText`
+→ `getProjectGitDiffSummary` → `runProjectShellCommand` → `gitRestorePaths`
+→ `getProjectGitDiffSummary`, plus a patch sub-loop
+(`validateProjectPatch` → `applyProjectPatchChecked` →
+`getProjectGitDiffSummary` → `deleteProjectFiles` →
+`getProjectGitDiffSummary`). The worktree returns to its clean baseline at
+the end of both sub-loops.
+
+The `/openapi.json` schema check in the E2E smoke now also asserts:
+`additionalProperties=false` on every requestBody schema, unique operationIds,
+mutation descriptions mention side effects + Bearer auth, and read-only
+descriptions mention read-only / never writes.
 
 ## validate_patch (patch preflight / dry-run)
 
@@ -280,7 +298,12 @@ Behavior:
   `replace_in_file` / `write_project_file` as runtime-only tools. Phase 5
   promotes `replace_in_file` to a dedicated GPT Action
   (`replaceProjectFileText`), so the OpenAPI op count is now 23 and MCP
-  `tools/list` is 25.
+  `tools/list` is 25. Phase 7 hardens the GPT Actions contract guard
+  (every requestBody schema must have `additionalProperties=false`; every
+  read-only action description must say "read-only" or "never writes"; every
+  mutation action description must mention side effects + Bearer auth) and
+  adds the full-auto coding loop E2E smoke — but does not change the op count
+  (23) or MCP tool count (25).
 - Capability: requires the agent `shell` capability (same as `apply_patch`,
   since the dry-run runs `git apply --check` via the agent shell path). Owner
   boundary checks are reused from `authorize_agent_tool`.

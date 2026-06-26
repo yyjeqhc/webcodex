@@ -118,6 +118,55 @@ snake_case runtime tool names (`read_file`, `git_diff`, `validate_patch`,
 `apply_patch_checked`, `apply_patch`, `run_shell`). Codex is optional and should
 not be required for basic read/diff/patch/test workflows.
 
+## Recommended full-auto coding loop
+
+A custom GPT can complete a small auto-coding cycle using only dedicated GPT
+Actions (no `callRuntimeTool`). The recommended loop, grouped by action kind:
+
+```text
+# read-only: discover and inspect
+1. listProjects              → pick the project id
+2. readProjectFile            → read the target file
+3. searchProjectText          → locate the exact line/marker
+4. getProjectGitDiffSummary   → confirm clean baseline
+
+# mutation: make the change
+5a. replaceProjectFileText    → small single-file text edit (preferred for
+                                 unique-substring replacements; fails safe on
+                                 missing/ambiguous match)
+ OR
+5b. validateProjectPatch      → dry-run a multi-file/complex patch
+    applyProjectPatchChecked  → apply only when preflight passes; returns the
+                                 post-apply diff summary
+
+# execution: verify
+6. runProjectShellCommand     → lightweight check (grep / cargo check / cargo
+                                 test / bash -n) — keep it bounded
+
+# read-only: summarize and decide
+7. getProjectGitDiffSummary   → review the full change set
+   → if tests fail: go back to step 2 (read/search/replace/patch/test)
+   → if tests pass: proceed to commit or cleanup
+
+# mutation: cleanup (when iterating)
+8. gitRestorePaths            → restore tracked files you want to discard
+   deleteProjectFiles         → remove throwaway probe files
+```
+
+Key recommendations:
+
+- **Small text edits**: prefer `replaceProjectFileText` over
+  `runProjectShellCommand` with `sed`/`awk`/`python` — it is safer, rejects
+  ambiguous matches, and never interpolates content into the shell command.
+- **Multi-file or complex changes**: prefer `validateProjectPatch` →
+  `applyProjectPatchChecked` over raw `applyProjectPatch` — the preflight
+  catches context mismatches before any file is touched.
+- **Test failures**: loop back to `readProjectFile` / `searchProjectText` →
+  `replaceProjectFileText` or `validateProjectPatch` → `applyProjectPatchChecked`
+  → `runProjectShellCommand` until tests pass.
+- **Final step**: always call `getProjectGitDiffSummary` to summarize the full
+  change set before committing or handing off.
+
 ## `callRuntimeTool` (advanced escape hatch)
 
 `callRuntimeTool` remains available as the advanced generic escape hatch for any
@@ -295,18 +344,34 @@ Tests in `src/openapi.rs` assert:
   `callRuntimeTool` / MCP `tools/call`) and is intentionally NOT promoted to a
   dedicated GPT Action; its endpoint `POST /api/projects/write_file` is listed
   in the forbidden-paths guard so it can never leak into the schema.
+- Every operationId is unique (no duplicates).
+- Every operation description is <= 300 chars.
+- Every operation is POST-only.
+- Every requestBody schema declares `additionalProperties: false` at the top
+  level so GPT Actions rejects unknown fields. Inner properties (e.g.
+  `ToolCallRequest.params`) may still allow arbitrary keys for tool arguments.
 - Every `$ref` resolves to a defined schema.
 - Every path is POST-only.
 - Bearer auth is present and globally enabled.
 - No legacy/non-GPT-Actions paths appear in the schema (file-drop, desktop,
   raw shell, codex command/context, agent protocol routes, `/mcp`,
-  `/openapi.json`, `/console`, `/api/jobs/stop`, `/api/audit/*`).
+  `/openapi.json`, `/console`, `/api/jobs/stop`, `/api/audit/*`,
+  `/api/projects/write_file`).
 - `callRuntimeTool` declares `params` as an OpenAPI 3.1 object accepting
   arbitrary tool arguments, plus an `arguments` compatibility alias (`params`
   wins when both are present).
 - `listRuntimeTools` returns `tools` (back-compat), `names`, `count`,
   `categories`, and `recommended_flows`.
-- Mutation actions describe their side effects, Bearer auth, and agent shell
-  capability requirement.
-- Read-only dedicated actions are marked read-only in their descriptions.
+- Mutation/execution actions (including `runCodexTask`) describe their side
+  effects and Bearer auth requirement; patch/shell/cleanup mutations also
+  mention the agent shell capability.
+- Read-only actions explicitly say "read-only" or "never writes" in their
+  descriptions so GPT callers can distinguish them from mutations.
 - Key actions ship request examples so ChatGPT has concrete templates.
+
+The E2E smoke (`scripts/e2e_zero_config_ws.sh`) re-checks the live
+`/openapi.json` for the same invariants: operation count 23, unique
+operationIds, POST-only, description <= 300 chars,
+`additionalProperties=false` on every requestBody schema, mutation descriptions
+mention side effects + Bearer auth, read-only descriptions mention read-only,
+and forbidden paths absent.

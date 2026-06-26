@@ -161,6 +161,28 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       check and a check-failed worktree immutability check. Local E2E passes
       83/83 over both transports; `cargo test` passes 472 main + 23 agent
       tests.
+- [x] Full-auto coding loop regression + GPT Actions contract hardening
+      (Phase 7): added an independent "full-auto coding loop smoke" E2E stage
+      that simulates a GPT Actions auto-coding loop using ONLY dedicated
+      endpoints (no `callRuntimeTool`): `listProjects` → `readProjectFile` →
+      `searchProjectText` → `getProjectGitDiffSummary` →
+      `replaceProjectFileText` → `getProjectGitDiffSummary` →
+      `runProjectShellCommand` → `gitRestorePaths` →
+      `getProjectGitDiffSummary`, plus a patch sub-loop
+      (`validateProjectPatch` → `applyProjectPatchChecked` →
+      `getProjectGitDiffSummary` → `deleteProjectFiles` →
+      `getProjectGitDiffSummary`). The worktree returns to its clean baseline
+      at the end of both sub-loops. Hardened the OpenAPI contract guard: every
+      requestBody schema must have `additionalProperties=false`; every
+      operationId unique; every description <= 300 chars; every operation
+      POST-only; mutation descriptions must mention side effects + Bearer auth;
+      read-only descriptions must say "read-only" or "never writes"; forbidden
+      paths still absent. The E2E `/openapi.json` Python check now re-verifies
+      the same invariants against the live schema. No new endpoint, no new
+      `ToolCall` variant, no `write_project_file` promotion; OpenAPI op count
+      stays 23 and MCP `tools/list` stays 25. Added a "Recommended full-auto
+      coding loop" example to `docs/GPT_ACTIONS.md`. Local E2E passes 98/98
+      over both transports; `cargo test` passes 473 main + 23 agent tests.
 
 ### Deprecated (not active features)
 

@@ -134,7 +134,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation(
                     "listRuntimeTools",
                     "List runtime tools",
-                    "Returns the MCP-compatible tool list plus `names`, `count`, `categories`, and `recommended_flows`. Useful for discovering every tool name accepted by callRuntimeTool and their groupings. GPT Actions normally do not need this if the dedicated actions cover the task.",
+                    "Read-only. Returns the MCP-compatible tool list plus `names`, `count`, `categories`, and `recommended_flows`. Useful for discovering every tool name accepted by callRuntimeTool. GPT Actions normally do not need this if dedicated actions cover the task.",
                     "EmptyRequest",
                     "ToolsListResponse"
                 )
@@ -143,7 +143,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation(
                     "listProjects",
                     "List agent-registered projects",
-                    "Returns the list of projects registered by connected agents with their runtime id (`agent:<client_id>:<project_id>`), path, executor, client_id, and whether patching is allowed. Call this first to learn the project ids required by runCodexTask, readProjectFile, and getProjectGitStatus.",
+                    "Read-only. Returns projects registered by connected agents with runtime id (`agent:<client_id>:<project_id>`), path, executor, client_id, and patch flag. Call this first to learn the project ids required by other actions.",
                     "EmptyRequest",
                     "ToolResult"
                 )
@@ -161,7 +161,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "runCodexTask",
                     "Run Codex CLI task",
-                    "Recommended primary code action. Starts Codex CLI asynchronously in an agent-registered project and returns a job_id. Do not assemble raw shell to run Codex; poll with getRuntimeJobStatus and read output with getRuntimeJobLog.",
+                    "Recommended primary code action. Mutation with side effects; requires Bearer auth. Starts Codex CLI asynchronously in an agent-registered project and returns a job_id. Do not assemble raw shell to run Codex; poll with getRuntimeJobStatus and read output with getRuntimeJobLog.",
                     "CodexRunRequest",
                     "ToolResult",
                     json!({
@@ -187,7 +187,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getRuntimeJobStatus",
                     "Get job status",
-                    "Returns status, timing, and exit metadata for a runtime job. Use this to poll the job_id returned by runCodexTask until status is completed, failed, stopped, or lost.",
+                    "Read-only. Returns status, timing, and exit metadata for a runtime job. Use this to poll the job_id returned by runCodexTask until status is completed, failed, stopped, or lost.",
                     "JobStatusRequest",
                     "ToolResult",
                     json!({
@@ -204,7 +204,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getRuntimeJobLog",
                     "Get job log",
-                    "Returns bounded stdout/stderr text for a runtime job. Use the job_id returned by runCodexTask. Output is always bounded; use tail_lines to limit the trailing stdout window and offset (next_stdout_line) for pagination.",
+                    "Read-only. Returns bounded stdout/stderr text for a runtime job. Use the job_id returned by runCodexTask. Output is always bounded; use tail_lines to limit the trailing stdout window and offset (next_stdout_line) for pagination.",
                     "JobLogRequest",
                     "ToolResult",
                     json!({
@@ -268,7 +268,7 @@ fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "readProjectFile",
                     "Read a project file",
-                    "Reads a UTF-8 file from an agent-registered project. Paths are resolved by the owning agent within that project. Output is bounded; use start_line and limit for pagination. This is the safe, dedicated alternative to callRuntimeTool for file inspection.",
+                    "Read-only. Reads a UTF-8 file from an agent-registered project. Paths are resolved by the owning agent within that project. Output is bounded; use start_line and limit for pagination. Safe dedicated alternative to callRuntimeTool for file inspection.",
                     "ReadProjectFileRequest",
                     "ToolResult",
                     json!({
@@ -1584,9 +1584,11 @@ mod tests {
         // discardUntrackedFiles) are executable actions with side effects; their
         // descriptions must call out the execution risk/side effects and the
         // Bearer-auth requirement so GPT callers understand they are not
-        // read-only inspection.
+        // read-only inspection. runCodexTask is also a mutation (starts an
+        // async process with side effects) and is included in this guard.
         let spec = build_openapi_spec();
         for path in [
+            "/api/codex/run",
             "/api/projects/apply_patch",
             "/api/projects/apply_patch_checked",
             "/api/projects/run_shell",
@@ -1610,6 +1612,23 @@ mod tests {
                 path,
                 desc
             );
+        }
+        // The patch/shell/cleanup mutations must also mention the agent shell
+        // capability. runCodexTask does not require the shell capability
+        // directly (it starts a Codex process), so it is excluded from this
+        // sub-check.
+        for path in [
+            "/api/projects/apply_patch",
+            "/api/projects/apply_patch_checked",
+            "/api/projects/run_shell",
+            "/api/projects/delete_files",
+            "/api/projects/git_restore_paths",
+            "/api/projects/discard_untracked",
+            "/api/projects/replace_in_file",
+        ] {
+            let desc = spec["paths"][path]["post"]["description"]
+                .as_str()
+                .unwrap_or("");
             assert!(
                 desc.to_lowercase().contains("agent shell capability"),
                 "{} description should mention the agent shell capability, got: {}",
@@ -1621,26 +1640,75 @@ mod tests {
 
     #[test]
     fn openapi_readonly_actions_describe_readonly() {
-        // Phase 3 read-only dedicated actions must mark themselves read-only in
-        // their description so GPT callers can tell them apart from mutations.
+        // Every read-only dedicated action must mark itself read-only (or
+        // "never writes") in its description so GPT callers can tell them
+        // apart from mutations. This covers all 14 read-only operations;
+        // callRuntimeTool is excluded because it is a generic escape hatch
+        // that can dispatch either read-only or mutating tools.
         let spec = build_openapi_spec();
         for path in [
+            "/api/tools/list",
+            "/api/projects/list",
+            "/api/runtime/status",
+            "/api/jobs/status",
+            "/api/jobs/log",
+            "/api/jobs/list",
+            "/api/jobs/tail",
+            "/api/projects/read_file",
+            "/api/projects/git_status",
+            "/api/projects/git_diff",
             "/api/projects/git_diff_summary",
             "/api/projects/list_files",
             "/api/projects/search_text",
             "/api/projects/validate_patch",
-            "/api/jobs/list",
-            "/api/jobs/tail",
         ] {
             let desc = spec["paths"][path]["post"]["description"]
                 .as_str()
                 .unwrap_or("");
+            let lower = desc.to_lowercase();
             assert!(
-                desc.to_lowercase().contains("read-only"),
-                "{} description should be marked read-only, got: {}",
+                lower.contains("read-only") || lower.contains("never writes"),
+                "{} description should be marked read-only or never writes, got: {}",
                 path,
                 desc
             );
+        }
+    }
+
+    #[test]
+    fn openapi_request_body_schemas_have_additional_properties_false() {
+        // Every requestBody schema referenced by an operation must declare
+        // `additionalProperties: false` at the top level so GPT Actions
+        // rejects unknown fields rather than silently dropping them. Inner
+        // properties (e.g. ToolCallRequest.params) may still allow arbitrary
+        // keys; this guard only pins the top-level request object.
+        let spec = build_openapi_spec();
+        let schemas = spec["components"]["schemas"]
+            .as_object()
+            .expect("schemas object");
+        for (path, methods) in spec["paths"].as_object().unwrap() {
+            for (method, op) in methods.as_object().unwrap() {
+                let request_schema_ref =
+                    op["requestBody"]["content"]["application/json"]["schema"]["$ref"].as_str();
+                let schema_name = match request_schema_ref {
+                    Some(r) => r.strip_prefix("#/components/schemas/").unwrap_or(r),
+                    None => continue,
+                };
+                let schema = schemas.get(schema_name).unwrap_or_else(|| {
+                    panic!(
+                        "{} {} references unknown schema '{}'",
+                        method, path, schema_name
+                    )
+                });
+                assert_eq!(
+                    schema["additionalProperties"],
+                    Value::Bool(false),
+                    "{} {} requestBody schema '{}' must have additionalProperties=false",
+                    method,
+                    path,
+                    schema_name
+                );
+            }
         }
     }
 

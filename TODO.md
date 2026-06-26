@@ -56,6 +56,17 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       `/api/jobs/list`, `/api/jobs/tail`). All are bounded and agent-backed;
       `/openapi.json` stays at 12 GPT Actions. See
       [docs/MCP_APP_CONSOLE_PLAN.md](docs/MCP_APP_CONSOLE_PLAN.md).
+- [x] MCP App console Phase B — read-only runtime/agent status console: a
+      self-contained `/console` page (public HTML/JS/CSS embedded in the
+      binary) that renders `POST /api/runtime/status` — runtime stats plus a
+      per-agent table (client_id, owner, status, transport, connected,
+      protocol, last_seen, pending_requests, projects_count). WebSocket agents
+      that flip `online` -> `stale` are visually obvious; websocket/polling are
+      distinguishable at a glance. `runtime_status` gained `agents.stale_count`
+      and per-agent `last_seen` (minimal, tested). Bearer token lives only in
+      `localStorage`; no tokens/secrets rendered in the DOM. `/openapi.json`
+      stays at 12 ops; the console route is explicitly excluded from the GPT
+      Actions schema. See [docs/MCP_APP_CONSOLE_PLAN.md](docs/MCP_APP_CONSOLE_PLAN.md).
 
 ### Deprecated (not active features)
 

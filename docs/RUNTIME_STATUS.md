@@ -67,6 +67,7 @@ The output is a structured JSON object:
   "agents": {
     "count": 1,
     "online_count": 1,
+    "stale_count": 0,
     "offline_count": 0,
     "clients": [
       {
@@ -76,6 +77,8 @@ The output is a structured JSON object:
         "status": "online",
         "connected": true,
         "agent_protocol_version": "polling-v1",
+        "transport": "polling",
+        "last_seen": 1719337980,
         "capabilities": { "shell": true, "file_read": true, ... },
         "projects_count": 1
       }
@@ -101,8 +104,16 @@ The output is a structured JSON object:
   configured.
 - `projects.configured`: `false` when `projects.toml` failed to load or is
   absent; `load_error` carries the reason in that case.
-- `agents.online_count` / `offline_count`: based on the agent's last-seen
-  timestamp (online = seen within the last 60 seconds).
+- `agents.online_count` / `stale_count` / `offline_count`: `online` = live
+  connection with a recent heartbeat (within the 60s online window);
+  `stale_count` = registered agents whose `last_seen` is older than the online
+  window (a WebSocket agent flipping `online` -> `stale` is the case the console
+  highlights); `offline_count` mirrors `stale_count` for the registered set
+  (truly offline agents are removed from the registry on disconnect).
+- `agents.clients[].transport`: `"websocket"` (preferred) or `"polling"`
+  (fallback). The console distinguishes the two at a glance.
+- `agents.clients[].last_seen`: unix timestamp (seconds) of the most recent
+  heartbeat/result for the agent. Used to render how stale an agent is.
 - `jobs.active_count`: jobs in `running`, `queued`, `agent_queued`, or
   `stop_requested` status. Counted across both agent-backed and local jobs.
 - `tools.names`: the full list of tool names exposed by `ToolRuntime`.

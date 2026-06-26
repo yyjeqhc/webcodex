@@ -1043,11 +1043,21 @@ impl ToolRuntime {
 
         // -- agents summary ---------------------------------------------------
         // Build a trimmed client list so the summary never leaks per-request
-        // state. Only carry fields useful for observability.
+        // state. Only carry fields useful for observability. `last_seen` is a
+        // unix timestamp (seconds) of the most recent heartbeat/result; the
+        // console uses it to render how stale an agent is and to make a
+        // websocket agent flipping `online` -> `stale` visually obvious.
         let clients = self.shell_clients.list_clients().await;
         let agent_count = clients.len();
         let online_count = clients.iter().filter(|c| c.connected).count();
-        let offline_count = agent_count.saturating_sub(online_count);
+        // `stale_count` = registered agents whose `last_seen` is older than the
+        // online window (status == "stale"). Truly offline agents are removed
+        // from the registry on disconnect, so they never appear here; the
+        // legacy `offline_count` field is retained (it mirrors `stale_count`
+        // for the registered set) for backward compatibility with existing
+        // callers/tests.
+        let stale_count = agent_count.saturating_sub(online_count);
+        let offline_count = stale_count;
         let clients_summary: Vec<Value> = clients
             .iter()
             .map(|c| {
@@ -1059,6 +1069,7 @@ impl ToolRuntime {
                     "connected": c.connected,
                     "agent_protocol_version": c.agent_protocol_version,
                     "transport": c.transport,
+                    "last_seen": c.last_seen,
                     "pending_requests": c.pending_requests,
                     "capabilities": c.capabilities,
                     "projects_count": c.projects.len(),
@@ -1068,6 +1079,7 @@ impl ToolRuntime {
         let agents = json!({
             "count": agent_count,
             "online_count": online_count,
+            "stale_count": stale_count,
             "offline_count": offline_count,
             "clients": clients_summary,
         });
@@ -5060,6 +5072,7 @@ mod tests {
         assert_eq!(agents["count"], 1);
         assert_eq!(agents["online_count"], 1);
         assert_eq!(agents["offline_count"], 0);
+        assert_eq!(agents["stale_count"], 0);
         let clients = agents["clients"].as_array().unwrap();
         assert_eq!(clients.len(), 1);
         assert_eq!(clients[0]["client_id"], "agent-1");
@@ -5068,6 +5081,61 @@ mod tests {
         assert_eq!(clients[0]["connected"], true);
         assert!(clients[0]["capabilities"].is_object());
         assert_eq!(clients[0]["projects_count"], 0);
+        // last_seen must be present as an integer unix timestamp (seconds).
+        assert!(
+            clients[0]["last_seen"].is_i64(),
+            "last_seen must be an integer timestamp: {:?}",
+            clients[0]["last_seen"]
+        );
+    }
+
+    #[tokio::test]
+    async fn runtime_status_marks_stale_websocket_agent_with_last_seen() {
+        use crate::shell_client::TRANSPORT_WEBSOCKET;
+        use crate::shell_protocol::ShellClientRegisterRequest;
+        let registry = Arc::new(ShellClientRegistry::default());
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "ws-stale".to_string(),
+                display_name: Some("Stale WS".to_string()),
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: Some(vec![]),
+                agent_protocol_version: Some("websocket-v1".to_string()),
+            })
+            .await
+            .unwrap();
+        registry
+            .set_transport("ws-stale", TRANSPORT_WEBSOCKET)
+            .await
+            .unwrap();
+        // Force the agent past the 60s online window so it reads as stale.
+        let stale_ts = chrono::Utc::now().timestamp() - 120;
+        registry.set_last_seen_for_test("ws-stale", stale_ts).await;
+
+        let runtime = ToolRuntime::new(
+            Arc::new(ProjectsState::failed(
+                "none".to_string(),
+                "test".to_string(),
+            )),
+            registry,
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        );
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        let agents = &result.output["agents"];
+        assert_eq!(agents["count"], 1);
+        assert_eq!(agents["online_count"], 0);
+        assert_eq!(agents["stale_count"], 1);
+        assert_eq!(agents["offline_count"], 1);
+        let entry = &agents["clients"][0];
+        assert_eq!(entry["client_id"], "ws-stale");
+        assert_eq!(entry["transport"], "websocket");
+        assert_eq!(entry["status"], "stale");
+        assert_eq!(entry["connected"], false);
+        assert_eq!(entry["last_seen"], stale_ts);
     }
 
     #[tokio::test]

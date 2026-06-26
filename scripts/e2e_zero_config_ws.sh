@@ -729,6 +729,57 @@ else
 fi
 
 # ----------------------------------------------------------------------------
+# 7b. MCP App console (Phase B) — public static entry + protected data API
+# ----------------------------------------------------------------------------
+
+log "---- MCP App console (/console) ----"
+
+# The console HTML shell is public (no Bearer auth) and must reference the
+# bundled assets. It never embeds the token.
+console_html="$(curl -sS --max-time 10 "http://127.0.0.1:${PORT}/console" 2>/dev/null)"
+if echo "$console_html" | grep -q "Runtime Console" && \
+   echo "$console_html" | grep -q "/console/app.js"; then
+    pass "GET /console serves public HTML shell"
+else
+    fail "GET /console did not return expected HTML shell (got: ${console_html:0:200})"
+fi
+
+# The bundled JS is public and must call the protected status endpoint.
+console_js="$(curl -sS --max-time 10 "http://127.0.0.1:${PORT}/console/app.js" 2>/dev/null)"
+if echo "$console_js" | grep -q "/api/runtime/status"; then
+    pass "GET /console/app.js references status endpoint"
+else
+    fail "GET /console/app.js missing status endpoint reference (got: ${console_js:0:200})"
+fi
+
+# The bundle must never embed the DROP_TOKEN env var name in the DOM.
+if echo "$console_html" | grep -qi "drop_token"; then
+    fail "console HTML leaked DROP_TOKEN literal"
+else
+    pass "console HTML does not leak DROP_TOKEN literal"
+fi
+
+# The protected data API must still reject unauthenticated requests even though
+# the console page itself is public.
+no_auth_status=$(curl -sS -o /dev/null -w "%{http_code}" --max-time 10 \
+    -H "Content-Type: application/json" \
+    -X POST "http://127.0.0.1:${PORT}/api/runtime/status" \
+    -d '{}' 2>/dev/null)
+if [ "$no_auth_status" = "401" ]; then
+    pass "POST /api/runtime/status rejects unauthenticated request (401)"
+else
+    fail "POST /api/runtime/status without token returned HTTP ${no_auth_status} (expected 401)"
+fi
+
+# runtime_status now carries per-agent last_seen + stale_count for the console.
+status_body="$(api_post /api/runtime/status '{}')"
+if [ "$(json_get "$status_body" output.agents.stale_count)" != "None" ]; then
+    pass "runtime_status exposes agents.stale_count"
+else
+    fail "runtime_status missing agents.stale_count"
+fi
+
+# ----------------------------------------------------------------------------
 # 8. Summary
 # ----------------------------------------------------------------------------
 

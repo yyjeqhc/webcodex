@@ -89,6 +89,15 @@ MCP App console read-only tools (Phase A; thin REST wrappers over
 - `POST /api/jobs/list`
 - `POST /api/jobs/tail`
 
+MCP App console (Phase B; read-only status console. Public static HTML/JS/CSS
+entry, NOT behind Bearer auth — like `/openapi.json`. Data is fetched by the
+browser from the protected `POST /api/runtime/status`. Not a GPT Action; the
+route is explicitly excluded from `/openapi.json`):
+
+- `GET /console` (HTML shell)
+- `GET /console/app.js`
+- `GET /console/styles.css`
+
 Admin/debug only:
 
 - `POST /api/audit/sessions`

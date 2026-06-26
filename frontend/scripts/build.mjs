@@ -26,14 +26,19 @@ function stripTypeScript(source) {
   js = js.replace(/^declare\s+global\s*\{[\s\S]*?^\}\n\n/m, "");
   js = js.replace(/^export\s*\{\};\s*\n?/gm, "");
   js = js.replace(/: RequestOptions(?=\s*[=,)])/g, "");
-  js = js.replace(/: string(?=\s*[=,)])/g, "");
-  js = js.replace(/: number(?=\s*[=,)])/g, "");
-  js = js.replace(/: unknown(?=\s*[=,)])/g, "");
+  js = js.replace(/: (string|number|unknown|boolean)(?=\s*[=,)])/g, "");
+  // DOM event-handler parameter types (single identifiers). Safe because the
+  // only JS context where `: <Word>` appears before `=`, `,`, or `)` is a TS
+  // type annotation; object-literal values like `{ key: Event, }` are avoided
+  // in the source by contract.
+  js = js.replace(/: (Event|SubmitEvent|MouseEvent|KeyboardEvent|ChangeEvent)(?=\s*[=,)])/g, "");
+  // `as <Identifier>` type assertions (e.g. `node as HTMLInputElement`).
+  // `as` is not a JS operator, so stripping `as <Word>` is safe; generic
+  // casts like `as Array<T>` are intentionally not used in the source.
+  js = js.replace(/\bas\s+[A-Za-z_]\w*/g, "");
   js = js.replace(/: Promise<Response \| null>(?=\s*\{)/g, "");
   js = js.replace(/: Promise<void>(?=\s*\{)/g, "");
-  js = js.replace(/: boolean(?=\s*\{)/g, "");
-  js = js.replace(/: string(?=\s*\{)/g, "");
-  js = js.replace(/: void(?=\s*\{)/g, "");
+  js = js.replace(/: (boolean|string|void)(?=\s*\{)/g, "");
   return js;
 }
 
@@ -57,6 +62,8 @@ function minifyCss(source) {
 const outputs = new Map([
   ["dist/app.js", buildJs(stripTypeScript(read("src/app.ts")))],
   ["dist/styles.css", minifyCss(read("src/styles.css"))],
+  // The console HTML shell is copied verbatim (no transform needed).
+  ["dist/console.html", normalizeNewline(read("src/console.html"))],
 ]);
 
 let drift = false;

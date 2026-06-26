@@ -16,6 +16,7 @@ mod audit_http;
 mod auth;
 mod codex;
 mod config;
+mod console_web;
 mod db;
 mod mcp;
 mod models;
@@ -164,6 +165,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
 
+    // Read-only MCP App console (Phase B). Public static entry — the HTML/JS/CSS
+    // bundle carries no secrets; all runtime data is fetched by the browser
+    // from the protected `POST /api/runtime/status` endpoint. Mirrors
+    // `/openapi.json` being public. NOT part of the GPT Actions schema.
+    let console_router = Router::with_path("console")
+        .get(console_web::console_html)
+        .push(Router::with_path("app.js").get(console_web::console_app_js))
+        .push(Router::with_path("styles.css").get(console_web::console_styles_css));
+
     let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
         .hoop(affix_state::inject(db.clone()))
@@ -173,6 +183,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .hoop(cors.into_handler())
         .push(api_router)
         .push(openapi_router)
+        .push(console_router)
         .push(
             Router::with_path("mcp")
                 .hoop(AuthMiddleware)
@@ -212,6 +223,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing::info!("Runtime base: {}", base);
     tracing::info!("MCP endpoint: {}/mcp", base);
     tracing::info!("OpenAPI (GPT Actions): {}/openapi.json", base);
+    tracing::info!("MCP App console: {}/console", base);
     tracing::info!("Runtime status: {}/api/runtime/status", base);
     tracing::info!("Agent WebSocket: {}/api/agents/ws", base);
     tracing::info!("Agent polling (fallback): {}/api/shell/agent/poll", base);

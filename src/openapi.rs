@@ -78,6 +78,12 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/audit/stats",
     "/mcp",
     "/openapi.json",
+    // The MCP App console is a public static HTML/JS/CSS surface served via
+    // GET; it is intentionally NOT a GPT Action and must never appear in the
+    // POST-only /openapi.json schema.
+    "/console",
+    "/console/app.js",
+    "/console/styles.css",
 ];
 
 #[handler]

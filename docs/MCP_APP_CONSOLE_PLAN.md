@@ -166,6 +166,19 @@ Acceptance:
 - A stale WebSocket agent is clearly distinguishable from a polling fallback
   agent and from an offline agent.
 
+> Status: Phase B is implemented. A self-contained read-only console is served
+> at `GET /console` (public HTML/JS/CSS embedded in the binary via
+> `include_str!` from `frontend/dist/`). It renders `POST /api/runtime/status`
+> as a runtime stat grid plus a per-agent table. WebSocket agents that flip
+> `online` -> `stale` get a red row + `STALE (ws)` badge; websocket vs polling
+> are distinguished by transport badge. The Bearer token lives only in
+> `localStorage` and is never rendered into the DOM. `runtime_status` gained
+> `agents.stale_count` and per-agent `last_seen` (minimal, tested additions).
+> `/openapi.json` stays at 12 GPT Actions; `/console*` is explicitly excluded
+> from the schema. Local E2E passes 37/37 over both transports; `cargo test`
+> passes 380 main + 22 agent tests. Frontend `typecheck` / `build` /
+> `check:dist` pass. Phases C–G remain.
+
 ## Phase C: Project Panel And File Browser
 
 Goal: make the selected project the center of the app.

@@ -76,7 +76,9 @@ what went wrong:
    - `POST /api/projects/list` (`listProjects`) — asserts the runtime id
      `agent:<client_id>:<project_id>` is present.
    - `POST /api/projects/git_status` (`getProjectGitStatus`)
+   - `POST /api/projects/git_diff` (`getProjectGitDiff`)
    - `POST /api/projects/read_file` (`readProjectFile`)
+   - `POST /api/projects/run_shell` (`runProjectShellCommand`)
    - `POST /api/codex/run` (`runCodexTask`) — starts an async job on the agent
      using the stub `CODEX_BIN`, captures `job_id`.
    - `POST /api/jobs/status` (`getRuntimeJobStatus`) — polls `job_id` to a
@@ -90,7 +92,7 @@ what went wrong:
      and that the agent project id appears in the output.
 8. Pulls `GET /openapi.json` and validates it with `python3` (no `jq`
    dependency):
-   - operationIds match the expected 9-id set exactly.
+   - operationIds match the expected 12-id set exactly.
    - no `/api/audit/*`, `/api/jobs/stop`, or legacy `/api/codex/*` paths.
    - every path is POST-only.
    - descriptions do not claim server-side `projects.toml` is the runtime
@@ -133,10 +135,11 @@ curl -sS -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
 The schema smoke pulls `GET /openapi.json` and validates with the Python
 standard library (no `jq` required). It asserts:
 
-- The operation-id set is exactly the 9 documented ids:
+- The operation-id set is exactly the 12 documented ids:
   `listRuntimeTools`, `listProjects`, `getRuntimeStatus`, `runCodexTask`,
   `getRuntimeJobStatus`, `getRuntimeJobLog`, `readProjectFile`,
-  `getProjectGitStatus`, `callRuntimeTool`.
+  `getProjectGitStatus`, `getProjectGitDiff`, `applyProjectPatch`,
+  `runProjectShellCommand`, `callRuntimeTool`.
 - No forbidden paths appear: `/api/audit/*`, `/api/jobs/stop`, and any legacy
   `/api/codex/*` route.
 - Every path is POST-only (the GPT Actions surface is POST-only; `/openapi.json`

@@ -59,19 +59,22 @@ requires the Codex CLI on the agent host.
 
 ### Recommended call flow
 
-1. `getRuntimeStatus` — is the runtime healthy? Are agents registered? Are
-   agents online? (See [docs/RUNTIME_STATUS.md](RUNTIME_STATUS.md).)
+1. `getRuntimeStatus` — is the runtime healthy? Are agents registered and
+   online? (See [docs/RUNTIME_STATUS.md](RUNTIME_STATUS.md).)
 2. `listProjects` — learn the available `project` ids.
-3. `runCodexTask` — start a Codex task in a project; capture `job_id` from the
-   response (`output.job_id`).
-4. `getRuntimeJobStatus` — poll `job_id` until `status` is `completed`,
-   `failed`, `stopped`, or `lost`.
-5. `getRuntimeJobLog` — read the Codex output, using `tail_lines` / `offset`
-   (`next_stdout_line`) for pagination.
+3. `getProjectGitStatus` / `getProjectGitDiff` — inspect repository state before
+   making changes.
+4. `readProjectFile` — read the focused files needed for the task.
+5. `runProjectShellCommand` — run bounded diagnostics such as `cargo check`,
+   `cargo test`, or script syntax checks when needed.
+6. `applyProjectPatch` — apply small reviewed patches through the owning agent.
+7. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
+   `getRuntimeJobLog`, when Codex CLI is installed and a larger delegated task
+   is desired.
 
-For inspection before/after a task, use `readProjectFile` and
-`getProjectGitStatus`. These are safe, read-only, and routed to the registered
-agent that owns the selected project id.
+The dedicated inspection and execution actions are the robust default path for
+ChatGPT-assisted development. Codex is optional and should not be required for
+basic read/diff/patch/test workflows.
 
 ## `callRuntimeTool` (advanced)
 

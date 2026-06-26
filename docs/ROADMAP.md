@@ -1,8 +1,8 @@
 # Private Drop Runtime Roadmap
 
 This document is the forward-looking development plan after the initial
-ChatGPT runtime build-out. The historical phase plan is kept in
-`docs/GLM52_DEVELOPMENT_PLAN.md`; this file is the current planning source.
+ChatGPT runtime build-out. Historical phase-by-phase planning notes were removed
+from the active docs set; this file is the current planning source.
 
 ## Current State
 

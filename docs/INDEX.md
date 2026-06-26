@@ -1,71 +1,40 @@
 # Documentation Index
 
-Recommended reading order for the Private Drop Runtime. The authoritative API
-surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
+Recommended reading order for the current Private Drop Runtime. The authoritative
+API surface is defined by `src/main.rs`, `src/openapi.rs`, and `README.md`.
 
-1. [README.md](../README.md) — runtime overview, build/run, current endpoints,
-   project config, MCP, and agent setup.
+1. [README.md](../README.md) — quick project overview, build/run commands,
+   current endpoints, agent setup, and verification entry points.
 2. [GPT_ACTIONS.md](GPT_ACTIONS.md) — ChatGPT GPT Actions import guide: import
-   URL, Bearer auth, the operation ids, and the recommended call flow.
-3. [RUNTIME_STATUS.md](RUNTIME_STATUS.md) — `runtime_status` /
+   URL, Bearer auth, the operation ids, examples, and the recommended
+   development flow.
+3. [DEPLOYMENT.md](DEPLOYMENT.md) — production deployment: server env vars,
+   agent config, reverse proxy / HTTPS, GPT Actions import, MCP endpoint,
+   smoke tests, and WebSocket online/stale troubleshooting.
+4. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — shared polling/WebSocket agent wire
+   protocol: transport-neutral envelopes, register/request/result/job_update,
+   ping-pong, backpressure, reconnect, capabilities, and owner boundary.
+5. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) — the live agent-local `projects.d`
+   registry and runtime project id model.
+6. [RUNTIME_STATUS.md](RUNTIME_STATUS.md) — `runtime_status` /
    `getRuntimeStatus` observability: response shape, field notes, and what is
    intentionally not exposed.
-4. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — the shared agent wire protocol used
-   by both transports: the transport-neutral `AgentEnvelope` (register /
-   request / result / job_update / ping-pong / error), capabilities, owner
-   boundary, backpressure/reconnect, and the WebSocket lifecycle. Polling
-   (`polling-v1`) and WebSocket (`websocket-v1`) are two carriers of the same
-   protocol.
-5. [AUDIT_API.md](AUDIT_API.md) — the read-only admin/debug audit query API
-   (`/api/audit/sessions`, `/api/audit/session`, `/api/audit/stats`): endpoints,
-   limit bounds, and secret-sanitization guarantees. Not a GPT Action.
-6. [ROADMAP.md](ROADMAP.md) — current forward-looking roadmap after the initial
-   runtime MVP: zero-config agent runtime, WebSocket transport, QUIC planning,
-   real ChatGPT validation, and deployment hardening.
-7. [ZERO_CONFIG_AGENT_RUNTIME.md](ZERO_CONFIG_AGENT_RUNTIME.md) — current
-   zero-server-project-config direction: agent-registered projects, runtime id
-   format, and WebSocket/QUIC transport sequence.
-8. [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — compact handoff notes for future
-   coding agents after context compaction or a new window.
-9. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation
-   harness (`scripts/e2e_zero_config_ws.sh`): how to run it, env vars, MCP
-   smoke, GPT Actions schema smoke, and mapping to a real ChatGPT import.
-10. [DEPLOYMENT.md](DEPLOYMENT.md) — production deployment: server env vars,
-    agent config (WebSocket preferred / polling fallback), reverse proxy / HTTPS,
-    ChatGPT GPT Actions import URL, MCP endpoint URL, smoke tests, and
-    troubleshooting order. The server is a zero-project-config relay.
-11. [GLM52_DEVELOPMENT_PLAN.md](GLM52_DEVELOPMENT_PLAN.md) — historical
-    phase-by-phase development plan retained for context.
+7. [AUDIT_API.md](AUDIT_API.md) — read-only admin/debug audit query API and
+   secret-sanitization guarantees. Not a GPT Action.
+8. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation harness
+   for WebSocket/polling agents, GPT Actions schema smoke, and MCP smoke.
+9. [ZERO_CONFIG_AGENT_RUNTIME.md](ZERO_CONFIG_AGENT_RUNTIME.md) — zero-server-
+   project-config direction and agent-registered project model.
+10. [ROADMAP.md](ROADMAP.md) — current forward-looking roadmap.
+11. [AGENT_HANDOFF.md](AGENT_HANDOFF.md) — compact handoff notes for future
+    coding agents after context compaction or a new window.
 
-## Scope and architecture
+## Scope and backlog
 
-- [V2_SCOPE.md](../V2_SCOPE.md) — vision, retained capabilities, removed
-  features, and the required GPT Actions operation ids.
-- [TODO.md](../TODO.md) — current backlog and deprecated items.
+- [V2_SCOPE.md](../V2_SCOPE.md) — vision, retained capabilities, and removed
+  product surfaces.
+- [TODO.md](../TODO.md) — current backlog and completed milestones.
 
-## Agent project registry
-
-- [AGENT_PROJECTS.md](AGENT_PROJECTS.md) — the agent-local `projects.d`
-  registry (still live) and the removed workflow / doctor / hook execution
-  routes.
-
-## Deprecated docs (kept for historical reference only)
-
-These describe removed endpoints and must not be used as integration guides:
-
-- [GPT_WORKFLOW.md](GPT_WORKFLOW.md) — removed v4 GPT workflow
-  (`/codex-openapi-*.json`, desktop tasks, goal workflow).
-- [WORKFLOWS.md](WORKFLOWS.md) — removed `project_workflow` / `project_doctor`
-  / `project_hook` routes and SSH executor.
-- [CODEX_USAGE.md](CODEX_USAGE.md) — removed `pdctl.py` workflow/doctor/hook
-  commands.
-- [action_sessions.md](action_sessions.md) — removed action session dashboard;
-  documents the internal audit storage layer and links to the new read-only
-  Audit API.
-- [action_session_coverage.md](action_session_coverage.md) — audits removed
-  routes.
-- [job_recovery_notes.md](job_recovery_notes.md) — removed `runJobOp` recovery.
-- [trusted_raw_commands.md](trusted_raw_commands.md) — removed
-  `command_request` / goal / trusted raw command workflow.
-- [TAILSCALE_SSH_DIAGNOSTICS.md](TAILSCALE_SSH_DIAGNOSTICS.md) — removed SSH
-  executor context.
+Deprecated workflow, SSH, and legacy action-session dashboard documents were
+removed from `docs/` to keep the documentation set focused on the active runtime
+surface. Use git history if historical removed-feature notes are needed.

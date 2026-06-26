@@ -188,18 +188,15 @@ Current E2E smoke result:
 
 Start with:
 
-- `docs/INDEX.md`
-- `docs/ROADMAP.md`
-- `docs/ZERO_CONFIG_AGENT_RUNTIME.md`
-- `TODO.md`
 - `README.md`
+- `docs/INDEX.md`
+- `docs/GPT_ACTIONS.md`
+- `docs/DEPLOYMENT.md`
+- `docs/ROADMAP.md`
+- `TODO.md`
 
-Historical phase plan:
-
-- `docs/GLM52_DEVELOPMENT_PLAN.md`
-
-Deprecated docs are retained only for history. Do not use them as integration
-guides.
+Deprecated workflow, SSH, and legacy dashboard notes have been removed from the
+active docs set. Use git history if historical removed-feature notes are needed.
 
 ## Next Likely Work
 

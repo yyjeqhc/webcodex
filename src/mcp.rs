@@ -883,6 +883,33 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mcp_tools_list_includes_validate_patch() {
+        // validate_patch is a patch preflight / dry-run tool exposed via MCP
+        // tools/list (and a thin REST wrapper), but NOT via GPT Actions.
+        let runtime = test_runtime();
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(12)), json!({})),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(v) => v,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        let tools = value["result"]["tools"].as_array().unwrap();
+        let names: Vec<String> = tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "validate_patch"),
+            "MCP tools/list must include validate_patch: {:?}",
+            names
+        );
+    }
+
+    #[tokio::test]
     async fn mcp_tools_call_runtime_status_returns_content() {
         let runtime = test_runtime();
         let outcome = handle_mcp_request(

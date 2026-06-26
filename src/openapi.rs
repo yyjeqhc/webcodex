@@ -84,6 +84,10 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/console",
     "/console/app.js",
     "/console/styles.css",
+    // validate_patch is a patch preflight / dry-run tool for full-auto coding
+    // agent loops. It is exposed via MCP tools/list and a thin REST wrapper,
+    // but is intentionally NOT a GPT Action (excluded from /openapi.json).
+    "/api/projects/validate_patch",
 ];
 
 #[handler]
@@ -746,6 +750,34 @@ mod tests {
                 legacy
             );
         }
+    }
+
+    #[test]
+    fn openapi_does_not_expose_validate_patch() {
+        // validate_patch is a patch preflight / dry-run tool for full-auto
+        // coding agent loops. It is exposed via MCP tools/list and a thin
+        // REST wrapper, but is intentionally NOT a GPT Action. The GPT
+        // Actions schema must stay at 12 ops and must not include it.
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        assert!(
+            !paths.contains_key("/api/projects/validate_patch"),
+            "validate_patch must not appear in /openapi.json (it is a preflight tool, not a GPT Action)"
+        );
+        // No operation id should mention validate_patch.
+        for methods in paths.values() {
+            for op in methods.as_object().unwrap().values() {
+                let id = op["operationId"].as_str().unwrap_or("");
+                assert!(
+                    !id.to_lowercase().contains("validate"),
+                    "validate_patch must not have a GPT Action operation id, found: {}",
+                    id
+                );
+            }
+        }
+        // The operation count must remain exactly 12.
+        let count: usize = paths.values().map(|m| m.as_object().unwrap().len()).sum();
+        assert_eq!(count, 12, "GPT Actions schema must stay at 12 operations");
     }
 
     #[test]

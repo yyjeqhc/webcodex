@@ -23,7 +23,7 @@ runtime project source again.
 Latest known baseline when this file was written:
 
 - Branch: `v2-mcp-runtime`
-- Commit: `49ec770 Fix websocket agent liveness`
+- Commit: current `HEAD` (`Add agent-backed validate patch preflight`)
 - Main binary: `private-drop`
 - Agent binary: `private-drop-agent`
 
@@ -71,6 +71,7 @@ Important runtime endpoints:
 - `POST /api/projects/git_status`
 - `POST /api/projects/git_diff`
 - `POST /api/projects/apply_patch`
+- `POST /api/projects/validate_patch`
 - `POST /api/projects/run_shell`
 - `POST /api/codex/run`
 - `POST /api/jobs/status`
@@ -177,7 +178,7 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 373 tests passing, agent binary 22 tests passing.
+- `cargo test`: main binary 397 tests passing, agent binary 23 tests passing.
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -199,9 +200,47 @@ bash -n scripts/smoke_deployment.sh
 
 Current E2E smoke result:
 
-- `bash scripts/e2e_zero_config_ws.sh`: 32 passed / 0 failed.
-- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 32 passed / 0
+- `bash scripts/e2e_zero_config_ws.sh`: 44 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 44 passed / 0
   failed.
+
+## validate_patch (patch preflight / dry-run)
+
+`validate_patch` is a read-only patch preflight tool for full-auto coding
+agent loops. It is **not** a human approval UI. The intended loop is:
+
+```text
+read/search -> generate patch -> validate_patch -> applyProjectPatch
+            -> git status/diff -> run tests -> fix failures -> repeat
+```
+
+Behavior:
+
+- Dry-run only: runs `git apply --check -` and `git apply --stat -` through the
+  owning `private-drop-agent`, passing the patch as `ShellRunRequest.stdin`.
+  Never invokes the real `git apply` application mode and never falls back to
+  `apply_patch`.
+- Do not embed patch text in the shell command. `ShellRunRequest.command` is
+  capped at 8 KiB; stdin is the protocol field intended for patch payloads.
+- The server never reads the agent project filesystem directly — all checks
+  are routed to the owning agent via the existing WebSocket/polling execution
+  path.
+- Input validation rejects empty patches, NUL bytes, and patches over
+  `MAX_VALIDATE_PATCH_BYTES` (256 KiB) before project resolution.
+- Absolute paths and `..` traversal are hard-rejected; sensitive filenames
+  (`agent.toml`, `private-drop.env`, `.env`, `projects.d`, `.git`, `target`,
+  `node_modules`) produce `warnings` rather than blocking the preflight.
+- Output: `can_apply` (bool), `affected_files` (array), `stat`, `stdout`,
+  `stderr`, `warnings` (array).
+- Exposed via MCP `tools/list` (19 tools) and `POST /api/projects/validate_patch`.
+- **Not** a GPT Action: `/openapi.json` stays at 12 ops. The route is in the
+  `LEGACY_FORBIDDEN_PATHS` guard so it can never leak into the GPT Actions
+  schema.
+- Capability: requires the agent `shell` capability (same as `apply_patch`,
+  since the dry-run runs `git apply --check` via the agent shell path). Owner
+  boundary checks are reused from `authorize_agent_tool`.
+- Server and agent should be upgraded together for stdin-backed
+  `validate_patch` / `apply_patch` behavior.
 
 ## Documentation Map
 

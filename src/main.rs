@@ -144,6 +144,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(
                 Router::with_path("projects/apply_patch").post(runtime_http::projects_apply_patch),
             )
+            .push(
+                Router::with_path("projects/validate_patch")
+                    .post(runtime_http::projects_validate_patch),
+            )
             .push(Router::with_path("projects/run_shell").post(runtime_http::projects_run_shell))
             .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
             .push(Router::with_path("shell/run").post(shell_run))

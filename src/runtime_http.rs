@@ -74,6 +74,17 @@ struct ApplyPatchRequest {
     pub patch: String,
 }
 
+/// `POST /api/projects/validate_patch` — thin REST wrapper over
+/// `ToolCall::ValidatePatch`. Patch preflight / dry-run only; never modifies
+/// the worktree and never falls back to a real apply. NOT a GPT Action
+/// (excluded from `/openapi.json`); intended for full-auto coding agent loops
+/// and the MCP App console.
+#[derive(Debug, Deserialize)]
+struct ValidatePatchRequest {
+    pub project: String,
+    pub patch: String,
+}
+
 #[derive(Debug, Deserialize)]
 struct RunShellRequest {
     pub project: String,
@@ -518,6 +529,51 @@ pub async fn projects_apply_patch(req: &mut Request, depot: &mut Depot, res: &mu
     render_result(res, &audit, "apply_patch", project, result);
 }
 
+/// `POST /api/projects/validate_patch` — thin REST wrapper over
+/// `ToolCall::ValidatePatch`. Patch preflight / dry-run: checks whether a
+/// unified diff can apply without modifying the worktree. Routed to the owning
+/// agent via `ToolRuntime`. NOT a GPT Action (excluded from `/openapi.json`).
+#[handler]
+pub async fn projects_validate_patch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let audit = ActionAudit::start(
+        req,
+        depot,
+        "/api/projects/validate_patch",
+        "validateProjectPatch",
+    );
+    let Some(runtime) = runtime(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Tool runtime not configured",
+        ));
+        return;
+    };
+    let body: ValidatePatchRequest = match req.parse_json().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Invalid JSON: {}", e),
+            ));
+            return;
+        }
+    };
+    let project = Some(body.project.clone());
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ValidatePatch {
+                project: body.project,
+                patch: body.patch,
+            },
+            auth.as_ref(),
+        )
+        .await;
+    render_result(res, &audit, "validate_patch", project, result);
+}
+
 /// `POST /api/projects/run_shell` — thin GPT Actions wrapper over
 /// `ToolCall::RunShell`. Executable with side effects; requires the owning
 /// agent's shell capability and Bearer auth.
@@ -783,6 +839,7 @@ fn tool_project(call: &ToolCall) -> Option<String> {
     match call {
         ToolCall::RunShell { project, .. }
         | ToolCall::ApplyPatch { project, .. }
+        | ToolCall::ValidatePatch { project, .. }
         | ToolCall::GitStatus { project }
         | ToolCall::GitDiff { project, .. }
         | ToolCall::GitDiffSummary { project }
@@ -878,6 +935,9 @@ mod tests {
                     .push(Router::with_path("projects/git_status").post(projects_git_status))
                     .push(Router::with_path("projects/git_diff").post(projects_git_diff))
                     .push(Router::with_path("projects/apply_patch").post(projects_apply_patch))
+                    .push(
+                        Router::with_path("projects/validate_patch").post(projects_validate_patch),
+                    )
                     .push(Router::with_path("projects/run_shell").post(projects_run_shell))
                     .push(Router::with_path("projects/list_files").post(projects_list_files))
                     .push(Router::with_path("projects/search_text").post(projects_search_text))
@@ -1325,5 +1385,77 @@ mod tests {
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], true);
         assert!(body["output"]["jobs"].is_array());
+    }
+
+    // =========================================================================
+    // validateProjectPatch (POST /api/projects/validate_patch)
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_projects_validate_patch_requires_bearer_auth() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let resp = TestClient::post("http://localhost/api/projects/validate_patch")
+            .json(&json!({"project": "demo", "patch": "diff"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn http_projects_validate_patch_dispatches_to_runtime() {
+        // With a correct bearer token the route reaches the runtime. The
+        // project id below is not agent-registered, so the runtime returns a
+        // structured error (not a 401/404) — proving the request was
+        // authenticated, deserialized, and dispatched to ToolRuntime.
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/projects/validate_patch")
+            .bearer_auth("secret")
+            .json(&json!({
+                "project": "agent:nope:nope",
+                "patch": "--- a/f.txt\n+++ b/f.txt\n@@ -1 +1,2 @@\nx\n+y\n"
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(
+            body["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "validate_patch should return a structured runtime error"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_projects_validate_patch_rejects_empty_patch_via_runtime() {
+        // An empty patch is rejected by the runtime with a structured error
+        // (BAD_REQUEST + success=false), not a 401/404. This proves the
+        // wrapper deserializes and dispatches even for invalid patches.
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/projects/validate_patch")
+            .bearer_auth("secret")
+            .json(&json!({"project": "agent:nope:nope", "patch": ""}))
+            .send(&service)
+            .await;
+        // Empty patch is rejected; because the project is not agent-registered
+        // authorize_agent_tool fails first, but the request is still
+        // authenticated + dispatched (structured error, not 401/404).
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
     }
 }

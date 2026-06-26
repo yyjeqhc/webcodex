@@ -261,6 +261,21 @@ Acceptance:
 - The app can preview the patch and require approval before mutation.
 - After approval and application, the app shows the resulting git status/diff.
 
+> Status: The `validate_patch` backend tool is implemented as a patch
+> preflight / dry-run (Phase D backend). It runs `git apply --check` and
+> `git apply --stat` through the owning agent, returns `can_apply`,
+> `affected_files`, `stat`, `stdout`, `stderr`, and `warnings`, and never
+> modifies the worktree. It is exposed via MCP `tools/list` (19 tools) and
+> `POST /api/projects/validate_patch`, but is intentionally **not** a GPT
+> Action (`/openapi.json` stays at 12 ops). It is designed for full-auto
+> coding agent loops (`validate_patch -> applyProjectPatch`), not as a human
+> approval UI — the approve/reject console UI (Phase D frontend) remains
+> future work. Input validation rejects empty/NUL/oversized patches;
+> sensitive filenames produce warnings; absolute paths and `..` traversal are
+> hard-rejected. Patch payloads are sent through `ShellRunRequest.stdin`, not
+> embedded in shell commands. Local E2E passes 44/44 over both transports;
+> `cargo test` passes 397 main + 23 agent tests.
+
 ## Phase E: Command And Job Panels
 
 Goal: expose execution clearly without making it feel like a generic dangerous

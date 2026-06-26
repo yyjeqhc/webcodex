@@ -67,6 +67,19 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
       `localStorage`; no tokens/secrets rendered in the DOM. `/openapi.json`
       stays at 12 ops; the console route is explicitly excluded from the GPT
       Actions schema. See [docs/MCP_APP_CONSOLE_PLAN.md](docs/MCP_APP_CONSOLE_PLAN.md).
+- [x] `validate_patch` patch preflight / dry-run (Phase D backend): a
+      read-only `ToolCall::ValidatePatch` that runs `git apply --check` and
+      `git apply --stat` through the owning agent without modifying the
+      worktree. Returns `can_apply`, `affected_files`, `stat`, `stdout`,
+      `stderr`, `warnings`. Input validation rejects empty/NUL/oversized
+      patches (256 KiB cap); sensitive filenames warn; absolute paths and `..`
+      traversal are hard-rejected. Exposed via MCP `tools/list` (19 tools) and
+      `POST /api/projects/validate_patch`; **not** a GPT Action
+      (`/openapi.json` stays at 12 ops). Designed for full-auto coding agent
+      loops, not human approval. Patch payloads use `ShellRunRequest.stdin`,
+      not shell command embedding. Local E2E passes 44/44 over both transports;
+      `cargo test` passes 397 main + 23 agent tests. See
+      [docs/MCP_APP_CONSOLE_PLAN.md](docs/MCP_APP_CONSOLE_PLAN.md).
 
 ### Deprecated (not active features)
 

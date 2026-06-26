@@ -24,6 +24,7 @@ const MAX_COMMAND_LEN: usize = 8_000;
 const MAX_CWD_LEN: usize = 1_024;
 const MAX_FILE_PATH_LEN: usize = 2_048;
 const MAX_FILE_CONTENT_BYTES: usize = 512 * 1024;
+const MAX_RUN_STDIN_BYTES: usize = 512 * 1024;
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
@@ -272,6 +273,17 @@ fn validate_run_request(body: &ShellRunRequest) -> Result<(), String> {
     }
     if body.command.contains('\0') {
         return Err("command cannot contain NUL bytes".to_string());
+    }
+    if let Some(stdin) = &body.stdin {
+        if stdin.len() > MAX_RUN_STDIN_BYTES {
+            return Err(format!(
+                "stdin is too large; maximum is {} bytes",
+                MAX_RUN_STDIN_BYTES
+            ));
+        }
+        if stdin.contains('\0') {
+            return Err("stdin cannot contain NUL bytes".to_string());
+        }
     }
     if let Some(cwd) = &body.cwd {
         if cwd.len() > MAX_CWD_LEN {
@@ -757,6 +769,7 @@ impl ShellClientRegistry {
             expected_sha256: body.expected_sha256.clone(),
             create_dirs: body.create_dirs,
             command: String::new(),
+            stdin: None,
             timeout_secs: 30,
             requested_by,
             created_at: now_ts(),
@@ -803,6 +816,7 @@ impl ShellClientRegistry {
             expected_sha256: None,
             create_dirs: false,
             command: body.command.clone(),
+            stdin: body.stdin.clone(),
             timeout_secs: body.timeout_secs,
             requested_by,
             created_at: now_ts(),
@@ -955,6 +969,7 @@ impl ShellClientRegistry {
             client_id: client_id.clone(),
             cwd: body.cwd.clone(),
             command: command.clone(),
+            stdin: None,
             timeout_secs: body.timeout_secs.unwrap_or(120),
             wait_timeout_secs: 0,
         };
@@ -974,6 +989,7 @@ impl ShellClientRegistry {
             expected_sha256: None,
             create_dirs: false,
             command,
+            stdin: None,
             timeout_secs: run.timeout_secs,
             requested_by,
             created_at,
@@ -1149,6 +1165,7 @@ impl ShellClientRegistry {
                     expected_sha256: None,
                     create_dirs: false,
                     command: String::new(),
+                    stdin: None,
                     timeout_secs: 1,
                     requested_by,
                     created_at: now_ts(),
@@ -2964,6 +2981,7 @@ mod tests {
                     client_id: "xrh".to_string(),
                     cwd: Some("/tmp".to_string()),
                     command: "echo hello".to_string(),
+                    stdin: Some("hello stdin".to_string()),
                     timeout_secs: 10,
                     wait_timeout_secs: 1,
                 },
@@ -2981,6 +2999,7 @@ mod tests {
             .unwrap();
         assert_eq!(polled.request_id, request_id);
         assert_eq!(polled.command, "echo hello");
+        assert_eq!(polled.stdin.as_deref(), Some("hello stdin"));
         registry
             .complete(ShellAgentResultRequest {
                 client_id: "xrh".to_string(),
@@ -3007,6 +3026,7 @@ mod tests {
                     client_id: "missing".to_string(),
                     cwd: None,
                     command: "pwd".to_string(),
+                    stdin: None,
                     timeout_secs: 10,
                     wait_timeout_secs: 1,
                 },
@@ -3015,6 +3035,33 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("unknown shell client"));
+    }
+
+    #[test]
+    fn validate_run_request_allows_bounded_stdin_beyond_command_limit() {
+        let body = ShellRunRequest {
+            client_id: "client-1".to_string(),
+            cwd: None,
+            command: "cat >/dev/null".to_string(),
+            stdin: Some("x".repeat(MAX_COMMAND_LEN + 1024)),
+            timeout_secs: 10,
+            wait_timeout_secs: 1,
+        };
+        validate_run_request(&body).expect("stdin has its own larger bound");
+    }
+
+    #[test]
+    fn validate_run_request_rejects_oversized_stdin() {
+        let body = ShellRunRequest {
+            client_id: "client-1".to_string(),
+            cwd: None,
+            command: "cat >/dev/null".to_string(),
+            stdin: Some("x".repeat(MAX_RUN_STDIN_BYTES + 1)),
+            timeout_secs: 10,
+            wait_timeout_secs: 1,
+        };
+        let err = validate_run_request(&body).unwrap_err();
+        assert!(err.contains("stdin is too large"), "got: {}", err);
     }
 
     #[tokio::test]
@@ -3397,6 +3444,7 @@ mod tests {
                         client_id: "full".to_string(),
                         cwd: None,
                         command: "echo hi".to_string(),
+                        stdin: None,
                         timeout_secs: 5,
                         wait_timeout_secs: 0,
                     },
@@ -3413,6 +3461,7 @@ mod tests {
                     client_id: "full".to_string(),
                     cwd: None,
                     command: "echo hi".to_string(),
+                    stdin: None,
                     timeout_secs: 5,
                     wait_timeout_secs: 0,
                 },

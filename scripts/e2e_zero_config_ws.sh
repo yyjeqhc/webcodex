@@ -653,6 +653,118 @@ if [ "$phase_a_present" = "1" ]; then
 fi
 
 # ----------------------------------------------------------------------------
+# 6c. validate_patch (patch preflight / dry-run) against the agent project
+# ----------------------------------------------------------------------------
+
+log "---- validate_patch (patch preflight) ----"
+
+# Build a JSON request body containing a patch, using python3 for safe
+# JSON string escaping (patches contain newlines and special chars).
+build_validate_body() {
+    local patch="$1"
+    python3 -c '
+import json, sys
+print(json.dumps({"project": sys.argv[1], "patch": sys.argv[2]}))
+' "$RUNTIME_PROJECT_ID" "$patch"
+}
+
+# A patch that creates a new file — always applies cleanly to a clean repo.
+GOOD_PATCH='diff --git a/VALIDATE_PROBE.md b/VALIDATE_PROBE.md
+new file mode 100644
+--- /dev/null
++++ b/VALIDATE_PROBE.md
+@@ -0,0 +1 @@
++preflight
+'
+
+# A patch whose context does not match — cannot apply.
+BAD_PATCH='--- a/README.md
++++ b/README.md
+@@ -1,1 +1,1 @@
+-NONEXISTENT_CONTEXT_LINE
++replacement
+'
+
+# Capture the worktree state before validation (should be clean: committed).
+pre_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+pre_porcelain="$(json_get "$pre_status" output.stdout)"
+
+# validate_patch with an applicable patch — can_apply must be true.
+good_body="$(build_validate_body "$GOOD_PATCH")"
+body="$(api_post /api/projects/validate_patch "$good_body")"
+vp_success="$(json_get "$body" success)"
+vp_can_apply="$(json_get "$body" output.can_apply)"
+if [ "$vp_success" = "True" ] && [ "$vp_can_apply" = "True" ]; then
+    pass "validate_patch(applicable) returns can_apply=true"
+else
+    fail "validate_patch(applicable) did not return can_apply=true (success=$vp_success can_apply=$vp_can_apply body=${body:0:300})"
+fi
+vp_affected="$(json_get "$body" output.affected_files)"
+if echo "$vp_affected" | grep -q "VALIDATE_PROBE.md"; then
+    pass "validate_patch(applicable) returns affected_files"
+else
+    fail "validate_patch(applicable) missing affected_files (got: ${vp_affected:0:200})"
+fi
+vp_stat="$(json_get "$body" output.stat)"
+if [ -n "$vp_stat" ] && [ "$vp_stat" != "None" ] && [ "$vp_stat" != "" ]; then
+    pass "validate_patch(applicable) returns stat"
+else
+    fail "validate_patch(applicable) missing stat (got: ${vp_stat:0:200})"
+fi
+
+# validate_patch with a patch larger than the shell command limit. The patch is
+# sent to the agent as stdin, not embedded in the command string.
+LARGE_PATCH="$(python3 - <<'PY'
+print("diff --git a/LARGE_VALIDATE_PROBE.md b/LARGE_VALIDATE_PROBE.md")
+print("new file mode 100644")
+print("--- /dev/null")
+print("+++ b/LARGE_VALIDATE_PROBE.md")
+print("@@ -0,0 +1,220 @@")
+for i in range(220):
+    print(f"+line-{i:03d}-" + ("x" * 48))
+PY
+)"
+LARGE_PATCH="${LARGE_PATCH}"$'\n'
+large_body="$(build_validate_body "$LARGE_PATCH")"
+body="$(api_post /api/projects/validate_patch "$large_body")"
+vp_large_success="$(json_get "$body" success)"
+vp_large_can_apply="$(json_get "$body" output.can_apply)"
+if [ "$vp_large_success" = "True" ] && [ "$vp_large_can_apply" = "True" ]; then
+    pass "validate_patch handles patch larger than command limit"
+else
+    fail "validate_patch large patch failed (success=$vp_large_success can_apply=$vp_large_can_apply body=${body:0:300})"
+fi
+
+# validate_patch with a non-applicable patch — can_apply must be false.
+bad_body="$(build_validate_body "$BAD_PATCH")"
+body="$(api_post /api/projects/validate_patch "$bad_body")"
+vp2_success="$(json_get "$body" success)"
+vp2_can_apply="$(json_get "$body" output.can_apply)"
+if [ "$vp2_success" = "True" ] && [ "$vp2_can_apply" = "False" ]; then
+    pass "validate_patch(non-applicable) returns can_apply=false"
+else
+    fail "validate_patch(non-applicable) did not return can_apply=false (success=$vp2_success can_apply=$vp2_can_apply body=${body:0:300})"
+fi
+
+# Worktree must be unchanged after both validations (dry-run never writes).
+post_status="$(api_post /api/projects/git_status "{\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+post_porcelain="$(json_get "$post_status" output.stdout)"
+if [ "$pre_porcelain" = "$post_porcelain" ] && \
+   ! echo "$post_porcelain" | grep -q "VALIDATE_PROBE" && \
+   ! echo "$post_porcelain" | grep -q "LARGE_VALIDATE_PROBE"; then
+    pass "validate_patch does not modify the worktree"
+else
+    fail "validate_patch modified the worktree (pre=${pre_porcelain:0:120} post=${post_porcelain:0:120})"
+fi
+
+# MCP tools/list must expose validate_patch.
+if echo "$TOOLS_LIST_BODY" | grep -q '"validate_patch"'; then
+    pass "MCP tools/list exposes validate_patch"
+else
+    fail "MCP tools/list missing validate_patch"
+fi
+
+# ----------------------------------------------------------------------------
 # 7. GPT Actions schema smoke (/openapi.json)
 # ----------------------------------------------------------------------------
 
@@ -685,8 +797,10 @@ if extra:
     errors.append(f"unexpected operationIds: {sorted(extra)}")
 
 # Forbidden legacy/admin paths must not appear in the schema paths.
+# validate_patch is a preflight/dry-run tool exposed via MCP + REST, NOT a
+# GPT Action, so it must not appear in /openapi.json.
 forbidden = ["/api/audit/sessions", "/api/audit/session", "/api/audit/stats",
-             "/api/jobs/stop"]
+             "/api/jobs/stop", "/api/projects/validate_patch"]
 paths = set(schema.get("paths", {}).keys())
 for fp in forbidden:
     if fp in paths:

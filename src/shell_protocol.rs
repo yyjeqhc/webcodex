@@ -161,6 +161,8 @@ pub struct ShellRunRequest {
     #[serde(default)]
     pub cwd: Option<String>,
     pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdin: Option<String>,
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
     #[serde(default = "default_wait_timeout_secs")]
@@ -251,6 +253,8 @@ pub struct ShellAgentShellRequest {
     #[serde(default)]
     pub create_dirs: bool,
     pub command: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdin: Option<String>,
     pub timeout_secs: u64,
     pub requested_by: String,
     pub created_at: i64,
@@ -707,6 +711,7 @@ mod envelope_tests {
             expected_sha256: None,
             create_dirs: false,
             command: "echo hi".to_string(),
+            stdin: Some("input".to_string()),
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 123,
@@ -717,6 +722,7 @@ mod envelope_tests {
         assert!(json.contains(r#""request_id":"req-1""#));
         assert!(json.contains(r#""kind":"run_shell""#));
         assert!(json.contains(r#""command":"echo hi""#));
+        assert!(json.contains(r#""stdin":"input""#));
         let back = AgentEnvelope::from_slice(json.as_bytes()).unwrap();
         match back {
             AgentEnvelope::Request { request } => {

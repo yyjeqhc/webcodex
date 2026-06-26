@@ -2,7 +2,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -758,6 +758,7 @@ fn run_shell(
     policy: &AgentPolicy,
     cwd: Option<&str>,
     command: &str,
+    stdin: Option<&str>,
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
 ) -> CommandResult {
@@ -784,13 +785,16 @@ fn run_shell(
     }
     let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
     let start = Instant::now();
-    let spawn = std::process::Command::new("sh")
-        .arg("-c")
+    let mut cmd = std::process::Command::new("sh");
+    cmd.arg("-c")
         .arg(command)
         .current_dir(&cwd_path)
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
+        .stderr(Stdio::piped());
+    if stdin.is_some() {
+        cmd.stdin(Stdio::piped());
+    }
+    let spawn = cmd.spawn();
     let mut child = match spawn {
         Ok(child) => child,
         Err(e) => {
@@ -803,6 +807,32 @@ fn run_shell(
             };
         }
     };
+    if let Some(input) = stdin {
+        match child.stdin.take() {
+            Some(mut child_stdin) => {
+                if let Err(e) = child_stdin.write_all(input.as_bytes()) {
+                    let _ = child.kill();
+                    return CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(start.elapsed().as_millis() as u64),
+                        error: Some(format!("failed to write command stdin: {}", e)),
+                    };
+                }
+            }
+            None => {
+                let _ = child.kill();
+                return CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some("stdin pipe missing".to_string()),
+                };
+            }
+        }
+    }
     loop {
         if stop_requested
             .map(|flag| flag.load(Ordering::SeqCst))
@@ -1516,6 +1546,7 @@ fn dispatch_request(
                 policy,
                 request.cwd.as_deref(),
                 &request.command,
+                request.stdin.as_deref(),
                 request.timeout_secs,
                 None,
             );
@@ -1968,6 +1999,7 @@ path = "/tmp/private-drop"
             &cfg.policy,
             Some(&cwd),
             "printf hello; printf warn >&2",
+            None,
             10,
             None,
         );
@@ -1976,9 +2008,28 @@ path = "/tmp/private-drop"
         assert_eq!(success.stderr.as_deref(), Some("warn"));
         assert!(success.error.is_none());
 
-        let failure = run_shell(&cfg.policy, Some(&cwd), "exit 7", 10, None);
+        let failure = run_shell(&cfg.policy, Some(&cwd), "exit 7", None, 10, None);
         assert_eq!(failure.exit_code, Some(7));
         assert!(failure.error.is_none());
+    }
+
+    #[test]
+    fn shell_job_writes_stdin_to_child() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let cwd = tmp.path().to_string_lossy().to_string();
+
+        let result = run_shell(
+            &cfg.policy,
+            Some(&cwd),
+            "cat",
+            Some("stdin payload\n"),
+            10,
+            None,
+        );
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.as_deref(), Some("stdin payload\n"));
+        assert!(result.error.is_none());
     }
 
     #[test]
@@ -1987,7 +2038,7 @@ path = "/tmp/private-drop"
         let cfg = test_config(tmp.path().join("config/projects.d"));
         let cwd = tmp.path().to_string_lossy().to_string();
 
-        let result = run_shell(&cfg.policy, Some(&cwd), "sleep 2", 1, None);
+        let result = run_shell(&cfg.policy, Some(&cwd), "sleep 2", None, 1, None);
         assert_eq!(result.exit_code, Some(-1));
         assert_eq!(result.error.as_deref(), Some("command timed out"));
         assert!(result
@@ -2008,6 +2059,7 @@ path = "/tmp/private-drop"
             &cfg.policy,
             Some(&cwd),
             "sleep 2",
+            None,
             10,
             Some(&stop_requested),
         );
@@ -2031,6 +2083,7 @@ path = "/tmp/private-drop"
             &cfg.policy,
             Some(&cwd),
             "printf 0123456789; printf abcdefghij >&2",
+            None,
             10,
             None,
         );
@@ -2178,6 +2231,7 @@ path = "/tmp/private-drop"
             expected_sha256: None,
             create_dirs: false,
             command: "printf wsok".to_string(),
+            stdin: None,
             timeout_secs: 10,
             requested_by: "tester".to_string(),
             created_at: 0,

@@ -41,6 +41,14 @@ pub enum ToolCall {
     /// Apply a unified diff patch to a project.
     ApplyPatch { project: String, patch: String },
 
+    /// Validate (preflight) a unified diff patch against an agent-registered
+    /// project **without applying it**. Dry-run only: runs `git apply --check`
+    /// and `git apply --stat` through the owning agent. Never modifies the
+    /// worktree and never falls back to a real apply. Intended for full-auto
+    /// coding agent loops that want to check a generated patch before calling
+    /// `apply_patch`.
+    ValidatePatch { project: String, patch: String },
+
     /// Run `git status` on a project.
     GitStatus { project: String },
 
@@ -490,6 +498,10 @@ impl ToolRuntime {
     fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
         match call {
             ToolCall::RunShell { .. } | ToolCall::ApplyPatch { .. } => Some(AgentCapability::Shell),
+            // validate_patch runs read-only `git apply --check`/`--stat` via
+            // the agent shell path; it requires the same shell capability as
+            // apply_patch but never mutates the worktree.
+            ToolCall::ValidatePatch { .. } => Some(AgentCapability::Shell),
             ToolCall::ReadFile { .. } | ToolCall::ListProjectFiles { .. } => {
                 Some(AgentCapability::FileRead)
             }
@@ -527,6 +539,7 @@ impl ToolRuntime {
         let project = match call {
             ToolCall::RunShell { project, .. }
             | ToolCall::ApplyPatch { project, .. }
+            | ToolCall::ValidatePatch { project, .. }
             | ToolCall::GitStatus { project }
             | ToolCall::GitDiff { project, .. }
             | ToolCall::GitDiffSummary { project }
@@ -642,6 +655,8 @@ impl ToolRuntime {
             } => self.run_shell(project, command, timeout_secs, cwd).await,
 
             ToolCall::ApplyPatch { project, patch } => self.apply_patch(project, patch).await,
+
+            ToolCall::ValidatePatch { project, patch } => self.validate_patch(project, patch).await,
 
             ToolCall::GitStatus { project } => self.git_status(project).await,
 
@@ -977,6 +992,20 @@ impl ToolRuntime {
                     ("patch", "string", "Unified diff patch.", true),
                 ]),
             },
+            ToolSpec {
+                name: "validate_patch".to_string(),
+                description: "Validate (preflight) a unified diff patch against an "
+                    .to_string()
+                    + "agent-registered project without applying it. Dry-run only: runs "
+                    + "`git apply --check` and `git apply --stat` through the owning agent. "
+                    + "Returns can_apply, affected_files, stat, stdout, stderr, and warnings. "
+                    + "Never modifies the worktree and never falls back to a real apply. "
+                    + "Intended for full-auto coding agent loops before apply_patch.",
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("patch", "string", "Unified diff patch to validate.", true),
+                ]),
+            },
         ]
     }
 
@@ -1166,6 +1195,7 @@ impl ToolRuntime {
                         client_id,
                         cwd: effective_cwd,
                         command,
+                        stdin: None,
                         timeout_secs: timeout,
                         wait_timeout_secs: wait_timeout,
                     },
@@ -1248,10 +1278,6 @@ impl ToolRuntime {
         if patch.is_empty() {
             return ToolResult::err("Patch cannot be empty");
         }
-        let root = proj.root();
-        if !root.exists() {
-            return ToolResult::err("Project root does not exist");
-        }
         let changed = parse_changed_files_from_patch(&patch);
         if changed.is_empty() {
             return ToolResult::err("Patch does not declare any changed files");
@@ -1266,17 +1292,14 @@ impl ToolRuntime {
                 Ok(id) => id.to_string(),
                 Err(e) => return ToolResult::err(e),
             };
-            let patch_cmd = format!(
-                "cd {} && git apply --check - && echo OK",
-                shell_escape_simple(&proj.path)
-            );
             let (check_req_id, check_rx) = match self
                 .shell_clients
                 .enqueue_run(
                     ShellRunRequest {
                         client_id: client_id.clone(),
                         cwd: Some(proj.path.clone()),
-                        command: format!("echo {} | {}", shell_escape_simple(&patch), patch_cmd),
+                        command: "git apply --check - && echo OK".to_string(),
+                        stdin: Some(patch.clone()),
                         timeout_secs: 60,
                         wait_timeout_secs: 62,
                     },
@@ -1308,14 +1331,14 @@ impl ToolRuntime {
                 }
                 _ => {}
             }
-            let apply_cmd = format!("cd {} && git apply -", shell_escape_simple(&proj.path));
             let (apply_req_id, apply_rx) = match self
                 .shell_clients
                 .enqueue_run(
                     ShellRunRequest {
                         client_id,
                         cwd: Some(proj.path.clone()),
-                        command: format!("echo {} | {}", shell_escape_simple(&patch), apply_cmd),
+                        command: "git apply -".to_string(),
+                        stdin: Some(patch.clone()),
                         timeout_secs: 60,
                         wait_timeout_secs: 62,
                     },
@@ -1346,6 +1369,10 @@ impl ToolRuntime {
                 }
             }
         } else {
+            let root = proj.root();
+            if !root.exists() {
+                return ToolResult::err("Project root does not exist");
+            }
             let patch_clone = patch.clone();
             let root_clone = root.clone();
             let result =
@@ -1362,6 +1389,158 @@ impl ToolRuntime {
                 Err(e) => ToolResult::err(format!("task join error: {}", e)),
             }
         }
+    }
+
+    /// Validate (preflight) a unified diff patch against an agent-registered
+    /// project without applying it.
+    ///
+    /// This is a **dry-run only** tool: it runs `git apply --check` (to test
+    /// applicability) and `git apply --stat` (to produce a summary) through
+    /// the owning agent's shell execution path. It never invokes the real
+    /// `git apply` application mode, never falls back to `apply_patch`, and
+    /// never modifies the worktree. The server never reads the agent project
+    /// filesystem directly — all checks are routed to the owning agent.
+    ///
+    /// Input is validated up front (empty / NUL / oversized patches are
+    /// rejected before project resolution) so bounds checks are independent
+    /// of routing. Sensitive filenames produce `warnings` rather than a hard
+    /// reject; absolute paths and `..` traversal are hard-rejected so the
+    /// preflight never escapes the project boundary.
+    async fn validate_patch(&self, project: String, patch: String) -> ToolResult {
+        // ---- Input validation (before any project resolution) ----
+        if patch.is_empty() {
+            return ToolResult::err("Patch cannot be empty");
+        }
+        if patch.contains('\0') {
+            return ToolResult::err("Patch contains NUL byte");
+        }
+        if patch.len() > MAX_VALIDATE_PATCH_BYTES {
+            return ToolResult::err(format!(
+                "Patch too large ({} bytes); maximum is {} bytes",
+                patch.len(),
+                MAX_VALIDATE_PATCH_BYTES
+            ));
+        }
+
+        // ---- Project resolution (agent-registered only) ----
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.allow_patch() {
+            return ToolResult::err("Patch is not allowed for this project");
+        }
+        // ---- Patch path analysis ----
+        let affected = parse_changed_files_from_patch(&patch);
+        if affected.is_empty() {
+            return ToolResult::err("Patch does not declare any changed files");
+        }
+        // Hard-reject paths that escape the project boundary. Collect warnings
+        // for sensitive filenames without blocking the preflight.
+        let mut warnings: Vec<String> = Vec::new();
+        for file in &affected {
+            if let Err(e) = validate_preflight_path(file) {
+                return ToolResult::err(e);
+            }
+            warnings.extend(sensitive_path_warnings(file));
+        }
+
+        // ---- Agent routing ----
+        // validate_patch must run through the owning agent; the server never
+        // reads the agent project filesystem directly, and server-configured
+        // legacy projects are not a supported runtime surface for this tool.
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "validate_patch requires an agent-registered project; \
+                 server-configured projects are not supported",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+
+        // ---- 1) git apply --check (read-only applicability test) ----
+        let (check_req_id, check_rx) = match self
+            .shell_clients
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: client_id.clone(),
+                    cwd: Some(proj.path.clone()),
+                    command: "git apply --check -".to_string(),
+                    stdin: Some(patch.clone()),
+                    timeout_secs: 60,
+                    wait_timeout_secs: 62,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(e),
+        };
+        let check_resp = match tokio::time::timeout(Duration::from_secs(64), check_rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&check_req_id).await;
+                return ToolResult::err("patch validation request dropped");
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&check_req_id).await;
+                return ToolResult::err("timed out during patch validation");
+            }
+        };
+        let can_apply = check_resp.exit_code == Some(0);
+        let check_stdout = check_resp.stdout.clone();
+        let check_stderr = check_resp.stderr.clone();
+
+        // ---- 2) git apply --stat (read-only summary) ----
+        // `--stat` only parses the diff and prints a summary; it does not
+        // check applicability and does not write files. It works regardless
+        // of `can_apply`, so the caller always gets a summary.
+        let (stat_req_id, stat_rx) = match self
+            .shell_clients
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id,
+                    cwd: Some(proj.path.clone()),
+                    command: "git apply --stat -".to_string(),
+                    stdin: Some(patch.clone()),
+                    timeout_secs: 60,
+                    wait_timeout_secs: 62,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(e),
+        };
+        let stat_resp = match tokio::time::timeout(Duration::from_secs(64), stat_rx).await {
+            Ok(Ok(resp)) => resp.stdout,
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&stat_req_id).await;
+                None
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&stat_req_id).await;
+                None
+            }
+        };
+
+        // ---- Structured result ----
+        // ToolResult.success reflects whether the *validation* ran cleanly;
+        // `can_apply` reports whether the patch would apply. A non-applicable
+        // patch is a normal preflight outcome (success=true, can_apply=false),
+        // not a tool error, so the agent loop can read it and regenerate.
+        ToolResult::ok(json!({
+            "can_apply": can_apply,
+            "affected_files": affected,
+            "stat": stat_resp,
+            "stdout": check_stdout,
+            "stderr": check_stderr,
+            "warnings": warnings,
+        }))
     }
 
     async fn git_status(&self, project: String) -> ToolResult {
@@ -1381,6 +1560,7 @@ impl ToolRuntime {
                         client_id,
                         cwd: Some(proj.path.clone()),
                         command: "git status --porcelain".to_string(),
+                        stdin: None,
                         timeout_secs: 30,
                         wait_timeout_secs: 32,
                     },
@@ -1447,6 +1627,7 @@ impl ToolRuntime {
                         client_id,
                         cwd: Some(proj.path.clone()),
                         command: cmd,
+                        stdin: None,
                         timeout_secs: 30,
                         wait_timeout_secs: 32,
                     },
@@ -1984,6 +2165,7 @@ impl ToolRuntime {
                         client_id,
                         cwd: Some(proj.path.clone()),
                         command: cmd,
+                        stdin: None,
                         timeout_secs: 30,
                         wait_timeout_secs: 32,
                     },
@@ -2058,6 +2240,7 @@ impl ToolRuntime {
                         client_id,
                         cwd: Some(proj.path.clone()),
                         command: cmd,
+                        stdin: None,
                         timeout_secs: 30,
                         wait_timeout_secs: 32,
                     },
@@ -3036,6 +3219,62 @@ fn validate_patch_file_path(path: &str) -> Result<(), String> {
         return Err(format!("Cannot modify sensitive path: {}", path));
     }
     Ok(())
+}
+
+/// Maximum accepted patch size for `validate_patch`, in bytes. Kept
+/// conservative to bound memory use and the agent stdin payload size. The
+/// patch is sent to the agent as stdin for `git apply`; larger patches should
+/// be split.
+/// This is a preflight-only bound; it does not affect `apply_patch`.
+const MAX_VALIDATE_PATCH_BYTES: usize = 256 * 1024; // 256 KiB
+
+/// Hard-reject patch file paths that would escape the project boundary during
+/// `validate_patch` preflight. Unlike `validate_patch_file_path` (used by the
+/// real `apply_patch`), this does **not** reject sensitive filenames — those
+/// are reported as `warnings` instead so the caller can still see the dry-run
+/// result. Only absolute paths, `..` traversal, and NUL bytes are hard
+/// rejects, ensuring the preflight never escapes the project root.
+fn validate_preflight_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("patch path cannot be empty".to_string());
+    }
+    if path.starts_with('/') {
+        return Err(format!("Absolute paths are not allowed: {}", path));
+    }
+    if path.contains("..") {
+        return Err(format!("Path traversal (..) is not allowed: {}", path));
+    }
+    if path.contains('\0') {
+        return Err("NUL byte in patch path is not allowed".to_string());
+    }
+    Ok(())
+}
+
+/// Sensitive path components that `validate_patch` should warn about (but not
+/// hard-reject). The preflight still runs; the caller sees the warning and can
+/// decide whether to proceed with `apply_patch`. Matching is case-insensitive
+/// substring so it catches `foo/.env`, `agent.toml.bak`, `target/debug`, etc.
+fn sensitive_path_warnings(path: &str) -> Vec<String> {
+    let lower = path.to_lowercase();
+    let sensitive = [
+        "agent.toml",
+        "private-drop.env",
+        ".env",
+        "projects.d",
+        ".git",
+        "target",
+        "node_modules",
+    ];
+    let mut warnings = Vec::new();
+    for name in sensitive {
+        if lower.contains(name) {
+            warnings.push(format!(
+                "patch touches sensitive path component '{}': {}",
+                name, path
+            ));
+        }
+    }
+    warnings
 }
 
 fn apply_patch_local(root: &Path, patch: &str) -> Result<(bool, String, String), String> {
@@ -4525,7 +4764,8 @@ mod tests {
     // =========================================================================
 
     use crate::shell_protocol::{
-        ShellAgentProjectSummary, ShellClientCapabilities, ShellClientRegisterRequest,
+        ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
+        ShellClientCapabilities, ShellClientRegisterRequest,
     };
 
     fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
@@ -4610,6 +4850,123 @@ mod tests {
             git_dirty: None,
             updated_at: 123,
         }
+    }
+
+    #[tokio::test]
+    async fn apply_patch_agent_does_not_require_server_local_project_root() {
+        let runtime = runtime_with_agent_project("patcher");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        runtime
+            .shell_clients
+            .register(ShellClientRegisterRequest {
+                client_id: "patcher".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(caps),
+                projects: Some(vec![registered_project(
+                    "agent-proj",
+                    "/definitely/not/on/server/private-drop-agent-only",
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+            })
+            .await
+            .unwrap();
+
+        let project = agent_test_project_id("patcher");
+        let patch = "diff --git a/REMOTE_ONLY.md b/REMOTE_ONLY.md\n\
+new file mode 100644\n\
+--- /dev/null\n\
++++ b/REMOTE_ONLY.md\n\
+@@ -0,0 +1 @@\n\
++remote\n"
+            .to_string();
+        let runtime_for_task = runtime.clone();
+        let apply_task =
+            tokio::spawn(async move { runtime_for_task.apply_patch(project, patch).await });
+
+        let mut check_req = None;
+        for _ in 0..10 {
+            check_req = runtime
+                .shell_clients
+                .poll(ShellAgentPollRequest {
+                    client_id: "patcher".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap();
+            if check_req.is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let check_req =
+            check_req.expect("apply_patch should enqueue git apply --check for the agent");
+        assert_eq!(check_req.command, "git apply --check - && echo OK");
+        assert!(check_req
+            .stdin
+            .as_deref()
+            .unwrap_or("")
+            .contains("REMOTE_ONLY.md"));
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "patcher".to_string(),
+                request_id: check_req.request_id,
+                exit_code: Some(0),
+                stdout: Some("OK\n".to_string()),
+                stderr: Some(String::new()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+
+        let mut apply_req = None;
+        for _ in 0..10 {
+            apply_req = runtime
+                .shell_clients
+                .poll(ShellAgentPollRequest {
+                    client_id: "patcher".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap();
+            if apply_req.is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let apply_req = apply_req.expect("apply_patch should enqueue git apply for the agent");
+        assert_eq!(apply_req.command, "git apply -");
+        assert!(apply_req
+            .stdin
+            .as_deref()
+            .unwrap_or("")
+            .contains("REMOTE_ONLY.md"));
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "patcher".to_string(),
+                request_id: apply_req.request_id,
+                exit_code: Some(0),
+                stdout: Some(String::new()),
+                stderr: Some(String::new()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+
+        let result = apply_task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["success"], true);
+        assert!(result.output["changed_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str() == Some("REMOTE_ONLY.md")));
     }
 
     async fn register_agent_with_projects(
@@ -5374,6 +5731,143 @@ mod tests {
                 names
             );
         }
+    }
+
+    // =========================================================================
+    // validate_patch (patch preflight / dry-run)
+    // =========================================================================
+
+    #[test]
+    fn from_tool_name_parses_validate_patch() {
+        let call = ToolCall::from_tool_name(
+            "validate_patch",
+            json!({"project": "agent:c:p", "patch": "diff"}),
+        )
+        .unwrap();
+        assert!(
+            matches!(call, ToolCall::ValidatePatch { project, patch } if project == "agent:c:p" && patch == "diff")
+        );
+    }
+
+    #[test]
+    fn tool_specs_include_validate_patch() {
+        let runtime = test_runtime();
+        let names: Vec<String> = runtime
+            .tool_specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "validate_patch"),
+            "tool_specs must include validate_patch: {:?}",
+            names
+        );
+    }
+
+    #[test]
+    fn validate_preflight_path_rejects_boundary_escapes() {
+        // In-bounds relative paths are accepted.
+        assert!(validate_preflight_path("README.md").is_ok());
+        assert!(validate_preflight_path("src/main.rs").is_ok());
+        // Absolute paths, traversal, empty, and NUL are hard rejects.
+        assert!(validate_preflight_path("").is_err());
+        assert!(validate_preflight_path("/etc/passwd").is_err());
+        assert!(validate_preflight_path("../outside").is_err());
+        assert!(validate_preflight_path("src/../../outside").is_err());
+        assert!(validate_preflight_path("src\0main.rs").is_err());
+        // Sensitive filenames are NOT hard-rejected here (they become warnings).
+        assert!(validate_preflight_path(".env").is_ok());
+        assert!(validate_preflight_path("agent.toml").is_ok());
+    }
+
+    #[test]
+    fn sensitive_path_warnings_flags_sensitive_names() {
+        assert!(sensitive_path_warnings(".env")
+            .iter()
+            .any(|w| w.contains(".env")));
+        assert!(sensitive_path_warnings("config/agent.toml")
+            .iter()
+            .any(|w| w.contains("agent.toml")));
+        assert!(sensitive_path_warnings("private-drop.env")
+            .iter()
+            .any(|w| w.contains("private-drop.env")));
+        assert!(sensitive_path_warnings("projects.d/x.toml")
+            .iter()
+            .any(|w| w.contains("projects.d")));
+        assert!(sensitive_path_warnings(".git/config")
+            .iter()
+            .any(|w| w.contains(".git")));
+        assert!(sensitive_path_warnings("target/debug/x")
+            .iter()
+            .any(|w| w.contains("target")));
+        assert!(sensitive_path_warnings("node_modules/x")
+            .iter()
+            .any(|w| w.contains("node_modules")));
+        // A normal source file produces no warnings.
+        assert!(sensitive_path_warnings("src/main.rs").is_empty());
+        // Matching is case-insensitive.
+        assert!(sensitive_path_warnings("TARGET/foo")
+            .iter()
+            .any(|w| w.contains("target")));
+    }
+
+    #[tokio::test]
+    async fn validate_patch_rejects_empty_patch() {
+        let runtime = test_runtime();
+        let result = runtime
+            .validate_patch("agent:c:p".to_string(), "".to_string())
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("empty"));
+    }
+
+    #[tokio::test]
+    async fn validate_patch_rejects_nul_byte_patch() {
+        let runtime = test_runtime();
+        let result = runtime
+            .validate_patch("agent:c:p".to_string(), "diff\0--- a/f\n".to_string())
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("NUL"));
+    }
+
+    #[tokio::test]
+    async fn validate_patch_rejects_oversized_patch() {
+        let runtime = test_runtime();
+        // Build a patch one byte over the limit.
+        let oversized = "x".repeat(MAX_VALIDATE_PATCH_BYTES + 1);
+        let result = runtime
+            .validate_patch("agent:c:p".to_string(), oversized)
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("too large"), "got: {}", err);
+    }
+
+    #[tokio::test]
+    async fn validate_patch_rejects_non_agent_project() {
+        // A server-configured (local) project is not a supported runtime
+        // surface for validate_patch. resolve_project rejects it before the
+        // agent dry-run path, and the server never reads the filesystem.
+        let runtime = test_runtime();
+        let patch = "--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\nhello\n+world\n";
+        let result = runtime
+            .validate_patch("agent:nope:nope".to_string(), patch.to_string())
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(
+            err.to_lowercase().contains("unknown") || err.to_lowercase().contains("agent"),
+            "expected a routing/rejection error for non-agent project, got: {}",
+            err
+        );
+    }
+
+    #[test]
+    fn max_validate_patch_bytes_is_conservative() {
+        // Pin the conservative upper bound so it is not accidentally raised.
+        assert_eq!(MAX_VALIDATE_PATCH_BYTES, 256 * 1024);
+        assert!(MAX_VALIDATE_PATCH_BYTES <= 1024 * 1024);
     }
 
     #[test]

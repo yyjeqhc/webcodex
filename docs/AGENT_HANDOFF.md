@@ -23,7 +23,7 @@ runtime project source again.
 Latest known baseline when this file was written:
 
 - Branch: `v2-mcp-runtime`
-- Commit: `3a0352e Harden local job lifecycle`
+- Commit: `49ec770 Fix websocket agent liveness`
 - Main binary: `private-drop`
 - Agent binary: `private-drop-agent`
 
@@ -114,6 +114,12 @@ specific safety review.
 - Agent tools must keep owner and capability checks centralized.
 - Do not log or return tokens, API keys, full secrets, full prompts containing
   credentials, or unbounded stdout/stderr.
+- WebSocket liveness is based on keepalive traffic. The agent sends application
+  `Ping` envelopes every 30s; the server replies `Pong` and refreshes
+  `last_seen` via `ShellClientRegistry::touch_client`. `Pong` is normal
+  keepalive traffic on both sides and must never be treated as an unexpected
+  envelope. This prevents idle WebSocket agents from decaying to `stale` while
+  the socket is healthy.
 - Keep GPT Actions small and stable. Prefer dedicated typed actions
   (`readProjectFile`, `getProjectGitStatus`, `getProjectGitDiff`,
   `applyProjectPatch`, `runProjectShellCommand`) plus optional `runCodexTask`;
@@ -152,7 +158,7 @@ Expected current result:
 
 - `cargo check`: 0 warnings.
 - `cargo check --tests`: 0 warnings.
-- `cargo test`: main binary 327 tests passing, agent binary 21 tests passing.
+- `cargo test`: main binary 347 tests passing, agent binary 22 tests passing.
 
 If `cargo test` hangs, do not assume the test suite is too large. Use:
 
@@ -171,6 +177,12 @@ with `python3 -m py_compile` if changed):
 bash -n scripts/e2e_zero_config_ws.sh
 bash -n scripts/smoke_deployment.sh
 ```
+
+Current E2E smoke result:
+
+- `bash scripts/e2e_zero_config_ws.sh`: 22 passed / 0 failed.
+- `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`: 22 passed / 0
+  failed.
 
 ## Documentation Map
 
@@ -193,17 +205,20 @@ guides.
 
 Prefer this order:
 
-1. Finish zero-config agent runtime cleanup.
-2. WebSocket agent transport is implemented (Phase 13) and hardened
-   (Phase 14): per-client pending-queue cap (`MAX_QUEUED_REQUESTS_PER_CLIENT`),
-   conservative `reconcile_disconnect` (marks running jobs `lost` on
-   disconnect), and `enforce_register_owner` (binds `owner` to the authed
-   principal at registration on both transports). Polling fallback is
-   unchanged and green. Not yet committed — confirm before committing.
-3. Keep the message envelope QUIC-compatible for a later QUIC transport
-   (Phase 15, design only; not implemented).
-4. Real ChatGPT GPT Actions and MCP connection validation.
-5. Deployment hardening docs and examples.
+1. Deploy the current build and verify the real public endpoint with
+   `scripts/smoke_deployment.sh`.
+2. Run the real WebSocket agent under systemd/supervisor and confirm
+   `runtime_status` keeps the agent `online` across idle periods. If it flips
+   to `stale`, inspect reverse-proxy WebSocket upgrade/timeouts and agent logs
+   before changing code.
+3. Import `/openapi.json` into ChatGPT GPT Actions and verify the 12 operation
+   schema works against the public deployment.
+4. Test the optional real Codex CLI path with a low-risk prompt. Codex remains
+   optional; most development work should still function through typed
+   actions (`readProjectFile`, `getProjectGitStatus`, `getProjectGitDiff`,
+   `applyProjectPatch`, `runProjectShellCommand`).
+5. Keep the message envelope QUIC-compatible for a later QUIC transport
+   (design only for now; do not implement QUIC unless explicitly requested).
 
 ## Priority verification after handoff
 

@@ -8,7 +8,31 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
 
 ## Done
 
-- [x] Shared `ToolRuntime` as the single execution layer for GPT Actions + MCP
+- [x] Phase 5A — standalone `webcodex-cli` binary + agent policy summary + HOME
+      default allowed_roots. Added `src/bin/webcodex-cli.rs` with `users`,
+      `tokens`, `agent-tokens` management (reusing the shared `admin_cli`
+      module), `agent init` (reusing the new shared `agent_init` module), and a
+      first-pass `setup single-user` command that creates a user + GPT Actions
+      personal API token + agent token and writes the one-time plaintext tokens
+      to 0600 files (summary prints prefixes only; never prints the bootstrap
+      token). Extracted shared agent-init logic into `src/agent_init.rs` so
+      `webcodex-agent` and `webcodex-cli` do not duplicate the large
+      generation/writing code. Added a sanitized `AgentPolicySummary`
+      (`allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`,
+      `max_timeout_secs`, `max_output_bytes` — never token/env/init_script) to
+      the registration payload and exposed it in `runtime_status` and
+      `listAgents` for both websocket and polling agents; older agents without
+      a policy register fine and surface `null`. Changed the default agent
+      policy so an empty/missing `allowed_roots` defaults to `[$HOME]` (with a
+      clear error when HOME is unavailable and `allow_cwd_anywhere=false`);
+      explicit `allowed_roots` still overrides. `runCodexTask` tool
+      description now states it requires the Codex CLI on the agent machine and
+      does not start a new WebCodex agent. `webcodex` server admin commands and
+      `webcodex-agent init` remain working. No `webcodex-agent` rename, no
+      protocol path renames, no audit, no project locks, no npm packaging.
+      OpenAPI stays 27 ops; user/token/agent-token/setup/audit endpoints remain
+      excluded from the GPT Actions schema and from MCP token creation. See
+      [docs/PHASE_5A.md](docs/PHASE_5A.md).
 - [x] GPT Actions OpenAPI schema (`/openapi.json`, POST-only, Bearer auth)
 - [x] MCP over HTTP (`/mcp`): `initialize`, `ping`, `tools/list`, `tools/call`,
       `notifications/initialized`, GET discovery

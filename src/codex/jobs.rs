@@ -2343,6 +2343,7 @@ mod tests {
                 capabilities: Some(async_shell_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -2450,6 +2451,7 @@ mod tests {
                 capabilities: Some(async_shell_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -2463,6 +2465,7 @@ mod tests {
                 capabilities: Some(async_shell_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();

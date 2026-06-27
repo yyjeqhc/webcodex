@@ -92,9 +92,6 @@ impl CodexConfig {
     }
 }
 
-#[cfg(test)]
-pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
 #[derive(Debug, Clone)]
 pub(crate) struct EnvFileLoad {
     pub(crate) path: PathBuf,
@@ -244,7 +241,7 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_uses_defaults_when_unset() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         // Clear CODEX_* env vars so we get deterministic defaults.
         std::env::remove_var("CODEX_BIN");
         std::env::remove_var("CODEX_APPROVAL_MODE");
@@ -263,7 +260,7 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_parses_overrides() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("CODEX_BIN", "/usr/local/bin/codex");
         std::env::set_var("CODEX_APPROVAL_MODE", "suggest");
         std::env::set_var("CODEX_DEFAULT_TIMEOUT_SECS", "600");
@@ -293,7 +290,7 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_trims_approval_mode_whitespace() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("CODEX_APPROVAL_MODE", "  suggest  ");
         let cfg = CodexConfig::from_env();
         assert_eq!(cfg.approval_mode, "suggest");
@@ -310,7 +307,7 @@ mod tests {
 
     #[test]
     fn codex_config_from_env_ignores_invalid_numeric_values() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("CODEX_DEFAULT_TIMEOUT_SECS", "not-a-number");
         std::env::set_var("CODEX_MAX_PROMPT_BYTES", "-5");
 
@@ -324,7 +321,7 @@ mod tests {
 
     #[test]
     fn codex_config_allowed_extra_args_ignores_empty_entries() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("CODEX_ALLOWED_EXTRA_ARGS", " --verbose , , --json ");
 
         let cfg = CodexConfig::from_env();
@@ -335,7 +332,7 @@ mod tests {
 
     #[test]
     fn load_startup_env_files_explicit_path_loads_webcodex_env() {
-        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         let dir = tempfile::tempdir().unwrap();
         let new_file = dir.path().join("webcodex.env");
         std::fs::write(&new_file, "WEBCODEX_TOKEN=new\n").unwrap();

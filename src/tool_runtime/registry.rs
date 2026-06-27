@@ -145,7 +145,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "run_codex".to_string(),
-                description: "Start Codex CLI as an asynchronous project job.".to_string(),
+                description: "Start Codex CLI as an async project job in the project cwd. Requires Codex CLI installed and configured on the owning agent; does NOT start a new WebCodex agent. If Codex CLI is unavailable there, use WebCodex file/shell tools instead.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Configured project id.", true),
                     (

@@ -524,9 +524,29 @@ impl ToolRuntime {
     }
 
     async fn list_agents(&self) -> ToolResult {
-        ToolResult::ok(json!({
-            "agents": self.shell_clients.list_clients().await
-        }))
+        let clients = self.shell_clients.list_clients().await;
+        let agents: Vec<Value> = clients
+            .iter()
+            .map(|c| {
+                json!({
+                    "client_id": c.client_id,
+                    "agent_instance_id": c.agent_instance_id,
+                    "display_name": c.display_name,
+                    "owner": c.owner,
+                    "hostname": c.hostname,
+                    "status": c.status,
+                    "connected": c.connected,
+                    "agent_protocol_version": c.agent_protocol_version,
+                    "transport": c.transport,
+                    "last_seen": c.last_seen,
+                    "pending_requests": c.pending_requests,
+                    "capabilities": c.capabilities,
+                    "projects": c.projects,
+                    "policy": sanitized_policy_summary(c.policy.as_ref()),
+                })
+            })
+            .collect();
+        ToolResult::ok(json!({ "agents": agents }))
     }
 
     /// Build the runtime observability summary. Read-only; never exposes
@@ -587,6 +607,7 @@ impl ToolRuntime {
                     "pending_requests": c.pending_requests,
                     "capabilities": c.capabilities,
                     "projects_count": c.projects.len(),
+                    "policy": sanitized_policy_summary(c.policy.as_ref()),
                 })
             })
             .collect();
@@ -652,6 +673,26 @@ impl ToolRuntime {
             "jobs": jobs,
             "tools": tools,
         }))
+    }
+}
+
+/// Build the sanitized policy summary JSON exposed in `runtime_status` and
+/// `listAgents`. Only the safe fields are carried: `allow_raw_shell`,
+/// `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`,
+/// `max_output_bytes`. The agent token, shell env values, init_script
+/// contents, and full agent.toml contents are NEVER included. Older agents
+/// that registered without a policy produce `Value::Null` so the field is
+/// present-but-null for clients that expect it.
+fn sanitized_policy_summary(policy: Option<&crate::shell_protocol::AgentPolicySummary>) -> Value {
+    match policy {
+        Some(p) => json!({
+            "allow_raw_shell": p.allow_raw_shell,
+            "allow_cwd_anywhere": p.allow_cwd_anywhere,
+            "allowed_roots": p.allowed_roots,
+            "max_timeout_secs": p.max_timeout_secs,
+            "max_output_bytes": p.max_output_bytes,
+        }),
+        None => Value::Null,
     }
 }
 
@@ -2460,6 +2501,7 @@ mod tests {
                 capabilities: Some(caps),
                 projects: Some(vec![registered_project("agent-proj", "/tmp/agent-proj")]),
                 agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap();
@@ -2536,6 +2578,7 @@ mod tests {
                     "/definitely/not/on/server/webcodex-agent-only",
                 )]),
                 agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap();
@@ -3074,6 +3117,7 @@ new file mode 100644\n\
                 capabilities: Some(caps),
                 projects: Some(projects),
                 agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap();
@@ -3488,7 +3532,7 @@ new file mode 100644\n\
 
     #[test]
     fn runtime_info_from_env_reads_webcodex_public_url() {
-        let _guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("WEBCODEX_TOKEN", "token");
         std::env::set_var("WEBCODEX_PUBLIC_URL", "https://new.example.com");
 
@@ -3517,6 +3561,7 @@ new file mode 100644\n\
                 capabilities: None,
                 projects: Some(vec![]),
                 agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap();
@@ -3553,6 +3598,137 @@ new file mode 100644\n\
     }
 
     #[tokio::test]
+    async fn runtime_status_includes_sanitized_policy_summary() {
+        use crate::shell_protocol::{AgentPolicySummary, ShellClientRegisterRequest};
+        let registry = Arc::new(ShellClientRegistry::default());
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "policy-agent".to_string(),
+                agent_instance_id: "inst-p".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: Some("websocket-v1".to_string()),
+                policy: Some(AgentPolicySummary {
+                    allow_raw_shell: true,
+                    allow_cwd_anywhere: false,
+                    allowed_roots: vec![std::path::PathBuf::from("/root")],
+                    max_timeout_secs: 3600,
+                    max_output_bytes: 262144,
+                }),
+            })
+            .await
+            .unwrap();
+        let runtime = ToolRuntime::new(
+            Arc::new(ProjectsState::failed(
+                "none".to_string(),
+                "test".to_string(),
+            )),
+            registry,
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        );
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        let clients = result.output["agents"]["clients"].as_array().unwrap();
+        let policy = &clients[0]["policy"];
+        assert_eq!(policy["allow_raw_shell"], true);
+        assert_eq!(policy["allow_cwd_anywhere"], false);
+        assert_eq!(policy["allowed_roots"], json!(["/root"]));
+        assert_eq!(policy["max_timeout_secs"], 3600);
+        assert_eq!(policy["max_output_bytes"], 262144);
+        // Sanitization: never expose token/env/init_script.
+        assert!(policy.get("token").is_none());
+        assert!(policy.get("env").is_none());
+        assert!(policy.get("init_script").is_none());
+    }
+
+    #[tokio::test]
+    async fn runtime_status_policy_summary_is_null_for_older_agents() {
+        use crate::shell_protocol::ShellClientRegisterRequest;
+        let registry = Arc::new(ShellClientRegistry::default());
+        // Older agent: no policy field (None).
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "legacy-agent".to_string(),
+                agent_instance_id: "inst-l".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: None,
+                policy: None,
+            })
+            .await
+            .unwrap();
+        let runtime = ToolRuntime::new(
+            Arc::new(ProjectsState::failed(
+                "none".to_string(),
+                "test".to_string(),
+            )),
+            registry,
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        );
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        let clients = result.output["agents"]["clients"].as_array().unwrap();
+        // Older/minimal payload -> policy is null, not a fatal error.
+        assert!(clients[0]["policy"].is_null());
+    }
+
+    #[tokio::test]
+    async fn list_agents_includes_sanitized_policy_summary() {
+        use crate::shell_protocol::{AgentPolicySummary, ShellClientRegisterRequest};
+        let registry = Arc::new(ShellClientRegistry::default());
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "list-policy-agent".to_string(),
+                agent_instance_id: "inst-lp".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: Some("websocket-v1".to_string()),
+                policy: Some(AgentPolicySummary {
+                    allow_raw_shell: false,
+                    allow_cwd_anywhere: true,
+                    allowed_roots: vec![],
+                    max_timeout_secs: 120,
+                    max_output_bytes: 4096,
+                }),
+            })
+            .await
+            .unwrap();
+        let runtime = ToolRuntime::new(
+            Arc::new(ProjectsState::failed(
+                "none".to_string(),
+                "test".to_string(),
+            )),
+            registry,
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        );
+        let result = runtime.dispatch(ToolCall::ListAgents).await;
+        assert!(result.success);
+        let agents = result.output["agents"].as_array().unwrap();
+        assert_eq!(agents.len(), 1);
+        let policy = &agents[0]["policy"];
+        assert_eq!(policy["allow_raw_shell"], false);
+        assert_eq!(policy["allow_cwd_anywhere"], true);
+        assert_eq!(policy["max_timeout_secs"], 120);
+        assert_eq!(policy["max_output_bytes"], 4096);
+        // No secret fields leak through listAgents either.
+        assert!(policy.get("token").is_none());
+        assert!(policy.get("env").is_none());
+        assert!(policy.get("init_script").is_none());
+    }
+
+    #[tokio::test]
     async fn runtime_status_marks_stale_websocket_agent_with_last_seen() {
         use crate::shell_client::TRANSPORT_WEBSOCKET;
         use crate::shell_protocol::ShellClientRegisterRequest;
@@ -3567,6 +3743,7 @@ new file mode 100644\n\
                 capabilities: None,
                 projects: Some(vec![]),
                 agent_protocol_version: Some("websocket-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap();
@@ -3624,6 +3801,7 @@ new file mode 100644\n\
                 capabilities: None,
                 projects: None,
                 agent_protocol_version: Some("websocket-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap();

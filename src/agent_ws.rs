@@ -411,6 +411,7 @@ mod tests {
                 agent_protocol_version: Some(
                     crate::shell_protocol::AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string(),
                 ),
+                policy: None,
             },
         }
     }

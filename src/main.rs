@@ -554,7 +554,7 @@ mod tests {
 
     #[test]
     fn test_config_from_env_defaults() {
-        let _guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         // Clear env vars to test defaults
         std::env::remove_var("WEBCODEX_ADDR");
         std::env::remove_var("WEBCODEX_DATA");

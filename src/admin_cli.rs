@@ -9,6 +9,14 @@ const DEFAULT_AGENT_SCOPES: &[&str] = &[
     "agent:job_update",
 ];
 
+/// Test-only mutex serializing tests that mutate process-wide environment
+/// variables. Lives here so the `admin_cli` module is self-contained and can
+/// be inlined into the standalone `webcodex-cli` binary as well as compiled
+/// inside the main `webcodex` crate. Other test modules acquire it via
+/// `crate::admin_cli::TEST_ENV_LOCK`.
+#[cfg(test)]
+pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum AdminCliCommand {
     UsersCreate(AdminOptions, CreateUserArgs),
@@ -664,7 +672,7 @@ mod tests {
 
     #[test]
     fn env_token_fallback_is_used() {
-        let _guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("WEBCODEX_TOKEN", "fake-env-token");
         let cmd = parse_admin_cli(&args(&[
             "users",

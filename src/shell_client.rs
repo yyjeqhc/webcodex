@@ -1,14 +1,15 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::shell_protocol::{
-    ShellAgentJobResult, ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
-    ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentProjectSummary,
-    ShellAgentResultRequest, ShellAgentResultResponse, ShellAgentShellJobResult,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientJobLogRequest,
-    ShellClientJobLogResponse, ShellClientJobStatusRequest, ShellClientJobStatusResponse,
-    ShellClientJobStopRequest, ShellClientJobStopResponse, ShellClientJobsListRequest,
-    ShellClientJobsListResponse, ShellClientRegisterRequest, ShellClientRegisterResponse,
-    ShellClientView, ShellFileOpRequest, ShellFileOpResponse, ShellJobCodexMetadata, ShellJobInfo,
-    ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
+    AgentPolicySummary, ShellAgentJobResult, ShellAgentJobUpdateRequest,
+    ShellAgentJobUpdateResponse, ShellAgentPollRequest, ShellAgentPollResponse,
+    ShellAgentProjectSummary, ShellAgentResultRequest, ShellAgentResultResponse,
+    ShellAgentShellJobResult, ShellAgentShellRequest, ShellClientCapabilities,
+    ShellClientJobLogRequest, ShellClientJobLogResponse, ShellClientJobStatusRequest,
+    ShellClientJobStatusResponse, ShellClientJobStopRequest, ShellClientJobStopResponse,
+    ShellClientJobsListRequest, ShellClientJobsListResponse, ShellClientRegisterRequest,
+    ShellClientRegisterResponse, ShellClientView, ShellFileOpRequest, ShellFileOpResponse,
+    ShellJobCodexMetadata, ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest,
+    ShellRunResponse,
 };
 use salvo::prelude::*;
 use serde_json::json;
@@ -66,6 +67,10 @@ struct ShellClientRecord {
     agent_protocol_version: String,
     /// How this client is currently connected: `"polling"` or `"websocket"`.
     transport: String,
+    /// Sanitized agent policy summary reported at registration. `None` for
+    /// older agents that did not report a policy. Exposed in
+    /// `runtime_status` / `listAgents`; never carries token/env/init_script.
+    policy: Option<AgentPolicySummary>,
 }
 
 #[derive(Debug)]
@@ -736,6 +741,7 @@ impl ShellClientRegistry {
                 .filter(|v| !v.is_empty())
                 .unwrap_or_else(|| "unknown".to_string()),
             transport: TRANSPORT_POLLING.to_string(),
+            policy: body.policy,
         };
         let mut inner = self.inner.lock().await;
 
@@ -1683,6 +1689,7 @@ impl ShellClientRegistry {
             projects: client.projects.clone(),
             agent_protocol_version: client.agent_protocol_version.clone(),
             transport: client.transport.clone(),
+            policy: client.policy.clone(),
         })
     }
 }
@@ -3203,6 +3210,7 @@ mod tests {
                 capabilities: None,
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3226,6 +3234,7 @@ mod tests {
                 capabilities: None,
                 projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3251,6 +3260,7 @@ mod tests {
                 capabilities: None,
                 projects: Some(vec![project_summary("one", "/tmp/one")]),
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3286,6 +3296,7 @@ mod tests {
                 capabilities: None,
                 projects: Some(vec![project_summary("webcodex", "/root/git/webcodex")]),
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3299,6 +3310,7 @@ mod tests {
                 capabilities: None,
                 projects: Some(vec![project_summary("secret", "/tmp/secret")]),
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3383,6 +3395,7 @@ mod tests {
                 capabilities: None,
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3403,6 +3416,7 @@ mod tests {
                 capabilities: None,
                 projects: None,
                 agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap();
@@ -3427,6 +3441,7 @@ mod tests {
                 capabilities: None,
                 projects: None,
                 agent_protocol_version: Some("   ".to_string()),
+                policy: None,
             })
             .await
             .unwrap();
@@ -3451,6 +3466,7 @@ mod tests {
                 capabilities: Some(caps),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3486,6 +3502,7 @@ mod tests {
                 capabilities: None,
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3593,6 +3610,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3698,6 +3716,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3749,6 +3768,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3813,6 +3833,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3867,6 +3888,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -3902,6 +3924,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -4111,6 +4134,7 @@ mod tests {
                 capabilities: None,
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -4167,6 +4191,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap();
@@ -4222,6 +4247,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap()
@@ -4265,6 +4291,7 @@ mod tests {
                 capabilities: Some(async_job_capabilities()),
                 projects: None,
                 agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
             })
             .await
             .unwrap_err();
@@ -4580,6 +4607,7 @@ mod tests {
                 capabilities: None,
                 projects: None,
                 agent_protocol_version: None,
+                policy: None,
             })
             .await
             .unwrap_err();

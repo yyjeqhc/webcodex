@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 
 fn default_shell_true() -> bool {
     true
@@ -104,6 +105,45 @@ pub struct ShellAgentProjectSummary {
     pub updated_at: i64,
 }
 
+/// Sanitized agent policy summary. Carried in the registration payload and
+/// exposed in `runtime_status` / `listAgents`. Contains ONLY non-secret
+/// fields: it never includes the agent token, shell env values, init_script
+/// contents, or full agent.toml contents. `allowed_roots` is intentionally
+/// exposed as a path-policy summary.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AgentPolicySummary {
+    #[serde(default = "default_shell_true")]
+    pub allow_raw_shell: bool,
+    #[serde(default)]
+    pub allow_cwd_anywhere: bool,
+    #[serde(default)]
+    pub allowed_roots: Vec<PathBuf>,
+    #[serde(default = "default_policy_max_timeout_secs")]
+    pub max_timeout_secs: u64,
+    #[serde(default = "default_policy_max_output_bytes")]
+    pub max_output_bytes: usize,
+}
+
+impl Default for AgentPolicySummary {
+    fn default() -> Self {
+        Self {
+            allow_raw_shell: true,
+            allow_cwd_anywhere: false,
+            allowed_roots: Vec::new(),
+            max_timeout_secs: default_policy_max_timeout_secs(),
+            max_output_bytes: default_policy_max_output_bytes(),
+        }
+    }
+}
+
+fn default_policy_max_timeout_secs() -> u64 {
+    3600
+}
+
+fn default_policy_max_output_bytes() -> usize {
+    256 * 1024
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientRegisterRequest {
     pub client_id: String,
@@ -129,6 +169,11 @@ pub struct ShellClientRegisterRequest {
     /// agents that omit this field are treated as `"unknown"` by the server.
     #[serde(default)]
     pub agent_protocol_version: Option<String>,
+    /// Sanitized agent policy summary. Older agents that omit this field
+    /// register with `None`; `runtime_status` / `listAgents` then expose
+    /// `null` for the policy so older/minimal payloads stay compatible.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<AgentPolicySummary>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -159,6 +204,11 @@ pub struct ShellClientView {
     /// `"websocket"`. Defaults to `"polling"` for older agents/views.
     #[serde(default = "default_transport_polling")]
     pub transport: String,
+    /// Sanitized agent policy summary reported at registration. `None`
+    /// (serialized as `null`/omitted) for older agents that did not report a
+    /// policy. Never contains token/env/init_script.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy: Option<AgentPolicySummary>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -695,6 +745,7 @@ mod envelope_tests {
             }),
             projects: None,
             agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1.to_string()),
+            policy: None,
         }
     }
 

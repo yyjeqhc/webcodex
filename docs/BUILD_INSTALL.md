@@ -1,205 +1,74 @@
-# Build and Install
+# Build and Install Quick Reference
 
-WebCodex is a Rust project. A normal deployment needs the server binary
-(`webcodex`) and at least one agent binary (`webcodex-agent`).
+This is the short install path. See [DEPLOYMENT.md](DEPLOYMENT.md) for production details.
 
-## Requirements
+## Build binaries
 
-Install a Rust toolchain with `cargo`:
-
-```bash
-rustup install stable
-rustup default stable
-```
-
-A Linux host with `git` available is recommended for the agent, because runtime
-tools use git for status, diff, patch validation, and patch application.
-
-## Build
-
-From the repository root:
-
-```bash
-cargo build --release
-```
-
-The release binaries are:
+Build the three current binaries for your host:
 
 ```text
-target/release/webcodex
-target/release/webcodex-agent
+webcodex
+webcodex-agent
+webcodex-cli
 ```
 
-## Run the server
+Do not run unauthenticated production deployments.
+
+## Initial setup
+
+Recommended single-user setup:
 
 ```bash
-WEBCODEX_TOKEN="change-me" \
-WEBCODEX_ADDR="0.0.0.0:8080" \
-WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
-./target/release/webcodex
+webcodex-cli setup single-user
 ```
 
-Expose the server over HTTPS before connecting ChatGPT GPT Actions or MCP Apps.
-A reverse proxy such as nginx or Caddy is fine.
+This creates the initial user API token for GPT Actions/MCP and an agent token for the agent.
 
-Useful server endpoints:
+Compatibility commands still work, but should not be the first choice in new docs:
 
-```text
-GET  /openapi.json   GPT Actions schema
-POST /mcp            MCP JSON-RPC endpoint
-GET  /console        Read-only runtime console
+```bash
+webcodex users ...
+webcodex tokens ...
+webcodex agent-tokens ...
 ```
 
-## Configure an agent project
+## Agent config
 
-Create one project file per local repository:
+Recommended agent config generation:
+
+```bash
+webcodex-cli agent init
+```
+
+`webcodex-agent init` remains available as a compatibility entry point.
+
+Agent policy defaults:
+
+- Missing or empty `allowed_roots` defaults to `$HOME`.
+- Explicit `allowed_roots` replaces the `$HOME` default.
+- To narrow an agent, set an explicit workspace root such as:
 
 ```toml
-# /etc/webcodex/projects.d/webcodex.toml
-id = "webcodex"
-name = "WebCodex"
-path = "/root/git/webcodex"
-allow_patch = true
-kind = "rust"
-```
-
-Create the agent config:
-
-```toml
-# /etc/webcodex/agent.toml
-server_url = "https://webcodex.example.com"
-token = "change-me"
-client_id = "workstation-1"
-display_name = "Workstation"
-owner = "you"
-transport = "websocket"
-projects_dir = "/etc/webcodex/projects.d"
-
-[capabilities]
-shell = true
-file_read = true
-file_write = true
-git = true
-jobs = true
-async_jobs = true
-async_shell_jobs = true
-
 [policy]
-allow_raw_shell = true
-allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
-max_timeout_secs = 3600
-max_output_bytes = 262144
 ```
 
-Run the agent:
+The example above is a narrowing example, not the default.
 
-```bash
-./target/release/webcodex-agent --config /etc/webcodex/agent.toml
-```
+## Auth reminders
 
-Registered project ids use this form:
+Use:
 
 ```text
-agent:<client_id>:<project_id>
+Authorization: Bearer <token>
 ```
 
-Example:
+for REST, polling, MCP, and GPT Actions.
 
-```text
-agent:workstation-1:webcodex
-```
+`?token=` is allowed only for `/api/agents/ws` WebSocket handshake compatibility.
 
-## Agent shell PATH under systemd
+## systemd PATH reminder
 
-A `webcodex-agent` service launched by systemd does not read interactive shell
-startup files such as `~/.bashrc`. Tools installed through rustup, including
-`cargo`, may therefore be absent from `PATH` even when they work in an SSH
-session.
+systemd services do not read interactive shell startup files such as `~/.bashrc`. If commands need Rust/Cargo, Node, or Codex CLI, expose them through the agent `[shell].path_prepend` / `[shell].env` config or through the service manager's environment.
 
-Prefer an explicit agent shell configuration:
-
-```toml
-[shell]
-program = "/bin/bash"
-args = ["-lc"]
-path_prepend = ["/root/.cargo/bin"]
-env = { CARGO_HOME = "/root/.cargo", RUSTUP_HOME = "/root/.rustup" }
-# init_script = "/root/.config/webcodex/shell-env.sh"
-```
-
-The default remains `program = "sh"` and `args = ["-c"]` with no extra
-environment or `PATH` changes. `init_script` is never used unless configured
-explicitly. As an alternative, set `Environment=PATH=...` in the systemd unit.
-
-## Connect ChatGPT
-
-For GPT Actions, import:
-
-```text
-https://webcodex.example.com/openapi.json
-```
-
-Use HTTP API key authentication in the `Authorization` header:
-
-```text
-Bearer <wc_pat_user_api_token>
-```
-
-Use the server `WEBCODEX_TOKEN` only as a bootstrap/admin credential for setup.
-Use personal API tokens for GPT Actions/MCP and agent tokens for
-`webcodex-agent`.
-
-For MCP / Apps, connect to:
-
-```text
-https://webcodex.example.com/mcp
-```
-
-The GPT Actions and MCP surfaces share the same `ToolRuntime`; they differ only
-in the protocol used to reach the runtime tools.
-
-## Verify
-
-Local checks:
-
-```bash
-cargo fmt --check
-cargo check
-cargo check --tests
-cargo test
-```
-
-Release readiness gate (runs the above plus both WebSocket and polling E2E
-transports, and a static check that no sensitive files are tracked/staged):
-
-```bash
-bash scripts/release_check.sh
-```
-
-Deployment smoke, when a public endpoint and token are available:
-
-```bash
-WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
-WEBCODEX_TOKEN="change-me" \
-bash scripts/smoke_deployment.sh
-```
-
-## GPT Actions import checklist
-
-Run through this short checklist before importing `/openapi.json` into ChatGPT
-GPT Actions:
-
-- [ ] Public HTTPS URL is reachable (e.g. `https://webcodex.example.com`).
-- [ ] `GET /openapi.json` returns a valid schema.
-- [ ] Schema exposes 25 operations (`scripts/e2e_zero_config_ws.sh` asserts
-      this against the live schema).
-- [ ] Every operation is POST-only (asserted by the E2E schema check).
-- [ ] `WEBCODEX_TOKEN` is set on the server as the bootstrap/admin credential;
-      GPT Action auth is configured as an HTTP API key in the `Authorization`
-      header with a Phase 2 personal API token.
-- [ ] At least one agent is `online` (`POST /api/runtime/status`).
-- [ ] `POST /api/projects/list` shows `agent:<client_id>:<project_id>`.
-- [ ] Local full-auto loop E2E passes:
-      `bash scripts/e2e_zero_config_ws.sh`
-      (and `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`).
+`runCodexTask` is optional and requires Codex CLI on the agent machine. It does not start a new `webcodex-agent`.

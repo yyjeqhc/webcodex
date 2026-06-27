@@ -1,334 +1,89 @@
 # WebCodex Runtime
 
-WebCodex is a self-hosted tool runtime for ChatGPT. It exposes local project
-capabilities through a single `ToolRuntime` that is shared by GPT Actions,
-MCP, and the REST wrappers used by this GPT.
+WebCodex is a self-hosted runtime that exposes controlled project tools to ChatGPT GPT Actions and MCP clients. A server hosts the API surface, and one or more agents execute filesystem, git, shell, and optional Codex CLI work inside registered projects.
 
-```text
-ChatGPT GPT Action      ChatGPT MCP client
-        |                       |
-        v                       v
-   /openapi.json              /mcp
-        \                       /
-         v                     v
-              ToolRuntime
-        read | git | patch | shell | jobs | codex
-              |
-    webcodex-agent -> local working tree
-```
+## Current entry points
 
-Current direction:
+- `webcodex` — server binary.
+- `webcodex-agent` — project execution agent.
+- `webcodex-cli` — recommended management and initialization CLI.
 
-- GPT Actions import `GET /openapi.json`.
-- MCP clients connect to `POST /mcp`.
-- Projects are registered by `webcodex-agent` clients.
-- The server is a **zero-project-config relay** for the normal runtime surface;
-  do not set `PROJECTS_CONFIG` expecting it to register runtime projects.
-- Codex is an **optional advanced capability**. Read, diff, patch, and shell
-  actions work without Codex installed.
-- The old file upload / Web UI / workflow / SSH product direction is removed from
-  the active server surface.
-
-## Build and install
-
-WebCodex needs a Rust toolchain with `cargo`:
+Recommended first setup:
 
 ```bash
-cargo build --release
+webcodex-cli setup single-user
 ```
 
-The release build produces:
+That command is the preferred one-shot entry point for creating a user API token for GPT Actions/MCP and an agent token for `webcodex-agent`.
 
-```text
-target/release/webcodex
-target/release/webcodex-agent
-```
-
-See [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) for the short build, install,
-server, agent, GPT Actions, and MCP setup guide.
-
-## Run the server locally
+Recommended agent config generation:
 
 ```bash
-WEBCODEX_TOKEN="change-me" \
-WEBCODEX_ADDR="127.0.0.1:8080" \
-WEBCODEX_PUBLIC_URL="http://127.0.0.1:8080" \
-cargo run --bin webcodex
+webcodex-cli agent init
 ```
 
-Useful endpoints:
+The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, and `webcodex-agent init` commands still work as compatibility entry points, but new documentation should prefer `webcodex-cli`.
 
-```text
-GET  /openapi.json   GPT Actions schema
-POST /mcp            MCP JSON-RPC endpoint
-POST /api/tools/list Runtime tool discovery
-```
+## Runtime surfaces
 
-Protected endpoints use Bearer auth:
+- GPT Actions import: `GET /openapi.json`.
+- MCP endpoint: `POST /mcp`.
+- Runtime health: `POST /api/runtime/status`.
+- Agent WebSocket: `GET /api/agents/ws`.
+
+GPT Actions and MCP share the same `ToolRuntime`. The GPT Actions OpenAPI surface is intentionally limited to project/runtime/job tools and does not expose user, API-token, agent-token, setup, or audit management endpoints.
+
+## Authentication
+
+Production APIs use HTTP Bearer authentication:
 
 ```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/runtime/status \
+curl -X POST \
+  -H "Authorization: Bearer <token>" \
   -H "Content-Type: application/json" \
-  -d '{}'
+  -d '{}' \
+  https://example.com/api/runtime/status
 ```
 
-## Run an agent
+`?token=` is accepted only for `/api/agents/ws` WebSocket handshake compatibility. Polling, REST, MCP, and GPT Actions ordinary API calls must use `Authorization: Bearer ...`.
 
-Agent-side project files live under `projects_dir`, one `*.toml` per project:
+Never commit real tokens, env files, `Authorization` headers, or complete `agent.toml` files.
 
-```toml
-# /etc/webcodex/projects.d/webcodex.toml
-id = "webcodex"
-path = "/root/git/webcodex"
-name = "WebCodex"
-allow_patch = true
-kind = "rust"
-description = "WebCodex Runtime repository"
-```
+## Agent projects and policy
 
-Agent config example:
-
-```toml
-server_url = "https://webcodex.example.com"
-token = "REPLACE_WITH_WC_AGENT_TOKEN"
-client_id = "workstation-1"
-display_name = "Workstation"
-owner = "you"
-transport = "websocket"
-poll_interval_ms = 1000
-projects_dir = "/etc/webcodex/projects.d"
-
-[capabilities]
-shell = true
-file_read = true
-file_write = true
-git = true
-jobs = true
-async_jobs = true
-async_shell_jobs = true
-
-[policy]
-allow_raw_shell = true
-allow_cwd_anywhere = false
-allowed_roots = ["/root/git"]
-max_timeout_secs = 3600
-max_output_bytes = 262144
-```
-
-Start the agent:
-
-```bash
-cargo run --bin webcodex-agent -- --config /etc/webcodex/agent.toml
-```
-
-`websocket` is the preferred long-lived transport. `polling` remains available
-as a fallback for restricted networks. Registered project ids are namespaced as:
+Agents report project files from their configured `projects_dir`. Project ids surfaced to GPT Actions use this form:
 
 ```text
 agent:<client_id>:<project_id>
 ```
 
-For example:
+Agent policy controls execution boundaries. When `allowed_roots` is omitted or empty, the agent defaults to `$HOME`. If `allowed_roots` is configured explicitly, that list replaces the `$HOME` default.
 
-```text
-agent:workstation-1:webcodex
+Example: to deliberately narrow an agent to one workspace tree, configure an explicit root:
+
+```toml
+[policy]
+allow_raw_shell = true
+allow_cwd_anywhere = false
+allowed_roots = ["/root/git"]
 ```
 
-Never commit real `agent.toml`, env files, tokens, or machine-local
-`projects.d/` entries. Use the examples under `deploy/` instead.
+`runtime_status` and `listAgents` expose a redacted policy summary for observability: `allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`, and `max_output_bytes`. They do not expose tokens, env values, `Authorization` headers, the full `agent.toml`, or shell `init_script` values.
 
-## GPT Actions
+## Optional Codex CLI jobs
 
-Import this URL in the GPT Builder Actions screen:
+`runCodexTask` is an optional advanced feature. It requires the Codex CLI to be installed and configured on the agent machine. Calling `runCodexTask` does not start a new `webcodex-agent`; it asks the already connected agent to run Codex inside a registered project.
 
-```text
-https://<your-server>/openapi.json
-```
-
-Configure authentication as an HTTP API key in the `Authorization` header with
-value:
-
-```text
-Bearer <wc_pat_user_api_token>
-```
-
-Use the server `WEBCODEX_TOKEN` only as a bootstrap/admin credential for setup.
-Use personal API tokens for GPT Actions/MCP and agent tokens for
-`webcodex-agent`.
-
-GPT Actions and MCP are peer surfaces over the same `ToolRuntime`. GPT
-Actions expose a small typed OpenAPI surface with stable operation ids; MCP
-exposes the runtime tool set directly. The underlying project/agent execution
-path is the same.
-
-Dedicated GPT Actions (25 operations). Read-only inspection first,
-then mutation/execution, then the advanced escape hatch:
-
-| operationId | Purpose |
-| --- | --- |
-| `getRuntimeStatus` | Runtime health, agents, project config state, and job counts. |
-| `listProjects` | List agent-registered runtime project ids. |
-| `readProjectFile` | Read a UTF-8 file from a project. |
-| `listProjectFiles` | Read-only bounded project file listing. |
-| `searchProjectText` | Read-only bounded text search inside a project. |
-| `getProjectGitStatus` | Run `git status --porcelain`. |
-| `getProjectGitDiff` | Run `git diff` with optional args/path scoping. |
-| `getProjectGitDiffSummary` | Read-only diff summary (porcelain + diffstat + changed files). |
-| `validateProjectPatch` | Read-only dry-run patch preflight; never writes files. |
-| `applyProjectPatch` | Apply a unified diff patch. Mutation with side effects. |
-| `applyProjectPatchChecked` | Validate then apply a patch; returns post-apply diff summary. |
-| `runProjectShellCommand` | Run a bounded shell command in a project. Mutation. |
-| `deleteProjectFiles` | Delete selected project files. Mutation. |
-| `gitRestorePaths` | `git restore` selected tracked paths. Mutation. |
-| `discardUntrackedFiles` | `git clean -f` selected untracked files. Mutation. |
-| `replaceProjectFileText` | Replace a unique substring in a project file. Mutation. |
-| `writeProjectFile` | Write a UTF-8 project file (create or overwrite). Mutation. |
-| `startProjectShellJob` | Start an async background shell job, returns a `job_id`. Execution. |
-| `runCodexTask` | Optional Codex CLI task, returns a `job_id`. |
-| `getRuntimeJobStatus` | Poll an async job. |
-| `getRuntimeJobLog` | Read bounded job stdout/stderr. |
-| `listRuntimeJobs` | Read-only bounded job summaries (metadata only). |
-| `getRuntimeJobTail` | Read-only bounded job stdout/stderr tail. |
-| `listRuntimeTools` | Advanced runtime tool discovery. |
-| `callRuntimeTool` | Advanced escape hatch; prefer typed actions above. |
-
-Recommended tool-driven development flow. Prefer the dedicated GPT Actions;
-fall back to `callRuntimeTool` only for tools without a dedicated action:
-
-1. `getRuntimeStatus` / `runtime_status` — confirm the runtime is healthy and
-   the agent is online.
-2. `listProjects` / `list_projects` — select the runtime project id.
-3. `getProjectGitStatus` / `git_status` and `getProjectGitDiffSummary` /
-   `git_diff_summary` — inspect repository state.
-4. `readProjectFile` / `read_file`, `listProjectFiles` / `list_project_files`,
-   and `searchProjectText` / `search_project_text` — read focused source,
-   config, and docs.
-5. `validateProjectPatch` / `validate_patch` — dry-run a generated patch
-   without modifying the worktree.
-6. `applyProjectPatchChecked` / `apply_patch_checked` — validate, apply, and
-   return the post-apply diff summary in one safer step.
-7. `runProjectShellCommand` / `run_shell` — run diagnostics such as
-   `cargo check`, `cargo test`, or script syntax checks.
-8. `listRuntimeJobs` / `list_jobs` and `getRuntimeJobTail` / `job_tail` —
-   inspect async job summaries and bounded tails.
-9. For cleanup, prefer `deleteProjectFiles` / `delete_project_files`,
-   `gitRestorePaths` / `git_restore_paths`, and `discardUntrackedFiles` /
-   `discard_untracked` over ad hoc `rm`.
-10. For simple text edits, prefer `replaceProjectFileText` / `replace_in_file`
-    over `run_shell` `sed`/`awk`/`python` one-liners — it replaces a unique
-    substring safely and refuses to write when `old` is missing or ambiguous.
-    Use `writeProjectFile` / `write_project_file` to create new files (or
-    overwrite with an `expected_sha256` guard). For long-running commands,
-    prefer `startProjectShellJob` / `run_job` over blocking
-    `runProjectShellCommand` — it returns a `job_id` to poll with
-    `getRuntimeJobStatus` and read with `getRuntimeJobTail`.
-11. `applyProjectPatch` / `apply_patch` — apply small patches directly when the
-    caller already performed preflight checks.
-12. `runCodexTask` / `run_codex` — optional advanced path when Codex CLI is
-    installed.
-
-See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for examples, schema guarantees,
-and executable-action risk notes.
-
-## MCP
-
-`/mcp` speaks JSON-RPC 2.0 over HTTP and is protected by the same Bearer token
-as the REST API.
-
-Supported methods:
-
-- `initialize`
-- `ping`
-- `tools/list`
-- `tools/call`
-- `notifications/initialized`
-
-GPT Actions and MCP share the same `ToolRuntime`; the MCP layer only frames and
-translates JSON-RPC messages. See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md),
-[docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md), and
-[docs/RUNTIME_STATUS.md](docs/RUNTIME_STATUS.md) for the detailed surfaces.
-
-## Codex CLI jobs
-
-Codex is optional. Only `runCodexTask` / `run_codex` require the Codex CLI on
-the agent host. The rest of the runtime works through read, git, patch, shell,
-and job actions.
-
-Relevant environment variables:
-
-| Variable | Default | Description |
-| --- | --- | --- |
-| `CODEX_BIN` | `codex` | Codex CLI binary name or path. |
-| `CODEX_APPROVAL_MODE` | empty/disabled | Empty, blank, `none`, `off`, or `disabled` omit `--approval-mode`. Other values enable it. |
-| `CODEX_DEFAULT_TIMEOUT_SECS` | `3600` | Default Codex job timeout. |
-| `CODEX_MAX_PROMPT_BYTES` | `100000` | Maximum prompt size. |
-| `CODEX_ALLOWED_EXTRA_ARGS` | empty | Comma-separated allowlist for optional extra CLI args. |
-
-Use an empty `CODEX_APPROVAL_MODE` when the installed Codex CLI does not support
-`--approval-mode`.
-
-## Verify
-
-Fast local checks:
-
-```bash
-cargo check
-cargo test
-```
-
-Full local E2E smoke with a stub Codex CLI, server, WebSocket agent, GPT Actions
-schema checks, and MCP checks:
-
-```bash
-bash scripts/e2e_zero_config_ws.sh
-```
-
-Polling transport smoke:
-
-```bash
-E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
-```
-
-Release readiness gate (fmt, check, check --tests, test, both E2E transports,
-and a static check that no sensitive files are tracked/staged):
-
-```bash
-bash scripts/release_check.sh
-```
-
-Deployment smoke against a live public instance:
-
-```bash
-WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
-WEBCODEX_TOKEN="<token>" \
-bash scripts/smoke_deployment.sh
-```
-
-## Deploy
-
-Deployment samples live under [`deploy/`](deploy/):
-
-- `webcodex.service.example`
-- `webcodex.env.example`
-- `webcodex-agent.service.example`
-- `webcodex-agent.toml.example`
-- `agent-project.toml.example`
-- `projects.d/webcodex.toml.example`
-- `nginx.webcodex.example.conf`
-
-The deployment guide covers server env vars, agent config, reverse proxy / TLS,
-GPT Actions import, MCP, smoke tests, and WebSocket online/stale troubleshooting:
-
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+All non-Codex project tools, including read, git, patch validation, patch application, file write, and shell tools, can work without the Codex CLI.
 
 ## Documentation
 
 Start here:
 
-- [docs/INDEX.md](docs/INDEX.md) — current documentation map.
-- [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) — GPT Actions import and usage.
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — production deployment.
-- [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md) — polling/WebSocket agent protocol.
-- [docs/E2E_VALIDATION.md](docs/E2E_VALIDATION.md) — local E2E validation.
-- [TODO.md](TODO.md) — current backlog.
+- [docs/INDEX.md](docs/INDEX.md) — documentation map.
+- [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) — installation quick reference.
+- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — production deployment guide.
+- [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) — GPT Actions import and tool usage.
+- [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md) — agent auth, transports, and observability.
+- [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md) — project registry and project management tools.
+- [docs/E2E_VALIDATION.md](docs/E2E_VALIDATION.md) — local end-to-end validation.

@@ -1,73 +1,46 @@
 # Example config for webcodex-agent.
 # Copy to /etc/webcodex/agent.toml and edit token/client_id/server_url.
+# Prefer generating this file with: webcodex-cli agent init
+# The compatibility command webcodex-agent init still works.
 
-# Public server URL. Must match the server's WEBCODEX_PUBLIC_URL so TLS validates.
 server_url = "https://webcodex.example.com"
-
-# Bearer token for this agent. Prefer a Phase 3 wc_agent_ token bound to this
-# client_id. NEVER commit a real token; replace this placeholder.
-token = "REPLACE_WITH_WC_AGENT_TOKEN"
-
-# Stable unique id for this agent host. Used in runtime ids:
-#   agent:<client_id>:<project_id>
-client_id = "workstation-1"
-display_name = "Workstation"
-
-# Owner principal. A bootstrap WEBCODEX_TOKEN may register any owner during
-# setup; an agent token fills or verifies owner == <username>. Applied
-# identically to polling and WebSocket.
-owner = "you"
-
-# Preferred long-lived transport. WebSocket is preferred; polling is the
-# fallback for restricted networks or older agents. Omit (or set "polling") to
-# use polling. Both transports reuse the same execution path and the same
-# server-side registry/queue/job state.
+token = "replace-with-agent-token"
+client_id = "example-agent"
+display_name = "Example Agent"
+owner = "example-user"
 transport = "websocket"
-
-# Polling interval (only used by the polling transport).
 poll_interval_ms = 1000
-
-# Directory of agent-side project files (one *.toml per project). The agent
-# reads these and reports them to the server at registration; the server never
-# needs a matching server-side [projects.<id>] block.
 projects_dir = "/etc/webcodex/projects.d"
 
 # Shell execution defaults to program = "sh" and args = ["-c"]. systemd does
 # not read ~/.bashrc, so expose tools such as Rust/Cargo explicitly here or via
 # systemd Environment=PATH. init_script is opt-in only and is sourced before the
-# requested command when configured.
+# requested command when configured. runtime_status/listAgents do not expose
+# init_script.
 #[shell]
 #program = "/bin/bash"
 #args = ["-lc"]
-#path_prepend = ["/root/.cargo/bin"]
-#env = { CARGO_HOME = "/root/.cargo", RUSTUP_HOME = "/root/.rustup" }
-#init_script = "/root/.config/webcodex/shell-env.sh"
-
-# The agent announces agent_protocol_version = "websocket-v1" (or "polling-v1")
-# automatically during registration. There is no config field for it; it is
-# reported back by list_agents and runtime_status for observability and future
-# capability negotiation.
+#path_prepend = ["/home/webcodex/.cargo/bin"]
+#env = { CARGO_HOME = "/home/webcodex/.cargo", RUSTUP_HOME = "/home/webcodex/.rustup" }
+#init_script = "/home/webcodex/.config/webcodex/shell-env.sh"
 
 [capabilities]
-# These must match what the agent host is allowed to do. The current
-# webcodex-agent build registers shell=true by default; enable the rest as
-# needed. ToolRuntime::authorize_agent_tool enforces these before any
-# agent-backed tool runs.
-shell = true
 file_read = true
 file_write = true
 git = true
+shell = true
 jobs = true
 async_jobs = true
 async_shell_jobs = true
 
 [policy]
-# Allow raw sh -c commands. Keep this true only on trusted machines.
+# Missing or empty allowed_roots defaults to $HOME.
+# Explicit allowed_roots replaces that default. Leave it empty to use $HOME, or
+# set a narrower workspace root for production hardening.
 allow_raw_shell = true
-
-# If false, cwd must be under one of allowed_roots.
 allow_cwd_anywhere = false
-allowed_roots = ["/root/git"]
-
+# allowed_roots = []
+# Example narrow root only; not the default:
+# allowed_roots = ["/root/git"]
 max_timeout_secs = 3600
 max_output_bytes = 262144

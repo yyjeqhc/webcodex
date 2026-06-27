@@ -1,425 +1,65 @@
 # GPT Actions
 
-WebCodex Runtime exposes a small, stable OpenAPI 3.1 schema for ChatGPT
-GPT Actions. GPT Actions and the MCP endpoint (`/mcp`) share a single
-`ToolRuntime` — there is no separate business logic for either surface.
+WebCodex exposes a focused OpenAPI schema for ChatGPT GPT Actions at:
 
-## Import URL
-
-In your ChatGPT GPT, under **Settings → Actions → Import from URL**, enter:
-
-```
-http(s)://<your-server>/openapi.json
+```text
+GET /openapi.json
 ```
 
-`/openapi.json` is the only GPT-Actions entry point. It is a `GET` route and
-is **not** listed inside the schema `paths` (which is POST-only).
+GPT Actions and MCP share the same `ToolRuntime`; GPT Actions provides typed REST operations while MCP provides MCP framing.
 
 ## Authentication
 
-- Scheme: HTTP Bearer (`Authorization: Bearer <token>`).
-- Token: a Phase 2 personal API token (`wc_pat_...`) for the user that should
-  own the requested operations.
-- Bearer auth is enabled globally on the schema (`security` + `bearerAuth`).
-- When `WEBCODEX_TOKEN` is unset, the server runs in development mode and auth is
-  bypassed — never do this in production.
-
-Configure the GPT Action authentication as **API Key**, type **HTTP**,
-header `Authorization`, value `Bearer <wc_pat_user_api_token>`. Keep the server
-`WEBCODEX_TOKEN` as a bootstrap/admin credential for creating users and tokens.
-
-## Server URL
-
-The `servers[0].url` in the schema defaults to `http://localhost:8080`. Override
-it for deployments by setting `WEBCODEX_PUBLIC_URL` on the server, for example:
-
-```bash
-WEBCODEX_PUBLIC_URL="https://webcodex.example.com" cargo run --bin webcodex
-```
-
-## Operations
-
-The schema exposes a small, stable set of operation ids (27),
-grouped by recommended call flow. GPT Actions and MCP are peer surfaces over
-the same `ToolRuntime`: GPT Actions expose selected typed OpenAPI operations,
-while MCP exposes the runtime tool set directly through `tools/list` and
-`tools/call`. Codex is an **optional advanced capability**: the inspection,
-mutation, and shell actions work without Codex installed — only `runCodexTask`
-requires the Codex CLI on the agent host.
-
-### Read-only actions
-
-| operationId | Path | Purpose |
-|-------------|------|---------|
-| `listRuntimeTools` | `POST /api/tools/list` | List every runtime tool name plus `names`, `count`, `categories`, and `recommended_flows` (advanced). |
-| `listProjects` | `POST /api/projects/list` | List agent-registered project ids. **Call this first.** |
-| `getRuntimeStatus` | `POST /api/runtime/status` | Structured runtime health/observability summary. Read-only; never exposes tokens or secrets. |
-| `getRuntimeJobStatus` | `POST /api/jobs/status` | Poll the `job_id` returned by `runCodexTask`. |
-| `getRuntimeJobLog` | `POST /api/jobs/log` | Read bounded stdout/stderr for the `job_id`. |
-| `readProjectFile` | `POST /api/projects/read_file` | Read a UTF-8 file from a project (paths confined to project root). |
-| `getProjectGitStatus` | `POST /api/projects/git_status` | Run `git status --porcelain` in a project. |
-| `getProjectGitDiff` | `POST /api/projects/git_diff` | Run `git diff` in a project (optional `args`). Read-only. |
-| `getProjectGitDiffSummary` | `POST /api/projects/git_diff_summary` | Read-only diff summary: porcelain, diffstat, changed-file list. |
-| `listProjectFiles` | `POST /api/projects/list_files` | Read-only bounded project file listing. |
-| `searchProjectText` | `POST /api/projects/search_text` | Read-only bounded text search inside a project. |
-| `validateProjectPatch` | `POST /api/projects/validate_patch` | Read-only dry-run patch preflight (`git apply --check`/`--stat`); never writes files. |
-| `listRuntimeJobs` | `POST /api/jobs/list` | Read-only bounded job summaries (metadata only, no stdout/stderr). |
-| `getRuntimeJobTail` | `POST /api/jobs/tail` | Read-only bounded stdout/stderr tail for a job. |
-
-### Mutation / execution actions
-
-| operationId | Path | Purpose |
-|-------------|------|---------|
-| `runCodexTask` | `POST /api/codex/run` | Start a Codex CLI task, returns `job_id`. **Optional advanced action; requires Codex CLI on the agent host.** |
-| `applyProjectPatch` | `POST /api/projects/apply_patch` | Apply a unified diff patch. **Mutation with side effects; Bearer auth + agent shell capability required.** |
-| `applyProjectPatchChecked` | `POST /api/projects/apply_patch_checked` | Validate then apply a patch; returns post-apply diff summary. **Mutation with side effects; Bearer auth + agent shell capability required.** |
-| `runProjectShellCommand` | `POST /api/projects/run_shell` | Run a shell command in a project. **Mutation with side effects; Bearer auth + agent shell capability required.** |
-| `deleteProjectFiles` | `POST /api/projects/delete_files` | Delete selected project-relative files. **Mutation with side effects; Bearer auth + agent shell capability required.** |
-| `gitRestorePaths` | `POST /api/projects/git_restore_paths` | `git restore` selected tracked paths. **Mutation with side effects; Bearer auth + agent shell capability required.** |
-| `discardUntrackedFiles` | `POST /api/projects/discard_untracked` | `git clean -f` selected untracked files. **Mutation with side effects; Bearer auth + agent shell capability required.** |
-| `replaceProjectFileText` | `POST /api/projects/replace_in_file` | Replace a unique substring in a project file via the owning agent. **Mutation with side effects; Bearer auth + agent shell capability required. Fails without writing when `old` is missing or ambiguous; rejects sensitive paths.** |
-| `writeProjectFile` | `POST /api/projects/write_file` | Write a UTF-8 project file (create or overwrite) via the owning agent. **Mutation with side effects; Bearer auth + agent shell capability required. Use `expected_sha256` / `expected_content_prefix` to guard overwrites; rejects sensitive paths.** |
-| `startProjectShellJob` | `POST /api/projects/run_job` | Start an async background shell job and return a `job_id`. **Execution with side effects; Bearer auth + agent async shell job capability required. Poll with `getRuntimeJobStatus`; read output with `getRuntimeJobTail` / `getRuntimeJobLog`.** |
-| `registerProject` | `POST /api/projects/register` | Register an existing directory as a WebCodex project on the selected agent. **Mutation with side effects; executes on the selected agent and is constrained by agent policy. Bearer auth required.** |
-| `createProject` | `POST /api/projects/create` | Create a new directory on the selected agent and register it as a WebCodex project. **Mutation with side effects; executes on the selected agent and is constrained by agent policy. Bearer auth required.** |
-
-### Advanced escape hatch
-
-| operationId | Path | Purpose |
-|-------------|------|---------|
-| `callRuntimeTool` | `POST /api/tools/call` | Generic entry point for any runtime tool by name. Prefer the dedicated actions above. |
-
-### Recommended call flow
-
-1. `getRuntimeStatus` — is the runtime healthy? Are agents registered and
-   online? (See [docs/RUNTIME_STATUS.md](RUNTIME_STATUS.md).)
-2. `listProjects` — learn the available `project` ids.
-3. `getProjectGitStatus` / `getProjectGitDiffSummary` — inspect repository
-   state before making changes.
-4. `readProjectFile` / `listProjectFiles` / `searchProjectText` — read the
-   focused files needed for the task.
-5. `validateProjectPatch` — dry-run a generated patch without modifying the
-   worktree.
-6. `applyProjectPatchChecked` — apply the patch only when the preflight passes
-   and get the post-apply diff summary.
-7. `runProjectShellCommand` — run bounded diagnostics such as `cargo check`,
-   `cargo test`, or script syntax checks when needed.
-8. `listRuntimeJobs` / `getRuntimeJobTail` — inspect async job summaries and
-   bounded tails.
-9. For cleanup, prefer `deleteProjectFiles`, `gitRestorePaths`, and
-   `discardUntrackedFiles` over ad hoc `rm` or broad shell.
-10. For simple text edits, prefer `replaceProjectFileText` / `replace_in_file`
-    over `runProjectShellCommand` `sed`/`awk`/`python` one-liners — it is safer
-    and refuses to write on a missing/ambiguous match. Use `writeProjectFile`
-    / `write_file` to create new files (or overwrite with an `expected_sha256`
-    guard). Both `replace_in_file` and `write_file` are now dedicated GPT
-    Actions.
-11. For long-running commands, prefer `startProjectShellJob` (`run_job`) over
-    blocking `runProjectShellCommand` — it starts an async job and returns a
-    `job_id` you can poll with `getRuntimeJobStatus` and read with
-    `getRuntimeJobTail` / `getRuntimeJobLog`.
-12. Optional Codex path: `runCodexTask`, then `getRuntimeJobStatus` /
-    `getRuntimeJobLog`, when Codex CLI is installed and a larger delegated
-    task is desired.
-
-The dedicated inspection and execution actions are the robust default path for
-ChatGPT-assisted development. MCP clients can drive the same loop with the
-snake_case runtime tool names (`read_file`, `git_diff`, `validate_patch`,
-`apply_patch_checked`, `apply_patch`, `run_shell`). Codex is optional and should
-not be required for basic read/diff/patch/test workflows.
-
-## Recommended full-auto coding loop
-
-A custom GPT can complete a small auto-coding cycle using only dedicated GPT
-Actions (no `callRuntimeTool`). The recommended loop, grouped by action kind:
+Configure the GPT Action with HTTP Bearer authentication:
 
 ```text
-# read-only: discover and inspect
-1. listProjects              → pick the project id
-2. readProjectFile            → read the target file
-3. searchProjectText          → locate the exact line/marker
-4. getProjectGitDiffSummary   → confirm clean baseline
-
-# mutation: make the change
-5a. replaceProjectFileText    → small single-file text edit (preferred for
-                                 unique-substring replacements; fails safe on
-                                 missing/ambiguous match)
- OR
-5b. validateProjectPatch      → dry-run a multi-file/complex patch
-    applyProjectPatchChecked  → apply only when preflight passes; returns the
-                                 post-apply diff summary
-
-# execution: verify
-6. runProjectShellCommand     → lightweight check (grep / cargo check / cargo
-                                 test / bash -n) — keep it bounded
-
-# read-only: summarize and decide
-7. getProjectGitDiffSummary   → review the full change set
-   → if tests fail: go back to step 2 (read/search/replace/patch/test)
-   → if tests pass: proceed to commit or cleanup
-
-# mutation: cleanup (when iterating)
-8. gitRestorePaths            → restore tracked files you want to discard
-   deleteProjectFiles         → remove throwaway probe files
+Authorization: Bearer <wc_pat_user_api_token>
 ```
 
-Key recommendations:
+Do not paste or store the bootstrap server token as the day-to-day GPT Actions credential. Use `webcodex-cli setup single-user` to create a user API token and an agent token during initial setup.
 
-- **Small text edits**: prefer `replaceProjectFileText` over
-  `runProjectShellCommand` with `sed`/`awk`/`python` — it is safer, rejects
-  ambiguous matches, and never interpolates content into the shell command.
-- **New file creation**: use `writeProjectFile` to create new files (or
-  overwrite an existing one with an `expected_sha256` guard). It is safer than
-  assembling raw shell `cat`/heredoc via `runProjectShellCommand`.
-- **Long-running commands**: prefer `startProjectShellJob` over blocking
-  `runProjectShellCommand` — it starts an async job and returns a `job_id`
-  you can poll with `getRuntimeJobStatus` and read with `getRuntimeJobTail` /
-  `getRuntimeJobLog`.
-- **Multi-file or complex changes**: prefer `validateProjectPatch` →
-  `applyProjectPatchChecked` over raw `applyProjectPatch` — the preflight
-  catches context mismatches before any file is touched.
-- **Test failures**: loop back to `readProjectFile` / `searchProjectText` →
-  `replaceProjectFileText` or `validateProjectPatch` → `applyProjectPatchChecked`
-  → `runProjectShellCommand` until tests pass.
-- **Final step**: always call `getProjectGitDiffSummary` to summarize the full
-  change set before committing or handing off.
+`?token=` is not a GPT Actions auth mechanism. It is accepted only by `/api/agents/ws` for WebSocket handshake compatibility.
 
-## `callRuntimeTool` (advanced escape hatch)
+## Tool surface
 
-`callRuntimeTool` remains available as the advanced generic escape hatch for any
-runtime tool that does not yet have a dedicated GPT Action. A custom GPT can now
-complete the full core coding loop using only dedicated typed actions; reach for
-`callRuntimeTool` only when a tool is not exposed as a dedicated operation.
+The GPT Actions surface is intentionally smaller than the full admin API. It includes runtime, project, git, patch, file, shell/job, and optional Codex task operations.
 
-- `list_tools`, `list_projects`, `list_agents`, `runtime_status`
-- `run_shell`, `run_job`, `run_codex`
-- `job_status`, `job_log`, `list_jobs`, `job_tail`
-- `read_file`, `git_status`, `git_diff`, `git_diff_summary`
-- `list_project_files`, `search_project_text`
-- `validate_patch`, `apply_patch_checked`, `apply_patch`
-- `delete_project_files`, `git_restore_paths`, `discard_untracked`
-- `replace_in_file` (Phase 4 structured-edit tool; now a dedicated GPT Action
-  `replaceProjectFileText`, also reachable via `callRuntimeTool` / MCP
-  `tools/call`). Prefer it over `run_shell` `sed`/`awk`/`python` one-liners for
-  simple text edits: the command is a fixed helper, `old`/`new` travel over
-  stdin (never interpolated into the shell command), sensitive paths are
-  rejected, and the file is left untouched when `old` is missing or ambiguous.
-- `write_project_file` (Phase 4 structured-edit tool; now a dedicated GPT
-  Action `writeProjectFile`, also reachable via `callRuntimeTool` / MCP
-  `tools/call`). Use it to create new files or overwrite with an
-  `expected_sha256` / `expected_content_prefix` guard.
-- `run_job` (runtime async-job tool; now a dedicated GPT Action
-  `startProjectShellJob`, also reachable via `callRuntimeTool` / MCP
-  `tools/call`). Prefer it over blocking `run_shell` for long-running commands;
-  it returns a `job_id` to poll with `job_status` / `job_tail` / `job_log`.
-- `register_project` (agent-side project management tool; dedicated GPT Action
-  `registerProject`, also reachable via `callRuntimeTool` / MCP `tools/call`).
-  Registers an existing directory as a WebCodex project on the selected agent.
-  The agent validates the path against its own policy, writes
-  `projects_dir/<id>.toml` atomically, and refreshes its project list.
-- `create_project` (agent-side project management tool; dedicated GPT Action
-  `createProject`, also reachable via `callRuntimeTool` / MCP `tools/call`).
-  Creates a new directory on the selected agent, optionally applies a minimal
-  template (`empty` or `basic`) and `git init`, writes `projects_dir/<id>.toml`
-  atomically, and refreshes its project list.
+It does not expose user, API-token, agent-token, setup, or audit management endpoints such as:
 
-### Request shapes
-
-`callRuntimeTool` accepts several equivalent request shapes so a custom GPT
-can call it even when the OpenAI schema layer drops or renames fields:
-
-- `{"tool":"list_tools"}` — params omitted (argument-less tools).
-- `{"tool":"list_tools","params":null}` — explicit null params.
-- `{"tool":"git_diff_summary","params":{"project":"agent:c:p"}}` — standard form.
-- `{"tool":"git_diff_summary","arguments":{"project":"agent:c:p"}}` — MCP-style
-  `arguments` alias.
-
-`arguments` is a compatibility alias for `params`. When both `params` and
-`arguments` are present, **`params` wins**; `arguments` is only used when
-`params` is absent. Omit both (or send `null`) for argument-less tools like
-`list_tools`, `list_projects`, `list_agents`, `runtime_status`.
-
-### Error messages
-
-Errors are field-aware and never echo the raw request body, token, env,
-`agent.toml`, or the `Authorization` header:
-
-- Unknown tool → lists every accepted tool name and points at `listRuntimeTools`.
-- Missing required field → names both the tool and the missing field.
-- Wrong field type → names the tool.
-
-`validateProjectPatch` is a read-only dry-run patch preflight: it does not
-modify the worktree and is suitable for full-auto coding loops before
-`applyProjectPatch` / `applyProjectPatchChecked`. `applyProjectPatchChecked`
-combines preflight, apply, and post-apply diff summary in one safer mutation
-call. `deleteProjectFiles`, `gitRestorePaths`, and `discardUntrackedFiles` are
-restricted cleanup tools intended to reduce ad hoc `rm` and broad shell usage.
-All of these are now dedicated GPT Actions (Phase 3); they are also still
-discoverable through `listRuntimeTools` and callable via `callRuntimeTool`.
-
-`params` is an OpenAPI 3.1 object (`type: object`, `additionalProperties: true`)
-that carries tool-specific arguments. **Prefer the dedicated actions when they
-cover the task.** GPT Actions has historically mishandled free-form object
-parameters (`UnrecognizedKwargsError: params` has been observed), so the typed
-dedicated actions (`getProjectGitDiff`, `applyProjectPatch`,
-`runProjectShellCommand`, `readProjectFile`, `getProjectGitStatus`) are the
-robust path and should be used instead of `callRuntimeTool` wherever possible.
-In particular, **do not** ask GPT to assemble raw shell to run Codex; use
-`runCodexTask` instead.
-
-## Executable actions
-
-`applyProjectPatch` and `runProjectShellCommand` are **executable** actions with
-side effects (they mutate files or run arbitrary commands on the agent host).
-They are deliberately exposed as dedicated, typed operations — not via the
-generic `callRuntimeTool` escape hatch — so GPT has clear, named operations.
-They require:
-
-- Bearer auth (`WEBCODEX_TOKEN`) on every call.
-- The owning agent's capability (`shell` for `runProjectShellCommand`; patching
-  allowed for `applyProjectPatch`).
-
-Treat them as development-collaboration capabilities with execution risk.
-
-Patch payload transport: `applyProjectPatch` / `applyProjectPatchChecked` /
-`validateProjectPatch` send the patch body to the owning agent over the shell
-request `stdin` field — never inside the shell `command` string. The command
-is a fixed `git apply` invocation (`git apply --check -`, `git apply --stat -`,
-`git apply -`), and the working directory is supplied via the shell request
-`cwd` field (not a `cd` prefix). This means patches larger than the shell
-command length limit still validate and apply, and there is no
-`echo '<patch>' | cd <path> && git apply` shape that could drop the patch.
-`applyProjectPatchChecked` runs the read-only preflight first and skips the
-apply step when the check fails, so a non-applicable patch never mutates the
-worktree.
-
-## Examples
-
-Start a Codex task (optional advanced; requires Codex CLI on the agent host):
-
-```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/codex/run \
-  -H "Content-Type: application/json" \
-  -d '{"project":"webcodex","prompt":"Inspect the codebase and summarize the runtime architecture."}'
+```text
+/api/users/create
+/api/tokens/create
+/api/agent-tokens/create
+/api/audit/sessions
 ```
 
-Poll status:
+Use `webcodex-cli` for those management tasks.
 
-```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/jobs/status \
-  -H "Content-Type: application/json" \
-  -d '{"job_id":"<job-id>"}'
-```
+## Recommended flow
 
-Read a project file:
+1. `getRuntimeStatus` — verify runtime health and redacted agent policy summaries.
+2. `listAgents` — confirm an online agent and its `agent_instance_id`.
+3. `listProjects` — choose an `agent:<client_id>:<project_id>`.
+4. `getProjectGitStatus`, `listProjectFiles`, `readProjectFile` — inspect first.
+5. `validateProjectPatch` — dry-run patches before applying.
+6. `applyProjectPatchChecked`, `writeProjectFile`, or `replaceProjectFileText` — mutate only when intended.
+7. `runProjectShellCommand` or `startProjectShellJob` — execute only bounded commands in registered projects.
+8. `runCodexTask` — optional advanced path when Codex CLI is installed and configured on the agent machine.
 
-```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/projects/read_file \
-  -H "Content-Type: application/json" \
-  -d '{"project":"webcodex","path":"README.md"}'
-```
+`runCodexTask` does not launch a new agent. It asks the already connected agent to run the Codex CLI in a project.
 
-Check git status / git diff:
+## Observability
 
-```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/projects/git_status \
-  -H "Content-Type: application/json" \
-  -d '{"project":"webcodex"}'
+`getRuntimeStatus` and `listAgents` may show a redacted policy summary:
 
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/projects/git_diff \
-  -H "Content-Type: application/json" \
-  -d '{"project":"webcodex","args":["--stat"]}'
-```
+- `allow_raw_shell`
+- `allow_cwd_anywhere`
+- `allowed_roots`
+- `max_timeout_secs`
+- `max_output_bytes`
 
-Run a shell command (executable; Bearer auth required):
+They must not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell `init_script` values.
 
-```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/projects/run_shell \
-  -H "Content-Type: application/json" \
-  -d '{"project":"webcodex","command":"cargo test"}'
-```
+## Compatibility notes
 
-Apply a patch (executable mutation; Bearer auth required):
-
-```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/projects/apply_patch \
-  -H "Content-Type: application/json" \
-  -d '{"project":"webcodex","patch":"--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# WebCodex\n+edited\n"}'
-```
-
-Register an existing directory as a project (mutation; Bearer auth required):
-
-```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/projects/register \
-  -H "Content-Type: application/json" \
-  -d '{"client_id":"oe","id":"my-project","name":"My Project","path":"/root/git/my-project"}'
-```
-
-Create a new project with the basic template and git init (mutation; Bearer auth required):
-
-```bash
-curl -H "Authorization: Bearer change-me" \
-  -X POST http://127.0.0.1:8080/api/projects/create \
-  -H "Content-Type: application/json" \
-  -d '{"client_id":"oe","id":"hello","name":"Hello","path":"/root/git/hello","template":"basic","git_init":true}'
-```
-
-## Shared ToolRuntime
-
-GPT Actions and MCP both call `ToolRuntime::dispatch`. The dedicated GPT Actions
-are thin HTTP wrappers that dispatch to the same `ToolCall` variants used by MCP
-`tools/call`: `listProjects` → `ListProjects`, `readProjectFile` → `ReadFile`,
-`getProjectGitStatus` → `GitStatus`, `getProjectGitDiff` → `GitDiff`,
-`applyProjectPatch` → `ApplyPatch`, `runProjectShellCommand` → `RunShell`. No
-business logic is duplicated, and owner/capability checks stay centralized in
-`ToolRuntime::authorize_agent_tool`.
-
-## Schema guarantees
-
-Tests in `src/openapi.rs` assert:
-
-- The operation-id set matches the documented set exactly (27 operations).
-- The operation count is exactly 27 and never exceeds 30. This phase promotes
-  `register_project` (`registerProject`) and `create_project` (`createProject`)
-  to dedicated GPT Actions, bringing the count to 27.
-- Every operationId is unique (no duplicates).
-- Every operation description is <= 300 chars.
-- Every operation is POST-only.
-- Every requestBody schema declares `additionalProperties: false` at the top
-  level so GPT Actions rejects unknown fields. Inner properties (e.g.
-  `ToolCallRequest.params`) may still allow arbitrary keys for tool arguments.
-- Every `$ref` resolves to a defined schema.
-- Every path is POST-only.
-- Bearer auth is present and globally enabled.
-- No legacy/non-GPT-Actions paths appear in the schema (file upload, desktop,
-  raw shell, codex command/context, agent protocol routes, `/mcp`,
-  `/openapi.json`, `/console`, `/api/jobs/stop`, `/api/audit/*`).
-  `/api/projects/write_file` and `/api/projects/run_job` are now dedicated GPT
-  Actions (`writeProjectFile` / `startProjectShellJob`) and are no longer
-  forbidden.
-- `callRuntimeTool` declares `params` as an OpenAPI 3.1 object accepting
-  arbitrary tool arguments, plus an `arguments` compatibility alias (`params`
-  wins when both are present).
-- `listRuntimeTools` returns `tools` (back-compat), `names`, `count`,
-  `categories`, and `recommended_flows`.
-- Mutation/execution actions (including `runCodexTask`) describe their side
-  effects and Bearer auth requirement; patch/shell/cleanup mutations also
-  mention the agent shell capability.
-- Read-only actions explicitly say "read-only" or "never writes" in their
-  descriptions so GPT callers can distinguish them from mutations.
-- Key actions ship request examples so ChatGPT has concrete templates.
-
-The E2E smoke (`scripts/e2e_zero_config_ws.sh`) re-checks the live
-`/openapi.json` for the same invariants: operation count 27, unique
-operationIds, POST-only, description <= 300 chars,
-`additionalProperties=false` on every requestBody schema, mutation descriptions
-mention side effects + Bearer auth, read-only descriptions mention read-only,
-and forbidden paths absent.
+The management CLI compatibility commands `webcodex users`, `webcodex tokens`, and `webcodex agent-tokens` still work, but `webcodex-cli` is the recommended CLI for current setup and operations.

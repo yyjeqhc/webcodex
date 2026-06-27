@@ -1,12 +1,12 @@
 # Deployment
 
-This guide covers the current WebCodex production shape: server, HTTPS reverse proxy, `webcodex-cli` setup, agent configuration, GPT Actions, MCP, and smoke checks.
+This guide covers the current WebCodex production shape: server bootstrap, service installation, agent configuration, GPT Actions, MCP, and smoke checks.
 
 ## Components
 
 - `webcodex`: server exposing REST, GPT Actions OpenAPI, MCP, and agent endpoints.
 - `webcodex-agent`: long-lived worker connected by WebSocket or polling.
-- `webcodex-cli`: recommended management CLI for users, tokens, setup, and agent config generation.
+- `webcodex-cli`: recommended management CLI for server bootstrap, status checks, and later setup flows.
 
 ## Server configuration
 
@@ -14,30 +14,58 @@ Required production settings usually include:
 
 ```text
 WEBCODEX_TOKEN=<bootstrap-admin-token>
-WEBCODEX_PUBLIC_URL=https://your-domain.example
 WEBCODEX_ADDR=127.0.0.1:8080
 WEBCODEX_DATA=/var/lib/webcodex
 ```
 
+`WEBCODEX_PUBLIC_URL=https://your-domain.example` is optional at server init time. Configure it when you have the public HTTPS URL you want runtime status/OpenAPI to report.
+
 Use the bootstrap token only for initial setup/admin work. Day-to-day GPT Actions and MCP calls should use a user API token. Agents should use agent tokens.
 
-## Recommended setup CLI
+## Server-first setup
 
-Create the first user token and agent token with:
+The documented distribution path assumes:
 
 ```bash
-webcodex-cli setup single-user
+npm install -g @webcodex/server @webcodex/cli
 ```
 
-This is the recommended one-shot initialization entry point. The compatibility commands remain available:
+Initialize the env file:
+
+```bash
+sudo webcodex-cli server init \
+  --listen 127.0.0.1:8080 \
+  --data-dir /var/lib/webcodex \
+  --env-file /etc/webcodex/webcodex.env
+```
+
+`server init` creates only `WEBCODEX_TOKEN`. It does not create `wc_pat_...` user API tokens or `wc_agent_...` agent tokens. User and agent token setup is a separate client-side setup/enroll flow.
+
+Install and start the systemd service:
+
+```bash
+sudo webcodex-cli server install-service \
+  --env-file /etc/webcodex/webcodex.env \
+  --bin /usr/local/bin/webcodex
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex
+webcodex-cli server status --env-file /etc/webcodex/webcodex.env
+```
+
+The compatibility commands remain available:
 
 ```bash
 webcodex users ...
 webcodex tokens ...
 webcodex agent-tokens ...
+webcodex-cli setup single-user
 ```
 
 Prefer `webcodex-cli` in new docs and automation.
+
+## Public HTTPS URL
+
+GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup; configure nginx, Caddy, Cloudflare Tunnel, ngrok, or similar infrastructure separately.
 
 ## Agent configuration
 

@@ -7,9 +7,9 @@
 //! to 0600 files.
 //!
 //! This binary intentionally does NOT start a server and does NOT print real
-//! tokens, Authorization headers, env files, or full agent.toml contents with
-//! secrets (except the explicit `agent init --output -` stdout path, which the
-//! user requests deliberately).
+//! tokens, Authorization headers, or full agent.toml contents with secrets
+//! (except explicit stdout materialization paths such as `agent init --output -`
+//! and `server init --output -`, which the user requests deliberately).
 //!
 //! The existing `webcodex` server binary keeps its `webcodex users/tokens/...`
 //! admin commands as compatibility wrappers; this binary is the new home for
@@ -18,6 +18,7 @@
 use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
+use uuid::Uuid;
 
 #[allow(dead_code)]
 #[path = "../shell_protocol.rs"]
@@ -52,6 +53,9 @@ enum CliAction {
     Admin(AdminCliCommand),
     AgentInit(AgentInitOptions),
     SetupSingleUser(SetupSingleUserOptions),
+    ServerInit(ServerInitOptions),
+    ServerInstallService(ServerInstallServiceOptions),
+    ServerStatus(ServerStatusOptions),
     Exit {
         code: i32,
         stdout: String,
@@ -75,10 +79,47 @@ struct SetupSingleUserOptions {
     json: bool,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServerInitOptions {
+    listen: String,
+    data_dir: PathBuf,
+    env_file: PathBuf,
+    public_url: Option<String>,
+    overwrite: bool,
+    output_stdout: bool,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServerInstallServiceOptions {
+    env_file: PathBuf,
+    bin: PathBuf,
+    service_file: PathBuf,
+    user: Option<String>,
+    group: Option<String>,
+    working_directory: PathBuf,
+    overwrite: bool,
+    dry_run: bool,
+    output_stdout: bool,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServerStatusOptions {
+    url: String,
+    env_file: Option<PathBuf>,
+    env_file_explicit: bool,
+    token_file: Option<PathBuf>,
+    json: bool,
+}
+
 fn usage() -> &'static str {
     "Usage: webcodex-cli <COMMAND>\n\n\
      Management/setup commands for WebCodex.\n\n\
      Commands:\n\
+       server init                                      Create server env bootstrap file\n\
+       server install-service                           Generate/install a systemd unit\n\
+       server status                                    Check service and runtime status\n\
        users create/list                                  Manage users\n\
        tokens create/list/revoke                          Manage personal API tokens\n\
        agent-tokens create/list/revoke                    Manage agent tokens\n\
@@ -93,6 +134,62 @@ fn usage() -> &'static str {
        --token-file PATH   Read bearer token from file\n\
        Token fallback: WEBCODEX_TOKEN\n\
      Output: JSON unless noted otherwise.\n"
+}
+
+fn server_usage() -> &'static str {
+    "Usage: webcodex-cli server <COMMAND>\n\n\
+     Server bootstrap commands.\n\n\
+     Commands:\n\
+       init                 Create WEBCODEX_TOKEN env bootstrap file\n\
+       install-service      Generate/install a systemd unit\n\
+       status               Check systemd and /api/runtime/status\n\n\
+     Notes:\n\
+       server init only creates the server bootstrap/admin WEBCODEX_TOKEN.\n\
+       It does not create user API tokens or agent tokens.\n"
+}
+
+fn server_init_usage() -> &'static str {
+    "Usage: webcodex-cli server init [OPTIONS]\n\n\
+     Options:\n\
+       --listen ADDR          Listen address [default: 127.0.0.1:8080]\n\
+       --data-dir PATH        Data directory [root: /var/lib/webcodex; user: ~/.local/share/webcodex]\n\
+       --env-file PATH        Env file [root: /etc/webcodex/webcodex.env; user: ~/.config/webcodex/webcodex.env]\n\
+       --public-url URL       Optional public URL to report from runtime status\n\
+       --overwrite            Replace an existing env file\n\
+       --output -             Also print env contents to stdout, including the full WEBCODEX_TOKEN\n\
+       --json                 Print a machine-readable summary without the full token\n\
+       -h, --help             Print help and exit\n\n\
+     server init writes only WEBCODEX_TOKEN. It does not create wc_pat_* user\n\
+     tokens or wc_agent_* agent tokens.\n"
+}
+
+fn server_install_service_usage() -> &'static str {
+    "Usage: webcodex-cli server install-service [OPTIONS]\n\n\
+     Options:\n\
+       --env-file PATH             Env file [default: /etc/webcodex/webcodex.env]\n\
+       --bin PATH                  webcodex server binary path; defaults to webcodex from PATH when safely discoverable\n\
+       --service-file PATH         systemd unit path [default: /etc/systemd/system/webcodex.service]\n\
+       --user USER                 Optional systemd User=\n\
+       --group GROUP               Optional systemd Group=\n\
+       --working-directory PATH    WorkingDirectory= [default: /var/lib/webcodex]\n\
+       --overwrite                 Replace an existing service file\n\
+       --dry-run                   Print the unit instead of writing it\n\
+       --output -                  Print the unit instead of writing it\n\
+       --json                      Print a machine-readable summary\n\
+       -h, --help                  Print help and exit\n\n\
+     Tokens are never inlined in the unit; it uses EnvironmentFile=.\n"
+}
+
+fn server_status_usage() -> &'static str {
+    "Usage: webcodex-cli server status [OPTIONS]\n\n\
+     Options:\n\
+       --url URL              Runtime URL [default: http://127.0.0.1:8080]\n\
+       --env-file PATH        Read WEBCODEX_TOKEN from env file [default: root /etc/webcodex/webcodex.env; user ~/.config/webcodex/webcodex.env]\n\
+       --token-file PATH      Read bearer token from file\n\
+       --json                 Print a machine-readable summary\n\
+       -h, --help             Print help and exit\n\n\
+     Token priority: --token-file, WEBCODEX_TOKEN from --env-file, process\n\
+     WEBCODEX_TOKEN, then no token for auth-disabled servers.\n"
 }
 
 fn cli_action<I, S>(args: I) -> CliAction
@@ -119,6 +216,7 @@ where
             stdout: format!("webcodex-cli {}\n", env!("CARGO_PKG_VERSION")),
             stderr: String::new(),
         },
+        "server" => parse_server_subcommand(&args[1..]),
         "agent" => parse_agent_subcommand(&args[1..]),
         "setup" => parse_setup_subcommand(&args[1..]),
         _ => {
@@ -163,6 +261,216 @@ fn parse_agent_subcommand(args: &[String]) -> CliAction {
             stderr: format!("unknown agent subcommand: {}\n", other),
         },
     }
+}
+
+fn parse_server_subcommand(args: &[String]) -> CliAction {
+    if args.is_empty() {
+        return CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("{}\n", server_usage()),
+        };
+    }
+    match args[0].as_str() {
+        "--help" | "-h" => CliAction::Exit {
+            code: 0,
+            stdout: server_usage().to_string(),
+            stderr: String::new(),
+        },
+        "init" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: server_init_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_server_init(&args[1..]) {
+                Ok(opts) => CliAction::ServerInit(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        "install-service" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: server_install_service_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_server_install_service(&args[1..]) {
+                Ok(opts) => CliAction::ServerInstallService(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        "status" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: server_status_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_server_status(&args[1..]) {
+                Ok(opts) => CliAction::ServerStatus(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        other => CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("unknown server subcommand: {}\n", other),
+        },
+    }
+}
+
+fn parse_server_init(args: &[String]) -> Result<ServerInitOptions, String> {
+    let defaults = default_server_paths();
+    let mut opts = ServerInitOptions {
+        listen: "127.0.0.1:8080".to_string(),
+        data_dir: defaults.data_dir,
+        env_file: defaults.env_file,
+        public_url: None,
+        overwrite: false,
+        output_stdout: false,
+        json: false,
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--listen" => opts.listen = next_value(&mut iter, arg)?,
+            "--data-dir" => opts.data_dir = PathBuf::from(next_value(&mut iter, arg)?),
+            "--env-file" => opts.env_file = PathBuf::from(next_value(&mut iter, arg)?),
+            "--public-url" => opts.public_url = Some(next_value(&mut iter, arg)?),
+            "--overwrite" => opts.overwrite = true,
+            "--output" => {
+                let value = next_value(&mut iter, arg)?;
+                if value != "-" {
+                    return Err("--output only supports '-' for stdout".to_string());
+                }
+                opts.output_stdout = true;
+            }
+            "--json" => opts.json = true,
+            _ => return Err(format!("unknown server init flag: {}", arg)),
+        }
+    }
+    if opts.listen.trim().is_empty() {
+        return Err("--listen cannot be empty".to_string());
+    }
+    if opts.data_dir.as_os_str().is_empty() {
+        return Err("--data-dir cannot be empty".to_string());
+    }
+    if opts.env_file.as_os_str().is_empty() {
+        return Err("--env-file cannot be empty".to_string());
+    }
+    if let Some(url) = &opts.public_url {
+        if url.trim().is_empty() {
+            return Err("--public-url cannot be empty".to_string());
+        }
+    }
+    Ok(opts)
+}
+
+fn parse_server_install_service(args: &[String]) -> Result<ServerInstallServiceOptions, String> {
+    let mut env_file = PathBuf::from("/etc/webcodex/webcodex.env");
+    let mut bin: Option<PathBuf> = None;
+    let mut service_file = PathBuf::from("/etc/systemd/system/webcodex.service");
+    let mut user = None;
+    let mut group = None;
+    let mut working_directory = PathBuf::from("/var/lib/webcodex");
+    let mut overwrite = false;
+    let mut dry_run = false;
+    let mut output_stdout = false;
+    let mut json = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--env-file" => env_file = PathBuf::from(next_value(&mut iter, arg)?),
+            "--bin" => bin = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--service-file" => service_file = PathBuf::from(next_value(&mut iter, arg)?),
+            "--user" => user = Some(next_value(&mut iter, arg)?),
+            "--group" => group = Some(next_value(&mut iter, arg)?),
+            "--working-directory" => working_directory = PathBuf::from(next_value(&mut iter, arg)?),
+            "--overwrite" => overwrite = true,
+            "--dry-run" => dry_run = true,
+            "--output" => {
+                let value = next_value(&mut iter, arg)?;
+                if value != "-" {
+                    return Err("--output only supports '-' for stdout".to_string());
+                }
+                output_stdout = true;
+            }
+            "--json" => json = true,
+            _ => return Err(format!("unknown server install-service flag: {}", arg)),
+        }
+    }
+    let bin = match bin.or_else(discover_webcodex_binary) {
+        Some(path) => path,
+        None => return Err("--bin is required because webcodex was not found in PATH".to_string()),
+    };
+    if env_file.as_os_str().is_empty() {
+        return Err("--env-file cannot be empty".to_string());
+    }
+    if bin.as_os_str().is_empty() {
+        return Err("--bin cannot be empty".to_string());
+    }
+    if service_file.as_os_str().is_empty() {
+        return Err("--service-file cannot be empty".to_string());
+    }
+    if working_directory.as_os_str().is_empty() {
+        return Err("--working-directory cannot be empty".to_string());
+    }
+    Ok(ServerInstallServiceOptions {
+        env_file,
+        bin,
+        service_file,
+        user,
+        group,
+        working_directory,
+        overwrite,
+        dry_run,
+        output_stdout,
+        json,
+    })
+}
+
+fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
+    let mut opts = ServerStatusOptions {
+        url: "http://127.0.0.1:8080".to_string(),
+        env_file: Some(default_server_paths().env_file),
+        env_file_explicit: false,
+        token_file: None,
+        json: false,
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--url" => opts.url = next_value(&mut iter, arg)?,
+            "--env-file" => {
+                opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?));
+                opts.env_file_explicit = true;
+            }
+            "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--json" => opts.json = true,
+            _ => return Err(format!("unknown server status flag: {}", arg)),
+        }
+    }
+    if opts.url.trim().is_empty() {
+        return Err("--url cannot be empty".to_string());
+    }
+    Ok(opts)
 }
 
 /// Small flag parser for `webcodex-cli agent init`. Produces an
@@ -308,6 +616,218 @@ where
     iter.next()
         .cloned()
         .ok_or_else(|| format!("{} requires a value", flag))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServerPathDefaults {
+    data_dir: PathBuf,
+    env_file: PathBuf,
+}
+
+fn default_server_paths() -> ServerPathDefaults {
+    if is_effective_root() {
+        return ServerPathDefaults {
+            data_dir: PathBuf::from("/var/lib/webcodex"),
+            env_file: PathBuf::from("/etc/webcodex/webcodex.env"),
+        };
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."));
+    ServerPathDefaults {
+        data_dir: home.join(".local/share/webcodex"),
+        env_file: home.join(".config/webcodex/webcodex.env"),
+    }
+}
+
+#[cfg(unix)]
+fn is_effective_root() -> bool {
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("Uid:") {
+                let mut parts = rest.split_whitespace();
+                let _real = parts.next();
+                if let Some(effective) = parts.next() {
+                    return effective == "0";
+                }
+            }
+        }
+    }
+    std::env::var("USER").is_ok_and(|u| u == "root")
+}
+
+#[cfg(not(unix))]
+fn is_effective_root() -> bool {
+    false
+}
+
+fn generate_bootstrap_token() -> String {
+    format!(
+        "wc_boot_{}{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
+}
+
+fn render_server_env(opts: &ServerInitOptions, token: &str) -> String {
+    let mut content = String::new();
+    content.push_str(&format!("WEBCODEX_ADDR={}\n", opts.listen.trim()));
+    content.push_str(&format!("WEBCODEX_DATA={}\n", opts.data_dir.display()));
+    content.push_str(&format!("WEBCODEX_TOKEN={}\n", token));
+    if let Some(public_url) = &opts.public_url {
+        content.push_str(&format!(
+            "WEBCODEX_PUBLIC_URL={}\n",
+            public_url.trim().trim_end_matches('/')
+        ));
+    }
+    content
+}
+
+fn write_text_file(
+    path: &Path,
+    content: &str,
+    overwrite: bool,
+    secret: bool,
+) -> Result<(), String> {
+    if path.exists() && !overwrite {
+        return Err(format!(
+            "{} already exists; pass --overwrite to replace it",
+            path.display()
+        ));
+    }
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
+        }
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        let mut options = std::fs::OpenOptions::new();
+        options.write(true);
+        if overwrite {
+            options.create(true).truncate(true);
+        } else {
+            options.create_new(true);
+        }
+        if secret {
+            options.mode(0o600);
+        }
+        let mut file = options
+            .open(path)
+            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+        use std::io::Write;
+        file.write_all(content.as_bytes())
+            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+        if secret {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+                .map_err(|e| format!("failed to set permissions on {}: {}", path.display(), e))?;
+        }
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = secret;
+        if overwrite {
+            std::fs::write(path, content)
+                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+        } else {
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(path)
+                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+            use std::io::Write;
+            file.write_all(content.as_bytes())
+                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
+        }
+    }
+    Ok(())
+}
+
+fn read_env_file_value(path: &Path, key: &str) -> Result<Option<String>, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read env file {}: {}", path.display(), e))?;
+    Ok(parse_env_content_value(&content, key))
+}
+
+fn parse_env_content_value(content: &str, key: &str) -> Option<String> {
+    for line in content.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let line = line.strip_prefix("export ").unwrap_or(line).trim();
+        let Some((k, value)) = line.split_once('=') else {
+            continue;
+        };
+        if k.trim() != key {
+            continue;
+        }
+        let value = value.trim();
+        let value = if (value.starts_with('"') && value.ends_with('"'))
+            || (value.starts_with('\'') && value.ends_with('\''))
+        {
+            &value[1..value.len() - 1]
+        } else {
+            value
+        };
+        return Some(value.to_string());
+    }
+    None
+}
+
+fn discover_webcodex_binary() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        if !dir.is_absolute() {
+            continue;
+        }
+        let candidate = dir.join("webcodex");
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+    }
+    None
+}
+
+fn render_systemd_unit(opts: &ServerInstallServiceOptions) -> String {
+    let mut unit = String::new();
+    unit.push_str("[Unit]\n");
+    unit.push_str("Description=WebCodex Runtime\n");
+    unit.push_str("After=network-online.target\n");
+    unit.push_str("Wants=network-online.target\n\n");
+    unit.push_str("[Service]\n");
+    unit.push_str("Type=simple\n");
+    unit.push_str(&format!("EnvironmentFile={}\n", opts.env_file.display()));
+    unit.push_str(&format!("ExecStart={}\n", opts.bin.display()));
+    unit.push_str("Restart=on-failure\n");
+    unit.push_str("RestartSec=3\n");
+    unit.push_str(&format!(
+        "WorkingDirectory={}\n",
+        opts.working_directory.display()
+    ));
+    if let Some(user) = &opts.user {
+        unit.push_str(&format!("User={}\n", user));
+    }
+    if let Some(group) = &opts.group {
+        unit.push_str(&format!("Group={}\n", group));
+    }
+    unit.push_str("\n[Install]\n");
+    unit.push_str("WantedBy=multi-user.target\n");
+    unit
+}
+
+fn systemctl_available() -> bool {
+    let Some(path) = std::env::var_os("PATH") else {
+        return false;
+    };
+    std::env::split_paths(&path).any(|dir| dir.join("systemctl").is_file())
+}
+
+fn is_systemd_platform() -> bool {
+    cfg!(target_os = "linux") && systemctl_available()
 }
 
 /// Resolve the bootstrap token for setup/admin commands. Order:
@@ -606,6 +1126,333 @@ async fn run_setup_single_user(opts: SetupSingleUserOptions) -> Result<String, S
     }
 }
 
+fn run_server_init(opts: ServerInitOptions) -> Result<String, String> {
+    let token = generate_bootstrap_token();
+    let env_content = render_server_env(&opts, &token);
+    write_text_file(&opts.env_file, &env_content, opts.overwrite, true)?;
+    if opts.output_stdout {
+        return Ok(env_content);
+    }
+    if opts.json {
+        let summary = json!({
+            "env_file": opts.env_file.to_string_lossy(),
+            "listen": opts.listen,
+            "data_dir": opts.data_dir.to_string_lossy(),
+            "public_url": opts.public_url,
+            "token_prefix": token_prefix(&token),
+            "wrote_env_file": true,
+            "next_steps": [
+                "install service",
+                "start service",
+                "run server status",
+                "configure HTTPS/public URL separately if using GPT Actions"
+            ],
+        });
+        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+    }
+    let mut out = String::new();
+    out.push_str("Server bootstrap initialized.\n\n");
+    out.push_str(&format!("  env file:     {}\n", opts.env_file.display()));
+    out.push_str(&format!("  listen:       {}\n", opts.listen));
+    out.push_str(&format!("  data dir:     {}\n", opts.data_dir.display()));
+    if let Some(public_url) = &opts.public_url {
+        out.push_str(&format!("  public URL:   {}\n", public_url.trim()));
+    } else {
+        out.push_str("  public URL:   not configured\n");
+    }
+    out.push_str(&format!("  token prefix: {}\n", token_prefix(&token)));
+    out.push_str("\nNext steps:\n");
+    out.push_str("  - Install the service: `webcodex-cli server install-service ...`\n");
+    out.push_str(
+        "  - Start it: `sudo systemctl daemon-reload && sudo systemctl enable --now webcodex`\n",
+    );
+    out.push_str("  - Check it: `webcodex-cli server status ...`\n");
+    out.push_str("  - For GPT Actions, configure a public HTTPS URL separately.\n");
+    out.push_str("\nNo user API tokens or agent tokens were created.\n");
+    Ok(out)
+}
+
+fn run_server_install_service(opts: ServerInstallServiceOptions) -> Result<String, String> {
+    let unit = render_systemd_unit(&opts);
+    let writes_file = !opts.dry_run && !opts.output_stdout;
+    if writes_file {
+        if opts.service_file.exists() && !opts.overwrite {
+            return Err(format!(
+                "{} already exists; pass --overwrite to replace it",
+                opts.service_file.display()
+            ));
+        }
+        if !is_systemd_platform() {
+            return Err(
+                "systemd was not detected; use --dry-run or --output - to render the unit"
+                    .to_string(),
+            );
+        }
+        write_text_file(&opts.service_file, &unit, opts.overwrite, false)?;
+    }
+    if opts.output_stdout || opts.dry_run {
+        if opts.json {
+            let summary = json!({
+                "service_file": opts.service_file.to_string_lossy(),
+                "env_file": opts.env_file.to_string_lossy(),
+                "bin": opts.bin.to_string_lossy(),
+                "dry_run": true,
+                "unit": unit,
+            });
+            return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+        }
+        return Ok(unit);
+    }
+    if opts.json {
+        let summary = json!({
+            "service_file": opts.service_file.to_string_lossy(),
+            "env_file": opts.env_file.to_string_lossy(),
+            "bin": opts.bin.to_string_lossy(),
+            "wrote_service_file": true,
+            "next_steps": [
+                "sudo systemctl daemon-reload",
+                "sudo systemctl enable --now webcodex",
+                "sudo systemctl status webcodex"
+            ],
+        });
+        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+    }
+    let mut out = String::new();
+    out.push_str("Service unit installed.\n\n");
+    out.push_str(&format!(
+        "  service file: {}\n",
+        opts.service_file.display()
+    ));
+    out.push_str(&format!("  env file:     {}\n", opts.env_file.display()));
+    out.push_str(&format!("  binary:       {}\n", opts.bin.display()));
+    out.push_str("\nNext steps:\n");
+    out.push_str("  - sudo systemctl daemon-reload\n");
+    out.push_str("  - sudo systemctl enable --now webcodex\n");
+    out.push_str("  - sudo systemctl status webcodex\n");
+    Ok(out)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SystemdStatus {
+    active: String,
+    enabled: String,
+}
+
+fn query_systemd_status() -> SystemdStatus {
+    fn run_status(args: &[&str]) -> String {
+        let output = std::process::Command::new("systemctl").args(args).output();
+        match output {
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if stdout.is_empty() {
+                    "unknown".to_string()
+                } else {
+                    stdout
+                }
+            }
+            Err(_) => "unknown".to_string(),
+        }
+    }
+    if !systemctl_available() {
+        return SystemdStatus {
+            active: "unknown".to_string(),
+            enabled: "unknown".to_string(),
+        };
+    }
+    SystemdStatus {
+        active: run_status(&["is-active", "webcodex.service"]),
+        enabled: run_status(&["is-enabled", "webcodex.service"]),
+    }
+}
+
+fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, String> {
+    if let Some(path) = &opts.token_file {
+        let token = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read token file {}: {}", path.display(), e))?
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            return Err("--token-file cannot be empty".to_string());
+        }
+        return Ok(Some(token));
+    }
+    if let Some(path) = &opts.env_file {
+        if !path.exists() {
+            if opts.env_file_explicit {
+                return Err(format!("env file {} does not exist", path.display()));
+            }
+        } else if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
+            let token = token.trim().to_string();
+            if !token.is_empty() {
+                return Ok(Some(token));
+            }
+        }
+    }
+    if let Ok(token) = std::env::var("WEBCODEX_TOKEN") {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return Ok(Some(token));
+        }
+    }
+    Ok(None)
+}
+
+#[derive(Debug, Clone)]
+struct HttpStatusSummary {
+    reachable: bool,
+    status_code: Option<u16>,
+    content_type: Option<String>,
+    error: Option<String>,
+    output: Option<Value>,
+}
+
+async fn fetch_runtime_status(url: &str, token: Option<&str>) -> Result<HttpStatusSummary, String> {
+    let endpoint = format!("{}/api/runtime/status", url.trim_end_matches('/'));
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let mut req = client.post(endpoint).json(&json!({}));
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = match req.send().await {
+        Ok(resp) => resp,
+        Err(e) => {
+            return Ok(HttpStatusSummary {
+                reachable: false,
+                status_code: None,
+                content_type: None,
+                error: Some(format!("request failed: {}", e)),
+                output: None,
+            });
+        }
+    };
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+    if !status.is_success() {
+        return Ok(HttpStatusSummary {
+            reachable: false,
+            status_code: Some(status.as_u16()),
+            content_type: Some(content_type),
+            error: None,
+            output: None,
+        });
+    }
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response: {}", e))?;
+    let value: Value = serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "failed to parse JSON response: {} (content-type: {})",
+            e, content_type
+        )
+    })?;
+    let output = value.get("output").cloned().or(Some(value));
+    Ok(HttpStatusSummary {
+        reachable: true,
+        status_code: Some(status.as_u16()),
+        content_type: Some(content_type),
+        error: None,
+        output,
+    })
+}
+
+async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> {
+    let systemd = query_systemd_status();
+    let token = resolve_status_token(&opts)?;
+    let http = fetch_runtime_status(&opts.url, token.as_deref()).await?;
+    let output = http.output.as_ref();
+    let auth_enabled = output.and_then(|v| v.get("auth_enabled")).cloned();
+    let configured_public_url = output
+        .and_then(|v| v.get("configured_public_url"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let tools_count = output
+        .and_then(|v| v.pointer("/tools/count"))
+        .and_then(Value::as_u64);
+    let agents_online_count = output
+        .and_then(|v| v.pointer("/agents/online_count"))
+        .and_then(Value::as_u64);
+    if opts.json {
+        let summary = json!({
+            "http_reachable": http.reachable,
+            "http_status_code": http.status_code,
+            "http_content_type": http.content_type,
+            "http_error": http.error,
+            "service": {
+                "active": systemd.active,
+                "enabled": systemd.enabled,
+            },
+            "auth_enabled": auth_enabled.unwrap_or(Value::Null),
+            "configured_public_url": configured_public_url,
+            "tools": {
+                "count": tools_count,
+            },
+            "agents": {
+                "online_count": agents_online_count,
+            },
+        });
+        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+    }
+    let mut out = String::new();
+    out.push_str("Server status:\n\n");
+    out.push_str(&format!(
+        "  HTTP reachable:        {}\n",
+        if http.reachable { "yes" } else { "no" }
+    ));
+    if !http.reachable {
+        if let Some(code) = http.status_code {
+            out.push_str(&format!("  HTTP status:           {}\n", code));
+        }
+        if let Some(content_type) = &http.content_type {
+            out.push_str(&format!("  HTTP content-type:     {}\n", content_type));
+        }
+        if let Some(error) = &http.error {
+            out.push_str(&format!("  HTTP error:            {}\n", error));
+        }
+    }
+    out.push_str(&format!("  service active:        {}\n", systemd.active));
+    out.push_str(&format!("  service enabled:       {}\n", systemd.enabled));
+    out.push_str(&format!(
+        "  auth_enabled:          {}\n",
+        auth_enabled
+            .as_ref()
+            .map(Value::to_string)
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    out.push_str(&format!(
+        "  configured_public_url: {}\n",
+        if configured_public_url.is_null() {
+            "null".to_string()
+        } else {
+            configured_public_url
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| configured_public_url.to_string())
+        }
+    ));
+    out.push_str(&format!(
+        "  tools.count:           {}\n",
+        tools_count
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    out.push_str(&format!(
+        "  agents.online_count:   {}\n",
+        agents_online_count
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    Ok(out)
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match cli_action(std::env::args().skip(1)) {
@@ -632,6 +1479,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         CliAction::SetupSingleUser(opts) => match run_setup_single_user(opts).await {
             Ok(stdout) => {
                 println!("{}", stdout);
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::ServerInit(opts) => match run_server_init(opts) {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::ServerInstallService(opts) => match run_server_install_service(opts) {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::ServerStatus(opts) => match run_server_status(opts).await {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
                 std::process::exit(0);
             }
             Err(stderr) => {
@@ -992,6 +1878,186 @@ mod tests {
     }
 
     #[test]
+    fn server_init_parse_defaults() {
+        let opts = parse_server_init(&args(&[])).unwrap();
+        assert_eq!(opts.listen, "127.0.0.1:8080");
+        if is_effective_root() {
+            assert_eq!(opts.data_dir, PathBuf::from("/var/lib/webcodex"));
+            assert_eq!(opts.env_file, PathBuf::from("/etc/webcodex/webcodex.env"));
+        } else {
+            assert!(opts.data_dir.ends_with(".local/share/webcodex"));
+            assert!(opts.env_file.ends_with(".config/webcodex/webcodex.env"));
+        }
+        assert!(!opts.overwrite);
+        assert!(!opts.json);
+    }
+
+    #[test]
+    fn server_init_writes_env_file_and_0600_permissions() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("etc/webcodex.env");
+        let data_dir = tmp.path().join("data");
+        let opts = parse_server_init(&args(&[
+            "--listen",
+            "127.0.0.1:9090",
+            "--data-dir",
+            data_dir.to_str().unwrap(),
+            "--env-file",
+            env_file.to_str().unwrap(),
+            "--public-url",
+            "https://example.test/",
+        ]))
+        .unwrap();
+        let output = run_server_init(opts).unwrap();
+        let content = std::fs::read_to_string(&env_file).unwrap();
+        assert!(content.contains("WEBCODEX_ADDR=127.0.0.1:9090\n"));
+        assert!(content.contains(&format!("WEBCODEX_DATA={}\n", data_dir.display())));
+        assert!(content.contains("WEBCODEX_TOKEN=wc_boot_"));
+        assert!(content.contains("WEBCODEX_PUBLIC_URL=https://example.test\n"));
+        let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
+        assert!(!output.contains(&token));
+        assert!(output.contains("token prefix:"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&env_file).unwrap().permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600);
+        }
+    }
+
+    #[test]
+    fn server_init_refuses_overwrite_unless_requested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("webcodex.env");
+        std::fs::write(&env_file, "WEBCODEX_TOKEN=old\n").unwrap();
+        let mut opts = parse_server_init(&args(&[
+            "--env-file",
+            env_file.to_str().unwrap(),
+            "--data-dir",
+            tmp.path().to_str().unwrap(),
+        ]))
+        .unwrap();
+        let err = run_server_init(opts.clone()).unwrap_err();
+        assert!(err.contains("already exists"));
+        opts.overwrite = true;
+        run_server_init(opts).unwrap();
+        let content = std::fs::read_to_string(&env_file).unwrap();
+        assert!(content.contains("WEBCODEX_ADDR="));
+        assert!(!content.contains("WEBCODEX_TOKEN=old"));
+    }
+
+    #[test]
+    fn server_init_json_output_does_not_include_full_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("webcodex.env");
+        let opts = parse_server_init(&args(&[
+            "--env-file",
+            env_file.to_str().unwrap(),
+            "--data-dir",
+            tmp.path().to_str().unwrap(),
+            "--json",
+        ]))
+        .unwrap();
+        let output = run_server_init(opts).unwrap();
+        let content = std::fs::read_to_string(&env_file).unwrap();
+        let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
+        assert!(!output.contains(&token));
+        let json: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(json["wrote_env_file"], true);
+        assert!(json["token_prefix"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_boot"));
+        assert!(json.get("token").is_none());
+    }
+
+    #[test]
+    fn server_init_output_stdout_explicitly_prints_env_contents_with_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("webcodex.env");
+        let opts = parse_server_init(&args(&[
+            "--env-file",
+            env_file.to_str().unwrap(),
+            "--data-dir",
+            tmp.path().to_str().unwrap(),
+            "--output",
+            "-",
+        ]))
+        .unwrap();
+        let output = run_server_init(opts).unwrap();
+        let content = std::fs::read_to_string(&env_file).unwrap();
+        let token = parse_env_content_value(&content, "WEBCODEX_TOKEN").unwrap();
+        assert_eq!(output, content);
+        assert!(output.contains(&format!("WEBCODEX_TOKEN={}", token)));
+        assert!(server_init_usage().contains("including the full WEBCODEX_TOKEN"));
+    }
+
+    #[test]
+    fn install_service_generates_expected_unit_without_tokens() {
+        let opts = parse_server_install_service(&args(&[
+            "--env-file",
+            "/etc/webcodex/webcodex.env",
+            "--bin",
+            "/usr/local/bin/webcodex",
+            "--working-directory",
+            "/var/lib/webcodex",
+            "--user",
+            "webcodex",
+            "--group",
+            "webcodex",
+            "--dry-run",
+        ]))
+        .unwrap();
+        let unit = run_server_install_service(opts).unwrap();
+        assert!(unit.contains("[Unit]\nDescription=WebCodex Runtime\n"));
+        assert!(unit.contains("EnvironmentFile=/etc/webcodex/webcodex.env\n"));
+        assert!(unit.contains("ExecStart=/usr/local/bin/webcodex\n"));
+        assert!(unit.contains("WorkingDirectory=/var/lib/webcodex\n"));
+        assert!(unit.contains("User=webcodex\n"));
+        assert!(unit.contains("Group=webcodex\n"));
+        assert!(!unit.contains("WEBCODEX_TOKEN"));
+        assert!(!unit.contains("wc_boot_"));
+    }
+
+    #[test]
+    fn install_service_refuses_overwrite_unless_requested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service_file = tmp.path().join("webcodex.service");
+        std::fs::write(&service_file, "old").unwrap();
+        let opts = parse_server_install_service(&args(&[
+            "--bin",
+            "/usr/local/bin/webcodex",
+            "--service-file",
+            service_file.to_str().unwrap(),
+        ]))
+        .unwrap();
+        let err = run_server_install_service(opts).unwrap_err();
+        assert!(err.contains("already exists"));
+    }
+
+    #[test]
+    fn install_service_dry_run_and_output_work_without_systemd() {
+        let dry =
+            parse_server_install_service(&args(&["--bin", "/usr/local/bin/webcodex", "--dry-run"]))
+                .unwrap();
+        assert!(run_server_install_service(dry)
+            .unwrap()
+            .contains("ExecStart=/usr/local/bin/webcodex"));
+
+        let out = parse_server_install_service(&args(&[
+            "--bin",
+            "/usr/local/bin/webcodex",
+            "--output",
+            "-",
+            "--json",
+        ]))
+        .unwrap();
+        let json: Value = serde_json::from_str(&run_server_install_service(out).unwrap()).unwrap();
+        assert_eq!(json["dry_run"], true);
+        assert!(json["unit"].as_str().unwrap().contains("[Service]"));
+    }
+
+    #[test]
     fn token_prefix_never_exposes_full_token() {
         let p = token_prefix("wc_abcdef0123456789");
         assert!(p.ends_with('…'));
@@ -1151,6 +2217,149 @@ mod tests {
         assert!(summary.contains("\"user_already_existed\": true"));
         assert!(!summary.contains(&bootstrap));
         assert!(!summary.contains("wc_user_ae_fake_token"));
+    }
+
+    #[tokio::test]
+    async fn server_status_parses_env_token_posts_and_does_not_print_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 16384];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            tx.send(request.clone()).unwrap();
+            let body = r#"{"success":true,"output":{"service":"webcodex","auth_enabled":true,"configured_public_url":"https://example.test","tools":{"count":12},"agents":{"online_count":2}}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("webcodex.env");
+        let token = "secret-status-token";
+        std::fs::write(&env_file, format!("WEBCODEX_TOKEN={}\n", token)).unwrap();
+        let opts = parse_server_status(&args(&[
+            "--url",
+            &format!("http://{}", addr),
+            "--env-file",
+            env_file.to_str().unwrap(),
+        ]))
+        .unwrap();
+        let output = run_server_status(opts).await.unwrap();
+        handle.join().unwrap();
+        let request = rx.recv().unwrap();
+        assert!(request.starts_with("POST /api/runtime/status "));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer secret-status-token"));
+        assert!(!output.contains(token));
+        assert!(output.contains("HTTP reachable:        yes"));
+        assert!(output.contains("auth_enabled:          true"));
+        assert!(output.contains("configured_public_url: https://example.test"));
+        assert!(output.contains("tools.count:           12"));
+        assert!(output.contains("agents.online_count:   2"));
+    }
+
+    #[tokio::test]
+    async fn server_status_token_file_takes_priority_over_env_file() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 16384];
+            let n = stream.read(&mut buf).unwrap();
+            tx.send(String::from_utf8_lossy(&buf[..n]).to_string())
+                .unwrap();
+            let body = r#"{"success":true,"output":{"auth_enabled":true,"configured_public_url":null,"tools":{"count":0},"agents":{"online_count":0}}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("webcodex.env");
+        let token_file = tmp.path().join("token");
+        std::fs::write(&env_file, "WEBCODEX_TOKEN=env-token\n").unwrap();
+        std::fs::write(&token_file, "file-token\n").unwrap();
+        let opts = parse_server_status(&args(&[
+            "--url",
+            &format!("http://{}", addr),
+            "--env-file",
+            env_file.to_str().unwrap(),
+            "--token-file",
+            token_file.to_str().unwrap(),
+            "--json",
+        ]))
+        .unwrap();
+        let output = run_server_status(opts).await.unwrap();
+        handle.join().unwrap();
+        let request = rx.recv().unwrap();
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer file-token"));
+        assert!(!request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer env-token"));
+        assert!(!output.contains("file-token"));
+        assert!(!output.contains("env-token"));
+    }
+
+    #[tokio::test]
+    async fn server_status_connection_failure_reports_unreachable_without_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        drop(listener);
+
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("webcodex.env");
+        let token = "connection-failure-token";
+        std::fs::write(&env_file, format!("WEBCODEX_TOKEN={}\n", token)).unwrap();
+        let opts = parse_server_status(&args(&[
+            "--url",
+            &format!("http://{}", addr),
+            "--env-file",
+            env_file.to_str().unwrap(),
+        ]))
+        .unwrap();
+        let output = run_server_status(opts).await.unwrap();
+        assert!(output.contains("HTTP reachable:        no"));
+        assert!(output.contains("HTTP error:"));
+        assert!(!output.contains(token));
+    }
+
+    #[tokio::test]
+    async fn server_status_non_json_error_reports_status_and_content_type_only() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = stream.read(&mut buf).unwrap();
+            let body = "secret body should not be printed";
+            write!(
+                stream,
+                "HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/html; charset=utf-8\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let opts = parse_server_status(&args(&["--url", &format!("http://{}", addr)])).unwrap();
+        let output = run_server_status(opts).await.unwrap();
+        handle.join().unwrap();
+        assert!(output.contains("HTTP reachable:        no"));
+        assert!(output.contains("HTTP status:           502"));
+        assert!(output.contains("HTTP content-type:     text/html; charset=utf-8"));
+        assert!(!output.contains("secret body"));
     }
 
     #[test]

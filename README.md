@@ -8,13 +8,23 @@ WebCodex is a self-hosted runtime that exposes controlled project tools to ChatG
 - `webcodex-agent` — project execution agent.
 - `webcodex-cli` — recommended management and initialization CLI.
 
-Recommended first setup:
+Recommended server-first setup assumes the npm packages are installed:
 
 ```bash
-webcodex-cli setup single-user
+npm install -g @webcodex/server @webcodex/cli
+sudo webcodex-cli server init \
+  --listen 127.0.0.1:8080 \
+  --data-dir /var/lib/webcodex \
+  --env-file /etc/webcodex/webcodex.env
+sudo webcodex-cli server install-service \
+  --env-file /etc/webcodex/webcodex.env \
+  --bin /usr/local/bin/webcodex
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex
+webcodex-cli server status --env-file /etc/webcodex/webcodex.env
 ```
 
-That command is the preferred one-shot entry point for creating a user API token for GPT Actions/MCP and an agent token for `webcodex-agent`.
+`server init` creates only the server bootstrap/admin `WEBCODEX_TOKEN`. It does not create `wc_pat_...` user API tokens or `wc_agent_...` agent tokens; those belong to a later client-side setup/enroll flow.
 
 Recommended agent config generation:
 
@@ -22,7 +32,7 @@ Recommended agent config generation:
 webcodex-cli agent init
 ```
 
-The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, and `webcodex-agent init` commands still work as compatibility entry points, but new documentation should prefer `webcodex-cli`.
+The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, `webcodex-cli setup single-user`, and `webcodex-agent init` commands still work as compatibility entry points, but new server bootstrap docs should prefer `webcodex-cli server ...`.
 
 ## Runtime surfaces
 
@@ -32,6 +42,8 @@ The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, and `web
 - Agent WebSocket: `GET /api/agents/ws`.
 
 GPT Actions and MCP share the same `ToolRuntime`. The GPT Actions OpenAPI surface is intentionally limited to project/runtime/job tools and does not expose user, API-token, agent-token, setup, or audit management endpoints.
+
+GPT Actions need a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup; use nginx, Caddy, Cloudflare Tunnel, ngrok, or similar infrastructure separately.
 
 ## Authentication
 

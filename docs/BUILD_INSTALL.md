@@ -14,15 +14,41 @@ webcodex-cli
 
 Do not run unauthenticated production deployments.
 
-## Initial setup
+## Install packages
 
-Recommended single-user setup:
+The documented distribution path assumes:
 
 ```bash
-webcodex-cli setup single-user
+npm install -g @webcodex/server @webcodex/cli
 ```
 
-This creates the initial user API token for GPT Actions/MCP and an agent token for the agent.
+## Server bootstrap
+
+Initialize the server env file:
+
+```bash
+sudo webcodex-cli server init \
+  --listen 127.0.0.1:8080 \
+  --data-dir /var/lib/webcodex \
+  --env-file /etc/webcodex/webcodex.env
+```
+
+This creates only the server bootstrap/admin `WEBCODEX_TOKEN`. It does not create user API tokens or agent tokens.
+
+Install and start the service:
+
+```bash
+sudo webcodex-cli server install-service \
+  --env-file /etc/webcodex/webcodex.env \
+  --bin /usr/local/bin/webcodex
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex
+webcodex-cli server status --env-file /etc/webcodex/webcodex.env
+```
+
+User and agent token setup is a separate client-side setup/enroll flow.
+
+GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxies or tunnels; configure nginx, Caddy, Cloudflare Tunnel, ngrok, or similar infrastructure separately if needed.
 
 Compatibility commands still work, but should not be the first choice in new docs:
 
@@ -30,6 +56,7 @@ Compatibility commands still work, but should not be the first choice in new doc
 webcodex users ...
 webcodex tokens ...
 webcodex agent-tokens ...
+webcodex-cli setup single-user
 ```
 
 ## Agent config

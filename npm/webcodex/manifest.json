@@ -1,0 +1,16 @@
+{
+  "artifacts": {
+    "linux-x64": {
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.1.0/webcodex-v0.1.0-linux-x64.tar.gz",
+      "sha256": "ed866b1cf43d227b2cbaa53a88229abb0871d6842a44bf3557b71503ddc8a6ed"
+    },
+    "linux-arm64": {
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.1.0/webcodex-v0.1.0-linux-arm64.tar.gz",
+      "sha256": "cdc5ccf10b509d9650636b6460f5a172b51fd32cacc245e4fdc595b079658683"
+    },
+    "darwin-arm64": {
+      "url": "https://github.com/yyjeqhc/webcodex/releases/download/v0.1.0/webcodex-v0.1.0-darwin-arm64.tar.gz",
+      "sha256": "33aa991670cac5611f5f421c5d8bc153788dc6221f2b3fe7e541b6d912824b94"
+    }
+  }
+}

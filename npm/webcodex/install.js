@@ -12,7 +12,9 @@ const zlib = require("zlib");
 
 const ROOT = __dirname;
 const VENDOR_BIN = path.join(ROOT, "vendor", "bin");
-const DEFAULT_MANIFEST = path.join(ROOT, "manifest.example.json");
+const RELEASE_MANIFEST = path.join(ROOT, "manifest.json");
+const EXAMPLE_MANIFEST = path.join(ROOT, "manifest.example.json");
+const DEFAULT_MANIFEST = fs.existsSync(RELEASE_MANIFEST) ? RELEASE_MANIFEST : EXAMPLE_MANIFEST;
 
 function platformKey(platform = process.platform, arch = process.arch) {
   const supported = new Set([
@@ -47,28 +49,50 @@ function readJsonFile(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
 }
 
-function fetchToFile(urlString, dest) {
-  const url = new URL(urlString);
-  if (url.protocol === "file:") {
-    fs.copyFileSync(url, dest);
-    return Promise.resolve();
+function fetchToFile(url, dest, redirects = 0) {
+  if (redirects > 5) {
+    return Promise.reject(new Error("Too many redirects"));
   }
-  const client = url.protocol === "https:" ? https : url.protocol === "http:" ? http : null;
-  if (!client) {
-    return Promise.reject(new Error(`Unsupported artifact URL protocol: ${url.protocol}`));
-  }
+
   return new Promise((resolve, reject) => {
+    const client = url.startsWith("https:") ? https : http;
+
     const req = client.get(url, (res) => {
-      if (res.statusCode < 200 || res.statusCode >= 300) {
-        reject(new Error(`Download failed with HTTP ${res.statusCode}`));
+      const status = res.statusCode || 0;
+
+      if ([301, 302, 303, 307, 308].includes(status)) {
+        const location = res.headers.location;
         res.resume();
+
+        if (!location) {
+          reject(new Error(`Redirect ${status} without Location header`));
+          return;
+        }
+
+        const nextUrl = new URL(location, url).toString();
+        fetchToFile(nextUrl, dest, redirects + 1).then(resolve, reject);
         return;
       }
-      const out = fs.createWriteStream(dest, { mode: 0o600 });
-      res.pipe(out);
-      out.on("finish", () => out.close(resolve));
-      out.on("error", reject);
+
+      if (status !== 200) {
+        res.resume();
+        reject(new Error(`Download failed with HTTP ${status}`));
+        return;
+      }
+
+      const file = fs.createWriteStream(dest);
+      res.pipe(file);
+
+      file.on("finish", () => {
+        file.close(resolve);
+      });
+
+      file.on("error", (err) => {
+        fs.rmSync(dest, { force: true });
+        reject(err);
+      });
     });
+
     req.on("error", reject);
   });
 }

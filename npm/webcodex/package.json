@@ -1,5 +1,5 @@
 {
-  "name": "@webcodex/webcodex",
+  "name": "@yyjeqhc/webcodex",
   "version": "0.1.0",
   "description": "MVP npm wrapper for WebCodex native binaries.",
   "license": "MIT",
@@ -15,11 +15,19 @@
   "files": [
     "bin",
     "install.js",
+    "manifest.json",
     "manifest.example.json",
     "README.md",
     "vendor/.gitkeep"
   ],
   "engines": {
     "node": ">=18"
-  }
+  },
+  "repository": {
+    "url": "git+https://github.com/yyjeqhc/webcodex.git"
+  },
+  "bugs": {
+    "url": "https://github.com/yyjeqhc/webcodex/issues"
+  },
+  "homepage": "https://github.com/yyjeqhc/webcodex#readme"
 }

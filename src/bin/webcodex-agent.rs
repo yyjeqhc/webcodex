@@ -752,6 +752,11 @@ impl AgentProjectCache {
         self.refreshed_at = Some(Instant::now());
         self.projects.clone()
     }
+
+    fn invalidate(&mut self) {
+        self.projects.clear();
+        self.refreshed_at = None;
+    }
 }
 
 fn endpoint(cfg: &AgentConfig, path: &str) -> String {
@@ -1301,6 +1306,589 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
     }
 }
 
+/// System directories that must never be used as a project root unless they are
+/// explicitly under an `allowed_roots` entry. Even when `allow_cwd_anywhere`
+/// is true, these roots are rejected to prevent accidental registration of
+/// critical system paths.
+const DANGEROUS_PROJECT_ROOTS: &[&str] = &[
+    "/", "/etc", "/bin", "/sbin", "/usr", "/var", "/proc", "/sys", "/dev", "/run", "/boot",
+];
+
+/// Escape a string for use as a TOML basic string (double-quoted). NUL is
+/// rejected up front by validation, so we only handle backslash, quote, and
+/// common control characters.
+fn toml_basic_string(value: &str) -> String {
+    let escaped = value
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
+        .replace('\t', "\\t");
+    format!("\"{}\"", escaped)
+}
+
+/// Build a deterministic project TOML string compatible with the existing
+/// `parse_agent_project_toml` parser. The field order is fixed so the output
+/// is reproducible.
+fn build_project_toml(
+    id: &str,
+    name: &str,
+    path: &str,
+    description: &Option<String>,
+    allow_patch: bool,
+) -> String {
+    let mut toml = String::new();
+    toml.push_str(&format!("id = {}\n", toml_basic_string(id)));
+    toml.push_str(&format!("name = {}\n", toml_basic_string(name)));
+    toml.push_str(&format!("path = {}\n", toml_basic_string(path)));
+    if let Some(desc) = description {
+        toml.push_str(&format!("description = {}\n", toml_basic_string(desc)));
+    }
+    toml.push_str(&format!("allow_patch = {}\n", allow_patch));
+    toml
+}
+
+/// Validate the project `id` for project-management operations. Stricter than
+/// the existing `validate_project_id`: no dots (prevents any path-like
+/// interpretation), only ASCII letters/digits/dash/underscore.
+fn validate_project_op_id(id: &str) -> Result<(), String> {
+    if id.is_empty() {
+        return Err("id cannot be empty".to_string());
+    }
+    if id.contains('\0') {
+        return Err("id must not contain NUL".to_string());
+    }
+    if id.len() > 64 {
+        return Err("id must be at most 64 characters".to_string());
+    }
+    if id.contains('/') || id.contains('\\') {
+        return Err("id must not contain slash or backslash".to_string());
+    }
+    if id == ".." || id == "." || id.contains("..") {
+        return Err("id must not contain dot-dot traversal".to_string());
+    }
+    if !id
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err("id may only contain ASCII letters, digits, '-', and '_'".to_string());
+    }
+    Ok(())
+}
+
+/// Validate the project `name`: non-empty after trim, <= 120 chars, no NUL.
+fn validate_project_op_name(name: &str) -> Result<(), String> {
+    if name.contains('\0') {
+        return Err("name must not contain NUL".to_string());
+    }
+    if name.trim().is_empty() {
+        return Err("name cannot be empty".to_string());
+    }
+    if name.len() > 120 {
+        return Err("name must be at most 120 characters".to_string());
+    }
+    Ok(())
+}
+
+/// Validate the optional `description`: <= 500 chars, no NUL.
+fn validate_project_op_description(desc: &str) -> Result<(), String> {
+    if desc.contains('\0') {
+        return Err("description must not contain NUL".to_string());
+    }
+    if desc.len() > 500 {
+        return Err("description must be at most 500 characters".to_string());
+    }
+    Ok(())
+}
+
+/// Check whether a canonicalized project path is allowed by the agent policy.
+/// Returns Ok(()) if the path is safe, Err otherwise.
+///
+/// - If `allow_cwd_anywhere` is false, the path must be under an explicit
+///   `allowed_roots` entry.
+/// - If `allow_cwd_anywhere` is true, the path is allowed unless it is one of
+///   the `DANGEROUS_PROJECT_ROOTS` (and not under an explicit `allowed_roots`).
+fn validate_project_path_policy(policy: &AgentPolicy, canonical_path: &Path) -> Result<(), String> {
+    let path_str = canonical_path.to_string_lossy().to_string();
+    // If under an explicit allowed_root, always allow.
+    for root in &policy.allowed_roots {
+        if let Ok(canonical_root) = canonicalize_existing(root) {
+            if canonical_path == &canonical_root || canonical_path.starts_with(&canonical_root) {
+                return Ok(());
+            }
+        }
+    }
+    if !policy.allow_cwd_anywhere {
+        return Err(format!(
+            "path {} is outside allowed_roots and allow_cwd_anywhere is false",
+            path_str
+        ));
+    }
+    // allow_cwd_anywhere is true: reject dangerous system roots.
+    for &dangerous in DANGEROUS_PROJECT_ROOTS {
+        let dangerous_root = Path::new(dangerous);
+        let is_dangerous = if dangerous_root == Path::new("/") {
+            canonical_path == dangerous_root
+        } else {
+            canonical_path == dangerous_root || canonical_path.starts_with(dangerous_root)
+        };
+        if is_dangerous {
+            return Err(format!(
+                "path {} is under a dangerous system root; register it under an explicit allowed_roots entry if intended",
+                path_str
+            ));
+        }
+    }
+    Ok(())
+}
+
+#[derive(Debug, Clone)]
+struct ProjectTomlWriteResult {
+    config_path: PathBuf,
+    created_config: bool,
+    overwritten: bool,
+}
+
+/// Write a project TOML file atomically into `projects_dir`. Creates
+/// `projects_dir` if missing. Returns write metadata on success.
+/// The temp file is written and fsynced, then renamed to `<id>.toml`.
+fn write_project_toml_atomic(
+    projects_dir: &Path,
+    id: &str,
+    toml_content: &str,
+    overwrite: bool,
+) -> Result<ProjectTomlWriteResult, String> {
+    // Ensure projects_dir exists.
+    std::fs::create_dir_all(projects_dir).map_err(|e| {
+        format!(
+            "failed to create projects_dir {}: {}",
+            projects_dir.display(),
+            e
+        )
+    })?;
+    let canonical_dir = canonicalize_existing(projects_dir)?;
+    let config_path = canonical_dir.join(format!("{}.toml", id));
+    // Guard against path escape: the final config path must be inside the
+    // canonical projects_dir. The id validation already rejects slashes and
+    // dot-dot, but this is a defense-in-depth check.
+    if !config_path.starts_with(&canonical_dir) {
+        return Err("project config path would escape projects_dir".to_string());
+    }
+    let existed_before = config_path.exists();
+    if existed_before && !overwrite {
+        return Err(format!(
+            "project config already exists at {}; set overwrite=true to replace",
+            config_path.display()
+        ));
+    }
+    let temp_path = canonical_dir.join(format!(".{}.toml.tmp", id));
+    {
+        let mut file = std::fs::File::create(&temp_path)
+            .map_err(|e| format!("failed to create temp file {}: {}", temp_path.display(), e))?;
+        file.write_all(toml_content.as_bytes())
+            .map_err(|e| format!("failed to write temp file {}: {}", temp_path.display(), e))?;
+        let _ = file.sync_all();
+    }
+    std::fs::rename(&temp_path, &config_path).map_err(|e| {
+        format!(
+            "failed to rename temp file to {}: {}",
+            config_path.display(),
+            e
+        )
+    })?;
+    Ok(ProjectTomlWriteResult {
+        config_path,
+        created_config: !existed_before,
+        overwritten: existed_before && overwrite,
+    })
+}
+
+/// Handle `register_project` / `create_project` agent requests. Parses the
+/// JSON payload from `request.stdin`, validates fields and path against
+/// policy, writes `projects_dir/<id>.toml` atomically (and for
+/// `create_project` creates the directory / templates / optional git init),
+/// and returns structured JSON in `CommandResult.stdout`.
+fn handle_project_op(
+    policy: &AgentPolicy,
+    projects_dir: &Path,
+    request: &ShellAgentShellRequest,
+) -> CommandResult {
+    let start = Instant::now();
+    let kind = request.kind.as_str();
+    let payload = match request.stdin.as_deref() {
+        Some(s) if !s.is_empty() => s,
+        _ => {
+            return CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(format!("{} request missing stdin payload", kind)),
+            };
+        }
+    };
+    let json: serde_json::Value = match serde_json::from_str(payload) {
+        Ok(v) => v,
+        Err(e) => {
+            return CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(format!("failed to parse {} payload: {}", kind, e)),
+            };
+        }
+    };
+    let get_str = |key: &str| -> Result<String, String> {
+        json.get(key)
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .ok_or_else(|| format!("{} missing required field '{}'", kind, key))
+    };
+    let id = match get_str("id") {
+        Ok(v) => v,
+        Err(e) => return err_cmd(start, e),
+    };
+    let name = match get_str("name") {
+        Ok(v) => v,
+        Err(e) => return err_cmd(start, e),
+    };
+    let path = match get_str("path") {
+        Ok(v) => v,
+        Err(e) => return err_cmd(start, e),
+    };
+    let description = json
+        .get("description")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let allow_patch = json
+        .get("allow_patch")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(true);
+    let overwrite = json
+        .get("overwrite")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if let Err(e) = validate_project_op_id(&id) {
+        return err_cmd(start, e);
+    }
+    if let Err(e) = validate_project_op_name(&name) {
+        return err_cmd(start, e);
+    }
+    if let Some(ref desc) = description {
+        if let Err(e) = validate_project_op_description(desc) {
+            return err_cmd(start, e);
+        }
+    }
+    if path.is_empty() || path.contains('\0') || !path.starts_with('/') {
+        return err_cmd(start, "path must be a non-empty absolute path".to_string());
+    }
+
+    let client_id = request.client_id.clone();
+    let runtime_id = format!("agent:{}:{}", client_id, id);
+
+    let toml_content = build_project_toml(&id, &name, &path, &description, allow_patch);
+
+    if kind == "register_project" {
+        // The directory must exist and be a directory.
+        let path_buf = PathBuf::from(&path);
+        let canonical = match path_buf.canonicalize() {
+            Ok(c) => c,
+            Err(e) => {
+                return err_cmd(
+                    start,
+                    format!(
+                        "path does not exist or cannot be canonicalized: {}: {}",
+                        path, e
+                    ),
+                );
+            }
+        };
+        if !canonical.is_dir() {
+            return err_cmd(start, format!("path {} is not a directory", path));
+        }
+        if let Err(e) = validate_project_path_policy(policy, &canonical) {
+            return err_cmd(start, e);
+        }
+        let write_result =
+            match write_project_toml_atomic(projects_dir, &id, &toml_content, overwrite) {
+                Ok(p) => p,
+                Err(e) => return err_cmd(start, e),
+            };
+        let result = serde_json::json!({
+            "id": runtime_id,
+            "agent_project_id": id,
+            "client_id": client_id,
+            "name": name,
+            "path": path,
+            "description": description,
+            "projects_config_path": write_result.config_path.to_string_lossy(),
+            "created_config": write_result.created_config,
+            "overwritten": write_result.overwritten,
+            "allow_patch": allow_patch,
+        });
+        return ok_cmd(start, result);
+    }
+
+    // create_project
+    let template = json
+        .get("template")
+        .and_then(|v| v.as_str())
+        .unwrap_or("empty")
+        .to_string();
+    let git_init = json
+        .get("git_init")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let allow_existing_empty = json
+        .get("allow_existing_empty")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    if template != "empty" && template != "basic" {
+        return err_cmd(
+            start,
+            format!("unknown template '{}'; supported: empty, basic", template),
+        );
+    }
+
+    let path_buf = PathBuf::from(&path);
+    let mut created_directory = false;
+    let mut created_paths = CreatedProjectPaths::default();
+
+    // Determine the canonical parent for policy validation. If the path exists,
+    // canonicalize it directly. If not, canonicalize the existing ancestor.
+    let canonical_for_policy = if path_buf.exists() {
+        match path_buf.canonicalize() {
+            Ok(c) => c,
+            Err(e) => {
+                return err_cmd(
+                    start,
+                    format!("path cannot be canonicalized: {}: {}", path, e),
+                );
+            }
+        }
+    } else {
+        // Find the nearest existing ancestor and canonicalize it.
+        let mut ancestor = path_buf.clone();
+        while !ancestor.exists() {
+            if let Some(parent) = ancestor.parent() {
+                ancestor = parent.to_path_buf();
+            } else {
+                break;
+            }
+        }
+        match ancestor.canonicalize() {
+            Ok(c) => c,
+            Err(e) => {
+                return err_cmd(
+                    start,
+                    format!(
+                        "parent path cannot be canonicalized: {}: {}",
+                        ancestor.display(),
+                        e
+                    ),
+                );
+            }
+        }
+    };
+    if let Err(e) = validate_project_path_policy(policy, &canonical_for_policy) {
+        return err_cmd(start, e);
+    }
+
+    // Handle existing vs new directory.
+    if path_buf.exists() {
+        let meta = match std::fs::metadata(&path_buf) {
+            Ok(m) => m,
+            Err(e) => return err_cmd(start, format!("failed to stat path {}: {}", path, e)),
+        };
+        if !meta.is_dir() {
+            return err_cmd(
+                start,
+                format!("path {} exists but is not a directory", path),
+            );
+        }
+        // Check if the directory is empty.
+        let is_empty = match std::fs::read_dir(&path_buf) {
+            Ok(mut it) => it.next().is_none(),
+            Err(e) => {
+                return err_cmd(start, format!("failed to read directory {}: {}", path, e));
+            }
+        };
+        if !is_empty {
+            return err_cmd(
+                start,
+                format!("path {} already exists and is not empty", path),
+            );
+        }
+        if !allow_existing_empty {
+            return err_cmd(
+                start,
+                format!(
+                    "path {} already exists; set allow_existing_empty=true to use it",
+                    path
+                ),
+            );
+        }
+    } else {
+        // Create the directory.
+        if let Err(e) = std::fs::create_dir_all(&path_buf) {
+            return err_cmd(start, format!("failed to create directory {}: {}", path, e));
+        }
+        created_directory = true;
+        created_paths.mark_project_dir_created(path_buf.clone());
+    }
+
+    // Apply template.
+    if template == "basic" {
+        let readme = if let Some(ref desc) = description {
+            format!("# {}\n\n{}\n", name, desc)
+        } else {
+            format!("# {}\n", name)
+        };
+        let readme_path = path_buf.join("README.md");
+        if let Err(e) = write_created_file(&readme_path, readme.as_bytes(), &mut created_paths) {
+            created_paths.cleanup();
+            return err_cmd(start, format!("failed to write README.md: {}", e));
+        }
+        let gitignore = "target/\nnode_modules/\n.env\n*.log\n";
+        let gitignore_path = path_buf.join(".gitignore");
+        if let Err(e) =
+            write_created_file(&gitignore_path, gitignore.as_bytes(), &mut created_paths)
+        {
+            created_paths.cleanup();
+            return err_cmd(start, format!("failed to write .gitignore: {}", e));
+        }
+    } else if template == "empty" {
+        // For empty template, optionally create README.md if description is provided.
+        if let Some(ref desc) = description {
+            let readme = format!("# {}\n\n{}\n", name, desc);
+            let readme_path = path_buf.join("README.md");
+            if let Err(e) = write_created_file(&readme_path, readme.as_bytes(), &mut created_paths)
+            {
+                created_paths.cleanup();
+                return err_cmd(start, format!("failed to write README.md: {}", e));
+            }
+        }
+    }
+
+    // git init.
+    let mut git_initialized = false;
+    if git_init {
+        match std::process::Command::new("git")
+            .arg("init")
+            .current_dir(&path_buf)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .output()
+        {
+            Ok(output) if output.status.success() => {
+                git_initialized = true;
+                created_paths.track(path_buf.join(".git"));
+            }
+            Ok(output) => {
+                created_paths.cleanup();
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                return err_cmd(start, format!("git init failed: {}", stderr.trim()));
+            }
+            Err(e) => {
+                created_paths.cleanup();
+                return err_cmd(start, format!("git init failed (is git installed?): {}", e));
+            }
+        }
+    }
+
+    // Write project TOML.
+    let write_result = match write_project_toml_atomic(projects_dir, &id, &toml_content, overwrite)
+    {
+        Ok(p) => p,
+        Err(e) => {
+            created_paths.cleanup();
+            return err_cmd(start, e);
+        }
+    };
+    let result = serde_json::json!({
+        "id": runtime_id,
+        "agent_project_id": id,
+        "client_id": client_id,
+        "name": name,
+        "path": path,
+        "description": description,
+        "projects_config_path": write_result.config_path.to_string_lossy(),
+        "created_directory": created_directory,
+        "created_config": write_result.created_config,
+        "overwritten": write_result.overwritten,
+        "allow_patch": allow_patch,
+        "template": template,
+        "git_initialized": git_initialized,
+    });
+    ok_cmd(start, result)
+}
+
+/// Build a success `CommandResult` with JSON output in stdout.
+fn ok_cmd(start: Instant, result: serde_json::Value) -> CommandResult {
+    CommandResult {
+        exit_code: Some(0),
+        stdout: Some(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())),
+        stderr: Some(String::new()),
+        duration_ms: Some(start.elapsed().as_millis() as u64),
+        error: None,
+    }
+}
+
+/// Build an error `CommandResult`.
+fn err_cmd(start: Instant, msg: String) -> CommandResult {
+    CommandResult {
+        exit_code: None,
+        stdout: None,
+        stderr: None,
+        duration_ms: Some(start.elapsed().as_millis() as u64),
+        error: Some(msg),
+    }
+}
+
+#[derive(Debug, Default)]
+struct CreatedProjectPaths {
+    project_dir_created: Option<PathBuf>,
+    paths: Vec<PathBuf>,
+}
+
+impl CreatedProjectPaths {
+    fn mark_project_dir_created(&mut self, path: PathBuf) {
+        self.project_dir_created = Some(path);
+    }
+
+    fn track(&mut self, path: PathBuf) {
+        self.paths.push(path);
+    }
+
+    fn cleanup(&self) {
+        for path in self.paths.iter().rev() {
+            if path.is_dir() {
+                let _ = std::fs::remove_dir_all(path);
+            } else if path.exists() {
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        if let Some(dir) = &self.project_dir_created {
+            let _ = std::fs::remove_dir(dir);
+        }
+    }
+}
+
+fn write_created_file(
+    path: &Path,
+    content: &[u8],
+    created_paths: &mut CreatedProjectPaths,
+) -> Result<(), std::io::Error> {
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?;
+    created_paths.track(path.to_path_buf());
+    file.write_all(content)
+}
+
 fn spawn_reader<R: Read + Send + 'static>(
     reader: R,
     tx: mpsc::Sender<OutputChunk>,
@@ -1698,6 +2286,7 @@ fn dispatch_request(
     policy: &AgentPolicy,
     shell: &ShellConfig,
     jobs: &JobManager,
+    projects_dir: &Path,
     request: ShellAgentShellRequest,
 ) -> Result<bool, String> {
     match request.kind.as_str() {
@@ -1718,6 +2307,11 @@ fn dispatch_request(
             let result = handle_file_request(policy, &request);
             sink.submit_result(request_id, result)
         }
+        "register_project" | "create_project" => {
+            let request_id = request.request_id.clone();
+            let result = handle_project_op(policy, projects_dir, &request);
+            sink.submit_result(request_id, result)
+        }
         _ => {
             let request_id = request.request_id.clone();
             let result = run_shell(
@@ -1732,6 +2326,10 @@ fn dispatch_request(
             sink.submit_result(request_id, result)
         }
     }
+}
+
+fn is_project_op(kind: &str) -> bool {
+    kind == "register_project" || kind == "create_project"
 }
 
 fn handle_one_poll(
@@ -1753,13 +2351,25 @@ fn handle_one_poll(
     let Some(request) = response.request else {
         return Ok(false);
     };
+    let project_op = is_project_op(&request.kind);
     let sink = AgentSink::Http(HttpSendConfig {
         client: client.clone(),
         server_url: cfg.server_url.clone(),
         token: cfg.token.clone(),
         client_id: cfg.client_id.clone(),
     });
-    dispatch_request(&sink, &cfg.policy, &cfg.shell, jobs, request)
+    let result = dispatch_request(
+        &sink,
+        &cfg.policy,
+        &cfg.shell,
+        jobs,
+        &projects_dir(&cfg),
+        request,
+    );
+    if project_op && result.is_ok() {
+        project_cache.invalidate();
+    }
+    result
 }
 
 fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
@@ -1873,6 +2483,7 @@ fn run_websocket_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
             let projects = project_cache.get(&cfg);
             match websocket_session(&cfg, projects).await {
                 Ok(()) => {
+                    project_cache.invalidate();
                     if once {
                         return Ok(());
                     }
@@ -1880,6 +2491,7 @@ fn run_websocket_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
                     tokio::time::sleep(WS_RECONNECT_BACKOFF).await;
                 }
                 Err(e) => {
+                    project_cache.invalidate();
                     eprintln!("webcodex-agent websocket error: {}", e);
                     if once {
                         return Err(e);
@@ -2005,11 +2617,19 @@ async fn websocket_session(
                         let policy = cfg.policy.clone();
                         let shell = cfg.shell.clone();
                         let jobs = jobs.clone();
+                        let projects_dir = projects_dir(&cfg);
                         // Execution is blocking (shell/file/jobs); run it off
                         // the async runtime thread. dispatch_request sends
                         // results/updates via the shared AgentSink.
                         tokio::task::spawn_blocking(move || {
-                            let _ = dispatch_request(&sink_handle, &policy, &shell, &jobs, request);
+                            let _ = dispatch_request(
+                                &sink_handle,
+                                &policy,
+                                &shell,
+                                &jobs,
+                                &projects_dir,
+                                request,
+                            );
                         });
                     }
                     AgentEnvelope::Ping { ts } => {
@@ -2558,7 +3178,8 @@ path = "/tmp/webcodex"
             requested_by: "tester".to_string(),
             created_at: 0,
         };
-        let ran = dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, request).unwrap();
+        let pdir = projects_dir(&cfg);
+        let ran = dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, &pdir, request).unwrap();
         assert!(ran);
         let env = rx.try_recv().expect("result envelope was sent");
         match env {
@@ -2569,6 +3190,356 @@ path = "/tmp/webcodex"
             }
             other => panic!("expected result, got {:?}", other.kind()),
         }
+    }
+
+    fn project_policy(root: &Path) -> AgentPolicy {
+        AgentPolicy {
+            allow_cwd_anywhere: false,
+            allowed_roots: vec![root.to_path_buf()],
+            ..AgentPolicy::default()
+        }
+    }
+
+    fn project_request(kind: &str, payload: serde_json::Value) -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: format!("req-{}", kind),
+            client_id: "oe".to_string(),
+            kind: kind.to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            command: String::new(),
+            stdin: Some(payload.to_string()),
+            timeout_secs: 10,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        }
+    }
+
+    fn project_ok(result: CommandResult) -> serde_json::Value {
+        assert_eq!(result.exit_code, Some(0), "unexpected result: {:?}", result);
+        assert!(
+            result.error.is_none(),
+            "unexpected error: {:?}",
+            result.error
+        );
+        serde_json::from_str(result.stdout.as_deref().expect("stdout json")).unwrap()
+    }
+
+    fn project_err(result: CommandResult) -> String {
+        assert!(
+            result.exit_code.is_none(),
+            "unexpected success: {:?}",
+            result
+        );
+        result.error.expect("error")
+    }
+
+    #[test]
+    fn register_project_writes_valid_toml_into_projects_dir() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("repo");
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir(&project_dir).unwrap();
+        let policy = project_policy(tmp.path());
+        let req = project_request(
+            "register_project",
+            serde_json::json!({
+                "id": "demo",
+                "name": "Demo",
+                "path": project_dir.to_string_lossy(),
+                "description": "A demo project",
+                "allow_patch": false
+            }),
+        );
+
+        let value = project_ok(handle_project_op(&policy, &projects_dir, &req));
+        assert_eq!(value["created_config"], true);
+        assert_eq!(value["overwritten"], false);
+
+        let content = std::fs::read_to_string(projects_dir.join("demo.toml")).unwrap();
+        let parsed = parse_agent_project_toml(&content).unwrap();
+        assert_eq!(parsed.id, "demo");
+        assert_eq!(parsed.name.as_deref(), Some("Demo"));
+        assert_eq!(parsed.path, project_dir.to_string_lossy());
+        assert!(!parsed.allow_patch);
+    }
+
+    #[test]
+    fn register_project_rejects_path_outside_allowed_roots() {
+        let allowed = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let projects_dir = allowed.path().join("projects.d");
+        let policy = project_policy(allowed.path());
+        let req = project_request(
+            "register_project",
+            serde_json::json!({
+                "id": "outside",
+                "name": "Outside",
+                "path": outside.path().to_string_lossy()
+            }),
+        );
+
+        let err = project_err(handle_project_op(&policy, &projects_dir, &req));
+        assert!(err.contains("outside allowed_roots"), "{err}");
+        assert!(!projects_dir.join("outside.toml").exists());
+    }
+
+    #[test]
+    fn register_project_rejects_dangerous_subpaths_without_explicit_root() {
+        let policy = AgentPolicy {
+            allow_cwd_anywhere: true,
+            allowed_roots: Vec::new(),
+            ..AgentPolicy::default()
+        };
+
+        for path in [
+            "/etc/nginx",
+            "/usr/local",
+            "/var/lib",
+            "/proc/self",
+            "/dev/shm",
+        ] {
+            let err = validate_project_path_policy(&policy, Path::new(path)).unwrap_err();
+            assert!(err.contains("dangerous system root"), "{path}: {err}");
+        }
+
+        validate_project_path_policy(&policy, Path::new("/usr2/local")).unwrap();
+    }
+
+    #[test]
+    fn register_project_overwrite_semantics_are_accurate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("repo");
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir(&project_dir).unwrap();
+        let policy = project_policy(tmp.path());
+        let payload = |overwrite| {
+            serde_json::json!({
+                "id": "demo",
+                "name": "Demo",
+                "path": project_dir.to_string_lossy(),
+                "overwrite": overwrite
+            })
+        };
+
+        let first = project_ok(handle_project_op(
+            &policy,
+            &projects_dir,
+            &project_request("register_project", payload(false)),
+        ));
+        assert_eq!(first["created_config"], true);
+        assert_eq!(first["overwritten"], false);
+
+        let err = project_err(handle_project_op(
+            &policy,
+            &projects_dir,
+            &project_request("register_project", payload(false)),
+        ));
+        assert!(err.contains("already exists"), "{err}");
+
+        let overwritten = project_ok(handle_project_op(
+            &policy,
+            &projects_dir,
+            &project_request("register_project", payload(true)),
+        ));
+        assert_eq!(overwritten["created_config"], false);
+        assert_eq!(overwritten["overwritten"], true);
+    }
+
+    #[test]
+    fn create_project_basic_creates_readme_and_gitignore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("new-project");
+        let projects_dir = tmp.path().join("projects.d");
+        let policy = project_policy(tmp.path());
+        let req = project_request(
+            "create_project",
+            serde_json::json!({
+                "id": "basic",
+                "name": "Basic",
+                "path": project_dir.to_string_lossy(),
+                "description": "Basic template",
+                "template": "basic"
+            }),
+        );
+
+        let value = project_ok(handle_project_op(&policy, &projects_dir, &req));
+        assert_eq!(value["created_directory"], true);
+        assert!(project_dir.join("README.md").exists());
+        assert!(project_dir.join(".gitignore").exists());
+        assert!(std::fs::read_to_string(project_dir.join("README.md"))
+            .unwrap()
+            .contains("Basic template"));
+    }
+
+    #[test]
+    fn create_project_rejects_existing_non_empty_directory() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("existing");
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir(&project_dir).unwrap();
+        let keep = project_dir.join("keep.txt");
+        std::fs::write(&keep, "keep").unwrap();
+        let policy = project_policy(tmp.path());
+        let req = project_request(
+            "create_project",
+            serde_json::json!({
+                "id": "existing",
+                "name": "Existing",
+                "path": project_dir.to_string_lossy(),
+                "template": "basic",
+                "allow_existing_empty": true
+            }),
+        );
+
+        let err = project_err(handle_project_op(&policy, &projects_dir, &req));
+        assert!(err.contains("not empty"), "{err}");
+        assert_eq!(std::fs::read_to_string(keep).unwrap(), "keep");
+    }
+
+    #[test]
+    fn create_project_rejects_unknown_template() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("new-project");
+        let projects_dir = tmp.path().join("projects.d");
+        let policy = project_policy(tmp.path());
+        let req = project_request(
+            "create_project",
+            serde_json::json!({
+                "id": "badtemplate",
+                "name": "Bad Template",
+                "path": project_dir.to_string_lossy(),
+                "template": "cargo"
+            }),
+        );
+
+        let err = project_err(handle_project_op(&policy, &projects_dir, &req));
+        assert!(err.contains("unknown template"), "{err}");
+        assert!(!project_dir.exists());
+    }
+
+    #[test]
+    fn create_project_created_config_and_overwritten_semantics_are_accurate() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("empty-project");
+        let projects_dir = tmp.path().join("projects.d");
+        let policy = project_policy(tmp.path());
+        let payload = |overwrite| {
+            serde_json::json!({
+                "id": "empty",
+                "name": "Empty",
+                "path": project_dir.to_string_lossy(),
+                "template": "empty",
+                "allow_existing_empty": true,
+                "overwrite": overwrite
+            })
+        };
+
+        let first = project_ok(handle_project_op(
+            &policy,
+            &projects_dir,
+            &project_request("create_project", payload(false)),
+        ));
+        assert_eq!(first["created_directory"], true);
+        assert_eq!(first["created_config"], true);
+        assert_eq!(first["overwritten"], false);
+
+        let second = project_ok(handle_project_op(
+            &policy,
+            &projects_dir,
+            &project_request("create_project", payload(true)),
+        ));
+        assert_eq!(second["created_directory"], false);
+        assert_eq!(second["created_config"], false);
+        assert_eq!(second["overwritten"], true);
+    }
+
+    #[test]
+    fn create_project_cleanup_removes_only_files_created_on_failure() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("existing-empty");
+        std::fs::create_dir(&project_dir).unwrap();
+        let projects_dir_file = tmp.path().join("projects.d-is-file");
+        std::fs::write(&projects_dir_file, "not a dir").unwrap();
+        let policy = project_policy(tmp.path());
+        let req = project_request(
+            "create_project",
+            serde_json::json!({
+                "id": "cleanup",
+                "name": "Cleanup",
+                "path": project_dir.to_string_lossy(),
+                "template": "basic",
+                "allow_existing_empty": true
+            }),
+        );
+
+        let err = project_err(handle_project_op(&policy, &projects_dir_file, &req));
+        assert!(err.contains("projects_dir"), "{err}");
+        assert!(project_dir.exists());
+        assert!(!project_dir.join("README.md").exists());
+        assert!(!project_dir.join(".gitignore").exists());
+    }
+
+    #[test]
+    fn create_project_does_not_delete_pre_existing_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("existing");
+        std::fs::create_dir(&project_dir).unwrap();
+        let pre_existing = project_dir.join("pre-existing.txt");
+        std::fs::write(&pre_existing, "original").unwrap();
+        let projects_dir_file = tmp.path().join("projects.d-is-file");
+        std::fs::write(&projects_dir_file, "not a dir").unwrap();
+        let policy = project_policy(tmp.path());
+        let req = project_request(
+            "create_project",
+            serde_json::json!({
+                "id": "keep",
+                "name": "Keep",
+                "path": project_dir.to_string_lossy(),
+                "template": "basic",
+                "allow_existing_empty": true
+            }),
+        );
+
+        let err = project_err(handle_project_op(&policy, &projects_dir_file, &req));
+        assert!(err.contains("not empty"), "{err}");
+        assert_eq!(std::fs::read_to_string(pre_existing).unwrap(), "original");
+    }
+
+    #[test]
+    fn agent_project_cache_invalidate_refreshes_after_project_op() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("repo");
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir(&project_dir).unwrap();
+        let mut cfg = test_config(projects_dir.clone());
+        cfg.policy = project_policy(tmp.path());
+        let mut cache = AgentProjectCache::default();
+        assert!(cache.get(&cfg).is_empty());
+
+        let req = project_request(
+            "register_project",
+            serde_json::json!({
+                "id": "cached",
+                "name": "Cached",
+                "path": project_dir.to_string_lossy()
+            }),
+        );
+        project_ok(handle_project_op(&cfg.policy, &projects_dir, &req));
+
+        assert!(
+            cache.get(&cfg).is_empty(),
+            "cache should still be stale before invalidation"
+        );
+        cache.invalidate();
+        let projects = cache.get(&cfg);
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].id, "cached");
     }
 
     #[test]

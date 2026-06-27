@@ -37,7 +37,7 @@ WEBCODEX_PUBLIC_URL="https://webcodex.example.com" cargo run --bin webcodex
 
 ## Operations
 
-The schema exposes a small, stable set of operation ids (25),
+The schema exposes a small, stable set of operation ids (27),
 grouped by recommended call flow. GPT Actions and MCP are peer surfaces over
 the same `ToolRuntime`: GPT Actions expose selected typed OpenAPI operations,
 while MCP exposes the runtime tool set directly through `tools/list` and
@@ -78,6 +78,8 @@ requires the Codex CLI on the agent host.
 | `replaceProjectFileText` | `POST /api/projects/replace_in_file` | Replace a unique substring in a project file via the owning agent. **Mutation with side effects; Bearer auth + agent shell capability required. Fails without writing when `old` is missing or ambiguous; rejects sensitive paths.** |
 | `writeProjectFile` | `POST /api/projects/write_file` | Write a UTF-8 project file (create or overwrite) via the owning agent. **Mutation with side effects; Bearer auth + agent shell capability required. Use `expected_sha256` / `expected_content_prefix` to guard overwrites; rejects sensitive paths.** |
 | `startProjectShellJob` | `POST /api/projects/run_job` | Start an async background shell job and return a `job_id`. **Execution with side effects; Bearer auth + agent async shell job capability required. Poll with `getRuntimeJobStatus`; read output with `getRuntimeJobTail` / `getRuntimeJobLog`.** |
+| `registerProject` | `POST /api/projects/register` | Register an existing directory as a WebCodex project on the selected agent. **Mutation with side effects; executes on the selected agent and is constrained by agent policy. Bearer auth required.** |
+| `createProject` | `POST /api/projects/create` | Create a new directory on the selected agent and register it as a WebCodex project. **Mutation with side effects; executes on the selected agent and is constrained by agent policy. Bearer auth required.** |
 
 ### Advanced escape hatch
 
@@ -208,6 +210,16 @@ complete the full core coding loop using only dedicated typed actions; reach for
   `startProjectShellJob`, also reachable via `callRuntimeTool` / MCP
   `tools/call`). Prefer it over blocking `run_shell` for long-running commands;
   it returns a `job_id` to poll with `job_status` / `job_tail` / `job_log`.
+- `register_project` (agent-side project management tool; dedicated GPT Action
+  `registerProject`, also reachable via `callRuntimeTool` / MCP `tools/call`).
+  Registers an existing directory as a WebCodex project on the selected agent.
+  The agent validates the path against its own policy, writes
+  `projects_dir/<id>.toml` atomically, and refreshes its project list.
+- `create_project` (agent-side project management tool; dedicated GPT Action
+  `createProject`, also reachable via `callRuntimeTool` / MCP `tools/call`).
+  Creates a new directory on the selected agent, optionally applies a minimal
+  template (`empty` or `basic`) and `git init`, writes `projects_dir/<id>.toml`
+  atomically, and refreshes its project list.
 
 ### Request shapes
 
@@ -340,6 +352,24 @@ curl -H "Authorization: Bearer change-me" \
   -d '{"project":"webcodex","patch":"--- a/README.md\n+++ b/README.md\n@@ -1 +1,2 @@\n# WebCodex\n+edited\n"}'
 ```
 
+Register an existing directory as a project (mutation; Bearer auth required):
+
+```bash
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/api/projects/register \
+  -H "Content-Type: application/json" \
+  -d '{"client_id":"oe","id":"my-project","name":"My Project","path":"/root/git/my-project"}'
+```
+
+Create a new project with the basic template and git init (mutation; Bearer auth required):
+
+```bash
+curl -H "Authorization: Bearer change-me" \
+  -X POST http://127.0.0.1:8080/api/projects/create \
+  -H "Content-Type: application/json" \
+  -d '{"client_id":"oe","id":"hello","name":"Hello","path":"/root/git/hello","template":"basic","git_init":true}'
+```
+
 ## Shared ToolRuntime
 
 GPT Actions and MCP both call `ToolRuntime::dispatch`. The dedicated GPT Actions
@@ -354,11 +384,10 @@ business logic is duplicated, and owner/capability checks stay centralized in
 
 Tests in `src/openapi.rs` assert:
 
-- The operation-id set matches the documented set exactly (25 operations).
-- The operation count is exactly 25 and never exceeds 30. Phase 5 promotes
-  `replace_in_file` to a dedicated GPT Action (`replaceProjectFileText`).
-  This phase promotes `write_project_file` (`writeProjectFile`) and `run_job`
-  (`startProjectShellJob`) to dedicated GPT Actions, bringing the count to 25.
+- The operation-id set matches the documented set exactly (27 operations).
+- The operation count is exactly 27 and never exceeds 30. This phase promotes
+  `register_project` (`registerProject`) and `create_project` (`createProject`)
+  to dedicated GPT Actions, bringing the count to 27.
 - Every operationId is unique (no duplicates).
 - Every operation description is <= 300 chars.
 - Every operation is POST-only.
@@ -387,7 +416,7 @@ Tests in `src/openapi.rs` assert:
 - Key actions ship request examples so ChatGPT has concrete templates.
 
 The E2E smoke (`scripts/e2e_zero_config_ws.sh`) re-checks the live
-`/openapi.json` for the same invariants: operation count 25, unique
+`/openapi.json` for the same invariants: operation count 27, unique
 operationIds, POST-only, description <= 300 chars,
 `additionalProperties=false` on every requestBody schema, mutation descriptions
 mention side effects + Bearer auth, read-only descriptions mention read-only,

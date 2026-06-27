@@ -748,6 +748,32 @@ impl ShellClientRegistry {
         Ok(client.projects.clone())
     }
 
+    /// Insert or replace a single project summary in the cached project list
+    /// for `client_id`. Called by the runtime after a successful
+    /// `register_project` / `create_project` agent operation so that
+    /// `listProjects` sees the new project immediately, without waiting for
+    /// the agent's next register/poll cycle. If a project with the same id
+    /// already exists it is replaced; otherwise the new summary is appended
+    /// and the list is re-sorted by id (matching `normalize_project_summaries`).
+    pub async fn upsert_client_project(
+        &self,
+        client_id: &str,
+        project: ShellAgentProjectSummary,
+    ) -> Result<(), String> {
+        let mut inner = self.inner.lock().await;
+        let Some(client) = inner.clients.get_mut(client_id) else {
+            return Err(format!("unknown shell client: {}", client_id));
+        };
+        if let Some(existing) = client.projects.iter_mut().find(|p| p.id == project.id) {
+            *existing = project;
+        } else {
+            client.projects.push(project);
+            client.projects.sort_by(|a, b| a.id.cmp(&b.id));
+            client.projects.dedup_by(|a, b| a.id == b.id);
+        }
+        Ok(())
+    }
+
     pub async fn enqueue_file_op(
         &self,
         body: ShellFileOpRequest,
@@ -849,6 +875,67 @@ impl ShellClientRegistry {
         for queue in inner.queues_by_client.values_mut() {
             queue.retain(|id| id != request_id);
         }
+    }
+
+    /// Enqueue a project-management agent request (`register_project` or
+    /// `create_project`). The JSON payload is carried in `stdin` so the
+    /// agent can parse it without shell interpolation. The `command` field is
+    /// empty (unused for these kinds); the agent dispatches on `kind` and
+    /// reads the payload from `stdin`. Returns a oneshot receiver for the
+    /// `ShellRunResponse` (the agent returns structured JSON in `stdout`).
+    pub async fn enqueue_project_op(
+        &self,
+        client_id: String,
+        kind: &str,
+        payload: String,
+        requested_by: String,
+    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
+        validate_id(&client_id, "client_id")?;
+        if kind != "register_project" && kind != "create_project" {
+            return Err(format!("unsupported project op kind: {}", kind));
+        }
+        if payload.contains('\0') {
+            return Err("project op payload must not contain NUL".to_string());
+        }
+        let request_id = Uuid::new_v4().to_string();
+        let (tx, rx) = oneshot::channel();
+        let request = ShellAgentShellRequest {
+            request_id: request_id.clone(),
+            client_id: client_id.clone(),
+            kind: kind.to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            command: String::new(),
+            stdin: Some(payload),
+            timeout_secs: 30,
+            requested_by,
+            created_at: now_ts(),
+        };
+        let mut inner = self.inner.lock().await;
+        if !inner.clients.contains_key(&client_id) {
+            return Err(format!("unknown shell client: {}", client_id));
+        }
+        ensure_queue_capacity_locked(&inner, &client_id)?;
+        inner
+            .queues_by_client
+            .entry(client_id.clone())
+            .or_default()
+            .push_back(request_id.clone());
+        inner.pending_by_id.insert(
+            request_id.clone(),
+            PendingShellRequest {
+                request,
+                waiter: Some(tx),
+                job_id: None,
+            },
+        );
+        Self::notify_client_locked(&inner, &client_id);
+        Ok((request_id, rx))
     }
 
     pub async fn poll(

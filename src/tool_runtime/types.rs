@@ -3,6 +3,12 @@ use serde_json::Value;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+/// Serde default helper: `true`. Used by `ToolCall` variants whose `allow_patch`
+/// field defaults to true (matching the agent-side project TOML parser).
+pub fn default_true() -> bool {
+    true
+}
+
 // =============================================================================
 // Tool input — one variant per tool
 // =============================================================================
@@ -197,6 +203,54 @@ pub enum ToolCall {
     /// List all agent-registered runtime projects.
     ListProjects,
 
+    /// Register an existing directory as a WebCodex project on a selected
+    /// agent. The agent validates the path against its own policy, writes a
+    /// `projects_dir/<id>.toml` file atomically, and refreshes its local
+    /// project list. The server refreshes its cached project summaries for
+    /// that agent so `listProjects` sees the new project immediately. This is
+    /// a mutating agent-side operation constrained by agent policy; the server
+    /// never writes project config files on the agent host directly.
+    RegisterProject {
+        client_id: String,
+        id: String,
+        name: String,
+        path: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default = "default_true")]
+        allow_patch: bool,
+        #[serde(default)]
+        overwrite: bool,
+    },
+
+    /// Create a new directory on the selected agent and register it as a
+    /// WebCodex project. The agent validates the path against its own policy,
+    /// creates the directory (and optional template files / git init), writes
+    /// a `projects_dir/<id>.toml` file atomically, and refreshes its local
+    /// project list. The server refreshes its cached project summaries so
+    /// `listProjects` sees the new project immediately. This is a mutating
+    /// agent-side operation constrained by agent policy; the server never
+    /// creates directories or writes project config files on the agent host
+    /// directly.
+    CreateProject {
+        client_id: String,
+        id: String,
+        name: String,
+        path: String,
+        #[serde(default)]
+        description: Option<String>,
+        #[serde(default = "default_true")]
+        allow_patch: bool,
+        #[serde(default)]
+        template: Option<String>,
+        #[serde(default)]
+        git_init: bool,
+        #[serde(default)]
+        allow_existing_empty: bool,
+        #[serde(default)]
+        overwrite: bool,
+    },
+
     /// List connected shell/agent clients.
     ListAgents,
 
@@ -237,6 +291,8 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "list_jobs",
     "job_tail",
     "list_projects",
+    "register_project",
+    "create_project",
     "list_agents",
     "runtime_status",
 ];

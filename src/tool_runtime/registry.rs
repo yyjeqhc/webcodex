@@ -47,6 +47,43 @@ impl ToolRuntime {
                 input_schema: object_schema(vec![]),
             },
             ToolSpec {
+                name: "register_project".to_string(),
+                description: "Register an existing directory as a WebCodex project on a selected agent. "
+                    .to_string()
+                    + "Mutation with side effects; constrained by agent policy. The agent validates "
+                    + "the path, writes projects_dir/<id>.toml atomically, and refreshes its "
+                    + "project list. Requires Bearer auth.",
+                input_schema: object_schema(vec![
+                    ("client_id", "string", "Registered agent client_id.", true),
+                    ("id", "string", "Project id (ASCII letters, digits, '-', '_'; no slash).", true),
+                    ("name", "string", "Human-readable project name.", true),
+                    ("path", "string", "Absolute directory path on the agent host.", true),
+                    ("description", "string", "Optional project description.", false),
+                    ("allow_patch", "boolean", "Allow patch operations on this project (default true).", false),
+                    ("overwrite", "boolean", "Overwrite an existing project config file (default false).", false),
+                ]),
+            },
+            ToolSpec {
+                name: "create_project".to_string(),
+                description: "Create a new directory on the selected agent and register it as a WebCodex "
+                    .to_string()
+                    + "project. Mutation with side effects; constrained by agent policy. Creates "
+                    + "directory, optional template, optional git init, writes projects_dir/<id>.toml "
+                    + "atomically. Requires Bearer auth.",
+                input_schema: object_schema(vec![
+                    ("client_id", "string", "Registered agent client_id.", true),
+                    ("id", "string", "Project id (ASCII letters, digits, '-', '_'; no slash).", true),
+                    ("name", "string", "Human-readable project name.", true),
+                    ("path", "string", "Absolute directory path on the agent host.", true),
+                    ("description", "string", "Optional project description.", false),
+                    ("allow_patch", "boolean", "Allow patch operations on this project (default true).", false),
+                    ("template", "string", "Template: 'empty' (default) or 'basic'.", false),
+                    ("git_init", "boolean", "Initialize git in the new directory (default false).", false),
+                    ("allow_existing_empty", "boolean", "Allow registering an existing empty directory (default false).", false),
+                    ("overwrite", "boolean", "Overwrite an existing project config file (default false).", false),
+                ]),
+            },
+            ToolSpec {
                 name: "list_agents".to_string(),
                 description: "List connected local/remote execution agents.".to_string(),
                 input_schema: object_schema(vec![]),
@@ -414,6 +451,7 @@ impl ToolRuntime {
                 "read_file", "list_project_files", "search_project_text",
                 "git_status", "git_diff", "git_diff_summary"
             ]),
+            "projects": pick(&["list_projects", "register_project", "create_project"]),
             "git": pick(&[
                 "git_status", "git_diff", "git_diff_summary",
                 "git_restore_paths", "discard_untracked"

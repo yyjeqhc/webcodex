@@ -9,6 +9,7 @@ mod git;
 mod helpers;
 mod jobs;
 mod patch;
+mod projects;
 mod registry;
 mod shell;
 mod types;
@@ -16,7 +17,7 @@ mod types;
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[allow(unused_imports)]
 pub use types::{
-    is_known_tool_name, RuntimeInfo, ToolCall, ToolResult, ToolSpec, KNOWN_TOOL_NAMES,
+    default_true, is_known_tool_name, RuntimeInfo, ToolCall, ToolResult, ToolSpec, KNOWN_TOOL_NAMES,
 };
 
 use crate::auth::AuthContext;
@@ -159,6 +160,8 @@ impl ToolRuntime {
             ToolCall::RunJob { .. } | ToolCall::RunCodex { .. } => Some(AgentCapability::AsyncJobs),
             ToolCall::ListTools
             | ToolCall::ListProjects
+            | ToolCall::RegisterProject { .. }
+            | ToolCall::CreateProject { .. }
             | ToolCall::ListAgents
             | ToolCall::RuntimeStatus
             | ToolCall::JobStatus { .. }
@@ -294,6 +297,56 @@ impl ToolRuntime {
             ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
 
             ToolCall::ListProjects => self.list_projects().await,
+
+            ToolCall::RegisterProject {
+                client_id,
+                id,
+                name,
+                path,
+                description,
+                allow_patch,
+                overwrite,
+            } => {
+                self.register_project(
+                    client_id,
+                    id,
+                    name,
+                    path,
+                    description,
+                    allow_patch,
+                    overwrite,
+                    auth,
+                )
+                .await
+            }
+
+            ToolCall::CreateProject {
+                client_id,
+                id,
+                name,
+                path,
+                description,
+                allow_patch,
+                template,
+                git_init,
+                allow_existing_empty,
+                overwrite,
+            } => {
+                self.create_project(
+                    client_id,
+                    id,
+                    name,
+                    path,
+                    description,
+                    allow_patch,
+                    template,
+                    git_init,
+                    allow_existing_empty,
+                    overwrite,
+                    auth,
+                )
+                .await
+            }
 
             ToolCall::ListAgents => self.list_agents().await,
 
@@ -5282,5 +5335,217 @@ new file mode 100644\n\
             .expect("spawn python3");
         let output = child.wait_with_output().unwrap();
         String::from_utf8(output.stdout).unwrap()
+    }
+
+    // =========================================================================
+    // Project management tools (register_project / create_project)
+    // =========================================================================
+
+    #[test]
+    fn known_tool_names_includes_project_management_tools() {
+        assert!(
+            KNOWN_TOOL_NAMES.contains(&"register_project"),
+            "KNOWN_TOOL_NAMES must include register_project"
+        );
+        assert!(
+            KNOWN_TOOL_NAMES.contains(&"create_project"),
+            "KNOWN_TOOL_NAMES must include create_project"
+        );
+    }
+
+    #[test]
+    fn tool_specs_include_project_management_tools() {
+        let runtime = test_runtime();
+        let names: Vec<String> = runtime
+            .tool_specs()
+            .iter()
+            .map(|s| s.name.clone())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "register_project"),
+            "tool_specs must include register_project: {:?}",
+            names
+        );
+        assert!(
+            names.iter().any(|n| n == "create_project"),
+            "tool_specs must include create_project: {:?}",
+            names
+        );
+        // Verify the specs carry the required-field schema.
+        for spec in runtime.tool_specs() {
+            if spec.name == "register_project" || spec.name == "create_project" {
+                let required = spec.input_schema["required"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{} must have required array", spec.name));
+                for field in ["client_id", "id", "name", "path"] {
+                    assert!(
+                        required.iter().any(|v| v == field),
+                        "{} input_schema must require '{}'",
+                        spec.name,
+                        field
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn tool_categories_include_projects_with_management_tools() {
+        let runtime = test_runtime();
+        let cats = runtime.tool_categories();
+        let projects = cats["projects"]
+            .as_array()
+            .expect("projects category present");
+        assert!(
+            projects.iter().any(|v| v == "register_project"),
+            "projects category must include register_project"
+        );
+        assert!(
+            projects.iter().any(|v| v == "create_project"),
+            "projects category must include create_project"
+        );
+    }
+
+    #[test]
+    fn from_tool_name_parses_project_management_tools() {
+        let register = ToolCall::from_tool_name(
+            "register_project",
+            json!({
+                "client_id":"oe",
+                "id":"my-project",
+                "name":"My Project",
+                "path":"/root/git/my-project"
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            register,
+            ToolCall::RegisterProject { ref client_id, ref id, ref name, ref path, .. }
+                if client_id == "oe" && id == "my-project" && name == "My Project"
+                && path == "/root/git/my-project"
+        ));
+
+        let create = ToolCall::from_tool_name(
+            "create_project",
+            json!({
+                "client_id":"oe",
+                "id":"hello",
+                "name":"Hello",
+                "path":"/root/git/hello",
+                "template":"basic",
+                "git_init":true
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            create,
+            ToolCall::CreateProject { ref client_id, ref id, ref name, ref path, ref template, git_init, .. }
+                if client_id == "oe" && id == "hello" && name == "Hello"
+                && path == "/root/git/hello" && template.as_deref() == Some("basic")
+                && git_init
+        ));
+    }
+
+    #[tokio::test]
+    async fn dispatch_register_project_rejects_unknown_client_id() {
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::RegisterProject {
+                client_id: "no-such-agent".to_string(),
+                id: "my-project".to_string(),
+                name: "My Project".to_string(),
+                path: "/root/git/my-project".to_string(),
+                description: None,
+                allow_patch: true,
+                overwrite: false,
+            })
+            .await;
+        assert!(!result.success);
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("unknown agent"),
+            "register_project should reject unknown client_id: {:?}",
+            result.error
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_create_project_rejects_unknown_client_id() {
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::CreateProject {
+                client_id: "no-such-agent".to_string(),
+                id: "hello".to_string(),
+                name: "Hello".to_string(),
+                path: "/root/git/hello".to_string(),
+                description: None,
+                allow_patch: true,
+                template: None,
+                git_init: false,
+                allow_existing_empty: false,
+                overwrite: false,
+            })
+            .await;
+        assert!(!result.success);
+        assert!(
+            result
+                .error
+                .as_deref()
+                .unwrap_or("")
+                .contains("unknown agent"),
+            "create_project should reject unknown client_id: {:?}",
+            result.error
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_register_project_rejects_unsafe_id() {
+        let runtime = test_runtime();
+        for bad_id in ["", "a/b", "a\\b", "..", "a..b", "a\0b"] {
+            let result = runtime
+                .dispatch(ToolCall::RegisterProject {
+                    client_id: "oe".to_string(),
+                    id: bad_id.to_string(),
+                    name: "Test".to_string(),
+                    path: "/root/git/test".to_string(),
+                    description: None,
+                    allow_patch: true,
+                    overwrite: false,
+                })
+                .await;
+            assert!(
+                !result.success,
+                "register_project should reject unsafe id '{:?}'",
+                bad_id
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_create_project_rejects_relative_path() {
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::CreateProject {
+                client_id: "oe".to_string(),
+                id: "hello".to_string(),
+                name: "Hello".to_string(),
+                path: "relative/path".to_string(),
+                description: None,
+                allow_patch: true,
+                template: None,
+                git_init: false,
+                allow_existing_empty: false,
+                overwrite: false,
+            })
+            .await;
+        assert!(!result.success);
+        assert!(
+            result.error.as_deref().unwrap_or("").contains("absolute"),
+            "create_project should reject relative path: {:?}",
+            result.error
+        );
     }
 }

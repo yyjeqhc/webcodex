@@ -36,6 +36,8 @@ fn public_url() -> String {
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
     "listProjects",
+    "registerProject",
+    "createProject",
     "getRuntimeStatus",
     "runCodexTask",
     "getRuntimeJobStatus",
@@ -150,6 +152,64 @@ pub(crate) fn build_openapi_spec() -> Value {
                     "Read-only. Returns projects registered by connected agents with runtime id (`agent:<client_id>:<project_id>`), path, executor, client_id, and patch flag. Call this first to learn the project ids required by other actions.",
                     "EmptyRequest",
                     "ToolResult"
+                )
+            },
+            "/api/projects/register": {
+                "post": operation_with_examples(
+                    "registerProject",
+                    "Register an existing project",
+                    "Mutation with side effects. Registers an existing directory as a WebCodex project on the selected agent. Executes on the agent and is constrained by agent policy. Requires Bearer auth.",
+                    "RegisterProjectRequest",
+                    "ToolResult",
+                    json!({
+                        "basic": {
+                            "summary": "Register an existing directory",
+                            "value": {
+                                "client_id": "oe",
+                                "id": "my-project",
+                                "name": "My Project",
+                                "path": "/root/git/my-project",
+                                "description": "Optional description",
+                                "allow_patch": true,
+                                "overwrite": false
+                            }
+                        }
+                    })
+                )
+            },
+            "/api/projects/create": {
+                "post": operation_with_examples(
+                    "createProject",
+                    "Create and register a new project",
+                    "Mutation with side effects. Creates a new directory on the selected agent and registers it as a WebCodex project. Executes on the agent and is constrained by agent policy. Requires Bearer auth.",
+                    "CreateProjectRequest",
+                    "ToolResult",
+                    json!({
+                        "basicTemplate": {
+                            "summary": "Create a project with the basic template",
+                            "value": {
+                                "client_id": "oe",
+                                "id": "hello",
+                                "name": "Hello",
+                                "path": "/root/git/hello",
+                                "description": "A new project",
+                                "allow_patch": true,
+                                "template": "basic",
+                                "git_init": true,
+                                "allow_existing_empty": false,
+                                "overwrite": false
+                            }
+                        },
+                        "emptyTemplate": {
+                            "summary": "Create an empty project",
+                            "value": {
+                                "client_id": "oe",
+                                "id": "scratch",
+                                "name": "Scratch",
+                                "path": "/root/git/scratch"
+                            }
+                        }
+                    })
                 )
             },
             "/api/runtime/status": {
@@ -760,7 +820,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, list_projects, runtime_status, read_file, git_status, git_diff, git_diff_summary, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, read_file, git_status, git_diff, git_diff_summary, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
                 "params": {
                     "type": "object",
@@ -1254,6 +1314,39 @@ fn schemas() -> Value {
                 "status": { "type": "integer" },
                 "error": { "type": "string" }
             }
+        },
+        "RegisterProjectRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["client_id", "id", "name", "path"],
+            "description": "Register an existing directory as a WebCodex project on the selected agent. Mutation with side effects; executes on the agent and is constrained by agent policy.",
+            "properties": {
+                "client_id": {"type": "string", "description": "Registered agent client_id from listAgents."},
+                "id": {"type": "string", "description": "Project id (ASCII letters, digits, '-', '_'; no slash)."},
+                "name": {"type": "string", "description": "Human-readable project name."},
+                "path": {"type": "string", "description": "Absolute directory path on the agent host."},
+                "description": {"type": "string", "description": "Optional project description."},
+                "allow_patch": {"type": "boolean", "description": "Allow patch operations on this project (default true)."},
+                "overwrite": {"type": "boolean", "description": "Overwrite an existing project config file (default false)."}
+            }
+        },
+        "CreateProjectRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["client_id", "id", "name", "path"],
+            "description": "Create a new directory on the selected agent and register it as a WebCodex project. Mutation with side effects; executes on the agent and is constrained by agent policy.",
+            "properties": {
+                "client_id": {"type": "string", "description": "Registered agent client_id from listAgents."},
+                "id": {"type": "string", "description": "Project id (ASCII letters, digits, '-', '_'; no slash)."},
+                "name": {"type": "string", "description": "Human-readable project name."},
+                "path": {"type": "string", "description": "Absolute directory path on the agent host."},
+                "description": {"type": "string", "description": "Optional project description."},
+                "allow_patch": {"type": "boolean", "description": "Allow patch operations on this project (default true)."},
+                "template": {"type": "string", "description": "Template: 'empty' (default) or 'basic'."},
+                "git_init": {"type": "boolean", "description": "Initialize git in the new directory (default false)."},
+                "allow_existing_empty": {"type": "boolean", "description": "Allow registering an existing empty directory (default false)."},
+                "overwrite": {"type": "boolean", "description": "Overwrite an existing project config file (default false)."}
+            }
         }
     })
 }
@@ -1375,6 +1468,8 @@ mod tests {
         for expected in [
             "/api/tools/list",
             "/api/projects/list",
+            "/api/projects/register",
+            "/api/projects/create",
             "/api/runtime/status",
             "/api/codex/run",
             "/api/jobs/status",
@@ -1604,6 +1699,8 @@ mod tests {
             ("/api/projects/replace_in_file", "replaceProjectFileText"),
             ("/api/projects/write_file", "writeProjectFile"),
             ("/api/projects/run_job", "startProjectShellJob"),
+            ("/api/projects/register", "registerProject"),
+            ("/api/projects/create", "createProject"),
             ("/api/jobs/list", "listRuntimeJobs"),
             ("/api/jobs/tail", "getRuntimeJobTail"),
             ("/api/tools/call", "callRuntimeTool"),
@@ -1696,6 +1793,14 @@ mod tests {
             "startProjectShellJob"
         );
         assert_eq!(
+            spec["paths"]["/api/projects/register"]["post"]["operationId"],
+            "registerProject"
+        );
+        assert_eq!(
+            spec["paths"]["/api/projects/create"]["post"]["operationId"],
+            "createProject"
+        );
+        assert_eq!(
             spec["paths"]["/api/jobs/list"]["post"]["operationId"],
             "listRuntimeJobs"
         );
@@ -1726,6 +1831,8 @@ mod tests {
             "/api/projects/replace_in_file",
             "/api/projects/write_file",
             "/api/projects/run_job",
+            "/api/projects/register",
+            "/api/projects/create",
         ] {
             let desc = spec["paths"][path]["post"]["description"]
                 .as_str()
@@ -1932,13 +2039,16 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_is_twenty_five() {
+    fn openapi_operation_count_is_twenty_seven() {
         // Phase 3 promoted 10 core runtime tools to dedicated GPT Actions,
         // bringing the schema from 12 to 22 ops. Phase 5 promotes
         // replace_in_file to a dedicated GPT Action (replaceProjectFileText),
         // bringing the count to 23. This phase promotes write_project_file
         // (writeProjectFile) and run_job (startProjectShellJob) to dedicated
-        // GPT Actions, bringing the count to 25. The surface must stay <= 30.
+        // GPT Actions, bringing the count to 25. The project management phase
+        // promotes register_project (registerProject) and create_project
+        // (createProject) to dedicated GPT Actions, bringing the count to 27.
+        // The surface must stay <= 30.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
             .as_object()
@@ -1946,7 +2056,7 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 25, "GPT Actions schema must be 25 operations");
+        assert_eq!(count, 27, "GPT Actions schema must be 27 operations");
         assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
     }
 

@@ -941,4 +941,31 @@ mod tests {
         // reports configured=false instead.
         assert_eq!(value["result"]["isError"], false);
     }
+
+    #[tokio::test]
+    async fn mcp_tools_list_includes_project_management_tools() {
+        let runtime = test_runtime();
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(99)), json!({})),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(v) => v,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        let tools = value["result"]["tools"].as_array().unwrap();
+        let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        assert!(
+            names.contains(&"register_project"),
+            "MCP tools/list must include register_project: {:?}",
+            names
+        );
+        assert!(
+            names.contains(&"create_project"),
+            "MCP tools/list must include create_project: {:?}",
+            names
+        );
+    }
 }

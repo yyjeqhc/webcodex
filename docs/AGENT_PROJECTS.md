@@ -90,13 +90,61 @@ are still reported to the server, but no current runtime route invokes hook
 
 ## Current Limits
 
-- Create / delete project on an agent through a server route: not available
-  (the create route was removed).
 - Run workflow / doctor / hook by agent project id through a server route: not
   available (those routes were removed).
 - Path access is controlled by the local agent policy
   (`allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`,
   `max_timeout_secs`, `max_output_bytes`).
+
+## Agent-side project management: `register_project` and `create_project`
+
+Two runtime tools let a GPT Action or MCP caller register or create projects on
+a selected agent without the server ever writing project config files directly
+on the agent host. Both are **mutations with side effects** and require Bearer
+auth.
+
+- **`register_project`** (GPT Action: `registerProject`, REST:
+  `POST /api/projects/register`) — registers an **existing** directory as a
+  WebCodex project. The agent validates that the path exists, is a directory,
+  and is allowed by agent policy. It then writes
+  `projects_dir/<id>.toml` atomically (temp file → fsync → rename) and
+  refreshes its local project list. The server upserts the new project summary
+  into its cache so `listProjects` sees it immediately.
+
+- **`create_project`** (GPT Action: `createProject`, REST:
+  `POST /api/projects/create`) — creates a **new** directory on the selected
+  agent and registers it as a WebCodex project. Supports a minimal `empty`
+  template (directory only) or a `basic` template (README.md + .gitignore),
+  optional `git init`, and the same atomic TOML write + cache refresh as
+  `register_project`. Never deletes or overwrites existing non-empty content.
+
+### Architecture
+
+- `projects.d/*.toml` remains the **source of truth** for registered projects
+  on each agent host. `register_project` and `create_project` are the supported
+  way to create those files programmatically.
+- The **server never writes** project config files or creates directories on
+  the agent host directly. It validates the request shape, checks the owner
+  boundary, routes the operation to the selected agent by `client_id`, and
+  parses the structured JSON response.
+- The **agent** does the authoritative path/policy validation, writes the TOML
+  file, creates directories/templates for `create_project`, and returns a
+  structured result.
+- There is **no workspace abstraction**. OS permissions and agent policy
+  (`allow_cwd_anywhere` / `allowed_roots`) are the real boundary. Unsafe system
+  roots (`/`, `/etc`, `/bin`, `/usr`, `/var`, …) are always rejected unless the
+  path is under an explicit `allowed_roots` entry.
+- `projects_dir` comes from the agent config, not from the server request.
+
+### Validation summary
+
+| Field | Rules |
+|-------|-------|
+| `client_id` | Must refer to a currently registered agent. |
+| `id` | Non-empty, ≤ 64 chars, ASCII letters/digits/`-`/`_` only; no slash, backslash, dot-dot, or NUL. |
+| `name` | Non-empty after trim, ≤ 120 chars, no NUL. |
+| `description` | Optional, ≤ 500 chars, no NUL. |
+| `path` | Non-empty, absolute, no NUL. Agent validates existence, directory type, and policy. |
 
 ## Troubleshooting: unexpected runtime project ids (e.g. `agent:<client>:tmp-hello`)
 

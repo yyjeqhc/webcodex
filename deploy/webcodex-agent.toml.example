@@ -2,7 +2,7 @@
 # Copy to /etc/webcodex/agent.toml and edit token/client_id/server_url.
 
 # Public server URL. Must match the server's WEBCODEX_PUBLIC_URL so TLS validates.
-server_url = "https://drop.example.com"
+server_url = "https://webcodex.example.com"
 
 # Bearer token. Must equal the server's WEBCODEX_TOKEN (or a valid API key).
 # NEVER commit a real token; replace this placeholder.

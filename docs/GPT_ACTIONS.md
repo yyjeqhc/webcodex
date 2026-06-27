@@ -32,7 +32,7 @@ The `servers[0].url` in the schema defaults to `http://localhost:8080`. Override
 it for deployments by setting `WEBCODEX_PUBLIC_URL` on the server, for example:
 
 ```bash
-WEBCODEX_PUBLIC_URL="https://drop.example.com" cargo run --bin webcodex
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" cargo run --bin webcodex
 ```
 
 ## Operations
@@ -368,7 +368,7 @@ Tests in `src/openapi.rs` assert:
 - Every `$ref` resolves to a defined schema.
 - Every path is POST-only.
 - Bearer auth is present and globally enabled.
-- No legacy/non-GPT-Actions paths appear in the schema (file-drop, desktop,
+- No legacy/non-GPT-Actions paths appear in the schema (file upload, desktop,
   raw shell, codex command/context, agent protocol routes, `/mcp`,
   `/openapi.json`, `/console`, `/api/jobs/stop`, `/api/audit/*`).
   `/api/projects/write_file` and `/api/projects/run_job` are now dedicated GPT

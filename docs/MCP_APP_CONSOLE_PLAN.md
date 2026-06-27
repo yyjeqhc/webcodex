@@ -23,7 +23,7 @@ The app should focus on the active runtime surface:
 
 Do not restore removed product surfaces:
 
-- file-drop / message / channel UI
+- file upload / message / channel UI
 - workflow / command_request UI
 - SSH executor UI
 - old Codex dashboard behavior
@@ -400,7 +400,7 @@ show public URL, auth_enabled, active jobs, project count, and agent rows with
 status, transport, last_seen, connected, pending_requests, protocol version,
 owner, and projects_count.
 
-Do not revive the old file-drop/message/workflow dashboard. Use the active
+Do not revive the old file upload/message/workflow dashboard. Use the active
 runtime APIs only. Never display WEBCODEX_TOKEN, Authorization headers, API keys,
 full env, agent.toml token values, webcodex.env values, or real projects.d
 secret contents. Make stale WebSocket agents visually obvious and distinguish
@@ -503,7 +503,7 @@ npm run check:dist
 For deployment validation when a live endpoint is available:
 
 ```bash
-WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
 WEBCODEX_TOKEN="<your-secret>" \
 bash scripts/smoke_deployment.sh
 ```

@@ -57,7 +57,7 @@ The output is a structured JSON object:
   "server_time": 1719337980,
   "pid": 12345,
   "auth_enabled": true,
-  "configured_public_url": "https://drop.example.com",
+  "configured_public_url": "https://webcodex.example.com",
   "projects": {
     "configured": true,
     "count": 2,

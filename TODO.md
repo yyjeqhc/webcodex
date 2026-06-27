@@ -221,7 +221,7 @@ capabilities through a single `ToolRuntime` consumed by both GPT Actions
 
 ### Deprecated (not active features)
 
-The old file-drop / message / channel / Web UI product surface, desktop task
+The old file upload / message / channel / Web UI product surface, desktop task
 orchestration, SSH executor, `command_request` / goal workflow, and
 `project_workflow` / `project_doctor` / `project_hook` routes have been
 removed. They are intentionally not tracked as future work.

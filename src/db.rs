@@ -1205,7 +1205,7 @@ mod tests {
     #[test]
     fn api_key_records_round_trip_and_revoked_keys_are_ignored() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open(&tmp.path().join("drop.db")).unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
         let user = UserRecord {
             id: "user-1".to_string(),
             username: "alice".to_string(),

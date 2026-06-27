@@ -26,8 +26,8 @@ allow_raw_command_requests = false
 fmt = "cargo fmt --check"
 test = "cargo test"
 build = "cargo build --release"
-e2e = "bash scripts/e2e_test.sh"
-full = "cargo fmt --check && cargo test && cargo build --release && bash scripts/e2e_test.sh"
+e2e = "bash scripts/e2e_zero_config_ws.sh"
+full = "cargo fmt --check && cargo test && cargo build --release && bash scripts/e2e_zero_config_ws.sh"
 
 # Optional extra project-level commands for /api/codex/command.
 # Requests can only choose one of these ids; they cannot provide arbitrary shell.
@@ -59,7 +59,7 @@ doc = "cargo doc --no-deps"
 # fmt = "cargo fmt --check"
 # test = "cargo test"
 # build = "cargo build --release"
-# e2e = "bash scripts/e2e_test.sh"
+# e2e = "bash scripts/e2e_zero_config_ws.sh"
 #
 # [projects.webcodex.commands]
 # clippy = "cargo clippy --all-targets -- -D warnings"

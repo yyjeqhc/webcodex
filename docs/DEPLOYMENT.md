@@ -65,8 +65,8 @@ sudo install -m 0755 target/release/webcodex-agent  /opt/webcodex/
 |----------|---------|----------|-------------|
 | `WEBCODEX_TOKEN` | _(unset)_ | **Yes (production)** | Bearer token for all protected endpoints and the agent handshake. When unset the server runs in **development mode without authentication** — never do this in production. |
 | `WEBCODEX_ADDR` | `0.0.0.0:8080` | No | Bind address for the HTTP server. Behind a reverse proxy, bind to `127.0.0.1:8080` and let the proxy terminate TLS. |
-| `WEBCODEX_DATA` | `./data` | No | Runtime data directory: SQLite DB (`drop.db`), uploads, job metadata (`.codex/jobs/`). Use a persistent, backed-up path in production. |
-| `WEBCODEX_PUBLIC_URL` | `http://localhost:8080` | **Yes (production)** | Public base URL used as `servers[0].url` in `/openapi.json`. Set to the externally reachable HTTPS URL (e.g. `https://drop.example.com`) so ChatGPT imports actions against the right host. |
+| `WEBCODEX_DATA` | `./data` | No | Runtime data directory: SQLite DB (`webcodex.db`), uploads, job metadata (`.codex/jobs/`). Use a persistent, backed-up path in production. |
+| `WEBCODEX_PUBLIC_URL` | `http://localhost:8080` | **Yes (production)** | Public base URL used as `servers[0].url` in `/openapi.json`. Set to the externally reachable HTTPS URL (e.g. `https://webcodex.example.com`) so ChatGPT imports actions against the right host. |
 | `WEBCODEX_ENV_FILE` | _(unset)_ | No | Optional path to an env file loaded at startup (KEY=value lines, `#` comments, optional `export ` prefix). If unset, the server also auto-loads `./webcodex.env`, `/opt/webcodex/webcodex.env`, and `/etc/webcodex/webcodex.env` if present. |
 | `WEBCODEX_ENABLE_SSH` | `false` | No | Reserved SSH executor toggle. Not used by the zero-config runtime; leave unset. |
 | `CODEX_BIN` | `codex` | No | Codex CLI binary name or path. Must be installed and on `PATH` on the **agent** host (the server only forwards requests; the agent runs Codex). **Codex is optional**: when not installed, the runtime still serves `read_file`, `git_status`, `git_diff`, `apply_patch`, and `run_shell` through the agent. Only `run_codex` requires the Codex CLI. |
@@ -86,7 +86,7 @@ sudo install -m 0755 target/release/webcodex-agent  /opt/webcodex/
 WEBCODEX_TOKEN="<long-random-secret>" \
 WEBCODEX_ADDR="127.0.0.1:8080" \
 WEBCODEX_DATA="/var/lib/webcodex" \
-WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
 RUST_LOG="info" \
 /opt/webcodex/webcodex
 ```
@@ -122,7 +122,7 @@ Full field reference (TOML, loaded via `--config <path>`):
 
 | Field | Required | Description |
 |-------|----------|-------------|
-| `server_url` | **Yes** | Server base URL (e.g. `https://drop.example.com`). Must match the server's public URL for TLS to validate. |
+| `server_url` | **Yes** | Server base URL (e.g. `https://webcodex.example.com`). Must match the server's public URL for TLS to validate. |
 | `token` | **Yes** | Bearer token. Must equal the server's `WEBCODEX_TOKEN` (or a valid API key on the server). Sent in the `Authorization: Bearer <token>` header, including the WebSocket handshake. |
 | `client_id` | **Yes** | Stable unique id for this agent host (e.g. `workstation-1`). Used in runtime ids `agent:<client_id>:<project_id>`. |
 | `owner` | No | Owner principal. A bootstrap `WEBCODEX_TOKEN` may register any `owner`; a normal API key may only register `owner == <username>`. |
@@ -138,7 +138,7 @@ Full field reference (TOML, loaded via `--config <path>`):
 ### Agent config example (WebSocket preferred)
 
 ```toml
-server_url = "https://drop.example.com"
+server_url = "https://webcodex.example.com"
 token = "REPLACE_WITH_WEBCODEX_TOKEN"
 client_id = "workstation-1"
 display_name = "Workstation"
@@ -238,7 +238,7 @@ See
 [`deploy/nginx.webcodex.example.conf`](../deploy/nginx.webcodex.example.conf)
 for a complete nginx sample (HTTPS server block, WebSocket upgrade headers,
 `/mcp`, `/openapi.json`, `/api/agents/ws`, body size and timeout tuning). The
-sample uses `drop.example.com` as a placeholder — replace it with your domain.
+sample uses `webcodex.example.com` as a placeholder — replace it with your domain.
 
 ### TLS notes
 
@@ -255,7 +255,7 @@ sample uses `drop.example.com` as a placeholder — replace it with your domain.
 In your ChatGPT GPT, under **Settings → Actions → Import from URL**, enter:
 
 ```
-https://drop.example.com/openapi.json
+https://webcodex.example.com/openapi.json
 ```
 
 Then configure Action authentication as **API Key**, type **HTTP**, header
@@ -271,7 +271,7 @@ list and the recommended call flow.
 ChatGPT MCP clients connect to:
 
 ```
-https://drop.example.com/mcp
+https://webcodex.example.com/mcp
 ```
 
 `/mcp` speaks JSON-RPC 2.0 over HTTP (streamable-http-jsonrpc transport),
@@ -287,7 +287,7 @@ there is no separate business logic for either surface. See
 After deploying, run the deployment smoke script against the live instance:
 
 ```bash
-WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
 WEBCODEX_TOKEN="<your-secret>" \
 bash scripts/smoke_deployment.sh
 ```
@@ -319,13 +319,13 @@ See [E2E_VALIDATION.md](E2E_VALIDATION.md) for what that harness covers.
 - **Server (systemd)**: `journalctl -u webcodex -f` (or the file you
   configured if not using the journal).
 - **Agent (systemd)**: `journalctl -u webcodex-agent -f`.
-- **Runtime data**: under `WEBCODEX_DATA` (default `./data`): `drop.db` (SQLite),
+- **Runtime data**: under `WEBCODEX_DATA` (default `./data`): `webcodex.db` (SQLite),
   `uploads/`, `.codex/jobs/<job_id>/metadata.json` and per-job stdout/stderr.
 - **Local E2E harness**: prints `server.log` and `agent.log` paths on failure.
 
 ### Troubleshooting order
 
-1. **Server up?** `curl -sS https://drop.example.com/openapi.json | head` —
+1. **Server up?** `curl -sS https://webcodex.example.com/openapi.json | head` —
    should return JSON. If not, check `systemctl status webcodex` and the
    reverse proxy.
 2. **Auth working?** `POST /api/runtime/status` with

@@ -1223,7 +1223,13 @@ mod tests {
         assert!(err.contains("apply_patch_checked"));
         // Must not leak secret/config artifacts.
         let lower = err.to_lowercase();
-        for forbidden in ["token", "authorization", "agent.toml", "drop.env", "secret"] {
+        for forbidden in [
+            "token",
+            "authorization",
+            "agent.toml",
+            "webcodex.env",
+            "secret",
+        ] {
             assert!(
                 !lower.contains(&forbidden),
                 "unknown-tool error must not leak '{}': {}",
@@ -3388,24 +3394,22 @@ new file mode 100644\n\
 
         let runtime = runtime_with_info(RuntimeInfo {
             auth_enabled: true,
-            configured_public_url: Some("https://drop.example.com".to_string()),
+            configured_public_url: Some("https://webcodex.example.com".to_string()),
         });
         let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
         assert!(result.success);
         assert_eq!(result.output["auth_enabled"], true);
         assert_eq!(
             result.output["configured_public_url"],
-            "https://drop.example.com"
+            "https://webcodex.example.com"
         );
     }
 
     #[test]
-    fn runtime_info_from_env_prefers_new_public_url() {
+    fn runtime_info_from_env_reads_webcodex_public_url() {
         let _guard = crate::config::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("WEBCODEX_TOKEN", "new-token");
-        std::env::set_var("DROP_TOKEN", "old-token");
+        std::env::set_var("WEBCODEX_TOKEN", "token");
         std::env::set_var("WEBCODEX_PUBLIC_URL", "https://new.example.com");
-        std::env::set_var("DROP_PUBLIC_URL", "https://old.example.com");
 
         let info = RuntimeInfo::from_env();
         assert!(info.auth_enabled);
@@ -3415,9 +3419,7 @@ new file mode 100644\n\
         );
 
         std::env::remove_var("WEBCODEX_TOKEN");
-        std::env::remove_var("DROP_TOKEN");
         std::env::remove_var("WEBCODEX_PUBLIC_URL");
-        std::env::remove_var("DROP_PUBLIC_URL");
     }
 
     #[tokio::test]

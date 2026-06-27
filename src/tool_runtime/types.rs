@@ -461,16 +461,16 @@ pub struct RuntimeInfo {
 
 impl RuntimeInfo {
     /// Build `RuntimeInfo` from the process environment. Reads
-    /// `WEBCODEX_TOKEN` (presence) and `WEBCODEX_PUBLIC_URL`, with deprecated
-    /// `DROP_*` fallbacks.
+    /// `WEBCODEX_TOKEN` (presence) and `WEBCODEX_PUBLIC_URL`.
     pub fn from_env() -> Self {
-        let auth_enabled = crate::config::env_with_legacy("WEBCODEX_TOKEN", "DROP_TOKEN")
+        let auth_enabled = std::env::var("WEBCODEX_TOKEN")
+            .ok()
             .map(|v| !v.trim().is_empty())
             .unwrap_or(false);
-        let configured_public_url =
-            crate::config::env_with_legacy("WEBCODEX_PUBLIC_URL", "DROP_PUBLIC_URL")
-                .map(|s| s.trim().trim_end_matches('/').to_string())
-                .filter(|s| !s.is_empty());
+        let configured_public_url = std::env::var("WEBCODEX_PUBLIC_URL")
+            .ok()
+            .map(|s| s.trim().trim_end_matches('/').to_string())
+            .filter(|s| !s.is_empty());
         Self {
             auth_enabled,
             configured_public_url,

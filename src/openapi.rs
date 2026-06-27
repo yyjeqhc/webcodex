@@ -2,7 +2,8 @@ use salvo::prelude::*;
 use serde_json::{json, Value};
 
 fn public_url() -> String {
-    crate::config::env_with_legacy("WEBCODEX_PUBLIC_URL", "DROP_PUBLIC_URL")
+    std::env::var("WEBCODEX_PUBLIC_URL")
+        .ok()
         .map(|s| s.trim().trim_end_matches('/').to_string())
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "http://localhost:8080".to_string())

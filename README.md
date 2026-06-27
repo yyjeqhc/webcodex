@@ -26,7 +26,7 @@ Current direction:
   do not set `PROJECTS_CONFIG` expecting it to register runtime projects.
 - Codex is an **optional advanced capability**. Read, diff, patch, and shell
   actions work without Codex installed.
-- The old file-drop / Web UI / workflow / SSH product direction is removed from
+- The old file upload / Web UI / workflow / SSH product direction is removed from
   the active server surface.
 
 ## Build and install
@@ -90,7 +90,7 @@ description = "WebCodex Runtime repository"
 Agent config example:
 
 ```toml
-server_url = "https://drop.example.com"
+server_url = "https://webcodex.example.com"
 token = "REPLACE_WITH_WEBCODEX_TOKEN"
 client_id = "workstation-1"
 display_name = "Workstation"
@@ -296,7 +296,7 @@ bash scripts/release_check.sh
 Deployment smoke against a live public instance:
 
 ```bash
-WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
 WEBCODEX_TOKEN="<token>" \
 bash scripts/smoke_deployment.sh
 ```

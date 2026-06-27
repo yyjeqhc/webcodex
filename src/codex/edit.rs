@@ -1649,7 +1649,7 @@ pub(super) fn allowed_upload_roots(project_root: &Path) -> Vec<PathBuf> {
         PathBuf::from("/var/tmp"),
         PathBuf::from("/mnt/data"),
     ];
-    if let Some(webcodex_data) = crate::config::env_with_legacy("WEBCODEX_DATA", "DROP_DATA") {
+    if let Some(webcodex_data) = std::env::var("WEBCODEX_DATA").ok() {
         roots.push(PathBuf::from(webcodex_data).join("uploads"));
     }
     roots

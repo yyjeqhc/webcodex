@@ -22,7 +22,6 @@ use shell_protocol::{
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
-const LEGACY_DEFAULT_CONFIG_PATH: &str = "/etc/private-drop-agent/agent.toml";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
@@ -326,7 +325,6 @@ fn usage() -> &'static str {
     "Usage: webcodex-agent [--config PATH] [--once]\n\n\
      Environment:\n\
        WEBCODEX_AGENT_CONFIG      default config path override\n\
-       PRIVATE_DROP_AGENT_CONFIG  deprecated default config path override\n\n\
      Example agent.toml:\n\
        server_url = \"https://v4.yyjeqhc.cn\"\n\
        token = \"...\"\n\
@@ -346,14 +344,6 @@ fn usage() -> &'static str {
 fn parse_args() -> Result<(PathBuf, bool), String> {
     let mut config_path = std::env::var("WEBCODEX_AGENT_CONFIG")
         .map(PathBuf::from)
-        .or_else(|_| {
-            std::env::var("PRIVATE_DROP_AGENT_CONFIG").map(|path| {
-                eprintln!(
-                    "PRIVATE_DROP_AGENT_CONFIG is deprecated; use WEBCODEX_AGENT_CONFIG instead."
-                );
-                PathBuf::from(path)
-            })
-        })
         .unwrap_or_else(|_| default_config_path());
     let mut once = false;
     let mut args = std::env::args().skip(1);
@@ -377,35 +367,20 @@ fn parse_args() -> Result<(PathBuf, bool), String> {
 }
 
 fn default_config_path() -> PathBuf {
-    let home_new = std::env::var_os("HOME")
+    let home_path = std::env::var_os("HOME")
         .map(PathBuf::from)
         .map(|home| home.join(".config/webcodex/agent.toml"));
-    let system_new = PathBuf::from(DEFAULT_CONFIG_PATH);
-    let home_legacy = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".config/private-drop-agent/agent.toml"));
-    let system_legacy = PathBuf::from(LEGACY_DEFAULT_CONFIG_PATH);
-    for (path, legacy) in [
-        (home_new.clone(), false),
-        (Some(system_new.clone()), false),
-        (home_legacy.clone(), true),
-        (Some(system_legacy.clone()), true),
-    ] {
-        if let Some(path) = path {
-            if path.exists() {
-                if legacy {
-                    eprintln!(
-                        "Legacy config path {} is deprecated; use {} or ~/.config/webcodex/agent.toml instead.",
-                        path.display(),
-                        DEFAULT_CONFIG_PATH
-                    );
-                }
-                return path;
-            }
+    let system_path = PathBuf::from(DEFAULT_CONFIG_PATH);
+    for path in [home_path.clone(), Some(system_path.clone())]
+        .into_iter()
+        .flatten()
+    {
+        if path.exists() {
+            return path;
         }
     }
-    home_new
-        .or_else(|| Some(system_new))
+    home_path
+        .or_else(|| Some(system_path))
         .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH))
 }
 
@@ -445,20 +420,10 @@ fn hostname() -> Option<String> {
 }
 
 fn default_projects_dir() -> PathBuf {
-    let home = std::env::var_os("HOME")
+    std::env::var_os("HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    let new_dir = home.join(".config/webcodex/projects.d");
-    let legacy_dir = home.join(".config/private-drop-agent/projects.d");
-    if new_dir.exists() || !legacy_dir.exists() {
-        return new_dir;
-    }
-    eprintln!(
-        "Legacy projects_dir {} is deprecated; use {} instead.",
-        legacy_dir.display(),
-        new_dir.display()
-    );
-    legacy_dir
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(".config/webcodex/projects.d")
 }
 
 fn projects_dir(cfg: &AgentConfig) -> PathBuf {

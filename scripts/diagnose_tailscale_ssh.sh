@@ -39,7 +39,7 @@ Examples:
     --iterations 20 \
     --concurrency 8 \
     --bursts 5 \
-    --trigger 'bash scripts/e2e_test.sh'
+    --trigger 'bash scripts/e2e_zero_config_ws.sh'
 
 Outputs:
   samples.csv       Per-probe timing and result rows

@@ -134,7 +134,7 @@ left permanently `running`.
 
 ## Non-Goals
 
-- Do not bring back Web UI / file-drop / SSH executor / command_request.
+- Do not bring back Web UI / file upload / SSH executor / command_request.
 - Do not make the server execute local repository commands as the normal path.
 - Do not create WebSocket-specific tool execution logic.
 - Do not expose agent stop/kill/admin APIs as GPT Actions by default.

@@ -272,7 +272,7 @@ mod tests {
     #[test]
     fn projects_event_is_lightweight_and_counted() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = Arc::new(Database::open(&tmp.path().join("drop.db")).unwrap());
+        let db = Arc::new(Database::open(&tmp.path().join("webcodex.db")).unwrap());
         record_action_event(
             &db,
             ActionAuditEventInput {

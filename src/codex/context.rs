@@ -1320,7 +1320,7 @@ pub(super) fn execute_context_item(
                 "README.md",
                 "TODO.md",
                 "Cargo.toml",
-                "scripts/e2e_test.sh",
+                "scripts/e2e_zero_config_ws.sh",
                 "src/main.rs",
             ];
             let mut content = format!("Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:", project_name, root.display(), branch, status, proj.effective_allowed_checks().join(", "));
@@ -1808,7 +1808,7 @@ pub async fn codex_context(req: &mut Request, depot: &mut Depot, res: &mut Respo
                 "README.md",
                 "TODO.md",
                 "Cargo.toml",
-                "scripts/e2e_test.sh",
+                "scripts/e2e_zero_config_ws.sh",
                 "src/main.rs",
             ];
             let mut content = format!("Project: {}\nRoot: {}\nBranch: {}\n\nGit Status:\n{}\n\nAllowed Checks: {}\n\nImportant Files:",

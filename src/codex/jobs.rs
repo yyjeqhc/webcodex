@@ -2274,7 +2274,7 @@ mod tests {
 
     fn test_db() -> (tempfile::TempDir, Arc<Database>) {
         let tmp = tempfile::tempdir().unwrap();
-        let db = Arc::new(Database::open(&tmp.path().join("drop.db")).unwrap());
+        let db = Arc::new(Database::open(&tmp.path().join("webcodex.db")).unwrap());
         (tmp, db)
     }
 

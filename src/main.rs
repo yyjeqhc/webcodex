@@ -395,7 +395,7 @@ mod tests {
     #[test]
     fn test_command_request_claim_is_atomic() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open(&tmp.path().join("drop.db")).unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
         let record = CommandAuditRecord {
             id: "req-1".to_string(),
             project: "p".to_string(),
@@ -431,7 +431,7 @@ mod tests {
     #[test]
     fn test_command_request_claim_respects_ttl() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open(&tmp.path().join("drop.db")).unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
         let record = CommandAuditRecord {
             id: "old-req".to_string(),
             project: "p".to_string(),
@@ -459,7 +459,7 @@ mod tests {
     #[test]
     fn test_command_request_reject_only_pending() {
         let tmp = tempfile::tempdir().unwrap();
-        let db = Database::open(&tmp.path().join("drop.db")).unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
         let record = CommandAuditRecord {
             id: "reject-req".to_string(),
             project: "p".to_string(),

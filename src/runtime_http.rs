@@ -2113,7 +2113,13 @@ mod tests {
         );
         // Must not leak secrets / config artifacts.
         let lower = err.to_lowercase();
-        for forbidden in ["token", "authorization", "agent.toml", "drop.env", "secret"] {
+        for forbidden in [
+            "token",
+            "authorization",
+            "agent.toml",
+            "webcodex.env",
+            "secret",
+        ] {
             assert!(
                 !lower.contains(&forbidden),
                 "unknown-tool error must not leak '{}': {}",

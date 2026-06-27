@@ -123,4 +123,4 @@ transport is a possible future addition, not a current requirement.
 - Complex file transfer / cloud storage replacement
 - Browser automation / desktop task orchestration
 - Real-time collaborative editing
-- Restoring the old file-drop / Web UI product surface
+- Restoring the old file upload / Web UI product surface

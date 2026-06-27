@@ -431,7 +431,7 @@ For an already-deployed instance, run the deployment smoke (no server/agent
 started; verifies the public surface of a live deployment):
 
 ```bash
-WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
 WEBCODEX_TOKEN="<your-secret>" \
 bash scripts/smoke_deployment.sh
 ```

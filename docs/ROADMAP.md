@@ -191,7 +191,7 @@ Acceptance:
 - Patch application and shell execution require clear human confirmation in the
   app.
 - GPT Actions and MCP continue to share one runtime layer.
-- Removed legacy workflow, SSH, file-drop, and old dashboard surfaces are not
+- Removed legacy workflow, SSH, file upload, and old dashboard surfaces are not
   reintroduced.
 
 See [MCP_APP_CONSOLE_PLAN.md](MCP_APP_CONSOLE_PLAN.md) for the staged plan and
@@ -207,7 +207,7 @@ copy/paste implementation prompts.
 
 ## Do Not Reintroduce
 
-- File-drop / message / channel product surface.
+- File upload / message / channel product surface.
 - Web UI as the main product surface.
 - Desktop task orchestration.
 - SSH executor.

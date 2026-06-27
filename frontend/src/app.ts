@@ -25,7 +25,7 @@ declare global {
 export {};
 
 const TOKEN_KEY = "webcodex_token";
-const LEGACY_TOKEN_KEY = "drop_token";
+const LEGACY_TOKEN_KEY = "webcodex_token";
 const STATUS_URL = "/api/runtime/status";
 // Refresh cadence: 8s. Conservative — avoids aggressive polling while keeping
 // stale/online transitions visible in near-real time.

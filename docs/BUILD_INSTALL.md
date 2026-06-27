@@ -35,7 +35,7 @@ target/release/webcodex-agent
 ```bash
 WEBCODEX_TOKEN="change-me" \
 WEBCODEX_ADDR="0.0.0.0:8080" \
-WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
 ./target/release/webcodex
 ```
 
@@ -67,7 +67,7 @@ Create the agent config:
 
 ```toml
 # /etc/webcodex/agent.toml
-server_url = "https://drop.example.com"
+server_url = "https://webcodex.example.com"
 token = "change-me"
 client_id = "workstation-1"
 display_name = "Workstation"
@@ -115,7 +115,7 @@ agent:workstation-1:webcodex
 For GPT Actions, import:
 
 ```text
-https://drop.example.com/openapi.json
+https://webcodex.example.com/openapi.json
 ```
 
 Use HTTP API key authentication in the `Authorization` header:
@@ -127,7 +127,7 @@ Bearer <WEBCODEX_TOKEN>
 For MCP / Apps, connect to:
 
 ```text
-https://drop.example.com/mcp
+https://webcodex.example.com/mcp
 ```
 
 The GPT Actions and MCP surfaces share the same `ToolRuntime`; they differ only
@@ -154,7 +154,7 @@ bash scripts/release_check.sh
 Deployment smoke, when a public endpoint and token are available:
 
 ```bash
-WEBCODEX_PUBLIC_URL="https://drop.example.com" \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
 WEBCODEX_TOKEN="change-me" \
 bash scripts/smoke_deployment.sh
 ```
@@ -164,7 +164,7 @@ bash scripts/smoke_deployment.sh
 Run through this short checklist before importing `/openapi.json` into ChatGPT
 GPT Actions:
 
-- [ ] Public HTTPS URL is reachable (e.g. `https://drop.example.com`).
+- [ ] Public HTTPS URL is reachable (e.g. `https://webcodex.example.com`).
 - [ ] `GET /openapi.json` returns a valid schema.
 - [ ] Schema exposes 25 operations (`scripts/e2e_zero_config_ws.sh` asserts
       this against the live schema).

@@ -229,11 +229,6 @@ pub fn request_action_session_id(req: &Request) -> Option<String> {
                 .get("x-webcodex-session-id")
                 .and_then(|v| v.to_str().ok())
         })
-        .or_else(|| {
-            req.headers()
-                .get("x-private-drop-session-id")
-                .and_then(|v| v.to_str().ok())
-        })
         .map(str::trim)
         .filter(|v| !v.is_empty())
         .map(|v| trim_and_truncate(v, 120))

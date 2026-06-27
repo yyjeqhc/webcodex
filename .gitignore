@@ -6,7 +6,7 @@ data*
 
 # Local Codex CLI workspace
 .codex
-
+.claude
 # Generated patch files
 *.patch
 

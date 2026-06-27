@@ -162,3 +162,7 @@ Start here:
 - [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md) — project registry and project management tools.
 - [docs/E2E_VALIDATION.md](docs/E2E_VALIDATION.md) — local end-to-end validation.
 - [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — deployment troubleshooting and operational checklist.
+
+## License
+
+Licensed under the Apache License, Version 2.0. See [LICENSE](LICENSE).

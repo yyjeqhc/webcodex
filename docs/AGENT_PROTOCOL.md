@@ -10,7 +10,7 @@ Agents should use agent tokens created during client enrollment:
 webcodex-cli client enroll --server-url URL --pairing-code CODE --client-id CLIENT_ID
 ```
 
-The server/admin side creates the temporary code with `webcodex-cli pairing create`. The agent token is returned to the client during enroll and written into the generated `agent.toml`; do not copy agent token files from the server.
+The server/admin side creates the temporary code with `webcodex-cli pairing create`. The agent token is returned to the client during enroll and written into the generated `agent.toml`; do not copy agent token files from the server. For binary deployments, install the client-side service with `webcodex-cli agent install-service` and inspect it with `webcodex-cli agent status`.
 
 Transport auth rules:
 

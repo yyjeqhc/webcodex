@@ -2,9 +2,9 @@
 
 Current user and deployment docs:
 
-1. [../README.md](../README.md) — product overview, server-first CLI entry points, pairing/enrollment, auth, policy, and doc map.
-2. [BUILD_INSTALL.md](BUILD_INSTALL.md) — package install, server bootstrap, client enrollment, doctor, and status reference.
-3. [DEPLOYMENT.md](DEPLOYMENT.md) — production server bootstrap, enrollment, and operations guide.
+1. [../README.md](../README.md) — product overview, binary deployment flow, pairing/enrollment, auth, policy, and doc map.
+2. [BUILD_INSTALL.md](BUILD_INSTALL.md) — package install, server bootstrap, client enrollment, agent service, doctor, and status reference.
+3. [DEPLOYMENT.md](DEPLOYMENT.md) — production server bootstrap, agent service installation, enrollment, and operations guide.
 4. [GPT_ACTIONS.md](GPT_ACTIONS.md) — GPT Actions import, auth, tool flow, and exposed surface.
 5. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — agent transports, auth, identity, and redacted policy summaries.
 6. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) — agent project registry and project management tools.

@@ -63,6 +63,33 @@ webcodex-cli setup single-user
 
 Prefer `webcodex-cli` in new docs and automation.
 
+## Binary deployment checklist
+
+Server:
+
+1. Install `webcodex` and `webcodex-cli` binaries.
+2. Run `webcodex-cli server init`.
+3. Run `webcodex-cli server install-service --overwrite` only if replacing an old unit.
+4. Run `sudo systemctl daemon-reload`.
+5. Run `sudo systemctl enable --now webcodex`.
+6. Run `webcodex-cli server status`.
+
+Server/admin:
+
+7. Run `webcodex-cli pairing create`.
+
+Client:
+
+8. Install `webcodex-agent` and `webcodex-cli` binaries.
+9. Run `webcodex-cli client enroll`.
+10. Run `webcodex-cli agent install-service`.
+11. Run `sudo systemctl daemon-reload`.
+12. Run `sudo systemctl enable --now webcodex-agent`.
+13. Run `webcodex-cli agent status`.
+14. Run `webcodex-cli doctor --strict`.
+
+`/etc/webcodex/webcodex.env` is server-side only. `/etc/webcodex/agent.toml`, `webcodex-user-token`, and `webcodex-agent-token` are client-side files when deploying a client agent as a service.
+
 ## Enrollment
 
 On the server/admin side, create a short-lived one-time pairing code:
@@ -75,32 +102,51 @@ webcodex-cli pairing create \
   --client-id alice-laptop
 ```
 
+`pairing create` is a server/admin-side command and needs server bootstrap/admin auth. The default server bootstrap env file exists on the server, not the client. Copy only the short-lived `wc_pair_*` code to the client; do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, or `wc_agent_*` values from the server.
+
 On the client side, exchange the code over HTTPS and write local credentials:
 
 ```bash
-webcodex-cli client enroll \
+sudo webcodex-cli client enroll \
   --server-url https://your-domain.example \
   --pairing-code <temporary_pairing_code> \
-  --client-id alice-laptop
+  --client-id alice-laptop \
+  --output-dir /etc/webcodex \
+  --agent-config /etc/webcodex/agent.toml
 ```
 
 Pairing creates no server-side `wc_pat_*` or `wc_agent_*` token files. Client enroll creates those tokens for the paired user/client and saves them locally with `0600` permissions on Unix:
 
 ```text
-~/.config/webcodex/webcodex-user-token
-~/.config/webcodex/webcodex-agent-token
-~/.config/webcodex/agent.toml
+/etc/webcodex/webcodex-user-token
+/etc/webcodex/webcodex-agent-token
+/etc/webcodex/agent.toml
 ```
 
-For root clients the default directory is `/etc/webcodex`. GPT Actions should use the client-side user-token file.
+For non-root foreground agents, the default directory is `~/.config/webcodex`. GPT Actions should use the client-side user-token file.
 
 ## Public HTTPS URL
 
-GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup; configure nginx, Caddy, Cloudflare Tunnel, ngrok, or similar infrastructure separately.
+GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup.
 
 ## Agent configuration
 
-Client enroll generates the agent config. Start the agent with:
+Client enroll generates the agent config. Install a systemd unit with:
+
+```bash
+sudo webcodex-cli agent install-service \
+  --config /etc/webcodex/agent.toml \
+  --bin /opt/webcodex/bin/webcodex-agent
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex-agent
+webcodex-cli agent status \
+  --config /etc/webcodex/agent.toml \
+  --server-url https://your-domain.example \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-token-file /etc/webcodex/webcodex-agent-token
+```
+
+For a foreground test, start the agent with:
 
 ```bash
 webcodex-agent --config ~/.config/webcodex/agent.toml

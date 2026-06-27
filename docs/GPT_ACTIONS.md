@@ -13,12 +13,14 @@ GPT Actions and MCP share the same `ToolRuntime`; GPT Actions provides typed RES
 Configure the GPT Action with HTTP Bearer authentication:
 
 ```text
-Authorization: Bearer <wc_pat_user_api_token>
+Authorization: Bearer <user-api-token>
 ```
 
-Do not paste or store the bootstrap server token as the day-to-day GPT Actions credential. Use pairing/enrollment instead: `webcodex-cli pairing create` creates a short-lived code on the server/admin side, and `webcodex-cli client enroll` exchanges that code on the client side. GPT Actions should use the generated client-side `webcodex-user-token` file. Do not copy token files from the server to the client.
+Do not paste or store the bootstrap server token as the day-to-day GPT Actions credential. Use pairing/enrollment instead: `webcodex-cli pairing create` creates a short-lived `wc_pair_*` code on the server/admin side, and `webcodex-cli client enroll` exchanges that code on the client side. GPT Actions should use the generated client-side `webcodex-user-token` file. `/etc/webcodex/webcodex.env` is server-side only; do not copy token files or `WEBCODEX_TOKEN`, `wc_pat_*`, or `wc_agent_*` values from the server to the client.
 
 `?token=` is not a GPT Actions auth mechanism. It is accepted only by `/api/agents/ws` for WebSocket handshake compatibility.
+
+GPT Actions require a public HTTPS URL for the WebCodex server.
 
 ## Tool surface
 

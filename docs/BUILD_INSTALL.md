@@ -24,9 +24,12 @@ npm install -g @webcodex/webcodex
 
 The npm package is a wrapper around native release artifacts. Publishing and real artifact URLs/checksums are a separate release step.
 
-## Server bootstrap
+## Binary deployment flow
 
-Initialize the server env file:
+Server:
+
+1. Install `webcodex` and `webcodex-cli` binaries.
+2. Initialize the server env file:
 
 ```bash
 sudo webcodex-cli server init \
@@ -35,22 +38,27 @@ sudo webcodex-cli server init \
   --env-file /etc/webcodex/webcodex.env
 ```
 
-This creates only the server bootstrap/admin `WEBCODEX_TOKEN`. It does not create user API tokens or agent tokens.
+This creates only the server bootstrap/admin `WEBCODEX_TOKEN` in `/etc/webcodex/webcodex.env`. That file is server-side only; it does not create user API tokens or agent tokens.
 
-Install and start the service:
+3. Install the server service. Use `--overwrite` only when replacing an old unit.
 
 ```bash
 sudo webcodex-cli server install-service \
   --env-file /etc/webcodex/webcodex.env \
   --bin /usr/local/bin/webcodex
+```
+
+4. Reload systemd, start the service, and check status:
+
+```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex
 webcodex-cli server status --env-file /etc/webcodex/webcodex.env
 ```
 
-## Client enrollment
+Server/admin:
 
-On the server/admin side, create a temporary one-time pairing code:
+5. Create a temporary one-time pairing code:
 
 ```bash
 webcodex-cli pairing create \
@@ -60,18 +68,44 @@ webcodex-cli pairing create \
   --client-id alice-laptop
 ```
 
-On the client side, exchange the pairing code over HTTPS:
+`pairing create` is a server/admin-side command. It needs server bootstrap/admin auth. Copy only the short-lived `wc_pair_*` code to the client; do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, or `wc_agent_*` values.
+
+Client:
+
+6. Install `webcodex-agent` and `webcodex-cli` binaries.
+7. Exchange the pairing code over HTTPS and write client-side credentials/config:
 
 ```bash
-webcodex-cli client enroll \
+sudo webcodex-cli client enroll \
   --server-url https://your-domain.example \
   --pairing-code <temporary_pairing_code> \
-  --client-id alice-laptop
+  --client-id alice-laptop \
+  --output-dir /etc/webcodex \
+  --agent-config /etc/webcodex/agent.toml
 ```
 
-Pairing creates only the short-lived code. Client enroll creates the `wc_pat_*` user token and `wc_agent_*` agent token, then saves them locally with `0600` permissions on Unix. GPT Actions should use the generated user-token file.
+Client enroll creates the `wc_pat_*` user token, `wc_agent_*` agent token, and `/etc/webcodex/agent.toml` locally with `0600` permissions on Unix.
 
-GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxies or tunnels; configure nginx, Caddy, Cloudflare Tunnel, ngrok, or similar infrastructure separately if needed.
+8. Install and start the agent service, then validate:
+
+```bash
+sudo webcodex-cli agent install-service \
+  --config /etc/webcodex/agent.toml \
+  --bin /opt/webcodex/bin/webcodex-agent
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex-agent
+webcodex-cli agent status \
+  --config /etc/webcodex/agent.toml \
+  --server-url https://your-domain.example \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-token-file /etc/webcodex/webcodex-agent-token
+webcodex-cli doctor --strict \
+  --server-url https://your-domain.example \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-token-file /etc/webcodex/webcodex-agent-token
+```
+
+GPT Actions should use the generated client-side user-token file. GPT Actions require a public HTTPS URL; WebCodex CLI does not automate reverse proxies or tunnels.
 
 Compatibility commands still work, but should not be the first choice in new docs:
 
@@ -84,7 +118,7 @@ webcodex-cli setup single-user
 
 ## Agent config
 
-Client enroll writes `agent.toml`. Start the agent with that generated config:
+Client enroll writes `agent.toml`. For a systemd service, use `webcodex-cli agent install-service`; for a foreground test, run:
 
 ```bash
 webcodex-agent --config ~/.config/webcodex/agent.toml
@@ -97,7 +131,10 @@ webcodex-agent --config ~/.config/webcodex/agent.toml
 Run non-destructive diagnostics:
 
 ```bash
-webcodex-cli doctor --server-url https://your-domain.example --user-token-file ~/.config/webcodex/webcodex-user-token
+webcodex-cli doctor --strict \
+  --server-url https://your-domain.example \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-token-file /etc/webcodex/webcodex-agent-token
 ```
 
 Agent policy defaults:

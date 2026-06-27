@@ -16,6 +16,7 @@
 //! management tooling.
 
 use reqwest::header::CONTENT_TYPE;
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -56,6 +57,8 @@ enum CliAction {
     PairingCreate(PairingCreateOptions),
     ClientEnroll(ClientEnrollOptions),
     Doctor(DoctorOptions),
+    AgentInstallService(AgentInstallServiceOptions),
+    AgentStatus(AgentStatusOptions),
     ServerInit(ServerInitOptions),
     ServerInstallService(ServerInstallServiceOptions),
     ServerStatus(ServerStatusOptions),
@@ -150,11 +153,34 @@ struct ServerInstallServiceOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentInstallServiceOptions {
+    config: PathBuf,
+    bin: PathBuf,
+    service_file: PathBuf,
+    user: Option<String>,
+    group: Option<String>,
+    working_directory: PathBuf,
+    overwrite: bool,
+    dry_run: bool,
+    output_stdout: bool,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ServerStatusOptions {
     url: String,
     env_file: Option<PathBuf>,
     env_file_explicit: bool,
     token_file: Option<PathBuf>,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentStatusOptions {
+    config: PathBuf,
+    server_url: Option<String>,
+    user_token_file: Option<PathBuf>,
+    agent_token_file: Option<PathBuf>,
     json: bool,
 }
 
@@ -171,7 +197,7 @@ fn usage() -> &'static str {
        users create/list                                  Manage users\n\
        tokens create/list/revoke                          Manage personal API tokens\n\
        agent-tokens create/list/revoke                    Manage agent tokens\n\
-       agent init                                         Generate an agent.toml config\n\
+       agent init/install-service/status                  Manage client-side agent config/service\n\
        setup single-user                                  Create a user + GPT + agent token set\n\n\
      Options:\n\
        -h, --help       Print help and exit\n\
@@ -205,9 +231,14 @@ fn pairing_create_usage() -> &'static str {
        --agent-token-name NAME   Name for the agent token created during enroll\n\
        --json                    Print machine-readable output\n\
        -h, --help                Print help and exit\n\n\
-     The pairing code is a temporary one-time credential. Copy it to the\n\
-     client and do not store it long-term. This command does not create\n\
-     wc_pat_* or wc_agent_* token files on the server.\n"
+     Server/admin-side command:\n\
+       pairing create needs server bootstrap/admin auth. The default server\n\
+       bootstrap env file lives on the server, not the client.\n\
+       On the client, use: webcodex-cli client enroll\n\n\
+     Copy only the short-lived wc_pair_* code to the client. Do not copy\n\
+     WEBCODEX_TOKEN, wc_pat_*, or wc_agent_* values from server to client.\n\
+     This command does not create wc_pat_* or wc_agent_* token files on the\n\
+     server.\n"
 }
 
 fn client_usage() -> &'static str {
@@ -307,6 +338,45 @@ fn server_status_usage() -> &'static str {
      WEBCODEX_TOKEN, then no token for auth-disabled servers.\n"
 }
 
+fn agent_usage() -> &'static str {
+    "Usage: webcodex-cli agent <COMMAND>\n\n\
+     Client-side agent commands.\n\n\
+     Commands:\n\
+       init                 Generate an agent.toml config\n\
+       install-service      Generate/install a webcodex-agent systemd unit\n\
+       status               Check systemd status and safe agent metadata\n"
+}
+
+fn agent_install_service_usage() -> &'static str {
+    "Usage: webcodex-cli agent install-service --config PATH [--bin PATH] [OPTIONS]\n\n\
+     Options:\n\
+       --config PATH              Agent config path [default: /etc/webcodex/agent.toml]\n\
+       --bin PATH                 webcodex-agent binary path; defaults to webcodex-agent from PATH when safely discoverable\n\
+       --service-file PATH        systemd unit path [default: /etc/systemd/system/webcodex-agent.service]\n\
+       --working-directory PATH   WorkingDirectory= [default: /root]\n\
+       --user USER                Optional systemd User=\n\
+       --group GROUP              Optional systemd Group=\n\
+       --overwrite                Replace an existing service file\n\
+       --dry-run                  Print the unit instead of writing it\n\
+       --output -                 Print the unit instead of writing it\n\
+       --json                     Print a machine-readable summary\n\
+       -h, --help                 Print help and exit\n\n\
+     The unit runs: webcodex-agent --config <config>. Tokens are never inlined.\n"
+}
+
+fn agent_status_usage() -> &'static str {
+    "Usage: webcodex-cli agent status [OPTIONS]\n\n\
+     Options:\n\
+       --config PATH              Agent config path [default: /etc/webcodex/agent.toml]\n\
+       --server-url URL           Override server URL for runtime checks\n\
+       --user-token-file PATH     Read user API token for /api/runtime/status\n\
+       --agent-token-file PATH    Read agent token for boundary check\n\
+       --json                     Print a machine-readable summary\n\
+       -h, --help                 Print help and exit\n\n\
+     Status prints safe metadata only: no tokens, Authorization headers, full\n\
+     agent.toml, env files, or secrets.\n"
+}
+
 fn cli_action<I, S>(args: I) -> CliAction
 where
     I: IntoIterator<Item = S>,
@@ -356,7 +426,7 @@ fn parse_agent_subcommand(args: &[String]) -> CliAction {
         return CliAction::Exit {
             code: 2,
             stdout: String::new(),
-            stderr: "expected `agent init`\n".to_string(),
+            stderr: format!("{}\n", agent_usage()),
         };
     }
     match args[0].as_str() {
@@ -368,9 +438,43 @@ fn parse_agent_subcommand(args: &[String]) -> CliAction {
                 stderr: format!("{}\n", e),
             },
         },
+        "install-service" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: agent_install_service_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_agent_install_service(&args[1..]) {
+                Ok(opts) => CliAction::AgentInstallService(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        "status" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: agent_status_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_agent_status(&args[1..]) {
+                Ok(opts) => CliAction::AgentStatus(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
         "--help" | "-h" => CliAction::Exit {
             code: 0,
-            stdout: usage().to_string(),
+            stdout: agent_usage().to_string(),
             stderr: String::new(),
         },
         other => CliAction::Exit {
@@ -575,6 +679,109 @@ fn parse_server_init(args: &[String]) -> Result<ServerInitOptions, String> {
         if url.trim().is_empty() {
             return Err("--public-url cannot be empty".to_string());
         }
+    }
+    Ok(opts)
+}
+
+fn parse_agent_install_service(args: &[String]) -> Result<AgentInstallServiceOptions, String> {
+    let mut config = PathBuf::from("/etc/webcodex/agent.toml");
+    let mut bin: Option<PathBuf> = None;
+    let mut service_file = PathBuf::from("/etc/systemd/system/webcodex-agent.service");
+    let mut working_directory = PathBuf::from("/root");
+    let mut user = None;
+    let mut group = None;
+    let mut overwrite = false;
+    let mut dry_run = false;
+    let mut output_stdout = false;
+    let mut json = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--config" => config = PathBuf::from(next_value(&mut iter, arg)?),
+            "--bin" => bin = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--service-file" => service_file = PathBuf::from(next_value(&mut iter, arg)?),
+            "--working-directory" => working_directory = PathBuf::from(next_value(&mut iter, arg)?),
+            "--user" => user = Some(next_value(&mut iter, arg)?),
+            "--group" => group = Some(next_value(&mut iter, arg)?),
+            "--overwrite" => overwrite = true,
+            "--dry-run" => dry_run = true,
+            "--output" => {
+                let value = next_value(&mut iter, arg)?;
+                if value != "-" {
+                    return Err("--output only supports '-' for stdout".to_string());
+                }
+                output_stdout = true;
+            }
+            "--json" => json = true,
+            _ => return Err(format!("unknown agent install-service flag: {}", arg)),
+        }
+    }
+    let bin = match bin.or_else(|| discover_named_binary_absolute("webcodex-agent")) {
+        Some(path) => path,
+        None => {
+            return Err(
+                "--bin is required because webcodex-agent was not found in PATH".to_string(),
+            )
+        }
+    };
+    if config.as_os_str().is_empty() {
+        return Err("--config cannot be empty".to_string());
+    }
+    if bin.as_os_str().is_empty() {
+        return Err("--bin cannot be empty".to_string());
+    }
+    if service_file.as_os_str().is_empty() {
+        return Err("--service-file cannot be empty".to_string());
+    }
+    if working_directory.as_os_str().is_empty() {
+        return Err("--working-directory cannot be empty".to_string());
+    }
+    Ok(AgentInstallServiceOptions {
+        config,
+        bin,
+        service_file,
+        user,
+        group,
+        working_directory,
+        overwrite,
+        dry_run,
+        output_stdout,
+        json,
+    })
+}
+
+fn parse_agent_status(args: &[String]) -> Result<AgentStatusOptions, String> {
+    let mut opts = AgentStatusOptions {
+        config: PathBuf::from("/etc/webcodex/agent.toml"),
+        server_url: None,
+        user_token_file: None,
+        agent_token_file: None,
+        json: false,
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--config" => opts.config = PathBuf::from(next_value(&mut iter, arg)?),
+            "--server-url" => opts.server_url = Some(next_value(&mut iter, arg)?),
+            "--user-token-file" => {
+                opts.user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
+            }
+            "--agent-token-file" => {
+                opts.agent_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
+            }
+            "--json" => opts.json = true,
+            _ => return Err(format!("unknown agent status flag: {}", arg)),
+        }
+    }
+    if opts.config.as_os_str().is_empty() {
+        return Err("--config cannot be empty".to_string());
+    }
+    if opts
+        .server_url
+        .as_ref()
+        .is_some_and(|url| url.trim().is_empty())
+    {
+        return Err("--server-url cannot be empty".to_string());
     }
     Ok(opts)
 }
@@ -1130,6 +1337,17 @@ fn read_env_file_value(path: &Path, key: &str) -> Result<Option<String>, String>
     Ok(parse_env_content_value(&content, key))
 }
 
+fn read_pairing_server_env_file_value(path: &Path, key: &str) -> Result<Option<String>, String> {
+    let content = std::fs::read_to_string(path).map_err(|e| {
+        format!(
+            "failed to read server env file {}: {}; pairing create is a server/admin-side command. Run it on the server or pass a server/admin token file.",
+            path.display(),
+            e
+        )
+    })?;
+    Ok(parse_env_content_value(&content, key))
+}
+
 fn parse_env_content_value(content: &str, key: &str) -> Option<String> {
     for line in content.lines() {
         let line = line.trim();
@@ -1157,14 +1375,25 @@ fn parse_env_content_value(content: &str, key: &str) -> Option<String> {
 }
 
 fn discover_webcodex_binary() -> Option<PathBuf> {
+    discover_named_binary_absolute("webcodex")
+}
+
+fn discover_named_binary_absolute(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
         if !dir.is_absolute() {
             continue;
         }
-        let candidate = dir.join("webcodex");
+        let candidate = dir.join(name);
         if candidate.is_file() {
             return Some(candidate);
+        }
+        #[cfg(windows)]
+        {
+            let candidate = dir.join(format!("{}.exe", name));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
         }
     }
     None
@@ -1180,6 +1409,36 @@ fn render_systemd_unit(opts: &ServerInstallServiceOptions) -> String {
     unit.push_str("Type=simple\n");
     unit.push_str(&format!("EnvironmentFile={}\n", opts.env_file.display()));
     unit.push_str(&format!("ExecStart={}\n", opts.bin.display()));
+    unit.push_str("Restart=on-failure\n");
+    unit.push_str("RestartSec=3\n");
+    unit.push_str(&format!(
+        "WorkingDirectory={}\n",
+        opts.working_directory.display()
+    ));
+    if let Some(user) = &opts.user {
+        unit.push_str(&format!("User={}\n", user));
+    }
+    if let Some(group) = &opts.group {
+        unit.push_str(&format!("Group={}\n", group));
+    }
+    unit.push_str("\n[Install]\n");
+    unit.push_str("WantedBy=multi-user.target\n");
+    unit
+}
+
+fn render_agent_systemd_unit(opts: &AgentInstallServiceOptions) -> String {
+    let mut unit = String::new();
+    unit.push_str("[Unit]\n");
+    unit.push_str("Description=WebCodex Agent\n");
+    unit.push_str("After=network-online.target\n");
+    unit.push_str("Wants=network-online.target\n\n");
+    unit.push_str("[Service]\n");
+    unit.push_str("Type=simple\n");
+    unit.push_str(&format!(
+        "ExecStart={} --config {}\n",
+        opts.bin.display(),
+        opts.config.display()
+    ));
     unit.push_str("Restart=on-failure\n");
     unit.push_str("RestartSec=3\n");
     unit.push_str(&format!(
@@ -1369,7 +1628,7 @@ fn resolve_pairing_create_token(opts: &PairingCreateOptions) -> Result<String, S
         return Ok(token);
     }
     if let Some(path) = &opts.env_file {
-        let token = read_env_file_value(path, "WEBCODEX_TOKEN")?
+        let token = read_pairing_server_env_file_value(path, "WEBCODEX_TOKEN")?
             .unwrap_or_default()
             .trim()
             .to_string();
@@ -2285,13 +2544,73 @@ fn run_server_install_service(opts: ServerInstallServiceOptions) -> Result<Strin
     Ok(out)
 }
 
+fn run_agent_install_service(opts: AgentInstallServiceOptions) -> Result<String, String> {
+    let unit = render_agent_systemd_unit(&opts);
+    let writes_file = !opts.dry_run && !opts.output_stdout;
+    if writes_file {
+        if opts.service_file.exists() && !opts.overwrite {
+            return Err(format!(
+                "{} already exists; pass --overwrite to replace it",
+                opts.service_file.display()
+            ));
+        }
+        if !is_systemd_platform() {
+            return Err(
+                "systemd was not detected; use --dry-run or --output - to render the unit"
+                    .to_string(),
+            );
+        }
+        write_text_file(&opts.service_file, &unit, opts.overwrite, false)?;
+    }
+    if opts.output_stdout || opts.dry_run {
+        if opts.json {
+            let summary = json!({
+                "service_file": opts.service_file.to_string_lossy(),
+                "config": opts.config.to_string_lossy(),
+                "bin": opts.bin.to_string_lossy(),
+                "dry_run": true,
+                "unit": unit,
+            });
+            return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+        }
+        return Ok(unit);
+    }
+    if opts.json {
+        let summary = json!({
+            "service_file": opts.service_file.to_string_lossy(),
+            "config": opts.config.to_string_lossy(),
+            "bin": opts.bin.to_string_lossy(),
+            "wrote_service_file": true,
+            "next_steps": [
+                "sudo systemctl daemon-reload",
+                "sudo systemctl enable --now webcodex-agent",
+                "sudo systemctl status webcodex-agent"
+            ],
+        });
+        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+    }
+    let mut out = String::new();
+    out.push_str("Agent service unit installed.\n\n");
+    out.push_str(&format!(
+        "  service file: {}\n",
+        opts.service_file.display()
+    ));
+    out.push_str(&format!("  config:       {}\n", opts.config.display()));
+    out.push_str(&format!("  binary:       {}\n", opts.bin.display()));
+    out.push_str("\nNext steps:\n");
+    out.push_str("  - sudo systemctl daemon-reload\n");
+    out.push_str("  - sudo systemctl enable --now webcodex-agent\n");
+    out.push_str("  - sudo systemctl status webcodex-agent\n");
+    Ok(out)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct SystemdStatus {
     active: String,
     enabled: String,
 }
 
-fn query_systemd_status() -> SystemdStatus {
+fn query_systemd_service_status(service_name: &str) -> SystemdStatus {
     fn run_status(args: &[&str]) -> String {
         let output = std::process::Command::new("systemctl").args(args).output();
         match output {
@@ -2313,9 +2632,13 @@ fn query_systemd_status() -> SystemdStatus {
         };
     }
     SystemdStatus {
-        active: run_status(&["is-active", "webcodex.service"]),
-        enabled: run_status(&["is-enabled", "webcodex.service"]),
+        active: run_status(&["is-active", service_name]),
+        enabled: run_status(&["is-enabled", service_name]),
     }
+}
+
+fn query_systemd_status() -> SystemdStatus {
+    query_systemd_service_status("webcodex.service")
 }
 
 fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, String> {
@@ -2415,6 +2738,281 @@ async fn fetch_runtime_status(url: &str, token: Option<&str>) -> Result<HttpStat
         error: None,
         output,
     })
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct AgentStatusConfig {
+    #[serde(default)]
+    server_url: String,
+    #[serde(default)]
+    client_id: String,
+    #[serde(default)]
+    owner: Option<String>,
+    #[serde(default)]
+    display_name: Option<String>,
+    #[serde(default)]
+    transport: Option<String>,
+    #[serde(default)]
+    projects_dir: Option<PathBuf>,
+    #[serde(default)]
+    policy: AgentStatusPolicy,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct AgentStatusPolicy {
+    #[serde(default)]
+    allowed_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone)]
+struct AgentConfigMetadata {
+    path: PathBuf,
+    client_id: String,
+    owner: Option<String>,
+    display_name: Option<String>,
+    transport: Option<String>,
+    projects_dir: Option<PathBuf>,
+    allowed_roots: Vec<PathBuf>,
+    server_url: String,
+}
+
+fn read_agent_config_metadata(path: &Path) -> Result<AgentConfigMetadata, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read agent config {}: {}", path.display(), e))?;
+    let cfg: AgentStatusConfig = toml::from_str(&content)
+        .map_err(|e| format!("failed to parse agent config {}: {}", path.display(), e))?;
+    Ok(AgentConfigMetadata {
+        path: path.to_path_buf(),
+        client_id: cfg.client_id,
+        owner: cfg.owner,
+        display_name: cfg.display_name,
+        transport: cfg.transport,
+        projects_dir: cfg.projects_dir,
+        allowed_roots: cfg.policy.allowed_roots,
+        server_url: cfg.server_url,
+    })
+}
+
+fn allowed_roots_summary(roots: &[PathBuf]) -> String {
+    if roots.is_empty() {
+        "0 configured; agent runtime defaults to $HOME when allowed_roots is omitted".to_string()
+    } else {
+        format!(
+            "{} configured: {}",
+            roots.len(),
+            roots
+                .iter()
+                .map(|p| p.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+fn runtime_client_entry<'a>(output: &'a Value, client_id: &str) -> Option<&'a Value> {
+    output
+        .pointer("/agents/clients")
+        .and_then(Value::as_array)
+        .and_then(|clients| {
+            clients
+                .iter()
+                .find(|client| client.get("client_id").and_then(Value::as_str) == Some(client_id))
+        })
+}
+
+fn runtime_client_online(output: &Value, client_id: &str) -> Option<bool> {
+    let entry = runtime_client_entry(output, client_id)?;
+    entry.get("connected").and_then(Value::as_bool).or_else(|| {
+        entry
+            .get("status")
+            .and_then(Value::as_str)
+            .map(|s| s == "online")
+    })
+}
+
+async fn run_agent_status(opts: AgentStatusOptions) -> Result<String, String> {
+    let systemd = query_systemd_service_status("webcodex-agent.service");
+    let metadata = read_agent_config_metadata(&opts.config)?;
+    let effective_server_url = opts.server_url.clone().or_else(|| {
+        let url = metadata.server_url.trim().to_string();
+        if url.is_empty() {
+            None
+        } else {
+            Some(url)
+        }
+    });
+    let user_token = read_optional_token(&opts.user_token_file, "--user-token-file")?;
+    let agent_token = read_optional_token(&opts.agent_token_file, "--agent-token-file")?;
+
+    let mut runtime_http: Option<HttpStatusSummary> = None;
+    let mut client_online: Option<bool> = None;
+    if let (Some(server_url), Some(token)) =
+        (effective_server_url.as_deref(), user_token.as_deref())
+    {
+        let http = fetch_runtime_status(server_url, Some(token)).await?;
+        if let Some(output) = http.output.as_ref() {
+            if !metadata.client_id.trim().is_empty() {
+                client_online = runtime_client_online(output, &metadata.client_id);
+            }
+        }
+        runtime_http = Some(http);
+    }
+
+    let mut agent_boundary_status: Option<&'static str> = None;
+    let mut agent_boundary_detail: Option<String> = None;
+    if let (Some(server_url), Some(token)) =
+        (effective_server_url.as_deref(), agent_token.as_deref())
+    {
+        match http_post_json_status(server_url, "/api/runtime/status", Some(token), json!({})).await
+        {
+            Ok((status, content_type, _)) if status == 401 || status == 403 => {
+                agent_boundary_status = Some("PASS");
+                agent_boundary_detail =
+                    Some("agent token cannot call /api/runtime/status".to_string());
+                let _ = content_type;
+            }
+            Ok((status, content_type, _)) => {
+                agent_boundary_status = Some("FAIL");
+                agent_boundary_detail = Some(format!(
+                    "unexpected HTTP {} content-type {}",
+                    status, content_type
+                ));
+            }
+            Err(e) => {
+                agent_boundary_status = Some("FAIL");
+                agent_boundary_detail = Some(e);
+            }
+        }
+    }
+
+    if opts.json {
+        let summary = json!({
+            "service": {
+                "active": systemd.active,
+                "enabled": systemd.enabled,
+            },
+            "config": {
+                "path": metadata.path.to_string_lossy(),
+                "client_id": metadata.client_id,
+                "owner": metadata.owner,
+                "display_name": metadata.display_name,
+                "transport": metadata.transport,
+                "projects_dir": metadata.projects_dir.map(|p| p.to_string_lossy().to_string()),
+                "allowed_roots": {
+                    "count": metadata.allowed_roots.len(),
+                    "summary": allowed_roots_summary(&metadata.allowed_roots),
+                    "paths": metadata.allowed_roots.iter().map(|p| p.to_string_lossy().to_string()).collect::<Vec<_>>(),
+                },
+                "server_url": metadata.server_url,
+            },
+            "runtime": runtime_http.as_ref().map(|http| json!({
+                "checked": true,
+                "reachable": http.reachable,
+                "status_code": http.status_code,
+                "content_type": http.content_type,
+                "error": http.error,
+                "client_online": client_online,
+            })).unwrap_or_else(|| json!({
+                "checked": false,
+                "reason": "requires server URL and --user-token-file",
+            })),
+            "agent_token_boundary": agent_boundary_status.map(|status| json!({
+                "checked": true,
+                "status": status,
+                "detail": agent_boundary_detail,
+            })).unwrap_or_else(|| json!({
+                "checked": false,
+                "reason": "requires server URL and --agent-token-file",
+            })),
+        });
+        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+    }
+
+    let mut out = String::new();
+    out.push_str("Agent status:\n\n");
+    out.push_str(&format!("  service active:       {}\n", systemd.active));
+    out.push_str(&format!("  service enabled:      {}\n", systemd.enabled));
+    out.push_str(&format!(
+        "  config:               {}\n",
+        metadata.path.display()
+    ));
+    out.push_str(&format!(
+        "  client_id:            {}\n",
+        if metadata.client_id.trim().is_empty() {
+            "unknown"
+        } else {
+            metadata.client_id.as_str()
+        }
+    ));
+    out.push_str(&format!(
+        "  owner:                {}\n",
+        metadata.owner.as_deref().unwrap_or("unknown")
+    ));
+    out.push_str(&format!(
+        "  display_name:         {}\n",
+        metadata.display_name.as_deref().unwrap_or("unknown")
+    ));
+    out.push_str(&format!(
+        "  transport:            {}\n",
+        metadata.transport.as_deref().unwrap_or("unknown")
+    ));
+    out.push_str(&format!(
+        "  projects_dir:         {}\n",
+        metadata
+            .projects_dir
+            .as_ref()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| "runtime default".to_string())
+    ));
+    out.push_str(&format!(
+        "  allowed_roots:        {}\n",
+        allowed_roots_summary(&metadata.allowed_roots)
+    ));
+    out.push_str(&format!(
+        "  server_url:           {}\n",
+        if metadata.server_url.trim().is_empty() {
+            "unknown"
+        } else {
+            metadata.server_url.as_str()
+        }
+    ));
+    match runtime_http {
+        Some(http) => {
+            out.push_str(&format!(
+                "  runtime reachable:    {}\n",
+                if http.reachable { "yes" } else { "no" }
+            ));
+            if let Some(code) = http.status_code {
+                out.push_str(&format!("  runtime status:       {}\n", code));
+            }
+            if let Some(content_type) = &http.content_type {
+                out.push_str(&format!("  runtime content-type: {}\n", content_type));
+            }
+            if let Some(error) = &http.error {
+                out.push_str(&format!("  runtime error:        {}\n", error));
+            }
+            out.push_str(&format!(
+                "  client online:        {}\n",
+                client_online
+                    .map(|online| if online { "yes" } else { "no" })
+                    .unwrap_or("unknown")
+            ));
+        }
+        None => out.push_str(
+            "  runtime check:        skipped (requires server URL and --user-token-file)\n",
+        ),
+    }
+    match agent_boundary_status {
+        Some(status) => out.push_str(&format!(
+            "  agent token boundary: {} ({})\n",
+            status,
+            agent_boundary_detail.unwrap_or_else(|| "unknown".to_string())
+        )),
+        None => out.push_str(
+            "  agent token boundary: skipped (requires server URL and --agent-token-file)\n",
+        ),
+    }
+    Ok(out)
 }
 
 async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> {
@@ -2578,6 +3176,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
+        CliAction::AgentInstallService(opts) => match run_agent_install_service(opts) {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::AgentStatus(opts) => match run_agent_status(opts).await {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
         CliAction::ServerInit(opts) => match run_server_init(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
@@ -2673,6 +3297,38 @@ mod tests {
                 assert!(stdout.contains("pairing create"));
                 assert!(stdout.contains("client enroll"));
                 assert!(stdout.contains("doctor"));
+                assert!(stdout.contains("agent init/install-service/status"));
+            }
+            other => panic!("expected help exit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn webcodex_cli_agent_help_mentions_new_subcommands() {
+        match cli_action(["agent", "--help"]) {
+            CliAction::Exit { code, stdout, .. } => {
+                assert_eq!(code, 0);
+                assert!(stdout.contains("install-service"));
+                assert!(stdout.contains("status"));
+                assert!(stdout.contains("init"));
+            }
+            other => panic!("expected help exit, got {other:?}"),
+        }
+        match cli_action(["agent", "install-service", "--help"]) {
+            CliAction::Exit { code, stdout, .. } => {
+                assert_eq!(code, 0);
+                assert!(stdout.contains("--config PATH"));
+                assert!(stdout.contains("--bin PATH"));
+                assert!(stdout.contains("Tokens are never inlined"));
+            }
+            other => panic!("expected help exit, got {other:?}"),
+        }
+        match cli_action(["agent", "status", "--help"]) {
+            CliAction::Exit { code, stdout, .. } => {
+                assert_eq!(code, 0);
+                assert!(stdout.contains("--user-token-file PATH"));
+                assert!(stdout.contains("--agent-token-file PATH"));
+                assert!(stdout.contains("no tokens"));
             }
             other => panic!("expected help exit, got {other:?}"),
         }
@@ -2797,7 +3453,7 @@ mod tests {
             "--server-url",
             "https://v4.example.test/",
             "--token",
-            "wc_agent_fake_test_token",
+            "agent_fake_test_token",
             "--client-id",
             "alice-laptop",
             "--owner",
@@ -2818,7 +3474,7 @@ mod tests {
             "--server-url",
             "https://v4.example.test/",
             "--token",
-            "wc_agent_fake_test_token",
+            "agent_fake_test_token",
             "--client-id",
             "alice-laptop",
             "--owner",
@@ -2839,7 +3495,7 @@ mod tests {
             "--server-url",
             "https://v4.example.test",
             "--token",
-            "wc_agent_fake_stdout_token",
+            "agent_fake_stdout_token",
             "--client-id",
             "alice-laptop",
             "--owner",
@@ -2851,7 +3507,7 @@ mod tests {
         ]))
         .unwrap();
         let content = run_agent_init(opts).unwrap();
-        assert_eq!(content.matches("wc_agent_fake_stdout_token").count(), 1);
+        assert_eq!(content.matches("agent_fake_stdout_token").count(), 1);
     }
 
     #[cfg(unix)]
@@ -2864,7 +3520,7 @@ mod tests {
             "--server-url",
             "https://v4.example.test",
             "--token",
-            "wc_agent_fake_perms_token",
+            "agent_fake_perms_token",
             "--client-id",
             "alice-laptop",
             "--owner",
@@ -2884,7 +3540,7 @@ mod tests {
     fn agent_init_token_file_and_env_fallback() {
         let tmp = tempfile::tempdir().unwrap();
         let token_file = tmp.path().join("agent.token");
-        std::fs::write(&token_file, "wc_agent_fake_file_token\n").unwrap();
+        std::fs::write(&token_file, "agent_fake_file_token\n").unwrap();
         let opts = parse_cli_agent_init(&args(&[
             "--server-url",
             "https://v4.example.test",
@@ -2901,10 +3557,10 @@ mod tests {
         ]))
         .unwrap();
         let content = run_agent_init(opts).unwrap();
-        assert!(content.contains("wc_agent_fake_file_token"));
+        assert!(content.contains("agent_fake_file_token"));
 
         let _guard = admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::set_var("WEBCODEX_AGENT_TOKEN", "wc_agent_fake_env_token");
+        std::env::set_var("WEBCODEX_AGENT_TOKEN", "agent_fake_env_token");
         let opts = parse_cli_agent_init(&args(&[
             "--server-url",
             "https://v4.example.test",
@@ -2919,7 +3575,7 @@ mod tests {
         ]))
         .unwrap();
         let content = run_agent_init(opts).unwrap();
-        assert!(content.contains("wc_agent_fake_env_token"));
+        assert!(content.contains("agent_fake_env_token"));
         std::env::remove_var("WEBCODEX_AGENT_TOKEN");
     }
 
@@ -2932,7 +3588,7 @@ mod tests {
                 "--server-url",
                 "https://v4.example.test",
                 "--token",
-                "wc_agent_fake_home_token",
+                "agent_fake_home_token",
                 "--client-id",
                 "alice-laptop",
                 "--owner",
@@ -2999,6 +3655,22 @@ mod tests {
         assert_eq!(opts.username, "alice");
         assert_eq!(opts.client_id, "alice-laptop");
         assert_eq!(opts.token_file, Some(PathBuf::from("/tmp/webcodex-token")));
+    }
+
+    #[test]
+    fn pairing_create_missing_env_file_error_includes_server_admin_guidance() {
+        let opts = PairingCreateOptions {
+            server_url: "https://example.test".to_string(),
+            env_file: Some(PathBuf::from("/tmp/webcodex-missing-server-env-file")),
+            username: "alice".to_string(),
+            client_id: "alice-laptop".to_string(),
+            ttl_secs: 600,
+            ..PairingCreateOptions::default()
+        };
+        let err = resolve_pairing_create_token(&opts).unwrap_err();
+        assert!(err.contains("failed to read server env file"));
+        assert!(err.contains("pairing create is a server/admin-side command"));
+        assert!(err.contains("Run it on the server or pass a server/admin token file"));
     }
 
     #[test]
@@ -3090,7 +3762,7 @@ mod tests {
             let n = stream.read(&mut buf).unwrap();
             let request = String::from_utf8_lossy(&buf[..n]).to_string();
             tx.send(request).unwrap();
-            let body = r#"{"success":true,"username":"alice","client_id":"alice-laptop","user_token":"wc_pat_fake_plaintext_123456","agent_token":"wc_agent_fake_plaintext_abcdef","user_token_prefix":"wc_pat_fake_pre","agent_token_prefix":"wc_agent_fake_p"}"#;
+            let body = r#"{"success":true,"username":"alice","client_id":"alice-laptop","user_token":"pat_fake_plaintext_123456","agent_token":"agent_fake_plaintext_abcdef","user_token_prefix":"wc_pat_fake_pre","agent_token_prefix":"wc_agent_fake_p"}"#;
             write!(
                 stream,
                 "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
@@ -3124,18 +3796,18 @@ mod tests {
             std::fs::read_to_string(tmp.path().join("webcodex-user-token"))
                 .unwrap()
                 .trim(),
-            "wc_pat_fake_plaintext_123456"
+            "pat_fake_plaintext_123456"
         );
         assert_eq!(
             std::fs::read_to_string(tmp.path().join("webcodex-agent-token"))
                 .unwrap()
                 .trim(),
-            "wc_agent_fake_plaintext_abcdef"
+            "agent_fake_plaintext_abcdef"
         );
         let agent_config = std::fs::read_to_string(tmp.path().join("agent.toml")).unwrap();
-        assert!(agent_config.contains("wc_agent_fake_plaintext_abcdef"));
-        assert!(!output.contains("wc_pat_fake_plaintext_123456"));
-        assert!(!output.contains("wc_agent_fake_plaintext_abcdef"));
+        assert!(agent_config.contains("agent_fake_plaintext_abcdef"));
+        assert!(!output.contains("pat_fake_plaintext_123456"));
+        assert!(!output.contains("agent_fake_plaintext_abcdef"));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -3364,6 +4036,221 @@ mod tests {
     }
 
     #[test]
+    fn agent_install_service_generates_expected_unit_without_tokens() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("agent.toml");
+        std::fs::write(&config, "token = \"agent_secret_should_not_print\"\n").unwrap();
+        let opts = parse_agent_install_service(&args(&[
+            "--config",
+            config.to_str().unwrap(),
+            "--bin",
+            "/opt/webcodex/bin/webcodex-agent",
+            "--working-directory",
+            "/root",
+            "--user",
+            "webcodex",
+            "--group",
+            "webcodex",
+            "--dry-run",
+        ]))
+        .unwrap();
+        let unit = run_agent_install_service(opts).unwrap();
+        assert!(unit.contains("[Unit]\nDescription=WebCodex Agent\n"));
+        assert!(unit.contains(&format!(
+            "ExecStart=/opt/webcodex/bin/webcodex-agent --config {}\n",
+            config.display()
+        )));
+        assert!(unit.contains("Restart=on-failure\n"));
+        assert!(unit.contains("RestartSec=3\n"));
+        assert!(unit.contains("WorkingDirectory=/root\n"));
+        assert!(unit.contains("User=webcodex\n"));
+        assert!(unit.contains("Group=webcodex\n"));
+        assert!(!unit.contains("agent_secret_should_not_print"));
+        assert!(!unit.contains("Authorization"));
+        assert!(!unit.contains("token ="));
+    }
+
+    #[test]
+    fn agent_install_service_refuses_overwrite_unless_requested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let service_file = tmp.path().join("webcodex-agent.service");
+        std::fs::write(&service_file, "old").unwrap();
+        let opts = parse_agent_install_service(&args(&[
+            "--config",
+            "/etc/webcodex/agent.toml",
+            "--bin",
+            "/opt/webcodex/bin/webcodex-agent",
+            "--service-file",
+            service_file.to_str().unwrap(),
+        ]))
+        .unwrap();
+        let err = run_agent_install_service(opts).unwrap_err();
+        assert!(err.contains("already exists"));
+    }
+
+    #[test]
+    fn agent_install_service_dry_run_and_output_work_without_systemd() {
+        let dry = parse_agent_install_service(&args(&[
+            "--config",
+            "/etc/webcodex/agent.toml",
+            "--bin",
+            "/opt/webcodex/bin/webcodex-agent",
+            "--dry-run",
+        ]))
+        .unwrap();
+        assert!(run_agent_install_service(dry).unwrap().contains(
+            "ExecStart=/opt/webcodex/bin/webcodex-agent --config /etc/webcodex/agent.toml"
+        ));
+
+        let out = parse_agent_install_service(&args(&[
+            "--config",
+            "/etc/webcodex/agent.toml",
+            "--bin",
+            "/opt/webcodex/bin/webcodex-agent",
+            "--output",
+            "-",
+            "--json",
+        ]))
+        .unwrap();
+        let json: Value = serde_json::from_str(&run_agent_install_service(out).unwrap()).unwrap();
+        assert_eq!(json["dry_run"], true);
+        assert!(json["unit"].as_str().unwrap().contains(
+            "ExecStart=/opt/webcodex/bin/webcodex-agent --config /etc/webcodex/agent.toml"
+        ));
+    }
+
+    #[test]
+    fn agent_status_parses_agent_toml_without_printing_token_and_systemd_unknown() {
+        let _guard = admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let old_path = std::env::var_os("PATH");
+        std::env::set_var("PATH", "");
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("agent.toml");
+        let secret = "agent_status_secret_1234567890";
+        std::fs::write(
+            &config,
+            format!(
+                r#"
+server_url = "https://example.test"
+token = "{secret}"
+client_id = "alice-laptop"
+owner = "alice"
+display_name = "Alice Laptop"
+transport = "websocket"
+projects_dir = "/etc/webcodex/projects.d"
+
+[policy]
+allowed_roots = ["/srv/projects"]
+"#
+            ),
+        )
+        .unwrap();
+        let opts =
+            parse_agent_status(&args(&["--config", config.to_str().unwrap(), "--json"])).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let output = rt.block_on(run_agent_status(opts)).unwrap();
+        if let Some(path) = old_path {
+            std::env::set_var("PATH", path);
+        } else {
+            std::env::remove_var("PATH");
+        }
+        assert!(!output.contains(secret));
+        let json: Value = serde_json::from_str(&output).unwrap();
+        assert_eq!(json["service"]["active"], "unknown");
+        assert_eq!(json["service"]["enabled"], "unknown");
+        assert_eq!(json["config"]["client_id"], "alice-laptop");
+        assert_eq!(json["config"]["owner"], "alice");
+        assert_eq!(json["config"]["allowed_roots"]["count"], 1);
+        assert!(json.get("token").is_none());
+        assert!(json["config"].get("token").is_none());
+    }
+
+    #[tokio::test]
+    async fn agent_status_detects_current_client_online_and_agent_boundary() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            for i in 0..2 {
+                let (mut stream, _) = listener.accept().unwrap();
+                let mut buf = [0u8; 16384];
+                let n = stream.read(&mut buf).unwrap();
+                let request = String::from_utf8_lossy(&buf[..n]).to_string();
+                tx.send(request.clone()).unwrap();
+                if i == 0 {
+                    let body = r#"{"success":true,"output":{"agents":{"clients":[{"client_id":"alice-laptop","connected":true,"status":"online"}]}}}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .unwrap();
+                } else {
+                    let body = r#"{"error":"forbidden"}"#;
+                    write!(
+                        stream,
+                        "HTTP/1.1 403 Forbidden\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                        body.len(),
+                        body
+                    )
+                    .unwrap();
+                }
+            }
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("agent.toml");
+        std::fs::write(
+            &config,
+            r#"
+server_url = "http://127.0.0.1:1"
+token = "agent_config_secret_abcdef"
+client_id = "alice-laptop"
+owner = "alice"
+transport = "websocket"
+"#,
+        )
+        .unwrap();
+        let user_token_file = tmp.path().join("webcodex-user-token");
+        let agent_token_file = tmp.path().join("webcodex-agent-token");
+        std::fs::write(&user_token_file, "pat_online_secret_1234567890\n").unwrap();
+        std::fs::write(&agent_token_file, "agent_boundary_secret_1234567890\n").unwrap();
+        let opts = parse_agent_status(&args(&[
+            "--config",
+            config.to_str().unwrap(),
+            "--server-url",
+            &format!("http://{}", addr),
+            "--user-token-file",
+            user_token_file.to_str().unwrap(),
+            "--agent-token-file",
+            agent_token_file.to_str().unwrap(),
+        ]))
+        .unwrap();
+        let output = run_agent_status(opts).await.unwrap();
+        handle.join().unwrap();
+        let first_request = rx.recv().unwrap();
+        let second_request = rx.recv().unwrap();
+        assert!(first_request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer pat_online_secret_1234567890"));
+        assert!(second_request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer agent_boundary_secret_1234567890"));
+        for secret in [
+            "agent_config_secret_abcdef",
+            "pat_online_secret_1234567890",
+            "agent_boundary_secret_1234567890",
+        ] {
+            assert!(!output.contains(secret));
+        }
+        assert!(output.contains("client online:        yes"));
+        assert!(output.contains("agent token boundary: PASS"));
+    }
+
+    #[test]
     fn token_prefix_never_exposes_full_token() {
         let p = token_prefix("wc_abcdef0123456789");
         assert!(p.ends_with('…'));
@@ -3397,7 +4284,7 @@ mod tests {
                 } else if path.contains("/api/tokens/create") {
                     r#"{"success":true,"token":"wc_user_fake_plaintext_12345","token_id":"ut-1"}"#
                 } else if path.contains("/api/agent-tokens/create") {
-                    r#"{"success":true,"token":"wc_agent_fake_plaintext_67890","token_id":"at-1"}"#
+                    r#"{"success":true,"token":"agent_fake_plaintext_67890","token_id":"at-1"}"#
                 } else {
                     r#"{"error":"unexpected path"}"#
                 };
@@ -3432,7 +4319,7 @@ mod tests {
 
         // Summary must NOT contain full tokens or the bootstrap token.
         assert!(!summary.contains("wc_user_fake_plaintext_12345"));
-        assert!(!summary.contains("wc_agent_fake_plaintext_67890"));
+        assert!(!summary.contains("agent_fake_plaintext_67890"));
         assert!(!summary.contains(&bootstrap));
         // Prefixes are present.
         assert!(summary.contains("wc_user_"));
@@ -3443,7 +4330,7 @@ mod tests {
         let user_token = std::fs::read_to_string(tmp.path().join("webcodex-user-token")).unwrap();
         assert_eq!(user_token.trim(), "wc_user_fake_plaintext_12345");
         let agent_token = std::fs::read_to_string(tmp.path().join("webcodex-agent-token")).unwrap();
-        assert_eq!(agent_token.trim(), "wc_agent_fake_plaintext_67890");
+        assert_eq!(agent_token.trim(), "agent_fake_plaintext_67890");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -3489,7 +4376,7 @@ mod tests {
                 } else {
                     (
                         "200 OK",
-                        r#"{"success":true,"token":"wc_agent_ae_fake_token","token_id":"at-1"}"#,
+                        r#"{"success":true,"token":"agent_ae_fake_token","token_id":"at-1"}"#,
                     )
                 };
                 write!(

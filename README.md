@@ -8,10 +8,10 @@ WebCodex is a self-hosted runtime that exposes controlled project tools to ChatG
 - `webcodex-agent` — project execution agent.
 - `webcodex-cli` — recommended management and initialization CLI.
 
-Recommended server-first setup assumes the MVP npm wrapper is installed:
+Recommended binary deployment flow:
 
 ```bash
-npm install -g @webcodex/webcodex
+# Server: install webcodex and webcodex-cli binaries first.
 sudo webcodex-cli server init \
   --listen 127.0.0.1:8080 \
   --data-dir /var/lib/webcodex \
@@ -24,26 +24,38 @@ sudo systemctl enable --now webcodex
 webcodex-cli server status --env-file /etc/webcodex/webcodex.env
 ```
 
-`server init` creates only the server bootstrap/admin `WEBCODEX_TOKEN`. It does not create `wc_pat_...` user API tokens or `wc_agent_...` agent tokens; those belong to a later client-side setup/enroll flow.
+Use `webcodex-cli server install-service --overwrite` only when intentionally replacing an old unit. `server init` creates only the server bootstrap/admin `WEBCODEX_TOKEN` in `/etc/webcodex/webcodex.env`. That file is server-side only; it is not a client credential and does not contain `wc_pat_...` user API tokens or `wc_agent_...` agent tokens.
 
 Recommended enrollment flow:
 
 ```bash
-# Server/admin side: creates a short-lived code, not token files.
+# Server/admin side: creates a short-lived wc_pair_* code, not token files.
 webcodex-cli pairing create \
   --server-url https://example.com \
   --env-file /etc/webcodex/webcodex.env \
   --username alice \
   --client-id alice-laptop
 
-# Client side: exchanges the code over HTTPS and saves tokens locally.
-webcodex-cli client enroll \
+# Client: install webcodex-agent and webcodex-cli binaries first.
+sudo webcodex-cli client enroll \
   --server-url https://example.com \
   --pairing-code <temporary_pairing_code> \
-  --client-id alice-laptop
+  --client-id alice-laptop \
+  --output-dir /etc/webcodex \
+  --agent-config /etc/webcodex/agent.toml
+sudo webcodex-cli agent install-service \
+  --config /etc/webcodex/agent.toml \
+  --bin /opt/webcodex/bin/webcodex-agent
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex-agent
+webcodex-cli agent status --config /etc/webcodex/agent.toml
+webcodex-cli doctor --strict \
+  --server-url https://example.com \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-token-file /etc/webcodex/webcodex-agent-token
 ```
 
-Client enroll writes `webcodex-user-token`, `webcodex-agent-token`, and `agent.toml` under the client config directory with `0600` permissions on Unix. GPT Actions should use the client-side user-token file. Start the agent with the generated `agent.toml`.
+`pairing create` runs on the server/admin side. `client enroll` runs on the client side and writes `webcodex-user-token`, `webcodex-agent-token`, and `agent.toml` under the client config directory with `0600` permissions on Unix. Copy only the short-lived `wc_pair_*` code between machines; do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, or `wc_agent_*` from server to client. GPT Actions should use the client-side user-token file.
 
 Run non-destructive diagnostics with:
 
@@ -62,7 +74,7 @@ The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, `webcode
 
 GPT Actions and MCP share the same `ToolRuntime`. The GPT Actions OpenAPI surface is intentionally limited to project/runtime/job tools and does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints.
 
-GPT Actions need a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup; use nginx, Caddy, Cloudflare Tunnel, ngrok, or similar infrastructure separately.
+GPT Actions need a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup.
 
 ## Authentication
 

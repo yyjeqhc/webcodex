@@ -33,9 +33,16 @@ Codex validation is optional. `runCodexTask` requires the Codex CLI on the agent
 Prefer:
 
 ```bash
+webcodex-cli server init
+webcodex-cli server install-service
+webcodex-cli server status
 webcodex-cli pairing create --server-url URL --username alice --client-id alice-laptop
 webcodex-cli client enroll --server-url URL --pairing-code CODE --client-id alice-laptop
-webcodex-cli doctor --server-url URL --user-token-file PATH
+webcodex-cli agent install-service --config /etc/webcodex/agent.toml --bin /opt/webcodex/bin/webcodex-agent
+webcodex-cli agent status --config /etc/webcodex/agent.toml --server-url URL --user-token-file PATH --agent-token-file PATH
+webcodex-cli doctor --strict --server-url URL --user-token-file PATH --agent-token-file PATH
 ```
+
+`pairing create` is server/admin-side. `client enroll`, `agent install-service`, and `agent status` are client-side for the machine running `webcodex-agent`. Do not copy server tokens to the client; copy only the short-lived pairing code.
 
 The compatibility entry points still exist, but new validation docs should use `webcodex-cli`.

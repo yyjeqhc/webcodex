@@ -110,6 +110,28 @@ Example:
 agent:workstation-1:webcodex
 ```
 
+## Agent shell PATH under systemd
+
+A `webcodex-agent` service launched by systemd does not read interactive shell
+startup files such as `~/.bashrc`. Tools installed through rustup, including
+`cargo`, may therefore be absent from `PATH` even when they work in an SSH
+session.
+
+Prefer an explicit agent shell configuration:
+
+```toml
+[shell]
+program = "/bin/bash"
+args = ["-lc"]
+path_prepend = ["/root/.cargo/bin"]
+env = { CARGO_HOME = "/root/.cargo", RUSTUP_HOME = "/root/.rustup" }
+# init_script = "/root/.config/webcodex/shell-env.sh"
+```
+
+The default remains `program = "sh"` and `args = ["-c"]` with no extra
+environment or `PATH` changes. `init_script` is never used unless configured
+explicitly. As an alternative, set `Environment=PATH=...` in the systemd unit.
+
 ## Connect ChatGPT
 
 For GPT Actions, import:

@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Stdio};
+use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -72,6 +72,8 @@ struct AgentConfig {
     /// `"websocket"` (preferred long-lived connection).
     #[serde(default)]
     transport: Option<String>,
+    #[serde(default)]
+    shell: ShellConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -98,6 +100,40 @@ impl Default for AgentPolicy {
             max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+struct ShellConfig {
+    #[serde(default = "default_shell_program")]
+    program: String,
+    #[serde(default = "default_shell_args")]
+    args: Vec<String>,
+    #[serde(default)]
+    path_prepend: Vec<PathBuf>,
+    #[serde(default)]
+    env: HashMap<String, String>,
+    #[serde(default)]
+    init_script: Option<PathBuf>,
+}
+
+impl Default for ShellConfig {
+    fn default() -> Self {
+        Self {
+            program: default_shell_program(),
+            args: default_shell_args(),
+            path_prepend: Vec::new(),
+            env: HashMap::new(),
+            init_script: None,
+        }
+    }
+}
+
+fn default_shell_program() -> String {
+    "sh".to_string()
+}
+
+fn default_shell_args() -> Vec<String> {
+    vec!["-c".to_string()]
 }
 
 fn default_true() -> bool {
@@ -271,7 +307,7 @@ where
 struct JobManager {
     max_concurrent: usize,
     jobs: Arc<Mutex<HashMap<String, RunningJob>>>,
-    queued: Arc<Mutex<VecDeque<(AgentSink, AgentPolicy, ShellAgentShellRequest)>>>,
+    queued: Arc<Mutex<VecDeque<(AgentSink, AgentPolicy, ShellConfig, ShellAgentShellRequest)>>>,
 }
 
 impl JobManager {
@@ -384,6 +420,101 @@ fn default_config_path() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH))
 }
 
+fn validate_env_key(key: &str) -> bool {
+    !key.is_empty()
+        && !key.contains('=')
+        && !key.contains('\0')
+        && key
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
+}
+
+fn validate_shell_config(shell: &ShellConfig) -> Result<(), String> {
+    if shell.program.trim().is_empty() {
+        return Err("shell.program cannot be empty".to_string());
+    }
+    if shell.args.is_empty() {
+        return Err("shell.args must include the command flag, for example [\"-c\"]".to_string());
+    }
+    if shell.args.iter().any(|arg| arg.trim().is_empty()) {
+        return Err("shell.args cannot contain empty values".to_string());
+    }
+    if shell
+        .path_prepend
+        .iter()
+        .any(|path| path.as_os_str().is_empty())
+    {
+        return Err("shell.path_prepend cannot contain empty paths".to_string());
+    }
+    for key in shell.env.keys() {
+        if !validate_env_key(key) {
+            return Err(format!("shell.env contains invalid key '{}'", key));
+        }
+    }
+    if shell
+        .init_script
+        .as_ref()
+        .is_some_and(|path| path.as_os_str().is_empty())
+    {
+        return Err("shell.init_script cannot be empty".to_string());
+    }
+    Ok(())
+}
+
+fn shell_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn shell_command_text(shell: &ShellConfig, command: &str) -> String {
+    match shell.init_script.as_ref() {
+        Some(path) => format!(
+            ". {} && (\n{}\n)",
+            shell_quote(&path.to_string_lossy()),
+            command
+        ),
+        None => command.to_string(),
+    }
+}
+
+fn apply_shell_environment(cmd: &mut Command, shell: &ShellConfig) -> Result<(), String> {
+    if !shell.path_prepend.is_empty() {
+        let mut paths = shell.path_prepend.clone();
+        if let Some(current) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&current));
+        }
+        let joined = std::env::join_paths(paths)
+            .map_err(|e| format!("failed to build shell PATH from shell.path_prepend: {}", e))?;
+        cmd.env("PATH", joined);
+    }
+    for (key, value) in &shell.env {
+        cmd.env(key, value);
+    }
+    Ok(())
+}
+
+fn configured_shell_command(shell: &ShellConfig, command: &str) -> Result<Command, String> {
+    validate_shell_config(shell)?;
+    let mut cmd = Command::new(&shell.program);
+    for arg in &shell.args {
+        cmd.arg(arg);
+    }
+    cmd.arg(shell_command_text(shell, command));
+    apply_shell_environment(&mut cmd, shell)?;
+    Ok(cmd)
+}
+
+fn configured_shell_job_command(shell: &ShellConfig, command: &str) -> Result<Command, String> {
+    validate_shell_config(shell)?;
+    let mut cmd = Command::new("setsid");
+    cmd.arg(&shell.program);
+    for arg in &shell.args {
+        cmd.arg(arg);
+    }
+    cmd.arg(shell_command_text(shell, command));
+    apply_shell_environment(&mut cmd, shell)?;
+    Ok(cmd)
+}
+
 fn load_config(path: &Path) -> Result<AgentConfig, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read config {}: {}", path.display(), e))?;
@@ -404,6 +535,7 @@ fn load_config(path: &Path) -> Result<AgentConfig, String> {
     if !cfg.policy.allow_cwd_anywhere && cfg.policy.allowed_roots.is_empty() {
         return Err("policy.allowed_roots must be set when allow_cwd_anywhere=false".to_string());
     }
+    validate_shell_config(&cfg.shell)?;
     Ok(cfg)
 }
 
@@ -774,6 +906,7 @@ fn read_pipes(
 
 fn run_shell(
     policy: &AgentPolicy,
+    shell: &ShellConfig,
     cwd: Option<&str>,
     command: &str,
     stdin: Option<&str>,
@@ -803,10 +936,19 @@ fn run_shell(
     }
     let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
     let start = Instant::now();
-    let mut cmd = std::process::Command::new("sh");
-    cmd.arg("-c")
-        .arg(command)
-        .current_dir(&cwd_path)
+    let mut cmd = match configured_shell_command(shell, command) {
+        Ok(cmd) => cmd,
+        Err(e) => {
+            return CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(e),
+            };
+        }
+    };
+    cmd.current_dir(&cwd_path)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     if stdin.is_some() {
@@ -1237,7 +1379,13 @@ impl JobManager {
             .count()
     }
 
-    fn enqueue(&self, sink: AgentSink, policy: AgentPolicy, request: ShellAgentShellRequest) {
+    fn enqueue(
+        &self,
+        sink: AgentSink,
+        policy: AgentPolicy,
+        shell: ShellConfig,
+        request: ShellAgentShellRequest,
+    ) {
         let Some(job_id) = request.job_id.clone() else {
             return;
         };
@@ -1261,14 +1409,20 @@ impl JobManager {
             self.queued
                 .lock()
                 .unwrap()
-                .push_back((sink, policy, request));
+                .push_back((sink, policy, shell, request));
             return;
         }
-        self.start_now(sink, policy, request);
+        self.start_now(sink, policy, shell, request);
     }
 
-    fn start_now(&self, sink: AgentSink, policy: AgentPolicy, request: ShellAgentShellRequest) {
-        self.start_shell_job(sink, policy, request);
+    fn start_now(
+        &self,
+        sink: AgentSink,
+        policy: AgentPolicy,
+        shell: ShellConfig,
+        request: ShellAgentShellRequest,
+    ) {
+        self.start_shell_job(sink, policy, shell, request);
     }
 
     fn start_available_queued(&self) {
@@ -1277,7 +1431,7 @@ impl JobManager {
                 let jobs = self.jobs.lock().unwrap();
                 let mut queued = self.queued.lock().unwrap();
                 let mut selected = None;
-                for (idx, (_, _policy, request)) in queued.iter().enumerate() {
+                for (idx, (_, _policy, _shell, request)) in queued.iter().enumerate() {
                     let active = jobs
                         .values()
                         .filter(|job| job.client_id == request.client_id)
@@ -1289,10 +1443,10 @@ impl JobManager {
                 }
                 selected.and_then(|idx| queued.remove(idx))
             };
-            let Some((sink, policy, request)) = next else {
+            let Some((sink, policy, shell, request)) = next else {
                 return;
             };
-            self.start_now(sink, policy, request);
+            self.start_now(sink, policy, shell, request);
         }
     }
 
@@ -1300,6 +1454,7 @@ impl JobManager {
         &self,
         sink: AgentSink,
         policy: AgentPolicy,
+        shell: ShellConfig,
         request: ShellAgentShellRequest,
     ) {
         let Some(job_id) = request.job_id.clone() else {
@@ -1323,10 +1478,14 @@ impl JobManager {
             return;
         }
         let start = Instant::now();
-        let spawn = std::process::Command::new("setsid")
-            .arg("sh")
-            .arg("-c")
-            .arg(&request.command)
+        let mut cmd = match configured_shell_job_command(&shell, &request.command) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                send_start_failure(&sink, request, e);
+                return;
+            }
+        };
+        let spawn = cmd
             .current_dir(&cwd_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -1489,14 +1648,14 @@ impl JobManager {
             let mut queued = self.queued.lock().unwrap();
             if let Some(pos) = queued
                 .iter()
-                .position(|(_, _, request)| request.job_id.as_deref() == Some(job_id))
+                .position(|(_, _, _, request)| request.job_id.as_deref() == Some(job_id))
             {
                 queued.remove(pos)
             } else {
                 None
             }
         };
-        if let Some((sink, _policy, request)) = queued_job {
+        if let Some((sink, _policy, _shell, request)) = queued_job {
             let request_id = request.request_id.clone();
             let job_id = request.job_id.clone().unwrap_or_default();
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
@@ -1537,12 +1696,13 @@ impl JobManager {
 fn dispatch_request(
     sink: &AgentSink,
     policy: &AgentPolicy,
+    shell: &ShellConfig,
     jobs: &JobManager,
     request: ShellAgentShellRequest,
 ) -> Result<bool, String> {
     match request.kind.as_str() {
         "start_job" => {
-            jobs.enqueue(sink.clone(), policy.clone(), request);
+            jobs.enqueue(sink.clone(), policy.clone(), shell.clone(), request);
             Ok(true)
         }
         "stop_job" => {
@@ -1562,6 +1722,7 @@ fn dispatch_request(
             let request_id = request.request_id.clone();
             let result = run_shell(
                 policy,
+                shell,
                 request.cwd.as_deref(),
                 &request.command,
                 request.stdin.as_deref(),
@@ -1598,7 +1759,7 @@ fn handle_one_poll(
         token: cfg.token.clone(),
         client_id: cfg.client_id.clone(),
     });
-    dispatch_request(&sink, &cfg.policy, jobs, request)
+    dispatch_request(&sink, &cfg.policy, &cfg.shell, jobs, request)
 }
 
 fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
@@ -1842,12 +2003,13 @@ async fn websocket_session(
                     AgentEnvelope::Request { request } => {
                         let sink_handle = sink_handle.clone();
                         let policy = cfg.policy.clone();
+                        let shell = cfg.shell.clone();
                         let jobs = jobs.clone();
                         // Execution is blocking (shell/file/jobs); run it off
                         // the async runtime thread. dispatch_request sends
                         // results/updates via the shared AgentSink.
                         tokio::task::spawn_blocking(move || {
-                            let _ = dispatch_request(&sink_handle, &policy, &jobs, request);
+                            let _ = dispatch_request(&sink_handle, &policy, &shell, &jobs, request);
                         });
                     }
                     AgentEnvelope::Ping { ts } => {
@@ -1946,6 +2108,7 @@ mod tests {
             capabilities: None,
             max_concurrent_jobs: None,
             policy: AgentPolicy::default(),
+            shell: ShellConfig::default(),
             transport: None,
         }
     }
@@ -2008,6 +2171,127 @@ path = "/tmp/webcodex"
     }
 
     #[test]
+    fn shell_config_default_preserves_sh_c_behavior() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let cwd = tmp.path().to_string_lossy().to_string();
+        let result = run_shell(
+            &cfg.policy,
+            &ShellConfig::default(),
+            Some(&cwd),
+            "printf default-ok",
+            None,
+            10,
+            None,
+        );
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.as_deref(), Some("default-ok"));
+    }
+
+    #[test]
+    fn shell_config_path_prepend_discovers_fake_executable() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let bin_dir = tmp.path().join("bin");
+        std::fs::create_dir(&bin_dir).unwrap();
+        let exe = bin_dir.join("webcodex-fake-tool");
+        std::fs::write(&exe, "#!/bin/sh\nprintf fake-tool-ok\n").unwrap();
+        let mut perms = std::fs::metadata(&exe).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&exe, perms).unwrap();
+        let shell = ShellConfig {
+            path_prepend: vec![bin_dir],
+            ..ShellConfig::default()
+        };
+        let cwd = tmp.path().to_string_lossy().to_string();
+        let result = run_shell(
+            &cfg.policy,
+            &shell,
+            Some(&cwd),
+            "webcodex-fake-tool",
+            None,
+            10,
+            None,
+        );
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.as_deref(), Some("fake-tool-ok"));
+    }
+
+    #[test]
+    fn shell_config_env_values_are_available() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let shell = ShellConfig {
+            env: HashMap::from([("WEBCODEX_TEST_VALUE".to_string(), "env-ok".to_string())]),
+            ..ShellConfig::default()
+        };
+        let cwd = tmp.path().to_string_lossy().to_string();
+        let result = run_shell(
+            &cfg.policy,
+            &shell,
+            Some(&cwd),
+            "printf %s \"$WEBCODEX_TEST_VALUE\"",
+            None,
+            10,
+            None,
+        );
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.as_deref(), Some("env-ok"));
+    }
+
+    #[test]
+    fn shell_config_init_script_is_sourced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let init = tmp.path().join("init.sh");
+        std::fs::write(&init, "export WEBCODEX_INIT_TEST=init-ok\n").unwrap();
+        let shell = ShellConfig {
+            init_script: Some(init),
+            ..ShellConfig::default()
+        };
+        let cwd = tmp.path().to_string_lossy().to_string();
+        let result = run_shell(
+            &cfg.policy,
+            &shell,
+            Some(&cwd),
+            "printf %s \"$WEBCODEX_INIT_TEST\"",
+            None,
+            10,
+            None,
+        );
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.as_deref(), Some("init-ok"));
+    }
+
+    #[test]
+    fn shell_config_bash_like_args_are_respected_when_available() {
+        if !Path::new("/bin/bash").exists() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let shell = ShellConfig {
+            program: "/bin/bash".to_string(),
+            args: vec!["-lc".to_string()],
+            ..ShellConfig::default()
+        };
+        let cwd = tmp.path().to_string_lossy().to_string();
+        let result = run_shell(
+            &cfg.policy,
+            &shell,
+            Some(&cwd),
+            "[[ 1 -eq 1 ]] && printf bash-ok",
+            None,
+            10,
+            None,
+        );
+        assert_eq!(result.exit_code, Some(0));
+        assert_eq!(result.stdout.as_deref(), Some("bash-ok"));
+    }
+
+    #[test]
     fn shell_job_success_and_failure_results_are_structured() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().join("config/projects.d"));
@@ -2015,6 +2299,7 @@ path = "/tmp/webcodex"
 
         let success = run_shell(
             &cfg.policy,
+            &cfg.shell,
             Some(&cwd),
             "printf hello; printf warn >&2",
             None,
@@ -2026,7 +2311,15 @@ path = "/tmp/webcodex"
         assert_eq!(success.stderr.as_deref(), Some("warn"));
         assert!(success.error.is_none());
 
-        let failure = run_shell(&cfg.policy, Some(&cwd), "exit 7", None, 10, None);
+        let failure = run_shell(
+            &cfg.policy,
+            &cfg.shell,
+            Some(&cwd),
+            "exit 7",
+            None,
+            10,
+            None,
+        );
         assert_eq!(failure.exit_code, Some(7));
         assert!(failure.error.is_none());
     }
@@ -2039,6 +2332,7 @@ path = "/tmp/webcodex"
 
         let result = run_shell(
             &cfg.policy,
+            &cfg.shell,
             Some(&cwd),
             "cat",
             Some("stdin payload\n"),
@@ -2056,7 +2350,15 @@ path = "/tmp/webcodex"
         let cfg = test_config(tmp.path().join("config/projects.d"));
         let cwd = tmp.path().to_string_lossy().to_string();
 
-        let result = run_shell(&cfg.policy, Some(&cwd), "sleep 2", None, 1, None);
+        let result = run_shell(
+            &cfg.policy,
+            &cfg.shell,
+            Some(&cwd),
+            "sleep 2",
+            None,
+            1,
+            None,
+        );
         assert_eq!(result.exit_code, Some(-1));
         assert_eq!(result.error.as_deref(), Some("command timed out"));
         assert!(result
@@ -2075,6 +2377,7 @@ path = "/tmp/webcodex"
 
         let result = run_shell(
             &cfg.policy,
+            &cfg.shell,
             Some(&cwd),
             "sleep 2",
             None,
@@ -2099,6 +2402,7 @@ path = "/tmp/webcodex"
 
         let result = run_shell(
             &cfg.policy,
+            &cfg.shell,
             Some(&cwd),
             "printf 0123456789; printf abcdefghij >&2",
             None,
@@ -2254,7 +2558,7 @@ path = "/tmp/webcodex"
             requested_by: "tester".to_string(),
             created_at: 0,
         };
-        let ran = dispatch_request(&sink, &cfg.policy, &jobs, request).unwrap();
+        let ran = dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, request).unwrap();
         assert!(ran);
         let env = rx.try_recv().expect("result envelope was sent");
         match env {

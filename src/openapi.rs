@@ -120,6 +120,10 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/agent-tokens/create",
     "/api/agent-tokens/list",
     "/api/agent-tokens/revoke",
+    // Pairing/enrollment creates temporary credentials and enrollment tokens.
+    // It is REST-only for CLI/admin flows and must not be GPT-importable.
+    "/api/pairing/create",
+    "/api/pairing/enroll",
     "/mcp",
     "/openapi.json",
     // The MCP App console is a public static HTML/JS/CSS surface served via
@@ -2179,6 +2183,19 @@ mod tests {
             assert!(
                 !paths.contains_key(path),
                 "agent token management endpoint '{}' must not appear in openapi.json",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_does_not_expose_pairing_endpoints() {
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        for path in ["/api/pairing/create", "/api/pairing/enroll"] {
+            assert!(
+                !paths.contains_key(path),
+                "pairing endpoint '{}' must not appear in openapi.json",
                 path
             );
         }

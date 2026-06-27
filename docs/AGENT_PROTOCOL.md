@@ -4,13 +4,13 @@ WebCodex agents connect to the server and execute registered project tools. WebS
 
 ## Authentication
 
-Agents should use agent tokens created during setup, preferably through:
+Agents should use agent tokens created during client enrollment:
 
 ```bash
-webcodex-cli setup single-user
+webcodex-cli client enroll --server-url URL --pairing-code CODE --client-id CLIENT_ID
 ```
 
-or another `webcodex-cli` management flow.
+The server/admin side creates the temporary code with `webcodex-cli pairing create`. The agent token is returned to the client during enroll and written into the generated `agent.toml`; do not copy agent token files from the server.
 
 Transport auth rules:
 

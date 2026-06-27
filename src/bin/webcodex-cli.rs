@@ -53,6 +53,9 @@ enum CliAction {
     Admin(AdminCliCommand),
     AgentInit(AgentInitOptions),
     SetupSingleUser(SetupSingleUserOptions),
+    PairingCreate(PairingCreateOptions),
+    ClientEnroll(ClientEnrollOptions),
+    Doctor(DoctorOptions),
     ServerInit(ServerInitOptions),
     ServerInstallService(ServerInstallServiceOptions),
     ServerStatus(ServerStatusOptions),
@@ -77,6 +80,48 @@ struct SetupSingleUserOptions {
     output_dir: PathBuf,
     force_create_tokens: bool,
     json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct PairingCreateOptions {
+    server_url: String,
+    env_file: Option<PathBuf>,
+    token: Option<String>,
+    token_file: Option<PathBuf>,
+    username: String,
+    client_id: String,
+    display_name: Option<String>,
+    ttl_secs: i64,
+    user_token_name: Option<String>,
+    agent_token_name: Option<String>,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ClientEnrollOptions {
+    server_url: String,
+    pairing_code: String,
+    client_id: String,
+    display_name: Option<String>,
+    transport: String,
+    output_dir: PathBuf,
+    agent_config: PathBuf,
+    projects_dir: PathBuf,
+    allowed_roots: Vec<PathBuf>,
+    allow_cwd_anywhere: bool,
+    overwrite: bool,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct DoctorOptions {
+    server_url: Option<String>,
+    env_file: Option<PathBuf>,
+    token_file: Option<PathBuf>,
+    user_token_file: Option<PathBuf>,
+    agent_token_file: Option<PathBuf>,
+    json: bool,
+    strict: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +165,9 @@ fn usage() -> &'static str {
        server init                                      Create server env bootstrap file\n\
        server install-service                           Generate/install a systemd unit\n\
        server status                                    Check service and runtime status\n\
+       pairing create                                   Create a temporary client pairing code\n\
+       client enroll                                    Enroll a client from a pairing code\n\
+       doctor                                           Run non-destructive diagnostics\n\
        users create/list                                  Manage users\n\
        tokens create/list/revoke                          Manage personal API tokens\n\
        agent-tokens create/list/revoke                    Manage agent tokens\n\
@@ -134,6 +182,73 @@ fn usage() -> &'static str {
        --token-file PATH   Read bearer token from file\n\
        Token fallback: WEBCODEX_TOKEN\n\
      Output: JSON unless noted otherwise.\n"
+}
+
+fn pairing_usage() -> &'static str {
+    "Usage: webcodex-cli pairing <COMMAND>\n\n\
+     Commands:\n\
+       create       Create a short-lived pairing code for client enrollment\n"
+}
+
+fn pairing_create_usage() -> &'static str {
+    "Usage: webcodex-cli pairing create --server-url URL --username USER --client-id CLIENT_ID [OPTIONS]\n\n\
+     Options:\n\
+       --server-url URL          WebCodex server URL\n\
+       --env-file PATH           Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH         Read bootstrap/admin bearer token from file\n\
+       --token TOKEN             Bootstrap/admin bearer token (discouraged in shell history)\n\
+       --username USER           User to ensure/create for enrollment\n\
+       --client-id CLIENT_ID     Client id the code is bound to\n\
+       --display-name NAME       Optional display name for a newly created user\n\
+       --ttl-secs SECS           Pairing code lifetime [default: 600; range: 60..3600]\n\
+       --user-token-name NAME    Name for the user API token created during enroll\n\
+       --agent-token-name NAME   Name for the agent token created during enroll\n\
+       --json                    Print machine-readable output\n\
+       -h, --help                Print help and exit\n\n\
+     The pairing code is a temporary one-time credential. Copy it to the\n\
+     client and do not store it long-term. This command does not create\n\
+     wc_pat_* or wc_agent_* token files on the server.\n"
+}
+
+fn client_usage() -> &'static str {
+    "Usage: webcodex-cli client <COMMAND>\n\n\
+     Commands:\n\
+       enroll       Enroll this client using a temporary pairing code\n"
+}
+
+fn client_enroll_usage() -> &'static str {
+    "Usage: webcodex-cli client enroll --server-url URL --pairing-code CODE --client-id CLIENT_ID [OPTIONS]\n\n\
+     Options:\n\
+       --server-url URL              WebCodex server URL\n\
+       --pairing-code CODE           Temporary one-time pairing code\n\
+       --client-id CLIENT_ID         Client id matching the pairing record\n\
+       --display-name NAME           Optional agent display name\n\
+       --transport websocket|polling Agent transport [default: websocket]\n\
+       --output-dir DIR              Output dir [root: /etc/webcodex; user: ~/.config/webcodex]\n\
+       --agent-config PATH           Agent config path [default: <output-dir>/agent.toml]\n\
+       --projects-dir PATH           Projects registry dir [default: <output-dir>/projects.d]\n\
+       --allowed-root PATH           Repeatable allowed project root\n\
+       --allow-cwd-anywhere BOOL     Allow cwd outside allowed roots [default: false]\n\
+       --overwrite                   Replace existing token/config files\n\
+       --json                        Print machine-readable output without full tokens\n\
+       -h, --help                    Print help and exit\n\n\
+     Enroll receives wc_pat_* and wc_agent_* tokens over HTTPS and writes them\n\
+     locally with 0600 permissions. It never sends an Authorization header.\n"
+}
+
+fn doctor_usage() -> &'static str {
+    "Usage: webcodex-cli doctor [OPTIONS]\n\n\
+     Options:\n\
+       --server-url URL          WebCodex server URL for HTTP checks\n\
+       --env-file PATH           Read WEBCODEX_TOKEN from env file\n\
+       --token-file PATH         Read bearer token from file\n\
+       --user-token-file PATH    Read user API token for runtime/project checks\n\
+       --agent-token-file PATH   Read agent token for boundary checks\n\
+       --json                    Print machine-readable diagnostics\n\
+       --strict                  Exit non-zero if any check fails\n\
+       -h, --help                Print help and exit\n\n\
+     Doctor is non-destructive and never prints tokens or response bodies from\n\
+     non-JSON/HTML errors.\n"
 }
 
 fn server_usage() -> &'static str {
@@ -217,6 +332,9 @@ where
             stderr: String::new(),
         },
         "server" => parse_server_subcommand(&args[1..]),
+        "pairing" => parse_pairing_subcommand(&args[1..]),
+        "client" => parse_client_subcommand(&args[1..]),
+        "doctor" => parse_doctor_command(&args[1..]),
         "agent" => parse_agent_subcommand(&args[1..]),
         "setup" => parse_setup_subcommand(&args[1..]),
         _ => {
@@ -259,6 +377,84 @@ fn parse_agent_subcommand(args: &[String]) -> CliAction {
             code: 2,
             stdout: String::new(),
             stderr: format!("unknown agent subcommand: {}\n", other),
+        },
+    }
+}
+
+fn parse_pairing_subcommand(args: &[String]) -> CliAction {
+    if args.is_empty() {
+        return CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("{}\n", pairing_usage()),
+        };
+    }
+    match args[0].as_str() {
+        "--help" | "-h" => CliAction::Exit {
+            code: 0,
+            stdout: pairing_usage().to_string(),
+            stderr: String::new(),
+        },
+        "create" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: pairing_create_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_pairing_create(&args[1..]) {
+                Ok(opts) => CliAction::PairingCreate(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        other => CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("unknown pairing subcommand: {}\n", other),
+        },
+    }
+}
+
+fn parse_client_subcommand(args: &[String]) -> CliAction {
+    if args.is_empty() {
+        return CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("{}\n", client_usage()),
+        };
+    }
+    match args[0].as_str() {
+        "--help" | "-h" => CliAction::Exit {
+            code: 0,
+            stdout: client_usage().to_string(),
+            stderr: String::new(),
+        },
+        "enroll" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: client_enroll_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_client_enroll(&args[1..]) {
+                Ok(opts) => CliAction::ClientEnroll(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+        other => CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("unknown client subcommand: {}\n", other),
         },
     }
 }
@@ -469,6 +665,188 @@ fn parse_server_status(args: &[String]) -> Result<ServerStatusOptions, String> {
     }
     if opts.url.trim().is_empty() {
         return Err("--url cannot be empty".to_string());
+    }
+    Ok(opts)
+}
+
+fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String> {
+    let mut opts = PairingCreateOptions {
+        ttl_secs: 600,
+        ..PairingCreateOptions::default()
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--server-url" => opts.server_url = next_value(&mut iter, arg)?,
+            "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token" => opts.token = Some(next_value(&mut iter, arg)?),
+            "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--username" => opts.username = next_value(&mut iter, arg)?,
+            "--client-id" => opts.client_id = next_value(&mut iter, arg)?,
+            "--display-name" => opts.display_name = Some(next_value(&mut iter, arg)?),
+            "--ttl-secs" => {
+                opts.ttl_secs = next_value(&mut iter, arg)?
+                    .parse::<i64>()
+                    .map_err(|_| "--ttl-secs must be an integer".to_string())?;
+            }
+            "--user-token-name" => opts.user_token_name = Some(next_value(&mut iter, arg)?),
+            "--agent-token-name" => opts.agent_token_name = Some(next_value(&mut iter, arg)?),
+            "--json" => opts.json = true,
+            _ => return Err(format!("unknown pairing create flag: {}", arg)),
+        }
+    }
+    if opts.server_url.trim().is_empty() {
+        return Err("--server-url is required".to_string());
+    }
+    if opts.username.trim().is_empty() {
+        return Err("--username is required".to_string());
+    }
+    if opts.client_id.trim().is_empty() {
+        return Err("--client-id is required".to_string());
+    }
+    if !(60..=3600).contains(&opts.ttl_secs) {
+        return Err("--ttl-secs must be between 60 and 3600".to_string());
+    }
+    let auth_sources = opts.token.is_some() as u8
+        + opts.token_file.is_some() as u8
+        + opts.env_file.is_some() as u8;
+    if auth_sources > 1 {
+        return Err("use only one of --token, --token-file, or --env-file".to_string());
+    }
+    Ok(opts)
+}
+
+fn default_client_output_dir() -> PathBuf {
+    if is_effective_root() {
+        PathBuf::from("/etc/webcodex")
+    } else {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        home.join(".config/webcodex")
+    }
+}
+
+fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
+    let mut server_url = String::new();
+    let mut pairing_code = String::new();
+    let mut client_id = String::new();
+    let mut display_name = None;
+    let mut transport = TRANSPORT_WEBSOCKET.to_string();
+    let mut output_dir: Option<PathBuf> = None;
+    let mut agent_config: Option<PathBuf> = None;
+    let mut projects_dir: Option<PathBuf> = None;
+    let mut allowed_roots = Vec::new();
+    let mut allow_cwd_anywhere = false;
+    let mut overwrite = false;
+    let mut json = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--server-url" => server_url = next_value(&mut iter, arg)?,
+            "--pairing-code" => pairing_code = next_value(&mut iter, arg)?,
+            "--client-id" => client_id = next_value(&mut iter, arg)?,
+            "--display-name" => display_name = Some(next_value(&mut iter, arg)?),
+            "--transport" => transport = next_value(&mut iter, arg)?,
+            "--output-dir" => output_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--agent-config" => agent_config = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--projects-dir" => projects_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--allowed-root" => allowed_roots.push(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--allow-cwd-anywhere" => {
+                allow_cwd_anywhere = agent_init::parse_bool(&next_value(&mut iter, arg)?)?;
+            }
+            "--overwrite" => overwrite = true,
+            "--json" => json = true,
+            _ => return Err(format!("unknown client enroll flag: {}", arg)),
+        }
+    }
+    if server_url.trim().is_empty() {
+        return Err("--server-url is required".to_string());
+    }
+    if pairing_code.trim().is_empty() {
+        return Err("--pairing-code is required".to_string());
+    }
+    if client_id.trim().is_empty() {
+        return Err("--client-id is required".to_string());
+    }
+    if !matches!(
+        transport.as_str(),
+        agent_init::TRANSPORT_WEBSOCKET | agent_init::TRANSPORT_POLLING
+    ) {
+        return Err("--transport must be websocket or polling".to_string());
+    }
+    let output_dir = output_dir.unwrap_or_else(default_client_output_dir);
+    if output_dir.as_os_str().is_empty() {
+        return Err("--output-dir cannot be empty".to_string());
+    }
+    let agent_config = agent_config.unwrap_or_else(|| output_dir.join("agent.toml"));
+    let projects_dir = projects_dir.unwrap_or_else(|| output_dir.join("projects.d"));
+    if agent_config.as_os_str().is_empty() {
+        return Err("--agent-config cannot be empty".to_string());
+    }
+    if projects_dir.as_os_str().is_empty() {
+        return Err("--projects-dir cannot be empty".to_string());
+    }
+    if allowed_roots.iter().any(|path| path.as_os_str().is_empty()) {
+        return Err("--allowed-root cannot be empty".to_string());
+    }
+    Ok(ClientEnrollOptions {
+        server_url,
+        pairing_code,
+        client_id,
+        display_name,
+        transport,
+        output_dir,
+        agent_config,
+        projects_dir,
+        allowed_roots,
+        allow_cwd_anywhere,
+        overwrite,
+        json,
+    })
+}
+
+fn parse_doctor_command(args: &[String]) -> CliAction {
+    if args.first().is_some_and(|a| a == "--help" || a == "-h") {
+        return CliAction::Exit {
+            code: 0,
+            stdout: doctor_usage().to_string(),
+            stderr: String::new(),
+        };
+    }
+    match parse_doctor(args) {
+        Ok(opts) => CliAction::Doctor(opts),
+        Err(e) => CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("{}\n", e),
+        },
+    }
+}
+
+fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
+    let mut opts = DoctorOptions::default();
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--server-url" => opts.server_url = Some(next_value(&mut iter, arg)?),
+            "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--user-token-file" => {
+                opts.user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
+            }
+            "--agent-token-file" => {
+                opts.agent_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
+            }
+            "--json" => opts.json = true,
+            "--strict" => opts.strict = true,
+            _ => return Err(format!("unknown doctor flag: {}", arg)),
+        }
+    }
+    if let Some(url) = &opts.server_url {
+        if url.trim().is_empty() {
+            return Err("--server-url cannot be empty".to_string());
+        }
     }
     Ok(opts)
 }
@@ -970,6 +1348,681 @@ fn format_error_body(status: u16, content_type: &str, body: &str) -> String {
         "request failed: HTTP {} (content-type: {})",
         status, content_type
     )
+}
+
+fn resolve_pairing_create_token(opts: &PairingCreateOptions) -> Result<String, String> {
+    if let Some(token) = &opts.token {
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err("--token cannot be empty".to_string());
+        }
+        return Ok(token);
+    }
+    if let Some(path) = &opts.token_file {
+        let token = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read token file {}: {}", path.display(), e))?
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            return Err("--token-file cannot be empty".to_string());
+        }
+        return Ok(token);
+    }
+    if let Some(path) = &opts.env_file {
+        let token = read_env_file_value(path, "WEBCODEX_TOKEN")?
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            return Err(format!(
+                "env file {} does not contain WEBCODEX_TOKEN",
+                path.display()
+            ));
+        }
+        return Ok(token);
+    }
+    let token = std::env::var("WEBCODEX_TOKEN")
+        .map_err(|_| {
+            "--env-file, --token-file, --token, or WEBCODEX_TOKEN is required".to_string()
+        })?
+        .trim()
+        .to_string();
+    if token.is_empty() {
+        return Err("WEBCODEX_TOKEN cannot be empty".to_string());
+    }
+    Ok(token)
+}
+
+async fn post_json_unauthed(server_url: &str, path: &str, body: Value) -> Result<Value, String> {
+    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let resp = client
+        .post(url)
+        .json(&body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {}", e))?;
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response: {}", e))?;
+    if !status.is_success() {
+        return Err(format_error_body(status.as_u16(), &content_type, &text));
+    }
+    serde_json::from_str(&text).map_err(|e| {
+        format!(
+            "failed to parse JSON response: {} (content-type: {})",
+            e, content_type
+        )
+    })
+}
+
+async fn run_pairing_create(opts: PairingCreateOptions) -> Result<String, String> {
+    let token = resolve_pairing_create_token(&opts)?;
+    let mut body = json!({
+        "username": opts.username,
+        "client_id": opts.client_id,
+        "ttl_secs": opts.ttl_secs,
+    });
+    if let Some(display_name) = &opts.display_name {
+        body["display_name"] = json!(display_name);
+    }
+    if let Some(name) = &opts.user_token_name {
+        body["user_token_name"] = json!(name);
+    }
+    if let Some(name) = &opts.agent_token_name {
+        body["agent_token_name"] = json!(name);
+    }
+    let value = post_json_authed(ApiCall {
+        server_url: &opts.server_url,
+        token: &token,
+        path: "/api/pairing/create",
+        body,
+    })
+    .await
+    .map_err(|e| e.replace(&token, "[redacted]"))?;
+    if opts.json {
+        let summary = json!({
+            "pairing_code": value["pairing_code"],
+            "expires_at": value["expires_at"],
+            "username": value["username"],
+            "client_id": value["client_id"],
+        });
+        serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
+    } else {
+        let mut out = String::new();
+        out.push_str("Pairing code created.\n\n");
+        out.push_str(&format!(
+            "  username:     {}\n",
+            value["username"].as_str().unwrap_or("unknown")
+        ));
+        out.push_str(&format!(
+            "  client_id:    {}\n",
+            value["client_id"].as_str().unwrap_or("unknown")
+        ));
+        out.push_str(&format!(
+            "  expires_at:   {}\n",
+            value["expires_at"]
+                .as_i64()
+                .map(|v| v.to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        ));
+        out.push_str(&format!(
+            "  pairing code: {}\n",
+            value["pairing_code"].as_str().unwrap_or("")
+        ));
+        out.push_str(
+            "\nCopy the pairing code to the client and run `webcodex-cli client enroll`.\n",
+        );
+        out.push_str("No wc_pat_* or wc_agent_* token files were created on the server.\n");
+        Ok(out)
+    }
+}
+
+fn ensure_enroll_outputs_available(opts: &ClientEnrollOptions) -> Result<(), String> {
+    if opts.overwrite {
+        return Ok(());
+    }
+    for path in [
+        opts.output_dir.join("webcodex-user-token"),
+        opts.output_dir.join("webcodex-agent-token"),
+        opts.agent_config.clone(),
+    ] {
+        if path.exists() {
+            return Err(format!(
+                "{} already exists; pass --overwrite to replace it",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+async fn run_client_enroll(opts: ClientEnrollOptions) -> Result<String, String> {
+    ensure_enroll_outputs_available(&opts)?;
+    let mut body = json!({
+        "pairing_code": opts.pairing_code,
+        "client_id": opts.client_id,
+        "transport": opts.transport,
+        "projects_dir": opts.projects_dir.to_string_lossy(),
+        "allow_cwd_anywhere": opts.allow_cwd_anywhere,
+    });
+    if let Some(display_name) = &opts.display_name {
+        body["display_name"] = json!(display_name);
+    }
+    if !opts.allowed_roots.is_empty() {
+        body["allowed_roots"] = json!(opts
+            .allowed_roots
+            .iter()
+            .map(|p| p.to_string_lossy().to_string())
+            .collect::<Vec<_>>());
+    }
+    let value = post_json_unauthed(&opts.server_url, "/api/pairing/enroll", body).await?;
+    let user_token = value
+        .get("user_token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "enroll response missing user_token".to_string())?
+        .to_string();
+    let agent_token = value
+        .get("agent_token")
+        .and_then(Value::as_str)
+        .ok_or_else(|| "enroll response missing agent_token".to_string())?
+        .to_string();
+    let username = value
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_string();
+    let user_prefix = value
+        .get("user_token_prefix")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| token_prefix(&user_token));
+    let agent_prefix = value
+        .get("agent_token_prefix")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| token_prefix(&agent_token));
+
+    let user_token_path = opts.output_dir.join("webcodex-user-token");
+    let agent_token_path = opts.output_dir.join("webcodex-agent-token");
+    write_text_file(
+        &user_token_path,
+        &format!("{}\n", user_token),
+        opts.overwrite,
+        true,
+    )?;
+    write_text_file(
+        &agent_token_path,
+        &format!("{}\n", agent_token),
+        opts.overwrite,
+        true,
+    )?;
+    let agent_opts = AgentInitOptions {
+        server_url: opts.server_url.clone(),
+        token: Some(agent_token.clone()),
+        token_file: None,
+        client_id: opts.client_id.clone(),
+        owner: username.clone(),
+        display_name: opts.display_name.clone(),
+        transport: opts.transport.clone(),
+        poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
+        projects_dir: opts.projects_dir.clone(),
+        output: opts.agent_config.clone(),
+        allowed_roots: opts.allowed_roots.clone(),
+        allow_cwd_anywhere: opts.allow_cwd_anywhere,
+        overwrite: opts.overwrite,
+    };
+    run_agent_init(agent_opts)?;
+
+    if opts.json {
+        let summary = json!({
+            "username": username,
+            "client_id": opts.client_id,
+            "user_token_prefix": user_prefix,
+            "agent_token_prefix": agent_prefix,
+            "user_token_file": user_token_path.to_string_lossy(),
+            "agent_token_file": agent_token_path.to_string_lossy(),
+            "agent_config": opts.agent_config.to_string_lossy(),
+            "projects_dir": opts.projects_dir.to_string_lossy(),
+            "next_steps": [
+                "start webcodex-agent with the generated agent.toml",
+                "configure GPT Actions with the user-token file"
+            ],
+        });
+        serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())
+    } else {
+        let mut out = String::new();
+        out.push_str("Client enrollment complete.\n\n");
+        out.push_str(&format!("  username:          {}\n", username));
+        out.push_str(&format!("  client_id:         {}\n", opts.client_id));
+        out.push_str(&format!("  user token prefix: {}\n", user_prefix));
+        out.push_str(&format!("  agent token prefix:{}\n", agent_prefix));
+        out.push_str(&format!(
+            "  user token file:   {}\n",
+            user_token_path.display()
+        ));
+        out.push_str(&format!(
+            "  agent token file:  {}\n",
+            agent_token_path.display()
+        ));
+        out.push_str(&format!(
+            "  agent config:      {}\n",
+            opts.agent_config.display()
+        ));
+        out.push_str("\nNext steps:\n");
+        out.push_str(&format!(
+            "  - Start the agent: `webcodex-agent --config {}`\n",
+            opts.agent_config.display()
+        ));
+        out.push_str(&format!(
+            "  - GPT Actions should use the user-token file: {}\n",
+            user_token_path.display()
+        ));
+        Ok(out)
+    }
+}
+
+#[derive(Debug, Clone)]
+struct DoctorCheck {
+    name: String,
+    status: &'static str,
+    detail: String,
+}
+
+impl DoctorCheck {
+    fn pass(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: "PASS",
+            detail: detail.into(),
+        }
+    }
+
+    fn warn(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: "WARN",
+            detail: detail.into(),
+        }
+    }
+
+    fn fail(name: impl Into<String>, detail: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            status: "FAIL",
+            detail: detail.into(),
+        }
+    }
+}
+
+fn discover_binary(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(name);
+        if candidate.is_file() {
+            return Some(candidate);
+        }
+        #[cfg(windows)]
+        {
+            let candidate = dir.join(format!("{}.exe", name));
+            if candidate.is_file() {
+                return Some(candidate);
+            }
+        }
+    }
+    None
+}
+
+fn read_optional_token(path: &Option<PathBuf>, label: &str) -> Result<Option<String>, String> {
+    let Some(path) = path else {
+        return Ok(None);
+    };
+    let token = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read {} {}: {}", label, path.display(), e))?
+        .trim()
+        .to_string();
+    if token.is_empty() {
+        return Err(format!("{} {} is empty", label, path.display()));
+    }
+    Ok(Some(token))
+}
+
+fn resolve_doctor_general_token(opts: &DoctorOptions) -> Result<Option<String>, String> {
+    if let Some(token) = read_optional_token(&opts.token_file, "--token-file")? {
+        return Ok(Some(token));
+    }
+    if let Some(path) = &opts.env_file {
+        if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
+            let token = token.trim().to_string();
+            if !token.is_empty() {
+                return Ok(Some(token));
+            }
+        }
+    }
+    Ok(None)
+}
+
+async fn http_post_json_status(
+    server_url: &str,
+    path: &str,
+    token: Option<&str>,
+    body: Value,
+) -> Result<(u16, String, Option<Value>), String> {
+    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let mut req = client.post(url).json(&body);
+    if let Some(token) = token {
+        req = req.bearer_auth(token);
+    }
+    let resp = req
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {}", e))?;
+    let status = resp.status().as_u16();
+    let content_type = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response: {}", e))?;
+    let json = if content_type
+        .split(';')
+        .next()
+        .is_some_and(|ct| ct.trim().eq_ignore_ascii_case("application/json"))
+    {
+        serde_json::from_str::<Value>(&text).ok()
+    } else {
+        None
+    };
+    Ok((status, content_type, json))
+}
+
+async fn http_get_json_status(
+    server_url: &str,
+    path: &str,
+) -> Result<(u16, String, Option<Value>), String> {
+    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let resp = client
+        .get(url)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {}", e))?;
+    let status = resp.status().as_u16();
+    let content_type = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+    let text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response: {}", e))?;
+    let json = if content_type
+        .split(';')
+        .next()
+        .is_some_and(|ct| ct.trim().eq_ignore_ascii_case("application/json"))
+    {
+        serde_json::from_str::<Value>(&text).ok()
+    } else {
+        None
+    };
+    Ok((status, content_type, json))
+}
+
+async fn run_doctor(opts: DoctorOptions) -> Result<(String, bool), String> {
+    let mut checks = Vec::new();
+    for name in ["webcodex", "webcodex-agent", "webcodex-cli"] {
+        match discover_binary(name) {
+            Some(path) => checks.push(DoctorCheck::pass(
+                format!("binary {}", name),
+                path.display().to_string(),
+            )),
+            None => checks.push(DoctorCheck::warn(
+                format!("binary {}", name),
+                "not found in PATH",
+            )),
+        }
+    }
+
+    let general_token = resolve_doctor_general_token(&opts)?;
+    let user_token = read_optional_token(&opts.user_token_file, "--user-token-file")?;
+    let agent_token = read_optional_token(&opts.agent_token_file, "--agent-token-file")?;
+    let preferred_token = user_token.as_deref().or(general_token.as_deref());
+
+    if let Some(server_url) = opts.server_url.as_deref() {
+        match http_post_json_status(
+            server_url,
+            "/api/runtime/status",
+            preferred_token,
+            json!({}),
+        )
+        .await
+        {
+            Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
+                let output = value.get("output").unwrap_or(&value);
+                let auth_enabled = output.get("auth_enabled").and_then(Value::as_bool);
+                let public_url = output
+                    .get("configured_public_url")
+                    .cloned()
+                    .unwrap_or(Value::Null);
+                let tools = output.pointer("/tools/count").and_then(Value::as_u64);
+                let online = output
+                    .pointer("/agents/online_count")
+                    .and_then(Value::as_u64);
+                checks.push(DoctorCheck::pass(
+                    "runtime status",
+                    format!(
+                        "auth_enabled={:?} configured_public_url={} tools.count={} agents.online_count={}",
+                        auth_enabled,
+                        public_url,
+                        tools.map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string()),
+                        online.map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string())
+                    ),
+                ));
+            }
+            Ok((status, content_type, Some(_))) => checks.push(DoctorCheck::fail(
+                "runtime status",
+                format!("HTTP {} content-type {}", status, content_type),
+            )),
+            Ok((status, content_type, None)) => checks.push(DoctorCheck::fail(
+                "runtime status",
+                format!(
+                    "HTTP {} non-JSON response content-type {}",
+                    status, content_type
+                ),
+            )),
+            Err(e) => checks.push(DoctorCheck::fail("runtime status", e)),
+        }
+
+        match http_get_json_status(server_url, "/openapi.json").await {
+            Ok((status, _content_type, Some(value))) if (200..300).contains(&status) => {
+                let paths = value["paths"].as_object();
+                let op_count: usize = paths
+                    .map(|p| {
+                        p.values()
+                            .map(|m| m.as_object().map(|o| o.len()).unwrap_or(0))
+                            .sum()
+                    })
+                    .unwrap_or(0);
+                let forbidden = [
+                    "/api/pairing/create",
+                    "/api/pairing/enroll",
+                    "/api/tokens/create",
+                    "/api/agent-tokens/create",
+                    "/api/users/create",
+                ];
+                let leaked: Vec<&str> = forbidden
+                    .iter()
+                    .copied()
+                    .filter(|p| paths.is_some_and(|paths| paths.contains_key(*p)))
+                    .collect();
+                if leaked.is_empty() {
+                    checks.push(DoctorCheck::pass(
+                        "openapi",
+                        format!(
+                            "reachable; operation_count={}; management/enrollment absent",
+                            op_count
+                        ),
+                    ));
+                } else {
+                    checks.push(DoctorCheck::fail(
+                        "openapi",
+                        format!("management/enrollment paths exposed: {}", leaked.join(", ")),
+                    ));
+                }
+            }
+            Ok((status, content_type, None)) => checks.push(DoctorCheck::fail(
+                "openapi",
+                format!(
+                    "HTTP {} non-JSON response content-type {}",
+                    status, content_type
+                ),
+            )),
+            Ok((status, content_type, Some(_))) => checks.push(DoctorCheck::fail(
+                "openapi",
+                format!("HTTP {} content-type {}", status, content_type),
+            )),
+            Err(e) => checks.push(DoctorCheck::fail("openapi", e)),
+        }
+
+        if let Some(token) = preferred_token {
+            match http_post_json_status(
+                server_url,
+                "/api/tools/call",
+                Some(token),
+                json!({"tool":"list_agents","params":{}}),
+            )
+            .await
+            {
+                Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+                    let count = value
+                        .pointer("/output/agents")
+                        .and_then(Value::as_array)
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    checks.push(DoctorCheck::pass(
+                        "agent visibility",
+                        format!("agents.count={}", count),
+                    ));
+                }
+                Ok((status, content_type, _)) => checks.push(DoctorCheck::warn(
+                    "agent visibility",
+                    format!("HTTP {} content-type {}", status, content_type),
+                )),
+                Err(e) => checks.push(DoctorCheck::warn("agent visibility", e)),
+            }
+            match http_post_json_status(server_url, "/api/projects/list", Some(token), json!({}))
+                .await
+            {
+                Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+                    let count = value
+                        .pointer("/output/projects")
+                        .and_then(Value::as_array)
+                        .map(|a| a.len())
+                        .unwrap_or(0);
+                    checks.push(DoctorCheck::pass(
+                        "projects",
+                        format!("projects.count={}", count),
+                    ));
+                }
+                Ok((status, content_type, _)) => checks.push(DoctorCheck::warn(
+                    "projects",
+                    format!("HTTP {} content-type {}", status, content_type),
+                )),
+                Err(e) => checks.push(DoctorCheck::warn("projects", e)),
+            }
+        } else {
+            checks.push(DoctorCheck::warn(
+                "tokened checks",
+                "no user/bootstrap token provided; skipped agents/projects",
+            ));
+        }
+
+        if let Some(token) = agent_token.as_deref() {
+            match http_post_json_status(server_url, "/api/runtime/status", Some(token), json!({}))
+                .await
+            {
+                Ok((status, _, _)) if status == 401 || status == 403 => {
+                    checks.push(DoctorCheck::pass(
+                        "agent token boundary",
+                        "agent token cannot call runtime status",
+                    ))
+                }
+                Ok((status, content_type, _)) => checks.push(DoctorCheck::fail(
+                    "agent token boundary",
+                    format!("unexpected HTTP {} content-type {}", status, content_type),
+                )),
+                Err(e) => checks.push(DoctorCheck::warn("agent token boundary", e)),
+            }
+        }
+        if let Some(token) = user_token.as_deref() {
+            match http_post_json_status(server_url, "/api/runtime/status", Some(token), json!({}))
+                .await
+            {
+                Ok((status, _, _)) if (200..300).contains(&status) => checks.push(
+                    DoctorCheck::pass("user token boundary", "user token can call runtime status"),
+                ),
+                Ok((status, content_type, _)) => checks.push(DoctorCheck::fail(
+                    "user token boundary",
+                    format!("HTTP {} content-type {}", status, content_type),
+                )),
+                Err(e) => checks.push(DoctorCheck::warn("user token boundary", e)),
+            }
+        }
+    } else {
+        checks.push(DoctorCheck::warn(
+            "server checks",
+            "--server-url not provided; skipped HTTP/OpenAPI checks",
+        ));
+    }
+
+    let has_fail = checks.iter().any(|c| c.status == "FAIL");
+    if opts.json {
+        let summary = json!({
+            "ok": !has_fail,
+            "strict": opts.strict,
+            "checks": checks.iter().map(|c| {
+                json!({"name": c.name, "status": c.status, "detail": c.detail})
+            }).collect::<Vec<_>>(),
+        });
+        Ok((
+            serde_json::to_string_pretty(&summary).map_err(|e| e.to_string())?,
+            has_fail,
+        ))
+    } else {
+        let mut out = String::new();
+        out.push_str("WebCodex doctor:\n\n");
+        for check in &checks {
+            out.push_str(&format!(
+                "{} {:<22} {}\n",
+                check.status, check.name, check.detail
+            ));
+        }
+        Ok((out, has_fail))
+    }
 }
 
 /// Run `setup single-user`:
@@ -1486,6 +2539,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
+        CliAction::PairingCreate(opts) => match run_pairing_create(opts).await {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::ClientEnroll(opts) => match run_client_enroll(opts).await {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::Doctor(opts) => match run_doctor(opts.clone()).await {
+            Ok((stdout, has_fail)) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(if opts.strict && has_fail { 1 } else { 0 });
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
         CliAction::ServerInit(opts) => match run_server_init(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
@@ -1570,6 +2662,19 @@ mod tests {
                 );
             }
             other => panic!("expected version exit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn webcodex_cli_help_mentions_pairing_client_and_doctor() {
+        match cli_action(["--help"]) {
+            CliAction::Exit { code, stdout, .. } => {
+                assert_eq!(code, 0);
+                assert!(stdout.contains("pairing create"));
+                assert!(stdout.contains("client enroll"));
+                assert!(stdout.contains("doctor"));
+            }
+            other => panic!("expected help exit, got {other:?}"),
         }
     }
 
@@ -1875,6 +2980,207 @@ mod tests {
         assert_eq!(opts.role, "admin");
         assert_eq!(opts.gpt_token_name, "chatgpt-action");
         assert_eq!(opts.agent_token_name, "oe agent");
+    }
+
+    #[test]
+    fn pairing_create_parse_defaults() {
+        let opts = parse_pairing_create(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--token-file",
+            "/tmp/webcodex-token",
+            "--username",
+            "alice",
+            "--client-id",
+            "alice-laptop",
+        ]))
+        .unwrap();
+        assert_eq!(opts.ttl_secs, 600);
+        assert_eq!(opts.username, "alice");
+        assert_eq!(opts.client_id, "alice-laptop");
+        assert_eq!(opts.token_file, Some(PathBuf::from("/tmp/webcodex-token")));
+    }
+
+    #[test]
+    fn client_enroll_parse_defaults() {
+        let opts = parse_client_enroll(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--pairing-code",
+            "wc_pair_fake",
+            "--client-id",
+            "alice-laptop",
+        ]))
+        .unwrap();
+        let default_dir = default_client_output_dir();
+        assert_eq!(opts.output_dir, default_dir);
+        assert_eq!(opts.agent_config, opts.output_dir.join("agent.toml"));
+        assert_eq!(opts.projects_dir, opts.output_dir.join("projects.d"));
+        assert_eq!(opts.transport, TRANSPORT_WEBSOCKET);
+        assert!(!opts.overwrite);
+    }
+
+    #[test]
+    fn client_enroll_refuses_overwrite_before_network() {
+        let tmp = tempfile::tempdir().unwrap();
+        let existing = tmp.path().join("webcodex-user-token");
+        std::fs::write(&existing, "old\n").unwrap();
+        let opts = ClientEnrollOptions {
+            server_url: "http://127.0.0.1:9".to_string(),
+            pairing_code: "wc_pair_fake".to_string(),
+            client_id: "alice-laptop".to_string(),
+            display_name: None,
+            transport: TRANSPORT_WEBSOCKET.to_string(),
+            output_dir: tmp.path().to_path_buf(),
+            agent_config: tmp.path().join("agent.toml"),
+            projects_dir: tmp.path().join("projects.d"),
+            allowed_roots: vec![tmp.path().to_path_buf()],
+            allow_cwd_anywhere: false,
+            overwrite: false,
+            json: false,
+        };
+        let err = ensure_enroll_outputs_available(&opts).unwrap_err();
+        assert!(err.contains("already exists"));
+    }
+
+    #[tokio::test]
+    async fn pairing_create_prints_pairing_code_once_without_auth_token() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]);
+            assert!(request.starts_with("POST /api/pairing/create "));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fake-bootstrap"));
+            let body = r#"{"success":true,"pairing_code":"wc_pair_copy_once","expires_at":123,"username":"alice","client_id":"alice-laptop"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let opts = PairingCreateOptions {
+            server_url: format!("http://{}", addr),
+            token: Some("fake-bootstrap".to_string()),
+            username: "alice".to_string(),
+            client_id: "alice-laptop".to_string(),
+            ttl_secs: 600,
+            ..PairingCreateOptions::default()
+        };
+        let output = run_pairing_create(opts).await.unwrap();
+        handle.join().unwrap();
+        assert_eq!(output.matches("wc_pair_copy_once").count(), 1);
+        assert!(!output.contains("fake-bootstrap"));
+    }
+
+    #[tokio::test]
+    async fn client_enroll_posts_without_authorization_and_writes_files() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 16384];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            tx.send(request).unwrap();
+            let body = r#"{"success":true,"username":"alice","client_id":"alice-laptop","user_token":"wc_pat_fake_plaintext_123456","agent_token":"wc_agent_fake_plaintext_abcdef","user_token_prefix":"wc_pat_fake_pre","agent_token_prefix":"wc_agent_fake_p"}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let opts = ClientEnrollOptions {
+            server_url: format!("http://{}", addr),
+            pairing_code: "wc_pair_fake".to_string(),
+            client_id: "alice-laptop".to_string(),
+            display_name: Some("Alice Laptop".to_string()),
+            transport: TRANSPORT_WEBSOCKET.to_string(),
+            output_dir: tmp.path().to_path_buf(),
+            agent_config: tmp.path().join("agent.toml"),
+            projects_dir: tmp.path().join("projects.d"),
+            allowed_roots: vec![tmp.path().to_path_buf()],
+            allow_cwd_anywhere: false,
+            overwrite: false,
+            json: true,
+        };
+        let output = run_client_enroll(opts).await.unwrap();
+        handle.join().unwrap();
+        let request = rx.recv().unwrap();
+        assert!(request.starts_with("POST /api/pairing/enroll "));
+        assert!(!request.to_ascii_lowercase().contains("authorization:"));
+        assert!(request.contains(r#""pairing_code":"wc_pair_fake""#));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("webcodex-user-token"))
+                .unwrap()
+                .trim(),
+            "wc_pat_fake_plaintext_123456"
+        );
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("webcodex-agent-token"))
+                .unwrap()
+                .trim(),
+            "wc_agent_fake_plaintext_abcdef"
+        );
+        let agent_config = std::fs::read_to_string(tmp.path().join("agent.toml")).unwrap();
+        assert!(agent_config.contains("wc_agent_fake_plaintext_abcdef"));
+        assert!(!output.contains("wc_pat_fake_plaintext_123456"));
+        assert!(!output.contains("wc_agent_fake_plaintext_abcdef"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            for path in [
+                tmp.path().join("webcodex-user-token"),
+                tmp.path().join("webcodex-agent-token"),
+                tmp.path().join("agent.toml"),
+            ] {
+                let mode = std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
+                assert_eq!(mode, 0o600);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn doctor_does_not_print_token_or_html_body() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let _ = stream.read(&mut buf).unwrap();
+            let body = "<html>secret-token-in-body</html>";
+            write!(
+                stream,
+                "HTTP/1.1 502 Bad Gateway\r\ncontent-type: text/html\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let tmp = tempfile::tempdir().unwrap();
+        let token_file = tmp.path().join("user-token");
+        std::fs::write(&token_file, "secret-doctor-token\n").unwrap();
+        let opts = DoctorOptions {
+            server_url: Some(format!("http://{}", addr)),
+            user_token_file: Some(token_file),
+            ..DoctorOptions::default()
+        };
+        let (output, has_fail) = run_doctor(opts).await.unwrap();
+        handle.join().unwrap();
+        assert!(has_fail);
+        assert!(!output.contains("secret-doctor-token"));
+        assert!(!output.contains("secret-token-in-body"));
+        assert!(output.contains("non-JSON response"));
     }
 
     #[test]

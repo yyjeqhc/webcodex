@@ -706,6 +706,8 @@ mod tests {
         assert!(!is_agent_transport_path("/api/agent-tokens/create"));
         assert!(!is_agent_transport_path("/api/agent-tokens/list"));
         assert!(!is_agent_transport_path("/api/agent-tokens/revoke"));
+        assert!(!is_agent_transport_path("/api/pairing/create"));
+        assert!(!is_agent_transport_path("/api/pairing/enroll"));
         assert!(!is_agent_transport_path("/api/runtime/status"));
         assert!(!is_agent_transport_path("/api/tools/list"));
         assert!(!is_agent_transport_path("/api/tools/call"));

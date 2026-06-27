@@ -6,7 +6,7 @@ This guide covers the current WebCodex production shape: server bootstrap, servi
 
 - `webcodex`: server exposing REST, GPT Actions OpenAPI, MCP, and agent endpoints.
 - `webcodex-agent`: long-lived worker connected by WebSocket or polling.
-- `webcodex-cli`: recommended management CLI for server bootstrap, status checks, and later setup flows.
+- `webcodex-cli`: recommended management CLI for server bootstrap, pairing/enrollment, status, and doctor checks.
 
 ## Server configuration
 
@@ -24,10 +24,10 @@ Use the bootstrap token only for initial setup/admin work. Day-to-day GPT Action
 
 ## Server-first setup
 
-The documented distribution path assumes:
+The documented distribution path assumes the MVP npm wrapper:
 
 ```bash
-npm install -g @webcodex/server @webcodex/cli
+npm install -g @webcodex/webcodex
 ```
 
 Initialize the env file:
@@ -39,7 +39,7 @@ sudo webcodex-cli server init \
   --env-file /etc/webcodex/webcodex.env
 ```
 
-`server init` creates only `WEBCODEX_TOKEN`. It does not create `wc_pat_...` user API tokens or `wc_agent_...` agent tokens. User and agent token setup is a separate client-side setup/enroll flow.
+`server init` creates only `WEBCODEX_TOKEN`. It does not create `wc_pat_...` user API tokens or `wc_agent_...` agent tokens.
 
 Install and start the systemd service:
 
@@ -63,16 +63,47 @@ webcodex-cli setup single-user
 
 Prefer `webcodex-cli` in new docs and automation.
 
+## Enrollment
+
+On the server/admin side, create a short-lived one-time pairing code:
+
+```bash
+webcodex-cli pairing create \
+  --server-url https://your-domain.example \
+  --env-file /etc/webcodex/webcodex.env \
+  --username alice \
+  --client-id alice-laptop
+```
+
+On the client side, exchange the code over HTTPS and write local credentials:
+
+```bash
+webcodex-cli client enroll \
+  --server-url https://your-domain.example \
+  --pairing-code <temporary_pairing_code> \
+  --client-id alice-laptop
+```
+
+Pairing creates no server-side `wc_pat_*` or `wc_agent_*` token files. Client enroll creates those tokens for the paired user/client and saves them locally with `0600` permissions on Unix:
+
+```text
+~/.config/webcodex/webcodex-user-token
+~/.config/webcodex/webcodex-agent-token
+~/.config/webcodex/agent.toml
+```
+
+For root clients the default directory is `/etc/webcodex`. GPT Actions should use the client-side user-token file.
+
 ## Public HTTPS URL
 
 GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup; configure nginx, Caddy, Cloudflare Tunnel, ngrok, or similar infrastructure separately.
 
 ## Agent configuration
 
-Generate the agent config with:
+Client enroll generates the agent config. Start the agent with:
 
 ```bash
-webcodex-cli agent init
+webcodex-agent --config ~/.config/webcodex/agent.toml
 ```
 
 `webcodex-agent init` remains available as a compatibility entry point.
@@ -131,7 +162,7 @@ https://your-domain.example/openapi.json
 
 Configure GPT Actions authentication as HTTP Bearer/API key in the `Authorization` header.
 
-The OpenAPI GPT Actions management surface intentionally excludes users, API tokens, agent tokens, setup, and audit management endpoints. Use `webcodex-cli` for those tasks.
+The OpenAPI GPT Actions management surface intentionally excludes users, API tokens, agent tokens, pairing/enrollment, setup, doctor, npm, server management, and audit endpoints. Use `webcodex-cli` for those tasks.
 
 MCP uses the same user API token and the same `ToolRuntime` as GPT Actions.
 
@@ -143,8 +174,9 @@ MCP uses the same user API token and the same `ToolRuntime` as GPT Actions.
 
 Recommended production smoke sequence:
 
-1. `POST /api/runtime/status` returns `service=webcodex` and the expected public URL.
-2. `listAgents` shows at least one online agent.
-3. `listProjects` shows `agent:<client_id>:<project_id>` ids.
-4. Read-only project tools work on a known project.
-5. Write/replace/validate tests are limited to disposable smoke projects.
+1. `webcodex-cli doctor --server-url https://your-domain.example --user-token-file PATH` passes its non-destructive checks.
+2. `POST /api/runtime/status` returns `service=webcodex` and the expected public URL.
+3. `listAgents` shows at least one online agent.
+4. `listProjects` shows `agent:<client_id>:<project_id>` ids.
+5. Read-only project tools work on a known project.
+6. Write/replace/validate tests are limited to disposable smoke projects.

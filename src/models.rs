@@ -200,6 +200,20 @@ pub struct ApiKeyRecord {
     pub allowed_client_id: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PairingCodeRecord {
+    pub id: String,
+    pub code_hash: String,
+    pub user_id: String,
+    pub username: String,
+    pub client_id: String,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub used_at: Option<i64>,
+    pub user_token_name: Option<String>,
+    pub agent_token_name: Option<String>,
+}
+
 impl ApiKeyRecord {
     /// Parse the stored scope string into an ordered, deduplicated list.
     pub fn scopes_vec(&self) -> Vec<String> {

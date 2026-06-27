@@ -33,8 +33,9 @@ Codex validation is optional. `runCodexTask` requires the Codex CLI on the agent
 Prefer:
 
 ```bash
-webcodex-cli setup single-user
-webcodex-cli agent init
+webcodex-cli pairing create --server-url URL --username alice --client-id alice-laptop
+webcodex-cli client enroll --server-url URL --pairing-code CODE --client-id alice-laptop
+webcodex-cli doctor --server-url URL --user-token-file PATH
 ```
 
 The compatibility entry points still exist, but new validation docs should use `webcodex-cli`.

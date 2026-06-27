@@ -16,7 +16,7 @@ Configure the GPT Action with HTTP Bearer authentication:
 Authorization: Bearer <wc_pat_user_api_token>
 ```
 
-Do not paste or store the bootstrap server token as the day-to-day GPT Actions credential. Use `webcodex-cli setup single-user` to create a user API token and an agent token during initial setup.
+Do not paste or store the bootstrap server token as the day-to-day GPT Actions credential. Use pairing/enrollment instead: `webcodex-cli pairing create` creates a short-lived code on the server/admin side, and `webcodex-cli client enroll` exchanges that code on the client side. GPT Actions should use the generated client-side `webcodex-user-token` file. Do not copy token files from the server to the client.
 
 `?token=` is not a GPT Actions auth mechanism. It is accepted only by `/api/agents/ws` for WebSocket handshake compatibility.
 
@@ -24,12 +24,14 @@ Do not paste or store the bootstrap server token as the day-to-day GPT Actions c
 
 The GPT Actions surface is intentionally smaller than the full admin API. It includes runtime, project, git, patch, file, shell/job, and optional Codex task operations.
 
-It does not expose user, API-token, agent-token, setup, or audit management endpoints such as:
+It does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints such as:
 
 ```text
 /api/users/create
 /api/tokens/create
 /api/agent-tokens/create
+/api/pairing/create
+/api/pairing/enroll
 /api/audit/sessions
 ```
 

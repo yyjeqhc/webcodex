@@ -1,0 +1,25 @@
+{
+  "name": "@webcodex/webcodex",
+  "version": "0.1.0",
+  "description": "MVP npm wrapper for WebCodex native binaries.",
+  "license": "MIT",
+  "bin": {
+    "webcodex": "bin/webcodex.js",
+    "webcodex-agent": "bin/webcodex-agent.js",
+    "webcodex-cli": "bin/webcodex-cli.js"
+  },
+  "scripts": {
+    "postinstall": "node install.js",
+    "test": "node test/self-test.js"
+  },
+  "files": [
+    "bin",
+    "install.js",
+    "manifest.example.json",
+    "README.md",
+    "vendor/.gitkeep"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

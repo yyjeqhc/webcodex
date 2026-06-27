@@ -1,4 +1,4 @@
-use crate::models::{ApiKeyRecord, UserRecord};
+use crate::models::{ApiKeyRecord, PairingCodeRecord, UserRecord};
 use crate::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
     CodexGoalRecord, CommandAuditRecord, Message, MessageKind,
@@ -9,6 +9,15 @@ use std::sync::Mutex;
 
 pub struct Database {
     conn: Mutex<Connection>,
+}
+
+#[derive(Debug, Clone)]
+pub enum PairingConsumeResult {
+    NotFound,
+    Consumed(PairingCodeRecord),
+    AlreadyUsed(PairingCodeRecord),
+    Expired(PairingCodeRecord),
+    ClientMismatch(PairingCodeRecord),
 }
 
 fn row_to_message(row: &rusqlite::Row) -> rusqlite::Result<Message> {
@@ -96,6 +105,21 @@ fn row_to_action_event(row: &rusqlite::Row) -> rusqlite::Result<ActionEventRecor
         summary_json: row.get(15)?,
         request_bytes: row.get(16)?,
         response_bytes: row.get(17)?,
+    })
+}
+
+fn row_to_pairing_code(row: &rusqlite::Row) -> rusqlite::Result<PairingCodeRecord> {
+    Ok(PairingCodeRecord {
+        id: row.get(0)?,
+        code_hash: row.get(1)?,
+        user_id: row.get(2)?,
+        username: row.get(3)?,
+        client_id: row.get(4)?,
+        created_at: row.get(5)?,
+        expires_at: row.get(6)?,
+        used_at: row.get(7)?,
+        user_token_name: row.get(8)?,
+        agent_token_name: row.get(9)?,
     })
 }
 
@@ -236,6 +260,22 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
             CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
+
+            CREATE TABLE IF NOT EXISTS pairing_codes (
+                id TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL UNIQUE,
+                user_id TEXT NOT NULL,
+                username TEXT NOT NULL,
+                client_id TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                used_at INTEGER,
+                user_token_name TEXT,
+                agent_token_name TEXT,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_pairing_codes_hash ON pairing_codes(code_hash);
+            CREATE INDEX IF NOT EXISTS idx_pairing_codes_expires_at ON pairing_codes(expires_at);
 
             CREATE TABLE IF NOT EXISTS agent_model_profiles (
                 id TEXT PRIMARY KEY,
@@ -1228,6 +1268,95 @@ impl Database {
             ],
         )?;
         Ok(())
+    }
+
+    pub fn insert_pairing_code(&self, record: &PairingCodeRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO pairing_codes (
+                id, code_hash, user_id, username, client_id, created_at, expires_at, used_at,
+                user_token_name, agent_token_name
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                record.id,
+                record.code_hash,
+                record.user_id,
+                record.username,
+                record.client_id,
+                record.created_at,
+                record.expires_at,
+                record.used_at,
+                record.user_token_name,
+                record.agent_token_name,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_pairing_code_by_hash(
+        &self,
+        code_hash: &str,
+    ) -> anyhow::Result<Option<PairingCodeRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, code_hash, user_id, username, client_id, created_at, expires_at, used_at,
+                    user_token_name, agent_token_name
+             FROM pairing_codes WHERE code_hash = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![code_hash], row_to_pairing_code)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn consume_pairing_code(
+        &self,
+        code_hash: &str,
+        client_id: &str,
+        now: i64,
+    ) -> anyhow::Result<PairingConsumeResult> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        let record = {
+            let mut stmt = tx.prepare(
+                "SELECT id, code_hash, user_id, username, client_id, created_at, expires_at,
+                        used_at, user_token_name, agent_token_name
+                 FROM pairing_codes WHERE code_hash = ?1",
+            )?;
+            let mut rows = stmt.query_map(params![code_hash], row_to_pairing_code)?;
+            match rows.next() {
+                Some(r) => r?,
+                None => return Ok(PairingConsumeResult::NotFound),
+            }
+        };
+        if record.used_at.is_some() {
+            return Ok(PairingConsumeResult::AlreadyUsed(record));
+        }
+        if record.expires_at <= now {
+            return Ok(PairingConsumeResult::Expired(record));
+        }
+        if record.client_id != client_id {
+            return Ok(PairingConsumeResult::ClientMismatch(record));
+        }
+        let changed = tx.execute(
+            "UPDATE pairing_codes SET used_at = ?2
+             WHERE id = ?1 AND used_at IS NULL AND expires_at > ?2 AND client_id = ?3",
+            params![record.id, now, client_id],
+        )?;
+        tx.commit()?;
+        if changed == 1 {
+            Ok(PairingConsumeResult::Consumed(PairingCodeRecord {
+                used_at: Some(now),
+                ..record
+            }))
+        } else {
+            // The connection mutex serializes pairing consumption in this
+            // process, so reaching this branch should only happen if SQLite
+            // reports an unexpected no-op update. Do not call back into helper
+            // methods here: they would try to re-lock the same DB mutex.
+            Ok(PairingConsumeResult::AlreadyUsed(record))
+        }
     }
 
     pub fn list_api_keys_by_user(&self, user_id: &str) -> anyhow::Result<Vec<ApiKeyRecord>> {

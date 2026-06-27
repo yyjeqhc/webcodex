@@ -16,11 +16,13 @@ Do not run unauthenticated production deployments.
 
 ## Install packages
 
-The documented distribution path assumes:
+The documented distribution path assumes the MVP npm wrapper:
 
 ```bash
-npm install -g @webcodex/server @webcodex/cli
+npm install -g @webcodex/webcodex
 ```
+
+The npm package is a wrapper around native release artifacts. Publishing and real artifact URLs/checksums are a separate release step.
 
 ## Server bootstrap
 
@@ -46,7 +48,28 @@ sudo systemctl enable --now webcodex
 webcodex-cli server status --env-file /etc/webcodex/webcodex.env
 ```
 
-User and agent token setup is a separate client-side setup/enroll flow.
+## Client enrollment
+
+On the server/admin side, create a temporary one-time pairing code:
+
+```bash
+webcodex-cli pairing create \
+  --server-url https://your-domain.example \
+  --env-file /etc/webcodex/webcodex.env \
+  --username alice \
+  --client-id alice-laptop
+```
+
+On the client side, exchange the pairing code over HTTPS:
+
+```bash
+webcodex-cli client enroll \
+  --server-url https://your-domain.example \
+  --pairing-code <temporary_pairing_code> \
+  --client-id alice-laptop
+```
+
+Pairing creates only the short-lived code. Client enroll creates the `wc_pat_*` user token and `wc_agent_*` agent token, then saves them locally with `0600` permissions on Unix. GPT Actions should use the generated user-token file.
 
 GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxies or tunnels; configure nginx, Caddy, Cloudflare Tunnel, ngrok, or similar infrastructure separately if needed.
 
@@ -61,13 +84,21 @@ webcodex-cli setup single-user
 
 ## Agent config
 
-Recommended agent config generation:
+Client enroll writes `agent.toml`. Start the agent with that generated config:
 
 ```bash
-webcodex-cli agent init
+webcodex-agent --config ~/.config/webcodex/agent.toml
 ```
 
 `webcodex-agent init` remains available as a compatibility entry point.
+
+## Doctor
+
+Run non-destructive diagnostics:
+
+```bash
+webcodex-cli doctor --server-url https://your-domain.example --user-token-file ~/.config/webcodex/webcodex-user-token
+```
 
 Agent policy defaults:
 

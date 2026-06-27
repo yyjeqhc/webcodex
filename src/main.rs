@@ -23,6 +23,7 @@ mod db;
 mod mcp;
 mod models;
 mod openapi;
+mod pairing_http;
 mod projects;
 mod runtime_http;
 mod shell_client;
@@ -233,102 +234,94 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_info.clone(),
     ));
 
-    let api_router = Router::with_path("api").push(
-        Router::new()
-            .hoop(AuthMiddleware)
-            .push(Router::with_path("tools/list").post(runtime_http::tools_list))
-            .push(Router::with_path("tools/call").post(runtime_http::tools_call))
-            .push(Router::with_path("codex/run").post(runtime_http::codex_run))
-            .push(Router::with_path("jobs/status").post(runtime_http::job_status))
-            .push(Router::with_path("jobs/log").post(runtime_http::job_log))
-            .push(Router::with_path("jobs/stop").post(runtime_http::job_stop))
-            .push(Router::with_path("jobs/list").post(runtime_http::jobs_list))
-            .push(Router::with_path("jobs/tail").post(runtime_http::job_tail))
-            .push(Router::with_path("projects/list").post(runtime_http::projects_list))
-            .push(Router::with_path("projects/register").post(runtime_http::projects_register))
-            .push(Router::with_path("projects/create").post(runtime_http::projects_create))
-            .push(Router::with_path("projects/read_file").post(runtime_http::projects_read_file))
-            .push(Router::with_path("projects/git_status").post(runtime_http::projects_git_status))
-            .push(Router::with_path("projects/git_diff").post(runtime_http::projects_git_diff))
-            .push(
-                Router::with_path("projects/git_diff_summary")
-                    .post(runtime_http::projects_git_diff_summary),
-            )
-            .push(Router::with_path("projects/list_files").post(runtime_http::projects_list_files))
-            .push(
-                Router::with_path("projects/search_text").post(runtime_http::projects_search_text),
-            )
-            .push(
-                Router::with_path("projects/apply_patch").post(runtime_http::projects_apply_patch),
-            )
-            .push(
-                Router::with_path("projects/validate_patch")
-                    .post(runtime_http::projects_validate_patch),
-            )
-            .push(Router::with_path("projects/run_shell").post(runtime_http::projects_run_shell))
-            .push(
-                Router::with_path("projects/apply_patch_checked")
-                    .post(runtime_http::projects_apply_patch_checked),
-            )
-            .push(
-                Router::with_path("projects/delete_files")
-                    .post(runtime_http::projects_delete_files),
-            )
-            .push(
-                Router::with_path("projects/git_restore_paths")
-                    .post(runtime_http::projects_git_restore_paths),
-            )
-            .push(
-                Router::with_path("projects/discard_untracked")
-                    .post(runtime_http::projects_discard_untracked),
-            )
-            .push(
-                Router::with_path("projects/replace_in_file")
-                    .post(runtime_http::projects_replace_in_file),
-            )
-            .push(Router::with_path("projects/write_file").post(runtime_http::projects_write_file))
-            .push(Router::with_path("projects/run_job").post(runtime_http::projects_run_job))
-            .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
-            // Phase 2 multi-user auth: user + personal API token management.
-            // REST-only admin/self-management surface; intentionally NOT
-            // exposed in /openapi.json (GPT Actions) because token creation is
-            // sensitive. All behind the shared AuthMiddleware Bearer auth.
-            .push(Router::with_path("users/create").post(users_http::users_create))
-            .push(Router::with_path("users/list").post(users_http::users_list))
-            .push(Router::with_path("tokens/create").post(users_http::tokens_create))
-            .push(Router::with_path("tokens/list").post(users_http::tokens_list))
-            .push(Router::with_path("tokens/revoke").post(users_http::tokens_revoke))
-            // Phase 3 agent token management: REST-only admin/self-management
-            // surface for agent tokens bound to an owner + allowed_client_id.
-            // Intentionally NOT exposed in /openapi.json (GPT Actions) because
-            // token creation is sensitive. All behind the shared AuthMiddleware
-            // Bearer auth. Agent tokens themselves are rejected from these
-            // endpoints so a leaked agent token cannot mint more tokens.
-            .push(
-                Router::with_path("agent-tokens/create")
-                    .post(agent_tokens_http::agent_tokens_create),
-            )
-            .push(Router::with_path("agent-tokens/list").post(agent_tokens_http::agent_tokens_list))
-            .push(
-                Router::with_path("agent-tokens/revoke")
-                    .post(agent_tokens_http::agent_tokens_revoke),
-            )
-            .push(Router::with_path("shell/run").post(shell_run))
-            .push(Router::with_path("shell/file").post(shell_file_op))
-            .push(Router::with_path("shell/job").post(shell_job))
-            .push(Router::with_path("shell/jobs/status").post(shell_job_status))
-            .push(Router::with_path("shell/jobs/log").post(shell_job_log))
-            .push(Router::with_path("shell/jobs/stop").post(shell_job_stop))
-            .push(Router::with_path("shell/jobs/list").post(shell_jobs_list))
-            .push(Router::with_path("shell/agent/register").post(shell_agent_register))
-            .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
-            .push(Router::with_path("shell/agent/result").post(shell_agent_result))
-            .push(Router::with_path("shell/agent/job_update").post(shell_agent_job_update))
-            // WebSocket agent transport (preferred long-lived connection).
-            // Polling endpoints above remain as fallback. Bearer auth is
-            // enforced by the shared AuthMiddleware hoop.
-            .push(Router::with_path("agents/ws").get(agent_ws::agent_ws)),
-    );
+    let authed_api_router = Router::new()
+        .hoop(AuthMiddleware)
+        .push(Router::with_path("tools/list").post(runtime_http::tools_list))
+        .push(Router::with_path("tools/call").post(runtime_http::tools_call))
+        .push(Router::with_path("codex/run").post(runtime_http::codex_run))
+        .push(Router::with_path("jobs/status").post(runtime_http::job_status))
+        .push(Router::with_path("jobs/log").post(runtime_http::job_log))
+        .push(Router::with_path("jobs/stop").post(runtime_http::job_stop))
+        .push(Router::with_path("jobs/list").post(runtime_http::jobs_list))
+        .push(Router::with_path("jobs/tail").post(runtime_http::job_tail))
+        .push(Router::with_path("projects/list").post(runtime_http::projects_list))
+        .push(Router::with_path("projects/register").post(runtime_http::projects_register))
+        .push(Router::with_path("projects/create").post(runtime_http::projects_create))
+        .push(Router::with_path("projects/read_file").post(runtime_http::projects_read_file))
+        .push(Router::with_path("projects/git_status").post(runtime_http::projects_git_status))
+        .push(Router::with_path("projects/git_diff").post(runtime_http::projects_git_diff))
+        .push(
+            Router::with_path("projects/git_diff_summary")
+                .post(runtime_http::projects_git_diff_summary),
+        )
+        .push(Router::with_path("projects/list_files").post(runtime_http::projects_list_files))
+        .push(Router::with_path("projects/search_text").post(runtime_http::projects_search_text))
+        .push(Router::with_path("projects/apply_patch").post(runtime_http::projects_apply_patch))
+        .push(
+            Router::with_path("projects/validate_patch")
+                .post(runtime_http::projects_validate_patch),
+        )
+        .push(Router::with_path("projects/run_shell").post(runtime_http::projects_run_shell))
+        .push(
+            Router::with_path("projects/apply_patch_checked")
+                .post(runtime_http::projects_apply_patch_checked),
+        )
+        .push(Router::with_path("projects/delete_files").post(runtime_http::projects_delete_files))
+        .push(
+            Router::with_path("projects/git_restore_paths")
+                .post(runtime_http::projects_git_restore_paths),
+        )
+        .push(
+            Router::with_path("projects/discard_untracked")
+                .post(runtime_http::projects_discard_untracked),
+        )
+        .push(
+            Router::with_path("projects/replace_in_file")
+                .post(runtime_http::projects_replace_in_file),
+        )
+        .push(Router::with_path("projects/write_file").post(runtime_http::projects_write_file))
+        .push(Router::with_path("projects/run_job").post(runtime_http::projects_run_job))
+        .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
+        // Phase 2 multi-user auth: user + personal API token management.
+        // REST-only admin/self-management surface; intentionally NOT
+        // exposed in /openapi.json (GPT Actions) because token creation is
+        // sensitive. All behind the shared AuthMiddleware Bearer auth.
+        .push(Router::with_path("users/create").post(users_http::users_create))
+        .push(Router::with_path("users/list").post(users_http::users_list))
+        .push(Router::with_path("tokens/create").post(users_http::tokens_create))
+        .push(Router::with_path("tokens/list").post(users_http::tokens_list))
+        .push(Router::with_path("tokens/revoke").post(users_http::tokens_revoke))
+        // Phase 3 agent token management: REST-only admin/self-management
+        // surface for agent tokens bound to an owner + allowed_client_id.
+        // Intentionally NOT exposed in /openapi.json (GPT Actions) because
+        // token creation is sensitive. All behind the shared AuthMiddleware
+        // Bearer auth. Agent tokens themselves are rejected from these
+        // endpoints so a leaked agent token cannot mint more tokens.
+        .push(Router::with_path("agent-tokens/create").post(agent_tokens_http::agent_tokens_create))
+        .push(Router::with_path("agent-tokens/list").post(agent_tokens_http::agent_tokens_list))
+        .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_http::agent_tokens_revoke))
+        .push(Router::with_path("shell/run").post(shell_run))
+        .push(Router::with_path("shell/file").post(shell_file_op))
+        .push(Router::with_path("shell/job").post(shell_job))
+        .push(Router::with_path("shell/jobs/status").post(shell_job_status))
+        .push(Router::with_path("shell/jobs/log").post(shell_job_log))
+        .push(Router::with_path("shell/jobs/stop").post(shell_job_stop))
+        .push(Router::with_path("shell/jobs/list").post(shell_jobs_list))
+        .push(Router::with_path("shell/agent/register").post(shell_agent_register))
+        .push(Router::with_path("shell/agent/poll").post(shell_agent_poll))
+        .push(Router::with_path("shell/agent/result").post(shell_agent_result))
+        .push(Router::with_path("shell/agent/job_update").post(shell_agent_job_update))
+        // WebSocket agent transport (preferred long-lived connection).
+        // Polling endpoints above remain as fallback. Bearer auth is
+        // enforced by the shared AuthMiddleware hoop.
+        .push(Router::with_path("agents/ws").get(agent_ws::agent_ws));
+
+    let api_router = Router::with_path("api")
+        .push(Router::with_path("pairing/enroll").post(pairing_http::pairing_enroll))
+        .push(
+            authed_api_router
+                .push(Router::with_path("pairing/create").post(pairing_http::pairing_create)),
+        );
 
     let openapi_router = Router::with_path("openapi.json").get(openapi_json);
 

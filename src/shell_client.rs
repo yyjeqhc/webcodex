@@ -20,6 +20,10 @@ use uuid::Uuid;
 
 const MAX_CLIENT_ID_LEN: usize = 80;
 const MAX_CLIENT_FIELD_LEN: usize = 200;
+/// Max length for `agent_instance_id`. A UUID v4 is 36 chars; allow headroom
+/// for future formats but bound it so a malicious peer cannot stash huge
+/// strings in the registry.
+const MAX_AGENT_INSTANCE_ID_LEN: usize = 128;
 const MAX_COMMAND_LEN: usize = 8_000;
 const MAX_CWD_LEN: usize = 1_024;
 const MAX_FILE_PATH_LEN: usize = 2_048;
@@ -49,6 +53,10 @@ pub const TRANSPORT_WEBSOCKET: &str = "websocket";
 #[derive(Debug, Clone)]
 struct ShellClientRecord {
     client_id: String,
+    /// Active agent process identity (UUID). Replacing this value is the lease
+    /// hand-off: once changed, the previous instance can no longer poll or
+    /// submit results/job_updates.
+    agent_instance_id: String,
     display_name: Option<String>,
     owner: Option<String>,
     hostname: Option<String>,
@@ -100,7 +108,20 @@ struct ShellClientRegistryInner {
     /// has a registered notifier, the server pumps the request immediately
     /// instead of waiting for the agent to poll. Polling agents never
     /// register a notifier and are unaffected.
-    notifiers: HashMap<String, Arc<Notify>>,
+    ///
+    /// The stored `agent_instance_id` records which agent process owns the
+    /// notifier. On disconnect, the WebSocket handler passes its own instance
+    /// id to `reconcile_disconnect`; the notifier (and running jobs) are only
+    /// cleared when that id matches the stored one, so a stale disconnect
+    /// cannot tear down a newer active instance's notifier.
+    notifiers: HashMap<String, NotifierEntry>,
+}
+
+/// A registered push notifier plus the agent instance id that installed it.
+#[derive(Debug, Clone)]
+struct NotifierEntry {
+    notify: Arc<Notify>,
+    agent_instance_id: String,
 }
 
 #[derive(Debug, Default)]
@@ -127,6 +148,32 @@ fn validate_id(value: &str, field: &str) -> Result<(), String> {
             "{} may only contain ASCII letters, digits, '-', '_', and '.'",
             field
         ));
+    }
+    Ok(())
+}
+
+/// Validate `agent_instance_id`. It must be a non-empty, bounded ASCII string.
+/// We accept the canonical UUID v4 format (`8-4-4-4-12` hex with dashes) and
+/// also any short alphanumeric/dash string so future identity formats keep
+/// working, but we reject empty / oversized / control-char values. This is not
+/// a secret, so the value itself may appear in logs and `runtime_status`.
+fn validate_agent_instance_id(value: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err("agent_instance_id must not be empty".to_string());
+    }
+    if value.len() > MAX_AGENT_INSTANCE_ID_LEN {
+        return Err(format!(
+            "agent_instance_id is too long; maximum is {} characters",
+            MAX_AGENT_INSTANCE_ID_LEN
+        ));
+    }
+    if !value
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+    {
+        return Err(
+            "agent_instance_id may only contain ASCII letters, digits, '-', and '_'".to_string(),
+        );
     }
     Ok(())
 }
@@ -481,6 +528,28 @@ fn client_is_connected_locked(inner: &ShellClientRegistryInner, client_id: &str)
         .unwrap_or(false)
 }
 
+/// Verify that `client_id` exists and that `agent_instance_id` matches the
+/// instance that currently holds the lease for it. A stale/replaced instance
+/// (e.g. a second process that was rejected, or the previous process after a
+/// stale replacement) is rejected so it can no longer poll or submit results.
+/// Callers must already hold `inner`.
+fn assert_active_instance_locked(
+    inner: &ShellClientRegistryInner,
+    client_id: &str,
+    agent_instance_id: &str,
+) -> Result<(), String> {
+    let Some(client) = inner.clients.get(client_id) else {
+        return Err(format!("unknown shell client: {}", client_id));
+    };
+    if client.agent_instance_id != agent_instance_id {
+        return Err(format!(
+            "agent client {} is no longer the active instance (stale or replaced)",
+            client_id
+        ));
+    }
+    Ok(())
+}
+
 /// Reject enqueue when a client's pending queue has reached
 /// `MAX_QUEUED_REQUESTS_PER_CLIENT`. Callers must already hold `inner`.
 fn ensure_queue_capacity_locked(
@@ -530,13 +599,16 @@ impl ShellClientRegistry {
         body: ShellClientRegisterRequest,
     ) -> Result<ShellClientView, String> {
         validate_id(&body.client_id, "client_id")?;
+        validate_agent_instance_id(&body.agent_instance_id)?;
         validate_optional_field(&body.display_name, "display_name")?;
         validate_optional_field(&body.owner, "owner")?;
         validate_optional_field(&body.hostname, "hostname")?;
 
         let client_id = body.client_id.trim().to_string();
+        let agent_instance_id = body.agent_instance_id.trim().to_string();
         let record = ShellClientRecord {
             client_id: client_id.clone(),
+            agent_instance_id: agent_instance_id.clone(),
             display_name: trim_string(body.display_name),
             owner: trim_string(body.owner),
             hostname: trim_string(body.hostname),
@@ -551,6 +623,42 @@ impl ShellClientRegistry {
             transport: TRANSPORT_POLLING.to_string(),
         };
         let mut inner = self.inner.lock().await;
+
+        // Enforce the agent instance lease. `client_id` is the unique active
+        // agent identity: at most one agent process may be online for it at a
+        // time. Rules:
+        //   - no existing client            -> accept (fresh registration)
+        //   - existing client is stale/offline -> accept and replace the
+        //     active instance (lease hand-off to the new process)
+        //   - existing client is online and the same instance id reconnects
+        //     -> accept as a refresh/reconnect
+        //   - existing client is online and a *different* instance id tries to
+        //     register -> reject with a clear error so two processes cannot
+        //     steal each other's requests.
+        if let Some(existing) = inner.clients.get(&client_id) {
+            let online = now_ts().saturating_sub(existing.last_seen) <= CLIENT_ONLINE_WINDOW_SECS;
+            let same_instance = existing.agent_instance_id == agent_instance_id;
+            if online && !same_instance {
+                return Err(format!(
+                    "agent client {} is already online with a different instance",
+                    client_id
+                ));
+            }
+        }
+
+        // When a different instance takes over the lease (stale replacement),
+        // clear any notifier left by the previous instance so the request pump
+        // for the dead process is not re-armed against the new one. A
+        // same-instance refresh keeps its notifier in place.
+        let replaced_instance = inner
+            .clients
+            .get(&client_id)
+            .map(|existing| existing.agent_instance_id != agent_instance_id)
+            .unwrap_or(false);
+        if replaced_instance {
+            inner.notifiers.remove(&client_id);
+        }
+
         inner.clients.insert(client_id.clone(), record);
         Ok(Self::client_view_locked(&inner, &client_id).expect("client just inserted"))
     }
@@ -579,11 +687,27 @@ impl ShellClientRegistry {
     /// callers can log a clear diagnostic; it is a no-op for the unknown path.
     /// `register`, `poll`, `complete`, and `update_job` already refresh
     /// `last_seen` on their own, so this is only needed for keepalive frames.
-    pub async fn touch_client(&self, client_id: &str) -> Result<(), String> {
+    ///
+    /// `agent_instance_id` is required: a stale/replaced instance must not be
+    /// able to refresh the active lease's `last_seen` via Ping/Pong. If the id
+    /// does not match the currently active instance, the touch is rejected
+    /// before mutating any state.
+    pub async fn touch_client(
+        &self,
+        client_id: &str,
+        agent_instance_id: &str,
+    ) -> Result<(), String> {
+        validate_agent_instance_id(agent_instance_id)?;
         let mut inner = self.inner.lock().await;
         let Some(client) = inner.clients.get_mut(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
+        if client.agent_instance_id != agent_instance_id {
+            return Err(format!(
+                "agent client {} is no longer the active instance (stale or replaced)",
+                client_id
+            ));
+        }
         client.last_seen = now_ts();
         Ok(())
     }
@@ -602,16 +726,39 @@ impl ShellClientRegistry {
     /// this after register; the server's request pump waits on the notifier
     /// between polls. Calling this replaces any previously registered
     /// notifier for the client (e.g. after a reconnect).
+    ///
+    /// `agent_instance_id` records which agent process owns the notifier. The
+    /// caller is the instance that just successfully registered, so it is the
+    /// active instance; this always installs/overwrites the notifier entry for
+    /// `client_id` tagged with that instance id.
     pub async fn register_notifier(
         &self,
         client_id: &str,
+        agent_instance_id: &str,
         notify: Arc<Notify>,
     ) -> Result<(), String> {
+        validate_agent_instance_id(agent_instance_id)?;
         let mut inner = self.inner.lock().await;
-        if !inner.clients.contains_key(client_id) {
+        let Some(client) = inner.clients.get(client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
+        };
+        // Only the currently active instance may install a notifier. A late
+        // notifier registration from a stale instance (e.g. it registered,
+        // then was replaced before reaching this call) must not overwrite the
+        // active instance's notifier.
+        if client.agent_instance_id != agent_instance_id {
+            return Err(format!(
+                "agent client {} is no longer the active instance (stale or replaced)",
+                client_id
+            ));
         }
-        inner.notifiers.insert(client_id.to_string(), notify);
+        inner.notifiers.insert(
+            client_id.to_string(),
+            NotifierEntry {
+                notify,
+                agent_instance_id: agent_instance_id.to_string(),
+            },
+        );
         Ok(())
     }
 
@@ -626,15 +773,41 @@ impl ShellClientRegistry {
     ///   logged, and `last_seen` is left untouched so the client decays to
     ///   `"stale"`/offline through the normal 60s online window.
     ///
+    /// `agent_instance_id` identifies *which* agent process disconnected. The
+    /// cleanup only fires when that id matches the currently active instance
+    /// for `client_id`; a stale disconnect (e.g. instance A's socket finally
+    /// tearing down after instance B already replaced it) must NOT remove
+    /// B's notifier or mark B's jobs lost.
+    ///
     /// This is intentionally conservative: a reconnecting agent that keeps
     /// running the same job will see the server-side job as `"lost"` (final),
     /// so its late `job_update`/`result` is ignored by `update_job`/`complete`.
     /// Operators should treat `"lost"` as "the server no longer tracks this
     /// job; restart it if needed". A future phase may lift `JobManager` to
     /// agent-level so reconnects can resume in-flight jobs.
-    pub async fn reconcile_disconnect(&self, client_id: &str) {
+    pub async fn reconcile_disconnect(&self, client_id: &str, agent_instance_id: &str) {
         let mut inner = self.inner.lock().await;
-        inner.notifiers.remove(client_id);
+        // Only reconcile when the disconnect belongs to the currently active
+        // instance. A stale disconnect (a previous process whose socket finally
+        // tore down after a newer instance already took over the lease) must
+        // not touch the active instance's notifier or jobs.
+        let is_active = inner
+            .clients
+            .get(client_id)
+            .map(|client| client.agent_instance_id == agent_instance_id)
+            .unwrap_or(false);
+        if !is_active {
+            return;
+        }
+        // Remove the notifier only if it still belongs to this instance.
+        if inner
+            .notifiers
+            .get(client_id)
+            .map(|entry| entry.agent_instance_id == agent_instance_id)
+            .unwrap_or(false)
+        {
+            inner.notifiers.remove(client_id);
+        }
         let lost_error = "agent transport disconnected".to_string();
         let now = now_ts();
         let lost_job_ids: Vec<String> = inner
@@ -681,8 +854,8 @@ impl ShellClientRegistry {
     /// request to the agent instead of waiting for a poll. Holds no lock of
     /// its own; callers must already hold `inner`.
     fn notify_client_locked(inner: &ShellClientRegistryInner, client_id: &str) {
-        if let Some(notify) = inner.notifiers.get(client_id) {
-            notify.notify_one();
+        if let Some(entry) = inner.notifiers.get(client_id) {
+            entry.notify.notify_one();
         }
     }
 
@@ -943,14 +1116,23 @@ impl ShellClientRegistry {
         body: ShellAgentPollRequest,
     ) -> Result<Option<ShellAgentShellRequest>, String> {
         validate_id(&body.client_id, "client_id")?;
+        validate_agent_instance_id(&body.agent_instance_id)?;
         let mut inner = self.inner.lock().await;
-        let Some(client) = inner.clients.get_mut(&body.client_id) else {
-            return Err(format!("unknown shell client: {}", body.client_id));
-        };
-        if body.projects.is_some() {
-            client.projects = normalize_project_summaries(body.projects);
+        {
+            let Some(client) = inner.clients.get_mut(&body.client_id) else {
+                return Err(format!("unknown shell client: {}", body.client_id));
+            };
+            if client.agent_instance_id != body.agent_instance_id {
+                return Err(format!(
+                    "agent client {} is no longer the active instance (stale or replaced)",
+                    body.client_id
+                ));
+            }
+            if body.projects.is_some() {
+                client.projects = normalize_project_summaries(body.projects);
+            }
+            client.last_seen = now_ts();
         }
-        client.last_seen = now_ts();
         loop {
             let request_id = {
                 let Some(queue) = inner.queues_by_client.get_mut(&body.client_id) else {
@@ -987,7 +1169,12 @@ impl ShellClientRegistry {
     pub async fn complete(&self, body: ShellAgentResultRequest) -> Result<(), String> {
         validate_id(&body.client_id, "client_id")?;
         validate_id(&body.request_id, "request_id")?;
+        validate_agent_instance_id(&body.agent_instance_id)?;
         let mut inner = self.inner.lock().await;
+        // Reject results from a stale/replaced instance before refreshing
+        // liveness: a dead process must not update the active lease's
+        // `last_seen` or resolve its waiters.
+        assert_active_instance_locked(&inner, &body.client_id, &body.agent_instance_id)?;
         if let Some(client) = inner.clients.get_mut(&body.client_id) {
             client.last_seen = now_ts();
         }
@@ -1288,7 +1475,11 @@ impl ShellClientRegistry {
     ) -> Result<ShellJobInfo, String> {
         validate_id(&body.client_id, "client_id")?;
         validate_id(&body.job_id, "job_id")?;
+        validate_agent_instance_id(&body.agent_instance_id)?;
         let mut inner = self.inner.lock().await;
+        // Reject job updates from a stale/replaced instance before refreshing
+        // liveness or mutating job state.
+        assert_active_instance_locked(&inner, &body.client_id, &body.agent_instance_id)?;
         if let Some(client) = inner.clients.get_mut(&body.client_id) {
             client.last_seen = now_ts();
         }
@@ -1365,6 +1556,7 @@ impl ShellClientRegistry {
         let connected = age <= CLIENT_ONLINE_WINDOW_SECS;
         Some(ShellClientView {
             client_id: client.client_id.clone(),
+            agent_instance_id: client.agent_instance_id.clone(),
             display_name: client.display_name.clone(),
             owner: client.owner.clone(),
             hostname: client.hostname.clone(),
@@ -2777,6 +2969,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "xrh".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: Some("XRH".to_string()),
                 owner: Some("yyjeqhc".to_string()),
                 hostname: Some("fineserver".to_string()),
@@ -2799,6 +2992,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -2823,6 +3017,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -2835,6 +3030,7 @@ mod tests {
         let polled = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 projects: Some(vec![
                     project_summary("one", "/tmp/one"),
                     project_summary("two", "/tmp/two"),
@@ -2856,6 +3052,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "alice-client".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -2868,6 +3065,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "bob-client".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("bob".to_string()),
                 hostname: None,
@@ -2903,6 +3101,7 @@ mod tests {
         let request: ShellClientRegisterRequest = serde_json::from_str(
             r#"{
                 "client_id": "oe",
+                "agent_instance_id": "inst-1",
                 "capabilities": {"shell": true}
             }"#,
         )
@@ -2917,6 +3116,7 @@ mod tests {
         let request: ShellClientRegisterRequest = serde_json::from_str(
             r#"{
                 "client_id": "oe",
+                "agent_instance_id": "inst-1",
                 "capabilities": {"shell": true, "file_read": true}
             }"#,
         )
@@ -2932,6 +3132,7 @@ mod tests {
         let request: ShellClientRegisterRequest = serde_json::from_str(
             r#"{
                 "client_id": "oe",
+                "agent_instance_id": "inst-1",
                 "agent_protocol_version": "polling-v1"
             }"#,
         )
@@ -2948,6 +3149,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -2967,6 +3169,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "xrh".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -2990,6 +3193,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3013,6 +3217,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3047,6 +3252,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "xrh".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3073,6 +3279,7 @@ mod tests {
         let polled = registry
             .poll(ShellAgentPollRequest {
                 client_id: "xrh".to_string(),
+                agent_instance_id: "inst".to_string(),
                 projects: None,
             })
             .await
@@ -3084,6 +3291,7 @@ mod tests {
         registry
             .complete(ShellAgentResultRequest {
                 client_id: "xrh".to_string(),
+                agent_instance_id: "inst".to_string(),
                 request_id,
                 exit_code: Some(0),
                 stdout: Some("hello\n".to_string()),
@@ -3151,6 +3359,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3199,6 +3408,7 @@ mod tests {
         let polled = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 projects: None,
             })
             .await
@@ -3210,6 +3420,7 @@ mod tests {
         registry
             .complete(ShellAgentResultRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 request_id: polled.request_id,
                 exit_code: Some(0),
                 stdout: Some("hello\n".to_string()),
@@ -3253,6 +3464,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3289,6 +3501,7 @@ mod tests {
         let polled = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 projects: None,
             })
             .await
@@ -3302,6 +3515,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3333,6 +3547,7 @@ mod tests {
         let started = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 projects: None,
             })
             .await
@@ -3348,6 +3563,7 @@ mod tests {
         let stop = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 projects: None,
             })
             .await
@@ -3363,6 +3579,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3394,6 +3611,7 @@ mod tests {
         let _ = registry
             .poll(ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 projects: None,
             })
             .await
@@ -3415,6 +3633,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3434,13 +3653,13 @@ mod tests {
         assert_eq!(stale.status, "stale");
 
         // A keepalive touch must bring it back online.
-        registry.touch_client("oe").await.unwrap();
+        registry.touch_client("oe", "inst").await.unwrap();
         let fresh = registry.get_client_view("oe").await.unwrap();
         assert!(fresh.connected);
         assert_eq!(fresh.status, "online");
 
         // Unknown client_id is a clear error and does not mutate state.
-        assert!(registry.touch_client("nope").await.is_err());
+        assert!(registry.touch_client("nope", "inst").await.is_err());
     }
 
     #[tokio::test]
@@ -3449,6 +3668,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "ws-1".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3470,11 +3690,64 @@ mod tests {
         assert_eq!(stale.transport, "websocket");
         assert!(!stale.connected);
 
-        registry.touch_client("ws-1").await.unwrap();
+        registry.touch_client("ws-1", "inst").await.unwrap();
         let fresh = registry.get_client_view("ws-1").await.unwrap();
         assert_eq!(fresh.transport, "websocket");
         assert!(fresh.connected);
         assert_eq!(fresh.status, "online");
+    }
+
+    #[tokio::test]
+    async fn touch_client_rejects_stale_instance_and_accepts_active() {
+        // Regression: a stale/replaced instance must not refresh the active
+        // lease's `last_seen` via Ping/Pong keepalive.
+        let registry = ShellClientRegistry::default();
+        // Instance A registers and is online.
+        let view_a = register_with_instance(&registry, "oe", "inst-a").await;
+        assert!(view_a.connected);
+
+        // Age A out so a newer instance may take over the lease.
+        registry
+            .set_last_seen_for_test("oe", now_ts() - CLIENT_ONLINE_WINDOW_SECS - 1)
+            .await;
+        // Instance B replaces A.
+        let view_b = register_with_instance(&registry, "oe", "inst-b").await;
+        assert_eq!(view_b.agent_instance_id, "inst-b");
+        assert!(view_b.connected);
+
+        // Capture B's last_seen right after registration.
+        let before = registry.get_client_view("oe").await.unwrap().last_seen;
+        // Sleep a moment so a successful touch would observably advance
+        // last_seen.
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+
+        // Stale instance A's keepalive must be rejected and must NOT advance
+        // last_seen for B.
+        let err = registry.touch_client("oe", "inst-a").await.unwrap_err();
+        assert!(
+            err.contains("no longer the active instance"),
+            "error was: {err}"
+        );
+        let after_a = registry.get_client_view("oe").await.unwrap().last_seen;
+        assert_eq!(
+            after_a, before,
+            "stale instance touch must not refresh active last_seen"
+        );
+        // A stale instance must not resurrect the client to online either.
+        let view_after_a = registry.get_client_view("oe").await.unwrap();
+        assert!(view_after_a.connected);
+
+        // Active instance B's keepalive succeeds and refreshes last_seen.
+        registry.touch_client("oe", "inst-b").await.unwrap();
+        let after_b = registry.get_client_view("oe").await.unwrap().last_seen;
+        assert!(
+            after_b > before,
+            "active instance touch must refresh last_seen"
+        );
+        assert!(registry.get_client_view("oe").await.unwrap().connected);
+
+        // An empty agent_instance_id is rejected by validation.
+        assert!(registry.touch_client("oe", "").await.is_err());
     }
 
     #[test]
@@ -3508,6 +3781,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "full".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -3563,6 +3837,7 @@ mod tests {
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -3595,12 +3870,396 @@ mod tests {
         let before = registry.get_client_view("oe").await.unwrap();
         assert_eq!(before.pending_requests, 1);
         // Transport disconnects (e.g. WebSocket dropped).
-        registry.reconcile_disconnect("oe").await;
+        registry.reconcile_disconnect("oe", "inst").await;
         let lost = registry.get_job(&job.job_id).await.unwrap();
         assert_eq!(lost.status, "lost");
         assert!(lost.error.unwrap().contains("disconnected"));
         // Pending request was dropped: no dangling waiter / queue entry.
         let after = registry.get_client_view("oe").await.unwrap();
         assert_eq!(after.pending_requests, 0);
+    }
+
+    // ------------------------------------------------------------------------
+    // Agent instance identity / lease model (Phase 1)
+    // ------------------------------------------------------------------------
+
+    /// Helper: register a client with an explicit `agent_instance_id`.
+    async fn register_with_instance(
+        registry: &ShellClientRegistry,
+        client_id: &str,
+        instance: &str,
+    ) -> ShellClientView {
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: instance.to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+                agent_protocol_version: Some("polling-v1".to_string()),
+            })
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn lease_first_register_accepts_instance() {
+        let registry = ShellClientRegistry::default();
+        let view = register_with_instance(&registry, "oe", "inst-a").await;
+        assert_eq!(view.agent_instance_id, "inst-a");
+        assert!(view.connected);
+        // The view/list path exposes the instance id.
+        let clients = registry.list_clients().await;
+        assert_eq!(clients[0].agent_instance_id, "inst-a");
+    }
+
+    #[tokio::test]
+    async fn lease_same_instance_reregister_accepts() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        // Same client_id + same instance id is a reconnect/refresh: accepted.
+        let _ = register_with_instance(&registry, "oe", "inst-a").await;
+        let view = registry.get_client_view("oe").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-a");
+        assert!(view.connected);
+    }
+
+    #[tokio::test]
+    async fn lease_different_online_instance_rejected() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        // A second process with the same client_id but a different instance
+        // must be rejected while the first is online.
+        let err = registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst-b".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+                agent_protocol_version: Some("polling-v1".to_string()),
+            })
+            .await
+            .unwrap_err();
+        assert!(err.contains("already online"), "error was: {err}");
+        assert!(err.contains("different instance"), "error was: {err}");
+        // The active instance is unchanged.
+        let view = registry.get_client_view("oe").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-a");
+    }
+
+    #[tokio::test]
+    async fn lease_stale_replaced_by_different_instance_accepts() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        // Age the first instance past the online window so it reads as stale.
+        registry
+            .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
+            .await;
+        // A different instance may now take over the lease.
+        let _ = register_with_instance(&registry, "oe", "inst-b").await;
+        let view = registry.get_client_view("oe").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-b");
+        assert!(view.connected);
+    }
+
+    #[tokio::test]
+    async fn lease_stale_instance_poll_rejected() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        // Replace with a newer instance after aging out.
+        registry
+            .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
+            .await;
+        register_with_instance(&registry, "oe", "inst-b").await;
+
+        // The stale instance A can no longer poll.
+        let err = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst-a".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("no longer the active instance"),
+            "error was: {err}"
+        );
+
+        // The active instance B can still poll.
+        registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst-b".to_string(),
+                projects: None,
+            })
+            .await
+            .expect("active instance must poll");
+    }
+
+    #[tokio::test]
+    async fn lease_stale_instance_result_rejected() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        // Enqueue a request and let instance A poll it.
+        let (request_id, _rx) = registry
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: "oe".to_string(),
+                    cwd: None,
+                    command: "echo hi".to_string(),
+                    stdin: None,
+                    timeout_secs: 5,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+        let _ = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst-a".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Replace instance A with B after aging out.
+        registry
+            .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
+            .await;
+        register_with_instance(&registry, "oe", "inst-b").await;
+
+        // The stale instance A cannot submit the result.
+        let err = registry
+            .complete(ShellAgentResultRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst-a".to_string(),
+                request_id: request_id.clone(),
+                exit_code: Some(0),
+                stdout: Some("hi".to_string()),
+                stderr: None,
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("no longer the active instance"),
+            "error was: {err}"
+        );
+
+        // The active instance B can submit the result.
+        registry
+            .complete(ShellAgentResultRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst-b".to_string(),
+                request_id,
+                exit_code: Some(0),
+                stdout: Some("hi".to_string()),
+                stderr: None,
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .expect("active instance must submit result");
+    }
+
+    #[tokio::test]
+    async fn lease_stale_instance_job_update_rejected() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("oe".to_string()),
+                    cwd: None,
+                    command: Some("sleep 10".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+
+        // Replace instance A with B after aging out.
+        registry
+            .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
+            .await;
+        register_with_instance(&registry, "oe", "inst-b").await;
+
+        // The stale instance A cannot update the job.
+        let err = registry
+            .update_job(ShellAgentJobUpdateRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst-a".to_string(),
+                job_id: job.job_id.clone(),
+                request_id: None,
+                status: "running".to_string(),
+                stdout_chunk: None,
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: None,
+                duration_ms: None,
+                error: None,
+                finished: false,
+            })
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("no longer the active instance"),
+            "error was: {err}"
+        );
+
+        // The active instance B can update the job.
+        registry
+            .update_job(ShellAgentJobUpdateRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst-b".to_string(),
+                job_id: job.job_id.clone(),
+                request_id: None,
+                status: "running".to_string(),
+                stdout_chunk: None,
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: None,
+                duration_ms: None,
+                error: None,
+                finished: false,
+            })
+            .await
+            .expect("active instance must update job");
+    }
+
+    #[tokio::test]
+    async fn lease_list_clients_exposes_instance_id() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        let clients = registry.list_clients().await;
+        assert_eq!(clients.len(), 1);
+        assert_eq!(clients[0].agent_instance_id, "inst-a");
+        let view = registry.get_client_view("oe").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-a");
+    }
+
+    #[tokio::test]
+    async fn lease_reconcile_disconnect_stale_instance_is_noop() {
+        // A stale instance disconnecting after a newer instance has taken over
+        // must NOT clear the active notifier or mark the active instance's
+        // jobs lost.
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        // Install a notifier for instance A.
+        let notify_a = Arc::new(Notify::new());
+        registry
+            .register_notifier("oe", "inst-a", notify_a.clone())
+            .await
+            .unwrap();
+        // Start a job under instance A.
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("oe".to_string()),
+                    cwd: None,
+                    command: Some("sleep 10".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+
+        // Age out A and let B take over.
+        registry
+            .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
+            .await;
+        register_with_instance(&registry, "oe", "inst-b").await;
+        // B installs its own notifier.
+        let notify_b = Arc::new(Notify::new());
+        registry
+            .register_notifier("oe", "inst-b", notify_b.clone())
+            .await
+            .unwrap();
+
+        // A's transport finally disconnects. This must be a no-op: B's notifier
+        // stays and B's job is not marked lost.
+        registry.reconcile_disconnect("oe", "inst-a").await;
+        let job_view = registry.get_job(&job.job_id).await.unwrap();
+        assert_ne!(
+            job_view.status, "lost",
+            "stale disconnect must not mark active instance job lost"
+        );
+        // B's disconnect, however, does reconcile.
+        registry.reconcile_disconnect("oe", "inst-b").await;
+        let job_view = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(job_view.status, "lost");
+    }
+
+    #[tokio::test]
+    async fn lease_register_notifier_rejects_stale_instance() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+        // Replace A with B.
+        registry
+            .set_last_seen_for_test("oe", chrono::Utc::now().timestamp() - 120)
+            .await;
+        register_with_instance(&registry, "oe", "inst-b").await;
+        // A's late notifier registration must be rejected so it cannot
+        // overwrite B's notifier.
+        let err = registry
+            .register_notifier("oe", "inst-a", Arc::new(Notify::new()))
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("no longer the active instance"),
+            "error was: {err}"
+        );
+        // B can still install its notifier.
+        registry
+            .register_notifier("oe", "inst-b", Arc::new(Notify::new()))
+            .await
+            .expect("active instance must install notifier");
+    }
+
+    #[tokio::test]
+    async fn lease_register_rejects_empty_instance_id() {
+        let registry = ShellClientRegistry::default();
+        let err = registry
+            .register(ShellClientRegisterRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: None,
+            })
+            .await
+            .unwrap_err();
+        assert!(err.contains("agent_instance_id"), "error was: {err}");
     }
 }

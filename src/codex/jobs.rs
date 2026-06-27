@@ -2318,6 +2318,7 @@ mod tests {
         registry
             .register(crate::shell_protocol::ShellClientRegisterRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -2356,6 +2357,7 @@ mod tests {
         let request = registry
             .poll(crate::shell_protocol::ShellAgentPollRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 projects: None,
             })
             .await
@@ -2368,6 +2370,7 @@ mod tests {
         registry
             .complete(crate::shell_protocol::ShellAgentResultRequest {
                 client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
                 request_id: request.request_id,
                 exit_code: Some(0),
                 stdout: Some("hello\n".to_string()),
@@ -2422,6 +2425,7 @@ mod tests {
         registry
             .register(crate::shell_protocol::ShellClientRegisterRequest {
                 client_id: "alice-client".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -2434,6 +2438,7 @@ mod tests {
         registry
             .register(crate::shell_protocol::ShellClientRegisterRequest {
                 client_id: "bob-client".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("bob".to_string()),
                 hostname: None,

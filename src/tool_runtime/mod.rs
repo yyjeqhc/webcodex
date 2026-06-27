@@ -576,6 +576,7 @@ impl ToolRuntime {
             .map(|c| {
                 json!({
                     "client_id": c.client_id,
+                    "agent_instance_id": c.agent_instance_id,
                     "display_name": c.display_name,
                     "owner": c.owner,
                     "status": c.status,
@@ -2434,6 +2435,7 @@ mod tests {
             .shell_clients
             .register(ShellClientRegisterRequest {
                 client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: owner.map(str::to_string),
                 hostname: None,
@@ -2506,6 +2508,7 @@ mod tests {
             .shell_clients
             .register(ShellClientRegisterRequest {
                 client_id: "patcher".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: None,
                 hostname: None,
@@ -2537,6 +2540,7 @@ new file mode 100644\n\
                 .shell_clients
                 .poll(ShellAgentPollRequest {
                     client_id: "patcher".to_string(),
+                    agent_instance_id: "inst".to_string(),
                     projects: None,
                 })
                 .await
@@ -2558,6 +2562,7 @@ new file mode 100644\n\
             .shell_clients
             .complete(ShellAgentResultRequest {
                 client_id: "patcher".to_string(),
+                agent_instance_id: "inst".to_string(),
                 request_id: check_req.request_id,
                 exit_code: Some(0),
                 stdout: Some("OK\n".to_string()),
@@ -2574,6 +2579,7 @@ new file mode 100644\n\
                 .shell_clients
                 .poll(ShellAgentPollRequest {
                     client_id: "patcher".to_string(),
+                    agent_instance_id: "inst".to_string(),
                     projects: None,
                 })
                 .await
@@ -2594,6 +2600,7 @@ new file mode 100644\n\
             .shell_clients
             .complete(ShellAgentResultRequest {
                 client_id: "patcher".to_string(),
+                agent_instance_id: "inst".to_string(),
                 request_id: apply_req.request_id,
                 exit_code: Some(0),
                 stdout: Some(String::new()),
@@ -2639,6 +2646,7 @@ new file mode 100644\n\
                 .shell_clients
                 .poll(ShellAgentPollRequest {
                     client_id: client_id.to_string(),
+                    agent_instance_id: "inst".to_string(),
                     projects: None,
                 })
                 .await
@@ -2663,6 +2671,7 @@ new file mode 100644\n\
             .shell_clients
             .complete(ShellAgentResultRequest {
                 client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
                 request_id: request_id.to_string(),
                 exit_code: Some(exit_code),
                 stdout: Some(stdout.to_string()),
@@ -3040,6 +3049,7 @@ new file mode 100644\n\
             .shell_clients
             .register(ShellClientRegisterRequest {
                 client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: owner.map(str::to_string),
                 hostname: None,
@@ -3482,6 +3492,7 @@ new file mode 100644\n\
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "agent-1".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: Some("Workstation".to_string()),
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -3531,6 +3542,7 @@ new file mode 100644\n\
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "ws-stale".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: Some("Stale WS".to_string()),
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -3587,6 +3599,7 @@ new file mode 100644\n\
         registry
             .register(ShellClientRegisterRequest {
                 client_id: "ws-agent".to_string(),
+                agent_instance_id: "inst".to_string(),
                 display_name: None,
                 owner: Some("alice".to_string()),
                 hostname: None,
@@ -4812,6 +4825,7 @@ new file mode 100644\n\
                 .shell_clients
                 .poll(ShellAgentPollRequest {
                     client_id: "editor".to_string(),
+                    agent_instance_id: "inst".to_string(),
                     projects: None,
                 })
                 .await
@@ -4846,6 +4860,7 @@ new file mode 100644\n\
             .shell_clients
             .complete(ShellAgentResultRequest {
                 client_id: "editor".to_string(),
+                agent_instance_id: "inst".to_string(),
                 request_id: req.request_id,
                 exit_code: Some(0),
                 stdout: Some(

@@ -176,6 +176,7 @@ struct HttpSendConfig {
     server_url: String,
     token: String,
     client_id: String,
+    agent_instance_id: String,
 }
 
 /// Transport-neutral outgoing channel for an agent. Both the polling loop and
@@ -192,6 +193,7 @@ enum AgentSink {
     WebSocket {
         tx: tokio::sync::mpsc::Sender<AgentEnvelope>,
         client_id: String,
+        agent_instance_id: String,
     },
 }
 
@@ -203,11 +205,23 @@ impl AgentSink {
         }
     }
 
+    /// Active agent process identity carried by this sink so every result /
+    /// job_update submission includes it.
+    fn agent_instance_id(&self) -> &str {
+        match self {
+            AgentSink::Http(h) => &h.agent_instance_id,
+            AgentSink::WebSocket {
+                agent_instance_id, ..
+            } => agent_instance_id,
+        }
+    }
+
     /// Submit the result of a synchronous shell/file request. Mirrors the old
     /// `submit_result` free function but routes over the active transport.
     fn submit_result(&self, request_id: String, result: CommandResult) -> Result<bool, String> {
         let body = ShellAgentResultRequest {
             client_id: self.client_id().to_string(),
+            agent_instance_id: self.agent_instance_id().to_string(),
             request_id,
             exit_code: result.exit_code,
             stdout: result.stdout,
@@ -798,10 +812,12 @@ fn build_register_request(
     cfg: &AgentConfig,
     projects: Vec<ShellAgentProjectSummary>,
     protocol_version: &str,
+    agent_instance_id: &str,
 ) -> ShellClientRegisterRequest {
     let capabilities = agent_register_capabilities(cfg);
     ShellClientRegisterRequest {
         client_id: cfg.client_id.clone(),
+        agent_instance_id: agent_instance_id.to_string(),
         display_name: cfg.display_name.clone(),
         owner: cfg.owner.clone(),
         hostname: cfg.hostname.clone().or_else(hostname),
@@ -815,11 +831,13 @@ fn register(
     client: &Client,
     cfg: &AgentConfig,
     project_cache: &mut AgentProjectCache,
+    agent_instance_id: &str,
 ) -> Result<(), String> {
     let body = build_register_request(
         cfg,
         project_cache.get(cfg),
         AGENT_PROTOCOL_VERSION_POLLING_V1,
+        agent_instance_id,
     );
     let response: ShellClientRegisterResponse =
         post_json(client, cfg, "/api/shell/agent/register", &body)?;
@@ -1921,6 +1939,7 @@ fn send_start_failure(sink: &AgentSink, request: ShellAgentShellRequest, error: 
     if let Some(job_id) = request.job_id {
         let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
             client_id: sink.client_id().to_string(),
+            agent_instance_id: sink.agent_instance_id().to_string(),
             job_id,
             request_id: Some(request.request_id),
             status: "failed".to_string(),
@@ -1982,6 +2001,7 @@ impl JobManager {
         if active >= self.max_concurrent {
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                 client_id: client_id.clone(),
+                agent_instance_id: sink.agent_instance_id().to_string(),
                 job_id: job_id.clone(),
                 request_id: Some(request.request_id.clone()),
                 status: "agent_queued".to_string(),
@@ -2100,6 +2120,7 @@ impl JobManager {
         );
         let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
             client_id: client_id.clone(),
+            agent_instance_id: sink.agent_instance_id().to_string(),
             job_id: job_id.clone(),
             request_id: Some(request.request_id.clone()),
             status: "running".to_string(),
@@ -2139,6 +2160,7 @@ impl JobManager {
                 if !out.is_empty() || !err.is_empty() {
                     let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                         client_id: sink.client_id().to_string(),
+                        agent_instance_id: sink.agent_instance_id().to_string(),
                         job_id: job_id.clone(),
                         request_id: Some(request.request_id.clone()),
                         status: "running".to_string(),
@@ -2209,6 +2231,7 @@ impl JobManager {
             }
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
+                agent_instance_id: sink.agent_instance_id().to_string(),
                 job_id: job_id.clone(),
                 request_id: Some(request.request_id),
                 status: final_status.0,
@@ -2248,6 +2271,7 @@ impl JobManager {
             let job_id = request.job_id.clone().unwrap_or_default();
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
                 client_id: sink.client_id().to_string(),
+                agent_instance_id: sink.agent_instance_id().to_string(),
                 job_id,
                 request_id: Some(request_id),
                 status: "stopped".to_string(),
@@ -2337,9 +2361,11 @@ fn handle_one_poll(
     cfg: &AgentConfig,
     jobs: &JobManager,
     project_cache: &mut AgentProjectCache,
+    agent_instance_id: &str,
 ) -> Result<bool, String> {
     let poll = ShellAgentPollRequest {
         client_id: cfg.client_id.clone(),
+        agent_instance_id: agent_instance_id.to_string(),
         projects: Some(project_cache.get(cfg)),
     };
     let response: ShellAgentPollResponse = post_json(client, cfg, "/api/shell/agent/poll", &poll)?;
@@ -2357,6 +2383,7 @@ fn handle_one_poll(
         server_url: cfg.server_url.clone(),
         token: cfg.token.clone(),
         client_id: cfg.client_id.clone(),
+        agent_instance_id: agent_instance_id.to_string(),
     });
     let result = dispatch_request(
         &sink,
@@ -2373,6 +2400,11 @@ fn handle_one_poll(
 }
 
 fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
+    // Generate the per-process agent instance identity once. It is stable for
+    // the whole process lifetime, including across WebSocket reconnects, so the
+    // server can treat this process as a single active lease for `client_id`.
+    // It is not a secret and is never persisted to disk.
+    let agent_instance_id = uuid::Uuid::new_v4().to_string();
     let transport = cfg
         .transport
         .as_deref()
@@ -2381,25 +2413,25 @@ fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
         .unwrap_or(TRANSPORT_POLLING)
         .to_string();
     match transport.as_str() {
-        TRANSPORT_WEBSOCKET => run_websocket_agent(cfg, once),
-        _ => run_polling_agent(cfg, once),
+        TRANSPORT_WEBSOCKET => run_websocket_agent(cfg, once, &agent_instance_id),
+        _ => run_polling_agent(cfg, once, &agent_instance_id),
     }
 }
 
-fn run_polling_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
+fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Result<(), String> {
     let client = Client::builder()
         .timeout(Duration::from_secs(30))
         .build()
         .map_err(|e| format!("failed to create http client: {}", e))?;
     let jobs = JobManager::new(max_concurrent_jobs(&cfg));
     let mut project_cache = AgentProjectCache::default();
-    register(&client, &cfg, &mut project_cache)?;
+    register(&client, &cfg, &mut project_cache, agent_instance_id)?;
     eprintln!(
         "webcodex-agent registered client_id={} server={} transport=polling",
         cfg.client_id, cfg.server_url
     );
     loop {
-        match handle_one_poll(&client, &cfg, &jobs, &mut project_cache) {
+        match handle_one_poll(&client, &cfg, &jobs, &mut project_cache, agent_instance_id) {
             Ok(ran_request) => {
                 if once {
                     while jobs.has_work() {
@@ -2417,7 +2449,7 @@ fn run_polling_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
                     return Err(e);
                 }
                 std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
-                let _ = register(&client, &cfg, &mut project_cache);
+                let _ = register(&client, &cfg, &mut project_cache, agent_instance_id);
             }
         }
     }
@@ -2472,7 +2504,12 @@ fn build_ws_request(
 
 /// Entry point for the WebSocket transport. Runs a tokio current-thread
 /// runtime and reconnects on session failure.
-fn run_websocket_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
+fn run_websocket_agent(
+    cfg: AgentConfig,
+    once: bool,
+    agent_instance_id: &str,
+) -> Result<(), String> {
+    let agent_instance_id = agent_instance_id.to_string();
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -2481,7 +2518,7 @@ fn run_websocket_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
         let mut project_cache = AgentProjectCache::default();
         loop {
             let projects = project_cache.get(&cfg);
-            match websocket_session(&cfg, projects).await {
+            match websocket_session(&cfg, projects, &agent_instance_id).await {
                 Ok(()) => {
                     project_cache.invalidate();
                     if once {
@@ -2508,6 +2545,7 @@ fn run_websocket_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
 async fn websocket_session(
     cfg: &AgentConfig,
     projects: Vec<ShellAgentProjectSummary>,
+    agent_instance_id: &str,
 ) -> Result<(), String> {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
@@ -2519,8 +2557,12 @@ async fn websocket_session(
         .map_err(|e| format!("websocket connect failed: {}", e))?;
 
     // Register over the socket.
-    let register_payload =
-        build_register_request(cfg, projects, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1);
+    let register_payload = build_register_request(
+        cfg,
+        projects,
+        AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+        agent_instance_id,
+    );
     let reg_env = AgentEnvelope::Register {
         payload: register_payload,
     };
@@ -2581,6 +2623,7 @@ async fn websocket_session(
     let sink_handle = AgentSink::WebSocket {
         tx: out_tx.clone(),
         client_id: cfg.client_id.clone(),
+        agent_instance_id: agent_instance_id.to_string(),
     };
     let jobs = JobManager::new(max_concurrent_jobs(cfg));
     let mut ping_interval = tokio::time::interval(WS_PING_INTERVAL);
@@ -3042,8 +3085,14 @@ path = "/tmp/webcodex"
     fn register_request_announces_polling_v1_protocol_version() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().join("config/projects.d"));
-        let body = build_register_request(&cfg, Vec::new(), AGENT_PROTOCOL_VERSION_POLLING_V1);
+        let body = build_register_request(
+            &cfg,
+            Vec::new(),
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            "inst-1",
+        );
         assert_eq!(body.client_id, "oe");
+        assert_eq!(body.agent_instance_id, "inst-1");
         assert_eq!(
             body.agent_protocol_version.as_deref(),
             Some(AGENT_PROTOCOL_VERSION_POLLING_V1)
@@ -3084,12 +3133,36 @@ path = "/tmp/webcodex"
     fn build_register_request_announces_websocket_v1_when_requested() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().join("config/projects.d"));
-        let body = build_register_request(&cfg, Vec::new(), AGENT_PROTOCOL_VERSION_WEBSOCKET_V1);
+        let body = build_register_request(
+            &cfg,
+            Vec::new(),
+            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+            "inst-1",
+        );
+        assert_eq!(body.agent_instance_id, "inst-1");
         assert_eq!(
             body.agent_protocol_version.as_deref(),
             Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1)
         );
         assert_eq!(body.agent_protocol_version.as_deref(), Some("websocket-v1"));
+    }
+
+    #[test]
+    fn generated_agent_instance_id_is_non_empty_uuid_like() {
+        // `run_agent` generates the instance id the same way; verify the
+        // format here without driving the full agent loop.
+        let id = uuid::Uuid::new_v4().to_string();
+        assert!(!id.is_empty());
+        // Canonical UUID v4 is 36 chars: 8-4-4-4-12 hex groups.
+        assert_eq!(id.len(), 36);
+        assert_eq!(id.chars().filter(|c| *c == '-').count(), 4);
+        assert!(id.chars().all(|c| c.is_ascii_hexdigit() || c == '-'));
+        // The register builder carries it through unchanged.
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let body = build_register_request(&cfg, Vec::new(), AGENT_PROTOCOL_VERSION_POLLING_V1, &id);
+        assert_eq!(body.agent_instance_id, id);
+        assert!(!body.agent_instance_id.is_empty());
     }
 
     fn ws_sink(client_id: &str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
@@ -3098,6 +3171,7 @@ path = "/tmp/webcodex"
             AgentSink::WebSocket {
                 tx,
                 client_id: client_id.to_string(),
+                agent_instance_id: "ws-inst".to_string(),
             },
             rx,
         )
@@ -3118,6 +3192,7 @@ path = "/tmp/webcodex"
         match env {
             AgentEnvelope::Result { payload } => {
                 assert_eq!(payload.client_id, "ws-client");
+                assert_eq!(payload.agent_instance_id, "ws-inst");
                 assert_eq!(payload.request_id, "req-9");
                 assert_eq!(payload.exit_code, Some(0));
                 assert_eq!(payload.stdout.as_deref(), Some("hi"));
@@ -3131,6 +3206,7 @@ path = "/tmp/webcodex"
         let (sink, mut rx) = ws_sink("ws-client");
         let body = ShellAgentJobUpdateRequest {
             client_id: "ws-client".to_string(),
+            agent_instance_id: "ws-inst".to_string(),
             job_id: "job-1".to_string(),
             request_id: Some("req-1".to_string()),
             status: "running".to_string(),
@@ -3552,8 +3628,10 @@ path = "/tmp/webcodex"
             server_url: cfg.server_url.clone(),
             token: cfg.token.clone(),
             client_id: cfg.client_id.clone(),
+            agent_instance_id: "inst-1".to_string(),
         });
         assert_eq!(sink.client_id(), "oe");
+        assert_eq!(sink.agent_instance_id(), "inst-1");
     }
 
     // ------------------------------------------------------------------------
@@ -3636,10 +3714,12 @@ path = "/tmp/webcodex"
         cfg.server_url = format!("http://{}", addr);
         cfg.transport = Some(TRANSPORT_WEBSOCKET.to_string());
 
-        let outcome =
-            tokio::time::timeout(Duration::from_secs(10), websocket_session(&cfg, Vec::new()))
-                .await
-                .expect("websocket_session did not complete in time");
+        let outcome = tokio::time::timeout(
+            Duration::from_secs(10),
+            websocket_session(&cfg, Vec::new(), "inst-1"),
+        )
+        .await
+        .expect("websocket_session did not complete in time");
 
         // The session must end (server dropped the socket) and must NOT have
         // returned an error — a Pong is normal keepalive traffic.

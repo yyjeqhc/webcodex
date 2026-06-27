@@ -107,6 +107,14 @@ pub struct ShellAgentProjectSummary {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientRegisterRequest {
     pub client_id: String,
+    /// Stable per-process identity for the registering agent. Generated once
+    /// by `webcodex-agent` at startup and reused for the whole process
+    /// lifetime (including WebSocket reconnects). The server treats this as
+    /// the active agent lease identity: a second agent process with the same
+    /// `client_id` but a different `agent_instance_id` is rejected while the
+    /// first is online, and a stale/replaced instance can no longer poll or
+    /// submit results. It is not a secret.
+    pub agent_instance_id: String,
     #[serde(default)]
     pub display_name: Option<String>,
     #[serde(default)]
@@ -126,8 +134,15 @@ pub struct ShellClientRegisterRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientView {
     pub client_id: String,
+    /// Active agent process identity (UUID) for this client. Empty for views
+    /// that predate the instance id field. Not a secret.
+    #[serde(default)]
+    pub agent_instance_id: String,
+    #[serde(default)]
     pub display_name: Option<String>,
+    #[serde(default)]
     pub owner: Option<String>,
+    #[serde(default)]
     pub hostname: Option<String>,
     pub status: String,
     pub connected: bool,
@@ -192,6 +207,9 @@ pub struct ShellRunResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentPollRequest {
     pub client_id: String,
+    /// Active agent process identity. Must match the instance that currently
+    /// holds the lease for `client_id`; a stale/replaced instance is rejected.
+    pub agent_instance_id: String,
     #[serde(default)]
     pub projects: Option<Vec<ShellAgentProjectSummary>>,
 }
@@ -272,6 +290,9 @@ pub struct ShellAgentPollResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentResultRequest {
     pub client_id: String,
+    /// Active agent process identity. Must match the instance that currently
+    /// holds the lease for `client_id`; a stale/replaced instance is rejected.
+    pub agent_instance_id: String,
     pub request_id: String,
     #[serde(default)]
     pub exit_code: Option<i32>,
@@ -295,6 +316,9 @@ pub struct ShellAgentResultResponse {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellAgentJobUpdateRequest {
     pub client_id: String,
+    /// Active agent process identity. Must match the instance that currently
+    /// holds the lease for `client_id`; a stale/replaced instance is rejected.
+    pub agent_instance_id: String,
     pub job_id: String,
     #[serde(default)]
     pub request_id: Option<String>,
@@ -656,6 +680,7 @@ mod envelope_tests {
     fn sample_register() -> ShellClientRegisterRequest {
         ShellClientRegisterRequest {
             client_id: "ws-1".to_string(),
+            agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
             display_name: Some("WS Agent".to_string()),
             owner: Some("alice".to_string()),
             hostname: None,
@@ -738,6 +763,7 @@ mod envelope_tests {
         let result_env = AgentEnvelope::Result {
             payload: ShellAgentResultRequest {
                 client_id: "ws-1".to_string(),
+                agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
                 request_id: "req-1".to_string(),
                 exit_code: Some(0),
                 stdout: Some("hi".to_string()),
@@ -756,6 +782,7 @@ mod envelope_tests {
         let job_env = AgentEnvelope::JobUpdate {
             payload: ShellAgentJobUpdateRequest {
                 client_id: "ws-1".to_string(),
+                agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
                 job_id: "job-1".to_string(),
                 request_id: Some("req-1".to_string()),
                 status: "running".to_string(),
@@ -821,5 +848,96 @@ mod envelope_tests {
         // client/error are skip_serializing_if None.
         assert!(!json.contains(r#""client""#));
         assert!(!json.contains(r#""error""#));
+    }
+
+    #[test]
+    fn register_request_round_trips_agent_instance_id() {
+        let req = sample_register();
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains(r#""agent_instance_id":"11111111-1111-1111-1111-111111111111""#));
+        let back: ShellClientRegisterRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.agent_instance_id,
+            "11111111-1111-1111-1111-111111111111"
+        );
+    }
+
+    #[test]
+    fn register_request_without_agent_instance_id_is_rejected() {
+        // An old agent that omits agent_instance_id must be rejected at
+        // deserialization: the field is now required for correctness.
+        let json = r#"{
+            "client_id": "oe",
+            "capabilities": {"shell": true}
+        }"#;
+        let err = serde_json::from_str::<ShellClientRegisterRequest>(json);
+        assert!(err.is_err(), "missing agent_instance_id must be rejected");
+    }
+
+    #[test]
+    fn poll_result_job_update_round_trip_agent_instance_id() {
+        let poll = ShellAgentPollRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
+            projects: None,
+        };
+        let json = serde_json::to_string(&poll).unwrap();
+        let back: ShellAgentPollRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.agent_instance_id,
+            "22222222-2222-2222-2222-222222222222"
+        );
+
+        let result = ShellAgentResultRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
+            request_id: "req-1".to_string(),
+            exit_code: Some(0),
+            stdout: None,
+            stderr: None,
+            duration_ms: None,
+            error: None,
+        };
+        let json = serde_json::to_string(&result).unwrap();
+        let back: ShellAgentResultRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.agent_instance_id,
+            "22222222-2222-2222-2222-222222222222"
+        );
+
+        let job = ShellAgentJobUpdateRequest {
+            client_id: "oe".to_string(),
+            agent_instance_id: "22222222-2222-2222-2222-222222222222".to_string(),
+            job_id: "job-1".to_string(),
+            request_id: None,
+            status: "running".to_string(),
+            stdout_chunk: None,
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            finished: false,
+        };
+        let json = serde_json::to_string(&job).unwrap();
+        let back: ShellAgentJobUpdateRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.agent_instance_id,
+            "22222222-2222-2222-2222-222222222222"
+        );
+    }
+
+    #[test]
+    fn poll_result_job_update_without_agent_instance_id_are_rejected() {
+        assert!(serde_json::from_str::<ShellAgentPollRequest>(r#"{"client_id":"oe"}"#).is_err());
+        assert!(serde_json::from_str::<ShellAgentResultRequest>(
+            r#"{"client_id":"oe","request_id":"r1"}"#
+        )
+        .is_err());
+        assert!(serde_json::from_str::<ShellAgentJobUpdateRequest>(
+            r#"{"client_id":"oe","job_id":"j1","status":"running"}"#
+        )
+        .is_err());
     }
 }

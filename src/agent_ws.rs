@@ -90,6 +90,7 @@ async fn handle_agent_ws(
         }
     };
     let client_id = register_payload.client_id.clone();
+    let agent_instance_id = register_payload.agent_instance_id.clone();
 
     // 1b. Enforce the owner/auth boundary before mutating the registry. This
     //     mirrors the polling register handler: bootstrap may register any
@@ -131,7 +132,7 @@ async fn handle_agent_ws(
         .await;
     let notify = Arc::new(Notify::new());
     if registry
-        .register_notifier(&client_id, notify.clone())
+        .register_notifier(&client_id, &agent_instance_id, notify.clone())
         .await
         .is_err()
     {
@@ -187,6 +188,7 @@ async fn handle_agent_ws(
     let pump_tx = out_tx.clone();
     let pump_registry = registry.clone();
     let pump_client_id = client_id.clone();
+    let pump_instance_id = agent_instance_id.clone();
     let pump_notify = notify.clone();
     let pump_task = tokio::spawn(async move {
         loop {
@@ -195,6 +197,7 @@ async fn handle_agent_ws(
             let notified = pump_notify.notified();
             let poll_req = ShellAgentPollRequest {
                 client_id: pump_client_id.clone(),
+                agent_instance_id: pump_instance_id.clone(),
                 projects: None,
             };
             match pump_registry.poll(poll_req).await {
@@ -274,7 +277,7 @@ async fn handle_agent_ws(
                 // online window by the 60s `CLIENT_ONLINE_WINDOW_SECS` check.
                 // Without this touch, a connected-but-idle agent decays to
                 // `"stale"` even though its socket is healthy.
-                if let Err(e) = registry.touch_client(&client_id).await {
+                if let Err(e) = registry.touch_client(&client_id, &agent_instance_id).await {
                     tracing::warn!(client_id = %client_id, error = %e, "ws ping liveness touch failed");
                 }
                 let pong = AgentEnvelope::Pong { ts };
@@ -293,7 +296,7 @@ async fn handle_agent_ws(
                 // future server-initiated ping reply) must still count as
                 // live traffic so the client does not decay to stale, and it
                 // must never be treated as an unexpected envelope.
-                if let Err(e) = registry.touch_client(&client_id).await {
+                if let Err(e) = registry.touch_client(&client_id, &agent_instance_id).await {
                     tracing::debug!(client_id = %client_id, error = %e, "ws pong liveness touch failed");
                 }
             }
@@ -319,7 +322,9 @@ async fn handle_agent_ws(
     // Reconcile: drop the notifier and mark running jobs lost so a
     // disconnected agent never leaves jobs permanently "running" or appears
     // permanently online (the client decays to stale via last_seen).
-    registry.reconcile_disconnect(&client_id).await;
+    registry
+        .reconcile_disconnect(&client_id, &agent_instance_id)
+        .await;
     tracing::info!(client_id = %client_id, "agent websocket disconnected");
 }
 
@@ -361,9 +366,14 @@ mod tests {
     use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 
     fn register_envelope(client_id: &str) -> AgentEnvelope {
+        register_envelope_with_instance(client_id, "ws-inst")
+    }
+
+    fn register_envelope_with_instance(client_id: &str, instance_id: &str) -> AgentEnvelope {
         AgentEnvelope::Register {
             payload: ShellClientRegisterRequest {
                 client_id: client_id.to_string(),
+                agent_instance_id: instance_id.to_string(),
                 display_name: Some("ws-test".to_string()),
                 owner: Some("tester".to_string()),
                 hostname: None,
@@ -489,6 +499,7 @@ mod tests {
         let result_env = AgentEnvelope::Result {
             payload: ShellAgentResultRequest {
                 client_id: "ws-roundtrip".to_string(),
+                agent_instance_id: "ws-inst".to_string(),
                 request_id: request_id.clone(),
                 exit_code: Some(0),
                 stdout: Some("hi".to_string()),
@@ -826,6 +837,7 @@ mod tests {
             AgentEnvelope::Result {
                 payload: ShellAgentResultRequest {
                     client_id: "ws-slow".to_string(),
+                    agent_instance_id: "ws-inst".to_string(),
                     request_id: request_id.clone(),
                     exit_code: Some(0),
                     stdout: Some("hi".to_string()),
@@ -898,5 +910,310 @@ mod tests {
         }
         assert_eq!(lost.status, "lost");
         assert!(lost.error.unwrap().contains("disconnected"));
+    }
+
+    #[tokio::test]
+    async fn ws_duplicate_different_instance_is_rejected() {
+        // A WebSocket agent with client_id=oe, instance=A is online. A second
+        // WebSocket registration with client_id=oe, instance=B must be rejected
+        // (the server sends an error and closes the second socket). The first
+        // connection stays online.
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+        let url = format!("ws://{}/api/agents/ws", addr);
+
+        // First session: instance A.
+        let (mut ws_a, _resp) = connect_async(url.clone()).await.unwrap();
+        ws_a.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-dup", "inst-a")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let ack = recv_envelope(&mut ws_a).await;
+        assert!(matches!(
+            ack,
+            AgentEnvelope::Registered { success: true, .. }
+        ));
+        let view = registry.get_client_view("ws-dup").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-a");
+        assert!(view.connected);
+
+        // Second session: instance B, same client_id, while A is online.
+        let (mut ws_b, _resp) = connect_async(url).await.unwrap();
+        ws_b.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-dup", "inst-b")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let resp = recv_envelope(&mut ws_b).await;
+        match resp {
+            AgentEnvelope::Error { message, .. } => {
+                assert!(message.contains("already online"), "error was: {message}");
+                assert!(
+                    message.contains("different instance"),
+                    "error was: {message}"
+                );
+            }
+            AgentEnvelope::Registered {
+                success: false,
+                error,
+                ..
+            } => {
+                let error = error.expect("error message");
+                assert!(error.contains("already online"), "error was: {error}");
+            }
+            other => panic!("expected error/rejected, got {:?}", other),
+        }
+
+        // The active instance is still A.
+        let view = registry.get_client_view("ws-dup").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-a");
+        assert!(view.connected);
+    }
+
+    #[tokio::test]
+    async fn ws_same_instance_reconnect_stays_accepted() {
+        // A reconnect from the same agent instance (same client_id + same
+        // instance id) must be accepted as a refresh, not rejected as a
+        // duplicate. This mirrors a WebSocket reconnect from the same process.
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+        let url = format!("ws://{}/api/agents/ws", addr);
+
+        let (mut ws1, _resp) = connect_async(url.clone()).await.unwrap();
+        ws1.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-same", "inst-x")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let ack1 = recv_envelope(&mut ws1).await;
+        assert!(matches!(
+            ack1,
+            AgentEnvelope::Registered { success: true, .. }
+        ));
+        drop(ws1);
+        // Let the server observe the disconnect and reconcile.
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            if registry.get_client_view("ws-same").await.is_some() {
+                break;
+            }
+        }
+
+        // Reconnect with the SAME instance id.
+        let (mut ws2, _resp) = connect_async(url).await.unwrap();
+        ws2.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-same", "inst-x")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let ack2 = recv_envelope(&mut ws2).await;
+        assert!(matches!(
+            ack2,
+            AgentEnvelope::Registered { success: true, .. }
+        ));
+        let view = registry.get_client_view("ws-same").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-x");
+        assert!(view.connected);
+    }
+
+    #[tokio::test]
+    async fn ws_stale_disconnect_does_not_mark_newer_active_offline() {
+        // Instance A connects, then ages out and is replaced by instance B
+        // (online). When A's socket finally tears down, its disconnect must NOT
+        // remove B's notifier or mark B's jobs lost. B stays online and its
+        // job is not marked lost.
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+        let url = format!("ws://{}/api/agents/ws", addr);
+
+        // Instance A connects and starts a job.
+        let (mut ws_a, _resp) = connect_async(url.clone()).await.unwrap();
+        ws_a.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-stale-disc", "inst-a")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let _ = recv_envelope(&mut ws_a).await; // Registered
+
+        // Age A out so B can take over the lease.
+        registry
+            .set_last_seen_for_test("ws-stale-disc", aged_last_seen())
+            .await;
+
+        // Instance B connects and takes over.
+        let (mut ws_b, _resp) = connect_async(url).await.unwrap();
+        ws_b.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-stale-disc", "inst-b")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let _ = recv_envelope(&mut ws_b).await; // Registered
+        let view_b = registry.get_client_view("ws-stale-disc").await.unwrap();
+        assert_eq!(view_b.agent_instance_id, "inst-b");
+        assert!(view_b.connected);
+
+        // Start a job under B.
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("ws-stale-disc".to_string()),
+                    cwd: None,
+                    command: Some("sleep 30".to_string()),
+                    timeout_secs: Some(30),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+
+        // A's socket finally disconnects. This must NOT affect B.
+        drop(ws_a);
+        // Give the server a moment to process A's disconnect.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        // B is still online and its job is NOT lost.
+        let view_b_after = registry.get_client_view("ws-stale-disc").await.unwrap();
+        assert!(
+            view_b_after.connected,
+            "stale disconnect must not mark newer active instance offline"
+        );
+        assert_eq!(view_b_after.agent_instance_id, "inst-b");
+        let job_view = registry.get_job(&job.job_id).await.unwrap();
+        assert_ne!(
+            job_view.status, "lost",
+            "stale disconnect must not mark active instance job lost"
+        );
+
+        // B's own disconnect does reconcile the job.
+        drop(ws_b);
+        let mut lost = registry.get_job(&job.job_id).await.unwrap();
+        for _ in 0..40 {
+            if lost.status == "lost" {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            lost = registry.get_job(&job.job_id).await.unwrap();
+        }
+        assert_eq!(lost.status, "lost");
+    }
+
+    #[tokio::test]
+    async fn ws_stale_ping_does_not_refresh_newer_active_instance() {
+        // Regression at the WebSocket level: after instance A is replaced by
+        // instance B, A's still-open socket must not be able to refresh B's
+        // liveness by sending Ping/Pong. The server rejects the touch and the
+        // active lease (B) is not extended by A's keepalive.
+        //
+        // We register A over a WebSocket, age it out, and let B register over a
+        // second socket. We then age B out to the edge of the online window,
+        // send a Ping from A's socket, and verify B's `last_seen` does not
+        // advance (the touch is rejected). A Ping from B's socket does refresh.
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+        let url = format!("ws://{}/api/agents/ws", addr);
+
+        // Instance A connects.
+        let (mut ws_a, _resp) = connect_async(url.clone()).await.unwrap();
+        ws_a.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-stale-ping", "inst-a")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let _ = recv_envelope(&mut ws_a).await; // Registered
+
+        // Age A out so B can take over.
+        registry
+            .set_last_seen_for_test("ws-stale-ping", aged_last_seen())
+            .await;
+
+        // Instance B connects and takes over the lease.
+        let (mut ws_b, _resp) = connect_async(url).await.unwrap();
+        ws_b.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-stale-ping", "inst-b")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        let _ = recv_envelope(&mut ws_b).await; // Registered
+        let view_b = registry.get_client_view("ws-stale-ping").await.unwrap();
+        assert_eq!(view_b.agent_instance_id, "inst-b");
+        assert!(view_b.connected);
+
+        // Snapshot B's last_seen right after registration.
+        let before = view_b.last_seen;
+        // Sleep so a successful touch would observably advance last_seen.
+        tokio::time::sleep(Duration::from_millis(1100)).await;
+
+        // A sends a Ping. The server replies with a Pong (best-effort keepalive
+        // echo) but the underlying touch must be rejected, so B's last_seen is
+        // unchanged.
+        ws_a.send(TungsteniteMessage::Text(
+            AgentEnvelope::Ping { ts: 1 }.to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        // Best-effort: drain the Pong if it arrived so it doesn't back up.
+        let _ = tokio::time::timeout(Duration::from_millis(500), recv_envelope(&mut ws_a)).await;
+        // Give the server a moment to finish processing.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+
+        let after_a = registry
+            .get_client_view("ws-stale-ping")
+            .await
+            .unwrap()
+            .last_seen;
+        assert_eq!(
+            after_a, before,
+            "stale instance ping must not refresh active last_seen"
+        );
+
+        // B sends a Ping and its liveness IS refreshed.
+        ws_b.send(TungsteniteMessage::Text(
+            AgentEnvelope::Ping { ts: 2 }.to_json().unwrap().into(),
+        ))
+        .await
+        .unwrap();
+        let _ = tokio::time::timeout(Duration::from_millis(500), recv_envelope(&mut ws_b)).await;
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        let after_b = registry
+            .get_client_view("ws-stale-ping")
+            .await
+            .unwrap()
+            .last_seen;
+        assert!(
+            after_b > before,
+            "active instance ping must refresh last_seen"
+        );
     }
 }

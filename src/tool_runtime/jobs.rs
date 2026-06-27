@@ -1,4 +1,5 @@
 use serde_json::{json, Value};
+use std::path::Path;
 
 use super::helpers::{
     is_safe_job_id, normalize_local_status, read_json, read_lines_from, read_trim,
@@ -9,6 +10,13 @@ use super::types::{
 };
 use super::ToolRuntime;
 use crate::shell_protocol::{ShellJobInfo, ShellJobOpRequest};
+
+fn job_id_for_log(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string()
+}
 
 /// Build a bounded job summary `Value` for an agent-known job. Never includes
 /// stdout/stderr bodies.
@@ -219,8 +227,20 @@ pub(crate) fn enforce_local_job_timeout(
     // Persist terminal state so subsequent reads are consistent and we don't
     // repeatedly attempt to kill. The wrapper shell was part of the group and
     // is now gone, so it will not write its own status/finished_at.
-    let _ = std::fs::write(record.dir.join("status"), "lost");
-    let _ = std::fs::write(record.dir.join("finished_at"), now.to_string());
+    if let Err(e) = std::fs::write(record.dir.join("status"), "lost") {
+        tracing::warn!(
+            job_id = %job_id_for_log(&record.dir),
+            error = %e,
+            "failed to write timed-out local job status"
+        );
+    }
+    if let Err(e) = std::fs::write(record.dir.join("finished_at"), now.to_string()) {
+        tracing::warn!(
+            job_id = %job_id_for_log(&record.dir),
+            error = %e,
+            "failed to write timed-out local job finished_at"
+        );
+    }
     Some(note)
 }
 
@@ -271,8 +291,20 @@ pub(crate) fn stop_local_job(
         }
         None => "stopped; no pid/process_group_id on record; marked stopped".to_string(),
     };
-    let _ = std::fs::write(record.dir.join("status"), "stopped");
-    let _ = std::fs::write(record.dir.join("finished_at"), now.to_string());
+    if let Err(e) = std::fs::write(record.dir.join("status"), "stopped") {
+        tracing::warn!(
+            job_id,
+            error = %e,
+            "failed to write stopped local job status"
+        );
+    }
+    if let Err(e) = std::fs::write(record.dir.join("finished_at"), now.to_string()) {
+        tracing::warn!(
+            job_id,
+            error = %e,
+            "failed to write stopped local job finished_at"
+        );
+    }
     ToolResult::ok(json!({
         "job_id": job_id,
         "project": record.project,
@@ -352,7 +384,13 @@ impl ToolRuntime {
             if let Err(e) = std::fs::write(dir.join("command.sh"), &cmd_content) {
                 return ToolResult::err(format!("Failed to write command.sh: {}", e));
             }
-            let _ = std::fs::write(dir.join("status"), "running");
+            if let Err(e) = std::fs::write(dir.join("status"), "running") {
+                tracing::warn!(
+                    job_id = %job_id,
+                    error = %e,
+                    "failed to write initial local job status"
+                );
+            }
             let dir_s = dir.to_string_lossy().to_string();
             let wrapper = format!(
                 "bash {0}/command.sh > {0}/stdout.log 2> {0}/stderr.log; code=$?; echo $code > {0}/exit_code; finished=$(date +%s); echo $finished > {0}/finished_at; if [ $code -eq 0 ]; then echo completed > {0}/status; else echo failed > {0}/status; fi",
@@ -374,12 +412,24 @@ impl ToolRuntime {
                     // process-group id. Record the pgid so timeout/stop can
                     // signal the whole subtree (`kill -<pgid>`).
                     let pgid = child.id() as i64;
-                    let _ = std::fs::write(dir.join("pid"), child.id().to_string());
+                    if let Err(e) = std::fs::write(dir.join("pid"), child.id().to_string()) {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            error = %e,
+                            "failed to write local job pid"
+                        );
+                    }
                     meta["process_group_id"] = json!(pgid);
-                    let _ = std::fs::write(
+                    if let Err(e) = std::fs::write(
                         dir.join("metadata.json"),
                         serde_json::to_string_pretty(&meta).unwrap_or_default(),
-                    );
+                    ) {
+                        tracing::warn!(
+                            job_id = %job_id,
+                            error = %e,
+                            "failed to update local job metadata with process group"
+                        );
+                    }
                     self.local_jobs
                         .lock()
                         .await
@@ -482,8 +532,14 @@ impl ToolRuntime {
             })
             .map(agent_job_summary_value)
             .collect();
-        let local_jobs_map = self.local_jobs.lock().await;
-        for (job_id, record) in local_jobs_map.iter() {
+        let local_records: Vec<(String, LocalJobRecord)> = {
+            let local_jobs_map = self.local_jobs.lock().await;
+            local_jobs_map
+                .iter()
+                .map(|(job_id, record)| (job_id.clone(), record.clone()))
+                .collect()
+        };
+        for (job_id, record) in &local_records {
             if let Some(summary) = local_job_summary_value(job_id, record, &status_filter) {
                 summaries.push(summary);
             }

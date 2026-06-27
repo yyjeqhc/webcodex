@@ -445,10 +445,29 @@ impl SystemJobKiller {
     /// (negative pid). Failures are swallowed: a non-existent group yields a
     /// non-zero exit which we treat as "nothing left to signal".
     fn signal_group(pgid: i64, signal: &str) {
-        let _ = std::process::Command::new("kill")
+        match std::process::Command::new("kill")
             .arg(signal)
             .arg(format!("-{}", pgid))
-            .status();
+            .status()
+        {
+            Ok(status) if status.success() => {}
+            Ok(status) => {
+                tracing::debug!(
+                    pgid,
+                    signal,
+                    status = %status,
+                    "local job process-group signal did not report success"
+                );
+            }
+            Err(e) => {
+                tracing::warn!(
+                    pgid,
+                    signal,
+                    error = %e,
+                    "failed to signal local job process group"
+                );
+            }
+        }
     }
 }
 

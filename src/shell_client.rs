@@ -3969,7 +3969,7 @@ mod tests {
         let before = registry.get_client_view("oe").await.unwrap().last_seen;
         // Sleep a moment so a successful touch would observably advance
         // last_seen.
-        std::thread::sleep(std::time::Duration::from_millis(1100));
+        tokio::time::sleep(std::time::Duration::from_millis(1100)).await;
 
         // Stale instance A's keepalive must be rejected and must NOT advance
         // last_seen for B.

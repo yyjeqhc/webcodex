@@ -156,13 +156,26 @@ pub(crate) fn get_db(depot: &Depot) -> Option<Arc<Database>> {
     depot.obtain::<Arc<Database>>().ok().cloned()
 }
 
-pub(crate) fn bearer_or_query_token(req: &Request) -> Option<String> {
+pub(crate) fn bearer_token(req: &Request) -> Option<String> {
     req.headers()
         .get("authorization")
         .and_then(|v| v.to_str().ok())
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|v| v.to_string())
-        .or_else(|| req.query::<String>("token"))
+}
+
+pub(crate) fn allow_query_token_for_path(path: &str) -> bool {
+    path == "/api/agents/ws"
+}
+
+pub(crate) fn bearer_or_allowed_query_token(req: &Request) -> Option<String> {
+    bearer_token(req).or_else(|| {
+        if allow_query_token_for_path(req.uri().path()) {
+            req.query::<String>("token")
+        } else {
+            None
+        }
+    })
 }
 
 /// Hash a plaintext token with SHA-256 and return a lowercase hex digest.
@@ -372,7 +385,7 @@ impl Handler for AuthMiddleware {
         };
 
         let db = get_db(depot);
-        let token = bearer_or_query_token(req);
+        let token = bearer_or_allowed_query_token(req);
 
         if !config.is_auth_enabled() {
             let ctx = AuthContext {
@@ -708,6 +721,14 @@ mod tests {
         assert!(!is_agent_transport_path(""));
     }
 
+    #[test]
+    fn query_token_is_allowed_only_for_agent_websocket_path() {
+        assert!(allow_query_token_for_path("/api/agents/ws"));
+        assert!(!allow_query_token_for_path("/api/runtime/status"));
+        assert!(!allow_query_token_for_path("/api/shell/agent/register"));
+        assert!(!allow_query_token_for_path("/api/agents/ws/extra"));
+    }
+
     // -----------------------------------------------------------------------
     // HTTP-level central gate tests
     // -----------------------------------------------------------------------
@@ -865,7 +886,7 @@ mod tests {
         auth: Option<&str>,
     ) -> (salvo::http::StatusCode, serde_json::Value) {
         let mut req = TestClient::post(&format!("http://localhost{}", path));
-        if path == "/api/agents/ws" {
+        if path == "/api/agents/ws" || path.starts_with("/api/agents/ws?") {
             // The WS endpoint is GET-mounted in this test router.
             req = TestClient::get(&format!("http://localhost{}", path));
         }
@@ -997,6 +1018,39 @@ mod tests {
         // Phase 3, but here the central gate lets them through; the per-handler
         // agent transport check rejects them). For this gate test we only
         // assert the central gate does not block user tokens on normal APIs.
+    }
+
+    #[tokio::test]
+    async fn query_token_is_rejected_on_runtime_status() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let service = Service::new(gate_router(config, db));
+        let mut resp = TestClient::post("http://localhost/api/runtime/status?token=secret")
+            .send(&service)
+            .await;
+        assert_eq!(gate_status(&resp), salvo::http::StatusCode::UNAUTHORIZED);
+        let body = resp.take_json::<serde_json::Value>().await.unwrap();
+        assert_eq!(body["error"], "Unauthorized");
+    }
+
+    #[tokio::test]
+    async fn query_token_still_works_for_agent_websocket_path() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let service = Service::new(gate_router(config, db));
+        let (status, body) = gate_send(&service, "/api/agents/ws?token=secret", None).await;
+        assert_eq!(status, salvo::http::StatusCode::OK, "body: {:?}", body);
+        assert_eq!(body["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn authorization_header_still_works_on_runtime_status() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let service = Service::new(gate_router(config, db));
+        let (status, body) = gate_send(&service, "/api/runtime/status", Some("secret")).await;
+        assert_eq!(status, salvo::http::StatusCode::OK, "body: {:?}", body);
+        assert_eq!(body["ok"], true);
     }
 
     #[tokio::test]

@@ -27,6 +27,7 @@ use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::ShellAgentProjectSummary;
 use serde_json::{json, Value};
 use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
@@ -624,8 +625,14 @@ impl ToolRuntime {
         // in-memory map. Active = running/queued/agent_queued/stop_requested.
         let agent_jobs = self.shell_clients.list_jobs(None).await;
         let agent_known_count = agent_jobs.len();
-        let local_jobs_map = self.local_jobs.lock().await;
-        let local_known_count = local_jobs_map.len();
+        let local_job_dirs: Vec<PathBuf> = {
+            let local_jobs_map = self.local_jobs.lock().await;
+            local_jobs_map
+                .values()
+                .map(|record| record.dir.clone())
+                .collect()
+        };
+        let local_known_count = local_job_dirs.len();
         // Avoid double-counting: agent jobs are tracked separately from local
         // jobs (local jobs are only in the in-memory map; agent jobs are only
         // in the registry). Count active across both.
@@ -634,8 +641,8 @@ impl ToolRuntime {
             .filter(|j| ACTIVE_JOB_STATUSES.contains(&j.status.as_str()))
             .count();
         let mut local_active = 0usize;
-        for record in local_jobs_map.values() {
-            if let Some(status) = std::fs::read_to_string(record.dir.join("status"))
+        for dir in local_job_dirs {
+            if let Some(status) = std::fs::read_to_string(dir.join("status"))
                 .ok()
                 .map(|s| s.trim().to_string())
             {

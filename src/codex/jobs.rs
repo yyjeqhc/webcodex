@@ -338,12 +338,32 @@ pub(super) fn read_file_to_string(path: &Path) -> Option<String> {
         .map(|s| s.trim().to_string())
 }
 
+fn job_id_for_log(path: &Path) -> String {
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("<unknown>")
+        .to_string()
+}
+
 pub(super) fn write_status_file(path: &Path, status: &str) {
-    let _ = std::fs::write(path.join("status"), status);
+    if let Err(e) = std::fs::write(path.join("status"), status) {
+        tracing::warn!(
+            job_id = %job_id_for_log(path),
+            status,
+            error = %e,
+            "failed to write local job status"
+        );
+    }
 }
 
 pub(super) fn write_finished_at_file(path: &Path, timestamp: i64) {
-    let _ = std::fs::write(path.join("finished_at"), timestamp.to_string());
+    if let Err(e) = std::fs::write(path.join("finished_at"), timestamp.to_string()) {
+        tracing::warn!(
+            job_id = %job_id_for_log(path),
+            error = %e,
+            "failed to write local job finished_at"
+        );
+    }
 }
 
 pub(super) fn read_finished_at_file(path: &Path) -> Option<i64> {
@@ -448,9 +468,17 @@ pub(super) fn update_job_status_local(root: &Path, meta: &JobMetadata) -> JobInf
     if status == "running" {
         if let Some(pid) = pid {
             if meta.started_at.unwrap_or(meta.created_at) + meta.max_runtime_secs < now {
-                let _ = std::process::Command::new("kill")
+                if let Err(e) = std::process::Command::new("kill")
                     .arg(pid.to_string())
-                    .status();
+                    .status()
+                {
+                    tracing::warn!(
+                        job_id = %meta.job_id,
+                        pid,
+                        error = %e,
+                        "failed to signal timed-out local job"
+                    );
+                }
                 status = "timeout".to_string();
                 write_status_file(&dir, &status);
                 write_finished_at_file(&dir, now);
@@ -655,18 +683,43 @@ fn kill_local_tree(pid: i64, signal: &str) {
         .arg("-P")
         .arg(pid.to_string())
         .output()
-        .ok()
         .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
-        .unwrap_or_default();
+        .unwrap_or_else(|e| {
+            tracing::debug!(
+                pid,
+                error = %e,
+                "failed to list child processes for local job cleanup"
+            );
+            String::new()
+        });
     for child in children.lines() {
         if let Ok(child_pid) = child.trim().parse::<i64>() {
             kill_local_tree(child_pid, signal);
         }
     }
-    let _ = std::process::Command::new("kill")
+    match std::process::Command::new("kill")
         .arg(signal)
         .arg(pid.to_string())
-        .status();
+        .status()
+    {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            tracing::debug!(
+                pid,
+                signal,
+                status = %status,
+                "local job cleanup signal did not report success"
+            );
+        }
+        Err(e) => {
+            tracing::warn!(
+                pid,
+                signal,
+                error = %e,
+                "failed to signal local job process during cleanup"
+            );
+        }
+    }
 }
 
 pub(super) fn stop_local_job(root: &Path, job_id: &str) -> Result<JobInfo, String> {
@@ -804,9 +857,17 @@ fn update_job_status_local_basic(root: &Path, meta: &JobMetadata) -> JobInfo {
     if status == "running" {
         if let Some(pid) = pid {
             if meta.started_at.unwrap_or(meta.created_at) + meta.max_runtime_secs < now {
-                let _ = std::process::Command::new("kill")
+                if let Err(e) = std::process::Command::new("kill")
                     .arg(pid.to_string())
-                    .status();
+                    .status()
+                {
+                    tracing::warn!(
+                        job_id = %meta.job_id,
+                        pid,
+                        error = %e,
+                        "failed to signal timed-out local job"
+                    );
+                }
                 status = "timeout".to_string();
                 write_status_file(&dir, &status);
                 write_finished_at_file(&dir, now);

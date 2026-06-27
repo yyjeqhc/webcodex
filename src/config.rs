@@ -220,8 +220,22 @@ impl Config {
     }
 
     pub fn validate_token(&self, token: &str) -> bool {
-        self.token.as_ref().map(|t| t == token).unwrap_or(false)
+        self.token
+            .as_ref()
+            .map(|t| constant_time_eq(t.as_bytes(), token.as_bytes()))
+            .unwrap_or(false)
     }
+}
+
+fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+    let max_len = a.len().max(b.len());
+    let mut diff = a.len() ^ b.len();
+    for i in 0..max_len {
+        let av = a.get(i).copied().unwrap_or(0);
+        let bv = b.get(i).copied().unwrap_or(0);
+        diff |= (av ^ bv) as usize;
+    }
+    diff == 0
 }
 
 #[cfg(test)]
@@ -237,6 +251,14 @@ mod tests {
         assert_eq!(cfg.default_timeout_secs, 3600);
         assert_eq!(cfg.max_prompt_bytes, 100_000);
         assert!(cfg.allowed_extra_args.is_empty());
+    }
+
+    #[test]
+    fn constant_time_eq_matches_byte_equality() {
+        assert!(constant_time_eq(b"secret123", b"secret123"));
+        assert!(!constant_time_eq(b"secret123", b"secret124"));
+        assert!(!constant_time_eq(b"secret123", b"secret1234"));
+        assert!(!constant_time_eq(b"secret123", b""));
     }
 
     #[test]

@@ -42,9 +42,10 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
 const OUTGOING_CHANNEL_CAPACITY: usize = 64;
 
 /// WebSocket agent endpoint: `GET /api/agents/ws` (also mounted at
-/// `/api/agents/ws`). Requires Bearer auth via the shared `AuthMiddleware`,
-/// exactly like the polling endpoints. The agent sends `Authorization:
-/// Bearer <token>` (or `?token=`) in the handshake.
+/// `/api/agents/ws`). Requires auth via the shared `AuthMiddleware`, exactly
+/// like the polling endpoints. The normal path is `Authorization: Bearer
+/// <token>`; `?token=` is accepted only on this WebSocket handshake path for
+/// compatibility with clients that cannot set handshake headers.
 #[handler]
 pub async fn agent_ws(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(registry) = depot.obtain::<Arc<ShellClientRegistry>>().ok().cloned() else {
@@ -81,12 +82,13 @@ async fn handle_agent_ws(
     let register_payload = match read_register(&mut ws).await {
         Ok(payload) => payload,
         Err(e) => {
-            let _ = send_envelope(
+            send_envelope_or_log(
                 &mut ws,
                 AgentEnvelope::Error {
                     code: "expected_register".to_string(),
                     message: e,
                 },
+                "expected_register",
             )
             .await;
             return;
@@ -104,12 +106,13 @@ async fn handle_agent_ws(
     //     is a no-op; production always runs behind AuthMiddleware.
     if let Err(e) = require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_REGISTER)
     {
-        let _ = send_envelope(
+        send_envelope_or_log(
             &mut ws,
             AgentEnvelope::Error {
                 code: "register_forbidden".to_string(),
                 message: e,
             },
+            "register_forbidden",
         )
         .await;
         return;
@@ -119,12 +122,13 @@ async fn handle_agent_ws(
         &register_payload.client_id,
         register_payload.owner.as_deref(),
     ) {
-        let _ = send_envelope(
+        send_envelope_or_log(
             &mut ws,
             AgentEnvelope::Error {
                 code: "register_forbidden".to_string(),
                 message: e,
             },
+            "register_forbidden",
         )
         .await;
         return;
@@ -138,12 +142,13 @@ async fn handle_agent_ws(
     //    then flip the transport label and install a push notifier so the
     //    request pump can be woken on enqueue.
     if let Err(e) = registry.register(register_payload).await {
-        let _ = send_envelope(
+        send_envelope_or_log(
             &mut ws,
             AgentEnvelope::Error {
                 code: "register_failed".to_string(),
                 message: e,
             },
+            "register_failed",
         )
         .await;
         return;
@@ -157,12 +162,13 @@ async fn handle_agent_ws(
         .await
         .is_err()
     {
-        let _ = send_envelope(
+        send_envelope_or_log(
             &mut ws,
             AgentEnvelope::Error {
                 code: "register_failed".to_string(),
                 message: "failed to install push notifier".to_string(),
             },
+            "register_failed",
         )
         .await;
         return;
@@ -174,13 +180,14 @@ async fn handle_agent_ws(
     };
 
     // 3. Acknowledge the register.
-    let _ = send_envelope(
+    send_envelope_or_log(
         &mut ws,
         AgentEnvelope::Registered {
             success: true,
             client: Some(view),
             error: None,
         },
+        "registered",
     )
     .await;
     tracing::info!(client_id = %client_id, "agent websocket connected");
@@ -195,11 +202,14 @@ async fn handle_agent_ws(
         let mut sink = sink;
         let mut out_rx = out_rx;
         while let Some(json) = out_rx.recv().await {
-            if sink.send(Message::text(json)).await.is_err() {
+            if let Err(e) = sink.send(Message::text(json)).await {
+                tracing::debug!(error = ?e, "agent websocket writer send failed; stopping writer");
                 break;
             }
         }
-        let _ = sink.close().await;
+        if let Err(e) = sink.close().await {
+            tracing::debug!(error = ?e, "agent websocket writer close failed");
+        }
     });
 
     // 5. Request pump: drain the registry queue for this client and push
@@ -227,10 +237,26 @@ async fn handle_agent_ws(
                     match env.to_json() {
                         Ok(json) => {
                             if pump_tx.send(json).await.is_err() {
+                                // Do not log the SendError<String>: its Debug
+                                // representation can include the unsent
+                                // request JSON, which may carry command/stdin
+                                // payloads. The channel state is enough for
+                                // diagnostics here.
+                                tracing::debug!(
+                                    client_id = %pump_client_id,
+                                    "agent websocket pump send channel closed; stopping pump"
+                                );
                                 break;
                             }
                         }
-                        Err(_) => break,
+                        Err(e) => {
+                            tracing::warn!(
+                                client_id = %pump_client_id,
+                                error = %e,
+                                "agent websocket pump failed to encode request envelope"
+                            );
+                            break;
+                        }
                     }
                 }
                 Ok(None) => {
@@ -308,7 +334,17 @@ async fn handle_agent_ws(
                     // stall inbound processing). try_send drops the pong when
                     // the channel is saturated; the agent treats a missing
                     // pong as a soft liveness signal, not a fatal error.
-                    let _ = out_tx.try_send(json);
+                    if let Err(e) = out_tx.try_send(json) {
+                        let reason = match e {
+                            tokio::sync::mpsc::error::TrySendError::Full(_) => "full",
+                            tokio::sync::mpsc::error::TrySendError::Closed(_) => "closed",
+                        };
+                        tracing::debug!(
+                            client_id = %client_id,
+                            reason,
+                            "agent websocket pong send dropped"
+                        );
+                    }
                 }
             }
             AgentEnvelope::Pong { .. } => {
@@ -339,7 +375,9 @@ async fn handle_agent_ws(
     //    "online websocket" forever.
     pump_task.abort();
     drop(out_tx);
-    let _ = writer_task.await;
+    if let Err(e) = writer_task.await {
+        tracing::debug!(client_id = %client_id, error = ?e, "agent websocket writer task join failed");
+    }
     // Reconcile: drop the notifier and mark running jobs lost so a
     // disconnected agent never leaves jobs permanently "running" or appears
     // permanently online (the client decays to stale via last_seen).
@@ -372,6 +410,17 @@ async fn read_register(ws: &mut WebSocket) -> Result<ShellClientRegisterRequest,
 async fn send_envelope(ws: &mut WebSocket, env: AgentEnvelope) -> Result<(), ()> {
     let json = env.to_json().map_err(|_| ())?;
     ws.send(Message::text(json)).await.map_err(|_| ())
+}
+
+async fn send_envelope_or_log(ws: &mut WebSocket, env: AgentEnvelope, context: &'static str) {
+    let kind = env.kind();
+    if send_envelope(ws, env).await.is_err() {
+        tracing::debug!(
+            envelope_kind = kind,
+            context,
+            "agent websocket pre-register send failed"
+        );
+    }
 }
 
 #[cfg(test)]

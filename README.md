@@ -26,36 +26,53 @@ webcodex-cli server status --env-file /etc/webcodex/webcodex.env
 
 Use `webcodex-cli server install-service --overwrite` only when intentionally replacing an old unit. `server init` creates only the server bootstrap/admin `WEBCODEX_TOKEN` in `/etc/webcodex/webcodex.env`. That file is server-side only; it is not a client credential and does not contain `wc_pat_...` user API tokens or `wc_agent_...` agent tokens.
 
-Recommended enrollment flow:
+## Invite another user
+
+Use pairing when the server owner wants to add a friend or another machine without copying long-lived credentials.
+
+Server/admin side:
 
 ```bash
-# Server/admin side: creates a short-lived wc_pair_* code, not token files.
 webcodex-cli pairing create \
-  --server-url https://example.com \
+  --server-url https://your-domain.example \
   --env-file /etc/webcodex/webcodex.env \
-  --username alice \
-  --client-id alice-laptop
-
-# Client: install webcodex-agent and webcodex-cli binaries first.
-sudo webcodex-cli client enroll \
-  --server-url https://example.com \
-  --pairing-code <temporary_pairing_code> \
-  --client-id alice-laptop \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml
-sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
-  --bin /opt/webcodex/bin/webcodex-agent
-sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
-webcodex-cli agent status --config /etc/webcodex/agent.toml
-webcodex-cli doctor --strict \
-  --server-url https://example.com \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --username friendname \
+  --client-id friend-laptop \
+  --display-name "Friend Name" \
+  --ttl-secs 600
 ```
 
-`pairing create` runs on the server/admin side. `client enroll` runs on the client side and writes `webcodex-user-token`, `webcodex-agent-token`, and `agent.toml` under the client config directory with `0600` permissions on Unix. Copy only the short-lived `wc_pair_*` code between machines; do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, or `wc_agent_*` from server to client. GPT Actions should use the client-side user-token file.
+`pairing create` is server/admin-side. `/etc/webcodex/webcodex.env` is server-side only. Send only the short-lived `wc_pair_*` code to the friend.
+
+Client/friend side:
+
+```bash
+webcodex-cli client enroll \
+  --server-url https://your-domain.example \
+  --pairing-code <wc_pair_...> \
+  --client-id friend-laptop \
+  --display-name "Friend Name" \
+  --output-dir /etc/webcodex \
+  --agent-config /etc/webcodex/agent.toml \
+  --projects-dir /etc/webcodex/projects.d \
+  --allowed-root /home/friend/git
+
+webcodex-cli agent install-service \
+  --config /etc/webcodex/agent.toml \
+  --bin /opt/webcodex/bin/webcodex-agent \
+  --overwrite
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex-agent
+
+webcodex-cli doctor \
+  --server-url https://your-domain.example \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-token-file /etc/webcodex/webcodex-agent-token \
+  --strict
+```
+
+`client enroll` is client/friend-side. GPT Actions should use the client-side `webcodex-user-token`; `webcodex-agent` should use the client-side agent token through the generated agent config. Do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, `wc_agent_*`, complete env files, or complete `agent.toml` files between machines. Each friend should use a unique `username` and `client_id`.
 
 Run non-destructive diagnostics with:
 
@@ -63,7 +80,7 @@ Run non-destructive diagnostics with:
 webcodex-cli doctor --server-url https://example.com --user-token-file ~/.config/webcodex/webcodex-user-token
 ```
 
-The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, `webcodex-cli setup single-user`, and `webcodex-agent init` commands still work as compatibility entry points.
+The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, and `webcodex-agent init` commands still work as compatibility entry points. `webcodex-cli setup single-user` remains a recommended shortcut for single-user setup; pairing/enroll is preferred when inviting another user or machine.
 
 ## Runtime surfaces
 
@@ -75,6 +92,16 @@ The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, `webcode
 GPT Actions and MCP share the same `ToolRuntime`. The GPT Actions OpenAPI surface is intentionally limited to project/runtime/job tools and does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints.
 
 GPT Actions need a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup.
+
+## Runtime console
+
+WebCodex serves a read-only browser console at:
+
+```text
+https://your-domain.example/console
+```
+
+The static console bundle contains no secrets. Runtime data is fetched by the browser from protected APIs using the user's credentials, session, or token as applicable. The console is not part of the GPT Actions OpenAPI and is not a full admin UI.
 
 ## Authentication
 

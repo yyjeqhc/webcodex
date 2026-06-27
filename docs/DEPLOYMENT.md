@@ -90,40 +90,63 @@ Client:
 
 `/etc/webcodex/webcodex.env` is server-side only. `/etc/webcodex/agent.toml`, `webcodex-user-token`, and `webcodex-agent-token` are client-side files when deploying a client agent as a service.
 
-## Enrollment
+## Invite another user
 
-On the server/admin side, create a short-lived one-time pairing code:
+When a server owner invites a friend or another operator, use a short-lived pairing code. Do not copy long-lived credentials between machines.
+
+Server/admin side:
 
 ```bash
 webcodex-cli pairing create \
   --server-url https://your-domain.example \
   --env-file /etc/webcodex/webcodex.env \
-  --username alice \
-  --client-id alice-laptop
+  --username friendname \
+  --client-id friend-laptop \
+  --display-name "Friend Name" \
+  --ttl-secs 600
 ```
 
-`pairing create` is a server/admin-side command and needs server bootstrap/admin auth. The default server bootstrap env file exists on the server, not the client. Copy only the short-lived `wc_pair_*` code to the client; do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, or `wc_agent_*` values from the server.
+`pairing create` is server/admin-side. `/etc/webcodex/webcodex.env` is server-side only. Send only the short-lived `wc_pair_*` code to the friend.
 
-On the client side, exchange the code over HTTPS and write local credentials:
+Client/friend side:
 
 ```bash
-sudo webcodex-cli client enroll \
+webcodex-cli client enroll \
   --server-url https://your-domain.example \
-  --pairing-code <temporary_pairing_code> \
-  --client-id alice-laptop \
+  --pairing-code <wc_pair_...> \
+  --client-id friend-laptop \
+  --display-name "Friend Name" \
   --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml
+  --agent-config /etc/webcodex/agent.toml \
+  --projects-dir /etc/webcodex/projects.d \
+  --allowed-root /home/friend/git
+
+webcodex-cli agent install-service \
+  --config /etc/webcodex/agent.toml \
+  --bin /opt/webcodex/bin/webcodex-agent \
+  --overwrite
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex-agent
+
+webcodex-cli doctor \
+  --server-url https://your-domain.example \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-token-file /etc/webcodex/webcodex-agent-token \
+  --strict
 ```
 
-Pairing creates no server-side `wc_pat_*` or `wc_agent_*` token files. Client enroll creates those tokens for the paired user/client and saves them locally with `0600` permissions on Unix:
+`client enroll` is client/friend-side. GPT Actions should use the client-side `webcodex-user-token`; the generated agent config uses the client-side agent token for `webcodex-agent`. Do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, `wc_agent_*`, complete env files, or complete `agent.toml` files between machines. Each friend should use a unique `username` and `client_id`.
+
+## Runtime console
+
+WebCodex serves a read-only browser console at:
 
 ```text
-/etc/webcodex/webcodex-user-token
-/etc/webcodex/webcodex-agent-token
-/etc/webcodex/agent.toml
+https://your-domain.example/console
 ```
 
-For non-root foreground agents, the default directory is `~/.config/webcodex`. GPT Actions should use the client-side user-token file.
+The static console bundle contains no secrets. Runtime data is fetched by the browser from protected APIs using the user's credentials, session, or token as applicable. The console is not part of the GPT Actions OpenAPI and is not a full admin UI.
 
 ## Public HTTPS URL
 

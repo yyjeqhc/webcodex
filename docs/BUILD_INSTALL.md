@@ -24,6 +24,18 @@ npm install -g @webcodex/webcodex
 
 The npm package is a wrapper around native release artifacts. Publishing and real artifact URLs/checksums are a separate release step.
 
+## Example files
+
+The `deploy/` directory contains short examples you can adapt:
+
+- `deploy/webcodex.env.example`
+- `deploy/webcodex.service.example`
+- `deploy/webcodex-agent.toml.example`
+- `deploy/webcodex-agent.service.example`
+- `deploy/nginx.webcodex.example.conf`
+
+The nginx file is only an example. WebCodex CLI does not automate reverse proxy setup.
+
 ## Binary deployment flow
 
 Server:
@@ -64,11 +76,13 @@ Server/admin:
 webcodex-cli pairing create \
   --server-url https://your-domain.example \
   --env-file /etc/webcodex/webcodex.env \
-  --username alice \
-  --client-id alice-laptop
+  --username friendname \
+  --client-id friend-laptop \
+  --display-name "Friend Name" \
+  --ttl-secs 600
 ```
 
-`pairing create` is a server/admin-side command. It needs server bootstrap/admin auth. Copy only the short-lived `wc_pair_*` code to the client; do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, or `wc_agent_*` values.
+`pairing create` is a server/admin-side command. It needs server bootstrap/admin auth. Copy only the short-lived `wc_pair_*` code to the client; do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, `wc_agent_*`, complete env files, or complete `agent.toml` files. Each friend should use a unique `username` and `client_id`.
 
 Client:
 
@@ -78,10 +92,12 @@ Client:
 ```bash
 sudo webcodex-cli client enroll \
   --server-url https://your-domain.example \
-  --pairing-code <temporary_pairing_code> \
-  --client-id alice-laptop \
+  --pairing-code <wc_pair_...> \
+  --client-id friend-laptop \
   --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml
+  --agent-config /etc/webcodex/agent.toml \
+  --projects-dir /etc/webcodex/projects.d \
+  --allowed-root /home/friend/git
 ```
 
 Client enroll creates the `wc_pat_*` user token, `wc_agent_*` agent token, and `/etc/webcodex/agent.toml` locally with `0600` permissions on Unix.
@@ -91,7 +107,8 @@ Client enroll creates the `wc_pat_*` user token, `wc_agent_*` agent token, and `
 ```bash
 sudo webcodex-cli agent install-service \
   --config /etc/webcodex/agent.toml \
-  --bin /opt/webcodex/bin/webcodex-agent
+  --bin /opt/webcodex/bin/webcodex-agent \
+  --overwrite
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent
 webcodex-cli agent status \

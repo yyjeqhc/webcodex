@@ -24,11 +24,13 @@ Use the bootstrap token only for initial setup/admin work. Day-to-day GPT Action
 
 ## Server-first setup
 
-The documented distribution path assumes the MVP npm wrapper:
+The documented distribution path uses the npm thin installer/wrapper:
 
 ```bash
-npm install -g @webcodex/webcodex
+npm install -g @yyjeqhc/webcodex
 ```
+Supported v0.1.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not included in v0.1.0 unless a later release adds artifacts.
+
 
 Initialize the env file:
 

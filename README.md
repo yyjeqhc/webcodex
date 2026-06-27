@@ -2,16 +2,35 @@
 
 WebCodex is a self-hosted runtime that exposes controlled project tools to ChatGPT GPT Actions and MCP clients. A server hosts the API surface, and one or more agents execute filesystem, git, shell, and optional Codex CLI work inside registered projects.
 
-## Current entry points
+## Install
 
-- `webcodex` — server binary.
-- `webcodex-agent` — project execution agent.
-- `webcodex-cli` — recommended management and initialization CLI.
-
-Recommended binary deployment flow:
+Install the npm thin installer/wrapper:
 
 ```bash
-# Server: install webcodex and webcodex-cli binaries first.
+npm install -g @yyjeqhc/webcodex
+```
+
+The npm package downloads native binaries from the GitHub Release for the current platform. You can also download release artifacts directly from:
+
+```text
+https://github.com/yyjeqhc/webcodex/releases/tag/v0.1.0
+```
+
+## Supported platforms
+
+v0.1.0 release artifacts currently include:
+
+- `linux-x64`
+- `linux-arm64`
+- `darwin-arm64`
+
+`darwin-x64`, Windows, and other targets are not included in v0.1.0; treat them as future targets unless a later release adds artifacts.
+
+## Quick start
+
+Server/admin side:
+
+```bash
 sudo webcodex-cli server init \
   --listen 127.0.0.1:8080 \
   --data-dir /var/lib/webcodex \
@@ -22,9 +41,50 @@ sudo webcodex-cli server install-service \
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex
 webcodex-cli server status --env-file /etc/webcodex/webcodex.env
+
+webcodex-cli pairing create \
+  --server-url https://your-domain.example \
+  --env-file /etc/webcodex/webcodex.env \
+  --username friendname \
+  --client-id friend-laptop \
+  --display-name "Friend Name" \
+  --ttl-secs 600
 ```
 
-Use `webcodex-cli server install-service --overwrite` only when intentionally replacing an old unit. `server init` creates only the server bootstrap/admin `WEBCODEX_TOKEN` in `/etc/webcodex/webcodex.env`. That file is server-side only; it is not a client credential and does not contain `wc_pat_...` user API tokens or `wc_agent_...` agent tokens.
+Client/friend side:
+
+```bash
+webcodex-cli client enroll \
+  --server-url https://your-domain.example \
+  --pairing-code <wc_pair_...> \
+  --client-id friend-laptop \
+  --display-name "Friend Name" \
+  --output-dir /etc/webcodex \
+  --agent-config /etc/webcodex/agent.toml \
+  --projects-dir /etc/webcodex/projects.d \
+  --allowed-root /home/friend/git
+
+webcodex-cli agent install-service \
+  --config /etc/webcodex/agent.toml \
+  --bin /opt/webcodex/bin/webcodex-agent \
+  --overwrite
+sudo systemctl daemon-reload
+sudo systemctl enable --now webcodex-agent
+
+webcodex-cli doctor \
+  --server-url https://your-domain.example \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-token-file /etc/webcodex/webcodex-agent-token \
+  --strict
+```
+
+## Security model
+
+- The server bootstrap token in `/etc/webcodex/webcodex.env` is for server/admin setup only.
+- User API tokens are for human/API clients such as GPT Actions and MCP.
+- Agent tokens are only for `webcodex-agent`.
+- GPT Actions should use the client-side `webcodex-user-token`, not the server bootstrap token.
+- Copy only short-lived `wc_pair_*` pairing codes between machines; do not copy env files, token files, or complete `agent.toml` files.
 
 ## Invite another user
 

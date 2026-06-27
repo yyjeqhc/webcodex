@@ -1,26 +1,30 @@
-# @webcodex/webcodex
+# @yyjeqhc/webcodex
 
-MVP npm wrapper for WebCodex native binaries. It provides:
+Thin npm installer/wrapper for WebCodex native binaries. It installs command wrappers for:
 
 - `webcodex`
 - `webcodex-agent`
 - `webcodex-cli`
 
-Publishing is not ready until release artifacts and real SHA-256 checksums exist. The package does not include compiled binaries in git.
+## Install
 
-## Install Behavior
+```bash
+npm install -g @yyjeqhc/webcodex
+```
 
-`install.js` detects platform/arch, reads a manifest entry, downloads a `.tar.gz` artifact, verifies SHA-256, and installs binaries into `vendor/bin`.
+The package does not commit compiled binaries to git. During installation, `install.js` detects the current platform/architecture, reads `manifest.json`, downloads the matching `.tar.gz` artifact from the GitHub Release, verifies its SHA-256 checksum, and installs the native binaries into `vendor/bin`.
 
-Supported targets:
+## Supported platforms in v0.1.0
 
-- linux x64
-- linux arm64
-- darwin x64
-- darwin arm64
-- win32 x64
+Current release artifacts include:
 
-Development switches:
+- `linux-x64`
+- `linux-arm64`
+- `darwin-arm64`
+
+`darwin-x64`, Windows, and other platforms are not included in v0.1.0. They are future targets unless a later release adds matching artifacts.
+
+## Development switches
 
 - `WEBCODEX_SKIP_DOWNLOAD=1` skips downloads.
 - `WEBCODEX_BINARY_DIR=/path/to/bin` copies local binaries.
@@ -28,8 +32,14 @@ Development switches:
 
 The wrappers preserve arguments and execute the package-local native binary. If a binary is missing, they print:
 
-`Run npm install again or set WEBCODEX_BINARY_DIR=...`
+```text
+Run npm install again or set WEBCODEX_BINARY_DIR=...
+```
 
-## Enrollment Flow
+## Enrollment flow
 
-Server init creates only `WEBCODEX_TOKEN`. Pairing creates a short-lived code, and client enroll creates/saves `wc_pat_*` and `wc_agent_*` tokens on the client side.
+Server init creates only the server bootstrap token. Pairing creates a short-lived `wc_pair_*` code, and client enroll creates/saves the user API token and agent token on the client side. GPT Actions should use the client-side user token, not the server bootstrap token.
+
+## License
+
+Apache-2.0. See the repository `LICENSE` file.

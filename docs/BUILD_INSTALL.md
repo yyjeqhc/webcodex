@@ -16,13 +16,15 @@ Do not run unauthenticated production deployments.
 
 ## Install packages
 
-The documented distribution path assumes the MVP npm wrapper:
+The documented distribution path uses the npm thin installer/wrapper:
 
 ```bash
-npm install -g @webcodex/webcodex
+npm install -g @yyjeqhc/webcodex
 ```
+Supported v0.1.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not included in v0.1.0 unless a later release adds artifacts.
 
-The npm package is a wrapper around native release artifacts. Publishing and real artifact URLs/checksums are a separate release step.
+
+The npm package is a thin wrapper around native release artifacts. During install it downloads the matching GitHub Release artifact and verifies the SHA-256 checksum from the manifest.
 
 ## Example files
 

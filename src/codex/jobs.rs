@@ -2297,6 +2297,12 @@ mod tests {
             role: Some(role),
             scopes,
             is_bootstrap,
+            token_kind: if is_bootstrap {
+                None
+            } else {
+                Some("user".to_string())
+            },
+            allowed_client_id: None,
         }
     }
 

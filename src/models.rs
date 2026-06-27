@@ -161,6 +161,13 @@ impl UserRecord {
     }
 }
 
+/// The kind of an API key. Phase 3 introduces agent tokens that are bound to
+/// an owner username and an allowed `client_id`, and may only be used on agent
+/// transport endpoints. Existing Phase 2 personal API tokens default to
+/// `user`.
+pub const TOKEN_KIND_USER: &str = "user";
+pub const TOKEN_KIND_AGENT: &str = "agent";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApiKeyRecord {
     pub id: String,
@@ -178,6 +185,19 @@ pub struct ApiKeyRecord {
     /// authenticate. `None` means the token never expires.
     #[serde(default)]
     pub expires_at: Option<i64>,
+    /// Phase 3 token kind: `"user"` (default) or `"agent"`. Agent tokens are
+    /// bound to an owner username (via `user_id`) and an `allowed_client_id`,
+    /// and may only authorize agent transport endpoints. Older rows that
+    /// predate the column default to `"user"` via the DB schema and the
+    /// [`ApiKeyRecord::kind`] helper.
+    #[serde(default)]
+    pub kind: String,
+    /// Phase 3: the `client_id` an agent token is bound to. Required for
+    /// agent tokens; `None` for user tokens. An agent token may only
+    /// register/poll/result/job_update for a client_id that matches this
+    /// value.
+    #[serde(default)]
+    pub allowed_client_id: Option<String>,
 }
 
 impl ApiKeyRecord {
@@ -194,5 +214,50 @@ impl ApiKeyRecord {
     /// True when the token has expired relative to `now` (unix seconds).
     pub fn is_expired(&self, now: i64) -> bool {
         self.expires_at.is_some_and(|exp| now >= exp)
+    }
+
+    /// The token kind, normalized to `"user"` when unset (legacy rows).
+    pub fn kind(&self) -> &str {
+        if self.kind.is_empty() {
+            TOKEN_KIND_USER
+        } else {
+            self.kind.as_str()
+        }
+    }
+
+    /// True when this is an agent token (kind == "agent").
+    pub fn is_agent_token(&self) -> bool {
+        self.kind() == TOKEN_KIND_AGENT
+    }
+
+    /// True when this is a user token (kind == "user", the default).
+    pub fn is_user_token(&self) -> bool {
+        self.kind() == TOKEN_KIND_USER
+    }
+
+    /// The `allowed_client_id` bound to an agent token. `None` for user tokens.
+    pub fn allowed_client_id(&self) -> Option<&str> {
+        self.allowed_client_id.as_deref()
+    }
+}
+
+impl Default for ApiKeyRecord {
+    /// Convenience default used by tests that build a record field-by-field;
+    /// production code constructs the struct explicitly. Defaults `kind` to
+    /// `"user"` and `allowed_client_id` to `None`.
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            user_id: String::new(),
+            name: String::new(),
+            key_prefix: String::new(),
+            created_at: 0,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: String::new(),
+            expires_at: None,
+            kind: TOKEN_KIND_USER.to_string(),
+            allowed_client_id: None,
+        }
     }
 }

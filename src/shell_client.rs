@@ -223,6 +223,19 @@ pub(crate) fn assert_shell_client_owner(
 /// - a normal API key may only register `owner == username`;
 /// - a normal API key with a missing/empty owner is rejected, matching the
 ///   existing owner boundary enforced on later operations.
+///
+/// Phase 3 additions:
+/// - an agent token may register only when its `allowed_client_id` matches
+///   `client_id`;
+/// - when an agent token authenticates owner "alice" and the request's
+///   `owner` is `None`, the effective owner is "alice";
+/// - when an agent token authenticates and `owner` is `Some("alice")`, it is
+///   accepted;
+/// - when an agent token authenticates and `owner` is `Some("bob")`, it is
+///   rejected (agents may not claim another owner);
+/// - a user token (Phase 2 personal API token) is rejected from agent transport
+///   registration. Only bootstrap or agent tokens may use agent transport
+///   endpoints.
 pub(crate) fn enforce_register_owner(
     auth: Option<&crate::auth::AuthContext>,
     client_id: &str,
@@ -231,7 +244,109 @@ pub(crate) fn enforce_register_owner(
     let Some(auth) = auth else {
         return Ok(());
     };
-    assert_shell_client_owner(Some(auth), client_id, owner)
+    // Bootstrap may register any owner.
+    if auth.is_bootstrap {
+        return Ok(());
+    }
+    // Phase 3: agent tokens are bound to an allowed_client_id and an owner.
+    if auth.is_agent_token() {
+        // allowed_client_id must match the registering client_id.
+        match auth.allowed_client_id.as_deref() {
+            Some(allowed) if allowed == client_id => {}
+            _ => {
+                return Err(format!(
+                    "agent token is not bound to client_id '{}'",
+                    client_id
+                ));
+            }
+        }
+        let token_username = auth
+            .username
+            .as_deref()
+            .filter(|u| !u.trim().is_empty())
+            .ok_or_else(|| "agent token has no owner".to_string())?;
+        // If owner is supplied, it must match the token's owner.
+        if let Some(req_owner) = owner.filter(|o| !o.trim().is_empty()) {
+            if req_owner != token_username {
+                return Err(format!(
+                    "agent token owner is '{}'; cannot register owner '{}'",
+                    token_username, req_owner
+                ));
+            }
+        }
+        return Ok(());
+    }
+    // Phase 2 user token: rejected from agent transport endpoints. Only
+    // bootstrap or agent tokens may register.
+    Err("user tokens are not allowed on agent transport endpoints".to_string())
+}
+
+/// Resolve the effective owner for an agent register request. When the caller
+/// is an agent token, the owner is the token's username regardless of the
+/// request body. When the caller is bootstrap, the request body owner is used
+/// (or `None` when absent). Returns the owner to store on the registry record.
+pub(crate) fn effective_register_owner(
+    auth: Option<&crate::auth::AuthContext>,
+    owner: Option<&str>,
+) -> Option<String> {
+    let Some(auth) = auth else {
+        return owner.map(str::to_string);
+    };
+    if auth.is_agent_token() {
+        return auth.username.clone();
+    }
+    owner.filter(|o| !o.trim().is_empty()).map(str::to_string)
+}
+
+/// Enforce the agent transport boundary for poll/result/job_update endpoints.
+/// These endpoints must only accept bootstrap or agent tokens, and an agent
+/// token must be bound to the request's `client_id`. User tokens are rejected.
+///
+/// This complements [`enforce_register_owner`] which handles the register
+/// endpoint. Poll/result/job_update do not carry an owner field; the registry
+/// already knows the owner from registration, so we only need to verify the
+/// client_id matches the token's `allowed_client_id`.
+pub(crate) fn enforce_agent_transport(
+    auth: Option<&crate::auth::AuthContext>,
+    client_id: &str,
+) -> Result<(), String> {
+    let Some(auth) = auth else {
+        return Ok(());
+    };
+    if auth.is_bootstrap {
+        return Ok(());
+    }
+    if auth.is_agent_token() {
+        match auth.allowed_client_id.as_deref() {
+            Some(allowed) if allowed == client_id => Ok(()),
+            _ => Err(format!(
+                "agent token is not bound to client_id '{}'",
+                client_id
+            )),
+        }
+    } else {
+        Err("user tokens are not allowed on agent transport endpoints".to_string())
+    }
+}
+
+/// Require the caller to hold `scope`. Used by agent transport endpoints to
+/// check `agent:register` / `agent:poll` / `agent:result` / `agent:job_update`.
+/// Bootstrap is always treated as holding every scope.
+pub(crate) fn require_agent_transport_scope(
+    auth: Option<&crate::auth::AuthContext>,
+    scope: &str,
+) -> Result<(), String> {
+    let Some(auth) = auth else {
+        return Ok(());
+    };
+    if auth.is_bootstrap {
+        return Ok(());
+    }
+    if auth.is_agent_token() && auth.scopes.iter().any(|s| s == scope) {
+        Ok(())
+    } else {
+        Err(format!("missing required scope: {}", scope))
+    }
 }
 
 fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), String> {
@@ -1824,6 +1939,18 @@ pub async fn shell_agent_register(req: &mut Request, depot: &mut Depot, res: &mu
         }
     };
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    // Phase 3: agent transport endpoints require bootstrap or an agent token
+    // with the agent:register scope. User tokens are rejected.
+    if let Err(e) = require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_REGISTER)
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellClientRegisterResponse {
+            success: false,
+            client: None,
+            error: Some(e),
+        }));
+        return;
+    }
     if let Err(e) = enforce_register_owner(auth.as_ref(), &body.client_id, body.owner.as_deref()) {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellClientRegisterResponse {
@@ -1833,6 +1960,10 @@ pub async fn shell_agent_register(req: &mut Request, depot: &mut Depot, res: &mu
         }));
         return;
     }
+    // Resolve the effective owner: an agent token fills the owner from its
+    // own username; bootstrap keeps the request body owner.
+    let mut body = body;
+    body.owner = effective_register_owner(auth.as_ref(), body.owner.as_deref());
     match registry.register(body).await {
         Ok(client) => res.render(Json(ShellClientRegisterResponse {
             success: true,
@@ -1873,6 +2004,25 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
             return;
         }
     };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    if let Err(e) = require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_POLL) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentPollResponse {
+            success: false,
+            request: None,
+            error: Some(e),
+        }));
+        return;
+    }
+    if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.client_id) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentPollResponse {
+            success: false,
+            request: None,
+            error: Some(e),
+        }));
+        return;
+    }
     match registry.poll(body).await {
         Ok(request) => res.render(Json(ShellAgentPollResponse {
             success: true,
@@ -1911,6 +2061,23 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
             return;
         }
     };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    if let Err(e) = require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_RESULT) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentResultResponse {
+            success: false,
+            error: Some(e),
+        }));
+        return;
+    }
+    if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.client_id) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentResultResponse {
+            success: false,
+            error: Some(e),
+        }));
+        return;
+    }
     match registry.complete(body).await {
         Ok(()) => res.render(Json(ShellAgentResultResponse {
             success: true,
@@ -2876,6 +3043,27 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
             return;
         }
     };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    if let Err(e) =
+        require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_JOB_UPDATE)
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentJobUpdateResponse {
+            success: false,
+            job: None,
+            error: Some(e),
+        }));
+        return;
+    }
+    if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.client_id) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentJobUpdateResponse {
+            success: false,
+            job: None,
+            error: Some(e),
+        }));
+        return;
+    }
     match registry.update_job(body).await {
         Ok(job) => res.render(Json(ShellAgentJobUpdateResponse {
             success: true,
@@ -2916,6 +3104,33 @@ mod tests {
             role: Some(role),
             scopes,
             is_bootstrap,
+            token_kind: if is_bootstrap {
+                None
+            } else {
+                Some("user".to_string())
+            },
+            allowed_client_id: None,
+        }
+    }
+
+    /// Phase 3 test helper: build an agent-token AuthContext bound to
+    /// `username` and `allowed_client_id`, carrying the given agent scopes.
+    fn agent_auth_context(
+        username: &str,
+        allowed_client_id: &str,
+        scopes: Vec<&str>,
+    ) -> crate::auth::AuthContext {
+        crate::auth::AuthContext {
+            kind: crate::auth::AuthKind::AgentToken,
+            user_id: Some(format!("user-{}", username)),
+            username: Some(username.to_string()),
+            api_key_id: Some("key-agent".to_string()),
+            api_key_name: Some("agent key".to_string()),
+            role: Some("user".to_string()),
+            scopes: scopes.into_iter().map(str::to_string).collect(),
+            is_bootstrap: false,
+            token_kind: Some("agent".to_string()),
+            allowed_client_id: Some(allowed_client_id.to_string()),
         }
     }
 
@@ -3778,13 +3993,109 @@ mod tests {
     }
 
     #[test]
-    fn enforce_register_owner_api_key_must_match_username() {
+    fn enforce_register_owner_user_token_is_rejected() {
+        // Phase 3: user tokens (Phase 2 personal API tokens) are no longer
+        // allowed on agent transport endpoints. Only bootstrap or agent tokens
+        // may register.
         let alice = auth_context(Some("alice"), false);
-        assert!(enforce_register_owner(Some(&alice), "client-1", Some("alice")).is_ok());
-        let mismatch = enforce_register_owner(Some(&alice), "client-1", Some("bob")).unwrap_err();
-        assert!(mismatch.contains("owned by bob"));
-        let missing = enforce_register_owner(Some(&alice), "client-1", None).unwrap_err();
-        assert_eq!(missing, "agent client client-1 has no owner");
+        let err = enforce_register_owner(Some(&alice), "client-1", Some("alice")).unwrap_err();
+        assert!(err.contains("user tokens are not allowed"), "got: {}", err);
+    }
+
+    #[test]
+    fn enforce_register_owner_agent_token_matching_client_id_succeeds() {
+        let alice = agent_auth_context(
+            "alice",
+            "alice-laptop",
+            vec![
+                "agent:register",
+                "agent:poll",
+                "agent:result",
+                "agent:job_update",
+            ],
+        );
+        // Matching client_id + matching owner -> Ok.
+        assert!(enforce_register_owner(Some(&alice), "alice-laptop", Some("alice")).is_ok());
+        // Matching client_id + missing owner -> Ok (owner filled in by the
+        // caller via effective_register_owner).
+        assert!(enforce_register_owner(Some(&alice), "alice-laptop", None).is_ok());
+    }
+
+    #[test]
+    fn enforce_register_owner_agent_token_wrong_client_id_rejected() {
+        let alice = agent_auth_context("alice", "alice-laptop", vec!["agent:register"]);
+        let err = enforce_register_owner(Some(&alice), "other-laptop", None).unwrap_err();
+        assert!(err.contains("not bound to client_id"), "got: {}", err);
+    }
+
+    #[test]
+    fn enforce_register_owner_agent_token_owner_mismatch_rejected() {
+        let alice = agent_auth_context("alice", "alice-laptop", vec!["agent:register"]);
+        let err = enforce_register_owner(Some(&alice), "alice-laptop", Some("bob")).unwrap_err();
+        assert!(err.contains("agent token owner is 'alice'"), "got: {}", err);
+        assert!(err.contains("bob"), "got: {}", err);
+    }
+
+    #[test]
+    fn effective_register_owner_agent_token_fills_username() {
+        let alice = agent_auth_context("alice", "alice-laptop", vec!["agent:register"]);
+        // Missing owner -> filled with the token's username.
+        assert_eq!(
+            effective_register_owner(Some(&alice), None),
+            Some("alice".to_string())
+        );
+        // Matching owner preserved.
+        assert_eq!(
+            effective_register_owner(Some(&alice), Some("alice")),
+            Some("alice".to_string())
+        );
+        // Bootstrap keeps the request owner.
+        let bootstrap = auth_context(None, true);
+        assert_eq!(
+            effective_register_owner(Some(&bootstrap), Some("bob")),
+            Some("bob".to_string())
+        );
+    }
+
+    #[test]
+    fn enforce_agent_transport_rejects_user_token() {
+        let alice = auth_context(Some("alice"), false);
+        let err = enforce_agent_transport(Some(&alice), "client-1").unwrap_err();
+        assert!(err.contains("user tokens are not allowed"), "got: {}", err);
+    }
+
+    #[test]
+    fn enforce_agent_transport_agent_token_matching_client_succeeds() {
+        let alice = agent_auth_context("alice", "alice-laptop", vec!["agent:poll"]);
+        assert!(enforce_agent_transport(Some(&alice), "alice-laptop").is_ok());
+        let err = enforce_agent_transport(Some(&alice), "other").unwrap_err();
+        assert!(err.contains("not bound"), "got: {}", err);
+    }
+
+    #[test]
+    fn enforce_agent_transport_bootstrap_succeeds() {
+        let bootstrap = auth_context(None, true);
+        assert!(enforce_agent_transport(Some(&bootstrap), "any-client").is_ok());
+    }
+
+    #[test]
+    fn require_agent_transport_scope_agent_token_with_scope_succeeds() {
+        let alice = agent_auth_context("alice", "alice-laptop", vec!["agent:poll"]);
+        assert!(require_agent_transport_scope(Some(&alice), "agent:poll").is_ok());
+        assert!(require_agent_transport_scope(Some(&alice), "agent:register").is_err());
+    }
+
+    #[test]
+    fn require_agent_transport_scope_bootstrap_always_succeeds() {
+        let bootstrap = auth_context(None, true);
+        assert!(require_agent_transport_scope(Some(&bootstrap), "agent:register").is_ok());
+    }
+
+    #[test]
+    fn require_agent_transport_scope_user_token_rejected() {
+        let alice = auth_context(Some("alice"), false);
+        let err = require_agent_transport_scope(Some(&alice), "agent:register").unwrap_err();
+        assert!(err.contains("missing required scope"), "got: {}", err);
     }
 
     #[tokio::test]

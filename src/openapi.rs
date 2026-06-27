@@ -114,6 +114,12 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/tokens/create",
     "/api/tokens/list",
     "/api/tokens/revoke",
+    // Phase 3 agent token management: same REST-only admin/self surface, also
+    // excluded from GPT Actions. Agent tokens are bound to an owner and an
+    // allowed_client_id and are only used by the webcodex-agent transport.
+    "/api/agent-tokens/create",
+    "/api/agent-tokens/list",
+    "/api/agent-tokens/revoke",
     "/mcp",
     "/openapi.json",
     // The MCP App console is a public static HTML/JS/CSS surface served via
@@ -2155,5 +2161,41 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("observability"));
+    }
+
+    #[test]
+    fn openapi_does_not_expose_agent_token_management_endpoints() {
+        // Phase 3: agent token management endpoints (create/list/revoke) are
+        // REST-only admin/self surfaces and must NOT appear in /openapi.json
+        // (GPT Actions). They are listed in LEGACY_FORBIDDEN_PATHS too; this
+        // test pins the specific endpoints for clarity.
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        for path in [
+            "/api/agent-tokens/create",
+            "/api/agent-tokens/list",
+            "/api/agent-tokens/revoke",
+        ] {
+            assert!(
+                !paths.contains_key(path),
+                "agent token management endpoint '{}' must not appear in openapi.json",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn openapi_operation_count_stays_twenty_seven_after_phase3() {
+        // Phase 3 adds agent token management endpoints to the REST surface
+        // but does NOT add them to /openapi.json. The GPT Actions operation
+        // count must remain 27.
+        let spec = build_openapi_spec();
+        let count: usize = spec["paths"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|m| m.as_object().unwrap().len())
+            .sum();
+        assert_eq!(count, 27, "GPT Actions schema must remain 27 operations");
     }
 }

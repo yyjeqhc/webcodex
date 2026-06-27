@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 mod action_audit;
 mod action_sessions;
+mod agent_tokens_http;
 mod agent_ws;
 mod audit_http;
 mod auth;
@@ -272,6 +273,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("tokens/create").post(users_http::tokens_create))
             .push(Router::with_path("tokens/list").post(users_http::tokens_list))
             .push(Router::with_path("tokens/revoke").post(users_http::tokens_revoke))
+            // Phase 3 agent token management: REST-only admin/self-management
+            // surface for agent tokens bound to an owner + allowed_client_id.
+            // Intentionally NOT exposed in /openapi.json (GPT Actions) because
+            // token creation is sensitive. All behind the shared AuthMiddleware
+            // Bearer auth. Agent tokens themselves are rejected from these
+            // endpoints so a leaked agent token cannot mint more tokens.
+            .push(
+                Router::with_path("agent-tokens/create")
+                    .post(agent_tokens_http::agent_tokens_create),
+            )
+            .push(Router::with_path("agent-tokens/list").post(agent_tokens_http::agent_tokens_list))
+            .push(
+                Router::with_path("agent-tokens/revoke")
+                    .post(agent_tokens_http::agent_tokens_revoke),
+            )
             .push(Router::with_path("shell/run").post(shell_run))
             .push(Router::with_path("shell/file").post(shell_file_op))
             .push(Router::with_path("shell/job").post(shell_job))

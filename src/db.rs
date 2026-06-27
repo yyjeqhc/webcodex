@@ -230,6 +230,8 @@ impl Database {
                 revoked_at INTEGER,
                 scopes TEXT NOT NULL DEFAULT '',
                 expires_at INTEGER,
+                kind TEXT NOT NULL DEFAULT 'user',
+                allowed_client_id TEXT,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
             CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
@@ -320,6 +322,11 @@ impl Database {
     /// `updated_at` on `users`; `scopes`, `expires_at` on `api_keys`) to older
     /// databases. Each ALTER is guarded by a `PRAGMA table_info` check so it
     /// is idempotent and safe to run on every startup.
+    ///
+    /// Phase 3 extends `api_keys` with `kind` (default `"user"`) and
+    /// `allowed_client_id` (nullable). Existing personal API tokens are
+    /// preserved as `kind="user"` via the column default; agent tokens must be
+    /// created explicitly through the agent-token management endpoints.
     fn migrate_users_and_api_keys(conn: &Connection) -> anyhow::Result<()> {
         let user_cols = table_columns(conn, "users")?;
         for (col, decl) in [
@@ -339,6 +346,12 @@ impl Database {
         for (col, decl) in [
             ("scopes", "TEXT NOT NULL DEFAULT ''"),
             ("expires_at", "INTEGER"),
+            // Phase 3: agent token kind + bound client_id. `kind` defaults to
+            // `"user"` so legacy rows continue to behave as personal API
+            // tokens. `allowed_client_id` is nullable and only set on agent
+            // tokens.
+            ("kind", "TEXT NOT NULL DEFAULT 'user'"),
+            ("allowed_client_id", "TEXT"),
         ] {
             if !key_cols.iter().any(|c| c == col) {
                 conn.execute(
@@ -1183,7 +1196,7 @@ impl Database {
     pub fn get_api_key_by_hash(&self, hash: &str) -> anyhow::Result<Option<ApiKeyRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at, kind, allowed_client_id
              FROM api_keys
              WHERE key_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -1197,8 +1210,8 @@ impl Database {
     pub fn insert_api_key(&self, key: &ApiKeyRecord, key_hash: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            "INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at, kind, allowed_client_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 key.id,
                 key.user_id,
@@ -1210,6 +1223,8 @@ impl Database {
                 key.revoked_at,
                 key.scopes,
                 key.expires_at,
+                key.kind,
+                key.allowed_client_id,
             ],
         )?;
         Ok(())
@@ -1218,8 +1233,20 @@ impl Database {
     pub fn list_api_keys_by_user(&self, user_id: &str) -> anyhow::Result<Vec<ApiKeyRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at, kind, allowed_client_id
              FROM api_keys WHERE user_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map(params![user_id], row_to_api_key)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// List only agent tokens (`kind='agent'`) for a user. Phase 3 agent-token
+    /// management surface. Ordered by `created_at DESC`.
+    pub fn list_agent_api_keys_by_user(&self, user_id: &str) -> anyhow::Result<Vec<ApiKeyRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at, kind, allowed_client_id
+             FROM api_keys WHERE user_id = ?1 AND kind = 'agent' ORDER BY created_at DESC",
         )?;
         let rows = stmt.query_map(params![user_id], row_to_api_key)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -1230,7 +1257,7 @@ impl Database {
     pub fn get_api_key_by_id(&self, id: &str) -> anyhow::Result<Option<ApiKeyRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at, kind, allowed_client_id
              FROM api_keys WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map(params![id], row_to_api_key)?;
@@ -1326,9 +1353,12 @@ fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<UserRecord> {
     })
 }
 
-/// Map an `api_keys` row (9 columns, Phase 2 order) to an `ApiKeyRecord`.
+/// Map an `api_keys` row (11 columns, Phase 3 order) to an `ApiKeyRecord`.
 /// Columns are positional: id, user_id, name, key_prefix, created_at,
-/// last_used_at, revoked_at, scopes, expires_at.
+/// last_used_at, revoked_at, scopes, expires_at, kind, allowed_client_id.
+/// Older rows without `kind`/`allowed_client_id` are filled in via the column
+/// default (`kind="user"`, `allowed_client_id=NULL`) at the SQL level, so this
+/// mapper only ever sees the full 11-column projection.
 fn row_to_api_key(row: &rusqlite::Row) -> rusqlite::Result<ApiKeyRecord> {
     Ok(ApiKeyRecord {
         id: row.get(0)?,
@@ -1340,6 +1370,10 @@ fn row_to_api_key(row: &rusqlite::Row) -> rusqlite::Result<ApiKeyRecord> {
         revoked_at: row.get(6)?,
         scopes: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
         expires_at: row.get(8)?,
+        kind: row
+            .get::<_, Option<String>>(9)?
+            .unwrap_or_else(|| "user".to_string()),
+        allowed_client_id: row.get(10)?,
     })
 }
 
@@ -1383,6 +1417,8 @@ mod tests {
             revoked_at: None,
             scopes: "runtime:read project:write".to_string(),
             expires_at: None,
+            kind: "user".to_string(),
+            allowed_client_id: None,
         };
         db.insert_api_key(&key, "hash-1").unwrap();
         let fetched_key = db.get_api_key_by_hash("hash-1").unwrap().unwrap();
@@ -1523,6 +1559,8 @@ mod tests {
             revoked_at: None,
             scopes: "runtime:read project:write".to_string(),
             expires_at: None,
+            kind: "user".to_string(),
+            allowed_client_id: None,
         };
         db.insert_api_key(&key, &key_hash).unwrap();
 
@@ -1579,5 +1617,249 @@ mod tests {
         db.set_user_disabled("u-1", true, now).unwrap();
         let disabled_user = db.get_user_by_id("u-1").unwrap().unwrap();
         assert!(disabled_user.is_disabled());
+    }
+
+    /// Phase 3: existing user tokens default to kind="user" after migration,
+    /// and the model helpers correctly distinguish user vs agent tokens.
+    #[test]
+    fn phase3_existing_user_tokens_default_to_kind_user_after_migration() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        db.create_user(&UserRecord {
+            id: "u-1".to_string(),
+            username: "alice".to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        })
+        .unwrap();
+        // Simulate a legacy Phase 2 row by constructing an ApiKeyRecord with
+        // kind="user" (the migration default) and allowed_client_id=None.
+        let key = ApiKeyRecord {
+            id: "k-legacy".to_string(),
+            user_id: "u-1".to_string(),
+            name: "legacy".to_string(),
+            key_prefix: "wc_pat_legacy".to_string(),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: "runtime:read".to_string(),
+            expires_at: None,
+            kind: "user".to_string(),
+            allowed_client_id: None,
+        };
+        db.insert_api_key(&key, "hash-legacy").unwrap();
+        let fetched = db.get_api_key_by_hash("hash-legacy").unwrap().unwrap();
+        assert!(fetched.is_user_token(), "legacy token must be kind=user");
+        assert!(!fetched.is_agent_token());
+        assert_eq!(fetched.kind(), "user");
+        assert!(fetched.allowed_client_id().is_none());
+    }
+
+    /// Phase 3: agent tokens are stored with kind=agent and allowed_client_id,
+    /// and the hash (not plaintext) is persisted.
+    #[test]
+    fn phase3_agent_token_stored_with_kind_and_allowed_client_id() {
+        use sha2::{Digest, Sha256};
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        db.create_user(&UserRecord {
+            id: "u-1".to_string(),
+            username: "alice".to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        })
+        .unwrap();
+        let plaintext = "wc_agent_secretvalue1234567890abcdef";
+        let mut hasher = Sha256::new();
+        hasher.update(plaintext.as_bytes());
+        let key_hash = format!("{:x}", hasher.finalize());
+        let key = ApiKeyRecord {
+            id: "k-agent-1".to_string(),
+            user_id: "u-1".to_string(),
+            name: "laptop agent".to_string(),
+            key_prefix: "wc_agent_secret".to_string(),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: "agent:register agent:poll agent:result agent:job_update".to_string(),
+            expires_at: None,
+            kind: "agent".to_string(),
+            allowed_client_id: Some("alice-laptop".to_string()),
+        };
+        db.insert_api_key(&key, &key_hash).unwrap();
+        // The stored key_hash must not be the plaintext token.
+        let conn = db.conn_for_tests();
+        let stored_hash: String = conn
+            .query_row(
+                "SELECT key_hash FROM api_keys WHERE id = 'k-agent-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(stored_hash, plaintext);
+        assert_eq!(stored_hash, key_hash);
+        // The stored kind and allowed_client_id must match.
+        let (stored_kind, stored_cid): (String, Option<String>) = conn
+            .query_row(
+                "SELECT kind, allowed_client_id FROM api_keys WHERE id = 'k-agent-1'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        drop(conn);
+        assert_eq!(stored_kind, "agent");
+        assert_eq!(stored_cid.as_deref(), Some("alice-laptop"));
+
+        // Lookup succeeds and the record reports agent token.
+        let fetched = db.get_api_key_by_hash(&key_hash).unwrap().unwrap();
+        assert!(fetched.is_agent_token());
+        assert!(!fetched.is_user_token());
+        assert_eq!(fetched.kind(), "agent");
+        assert_eq!(fetched.allowed_client_id(), Some("alice-laptop"));
+        assert_eq!(
+            fetched.scopes_vec(),
+            vec![
+                "agent:register".to_string(),
+                "agent:poll".to_string(),
+                "agent:result".to_string(),
+                "agent:job_update".to_string(),
+            ]
+        );
+    }
+
+    /// Phase 3: revoked/expired/disabled checks apply to agent tokens too.
+    #[test]
+    fn phase3_agent_token_revoked_expired_disabled_checks_apply() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        db.create_user(&UserRecord {
+            id: "u-1".to_string(),
+            username: "alice".to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        })
+        .unwrap();
+        let key = ApiKeyRecord {
+            id: "k-agent".to_string(),
+            user_id: "u-1".to_string(),
+            name: "agent".to_string(),
+            key_prefix: "wc_agent_pre".to_string(),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: "agent:register".to_string(),
+            expires_at: None,
+            kind: "agent".to_string(),
+            allowed_client_id: Some("alice-laptop".to_string()),
+        };
+        db.insert_api_key(&key, "hash-agent").unwrap();
+        // Revoked agent token is ignored by get_api_key_by_hash.
+        db.revoke_api_key("k-agent", now + 10).unwrap();
+        assert!(db.get_api_key_by_hash("hash-agent").unwrap().is_none());
+        // But get_api_key_by_id returns it with revoked_at set.
+        let revoked = db.get_api_key_by_id("k-agent").unwrap().unwrap();
+        assert!(revoked.is_revoked());
+        assert!(revoked.is_agent_token());
+
+        // Expired agent token: is_expired reports true.
+        let exp_key = ApiKeyRecord {
+            id: "k-agent-exp".to_string(),
+            revoked_at: None,
+            expires_at: Some(now - 1),
+            ..key.clone()
+        };
+        db.insert_api_key(&exp_key, "hash-agent-exp").unwrap();
+        let fetched = db.get_api_key_by_hash("hash-agent-exp").unwrap().unwrap();
+        assert!(fetched.is_expired(now));
+        assert!(fetched.is_agent_token());
+
+        // Disabled-user agent token: the auth layer checks user.is_disabled();
+        // here we confirm the DB marks the user disabled.
+        db.set_user_disabled("u-1", true, now).unwrap();
+        let disabled_user = db.get_user_by_id("u-1").unwrap().unwrap();
+        assert!(disabled_user.is_disabled());
+    }
+
+    /// Phase 3: list_user_tokens (list_api_keys_by_user) returns both user and
+    /// agent tokens; list_agent_tokens returns only kind=agent.
+    #[test]
+    fn phase3_list_agent_tokens_returns_only_kind_agent() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        db.create_user(&UserRecord {
+            id: "u-1".to_string(),
+            username: "alice".to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        })
+        .unwrap();
+        // One user token, two agent tokens.
+        let user_key = ApiKeyRecord {
+            id: "k-user".to_string(),
+            user_id: "u-1".to_string(),
+            name: "user".to_string(),
+            key_prefix: "wc_pat_user".to_string(),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: "runtime:read".to_string(),
+            expires_at: None,
+            kind: "user".to_string(),
+            allowed_client_id: None,
+        };
+        db.insert_api_key(&user_key, "hash-user").unwrap();
+        let agent_key_1 = ApiKeyRecord {
+            id: "k-agent-1".to_string(),
+            name: "agent-1".to_string(),
+            key_prefix: "wc_agent_a1".to_string(),
+            kind: "agent".to_string(),
+            allowed_client_id: Some("laptop".to_string()),
+            scopes: "agent:register".to_string(),
+            ..user_key.clone()
+        };
+        db.insert_api_key(&agent_key_1, "hash-agent-1").unwrap();
+        let agent_key_2 = ApiKeyRecord {
+            id: "k-agent-2".to_string(),
+            name: "agent-2".to_string(),
+            key_prefix: "wc_agent_a2".to_string(),
+            kind: "agent".to_string(),
+            allowed_client_id: Some("desktop".to_string()),
+            scopes: "agent:poll agent:result".to_string(),
+            ..user_key.clone()
+        };
+        db.insert_api_key(&agent_key_2, "hash-agent-2").unwrap();
+
+        // list_api_keys_by_user returns all 3.
+        let all = db.list_api_keys_by_user("u-1").unwrap();
+        assert_eq!(all.len(), 3);
+
+        // list_agent_api_keys_by_user returns only the 2 agent tokens.
+        let agents = db.list_agent_api_keys_by_user("u-1").unwrap();
+        assert_eq!(agents.len(), 2);
+        assert!(agents.iter().all(|k| k.is_agent_token()));
+        assert!(
+            agents.iter().all(|k| k.allowed_client_id.is_some()),
+            "agent tokens must have allowed_client_id"
+        );
     }
 }

@@ -20,7 +20,8 @@ There is no second business-logic path for WebSocket.
 
 ## Authentication
 
-Both transports require Bearer auth (`WEBCODEX_TOKEN` or an API key):
+Both transports require Bearer auth (`WEBCODEX_TOKEN` or a token from the
+`api_keys` table):
 
 - Polling: `Authorization: Bearer <token>` on every request (or `?token=`).
 - WebSocket: `Authorization: Bearer <token>` in the handshake request headers.
@@ -28,15 +29,36 @@ Both transports require Bearer auth (`WEBCODEX_TOKEN` or an API key):
 Auth is enforced by the shared `AuthMiddleware`. The WebSocket endpoint is
 mounted under the same authenticated `/api` router as the polling endpoints.
 
+### Token kinds (Phase 3)
+
+The `api_keys` table now carries a `kind` column (`"user"` or `"agent"`):
+
+- **User tokens** (`wc_pat_…`, kind=`"user"`): Phase 2 personal API tokens used
+  by GPT Actions / MCP / CLI. They represent a human user and may request
+  runtime operations against that user's agents/projects. They are **rejected**
+  by agent transport endpoints.
+- **Agent tokens** (`wc_agent_…`, kind=`agent`): bound to an owner username
+  (via `user_id`) and an `allowed_client_id`. They may **only** authorize agent
+  transport endpoints (`/api/shell/agent/*`, `/api/agents/ws`) and may only
+  register/poll/result/job_update for the bound `client_id`. They are rejected
+  by all normal runtime/project/admin/user-token-management endpoints.
+
+Agent tokens are managed via REST-only endpoints (excluded from GPT Actions
+OpenAPI): `POST /api/agent-tokens/create`, `/api/agent-tokens/list`,
+`/api/agent-tokens/revoke`. The `webcodex-agent` binary should use an agent
+token, not a user token or the bootstrap token.
+
 ### Owner binding at registration
 
 The `owner` field in `register` is bound to the authenticated principal, on
-both transports, by `enforce_register_owner` (which reuses the existing
-`assert_shell_client_owner` rule):
+both transports, by `enforce_register_owner`:
 
 - A bootstrap token (or auth disabled) may register any `owner`.
-- A normal API key may only register `owner == <api key username>`.
-- A normal API key with a missing/empty `owner` is rejected.
+- An agent token may register only when its `allowed_client_id` matches the
+  request `client_id`; when the request `owner` is missing it is filled in
+  from the token's username; when supplied it must match the token's owner.
+- A user token (Phase 2 personal API key) is rejected from agent transport
+  endpoints.
 
 This closes the gap where any valid token could register a client under an
 arbitrary owner. Polling and WebSocket register follow the same rule.

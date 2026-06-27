@@ -78,6 +78,20 @@ fn is_admin_caller(auth: &AuthContext) -> bool {
         || auth.scopes.iter().any(|s| s == SCOPE_ADMIN)
 }
 
+/// Phase 3: agent tokens must not be able to call user/token management
+/// endpoints. Returns an error response tuple when the caller is an agent
+/// token.
+fn reject_agent_token(auth: &AuthContext) -> Result<(), (StatusCode, String)> {
+    if auth.is_agent_token() {
+        Err((
+            StatusCode::FORBIDDEN,
+            "agent tokens may not manage users or tokens".to_string(),
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 /// Resolve the authenticated caller's username, if any. Bootstrap callers do
 /// not have a username.
 fn caller_username(auth: &AuthContext) -> Option<&str> {
@@ -189,6 +203,11 @@ pub(crate) async fn users_create(req: &mut Request, depot: &mut Depot, res: &mut
         ));
         return;
     }
+    if let Err((code, msg)) = reject_agent_token(auth) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
 
     let username = match validate_username(&body.username) {
         Ok(u) => u,
@@ -287,6 +306,11 @@ pub(crate) async fn users_list(depot: &mut Depot, res: &mut Response) {
         ));
         return;
     }
+    if let Err((code, msg)) = reject_agent_token(auth) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
     let Some(db) = crate::get_db(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(json_error(
@@ -338,6 +362,11 @@ pub(crate) async fn tokens_create(req: &mut Request, depot: &mut Depot, res: &mu
         ));
         return;
     };
+    if let Err((code, msg)) = reject_agent_token(auth) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
     let username = match validate_username(&body.username) {
         Ok(u) => u,
         Err(e) => {
@@ -432,6 +461,8 @@ pub(crate) async fn tokens_create(req: &mut Request, depot: &mut Depot, res: &mu
         revoked_at: None,
         scopes: scopes_to_string(&scopes),
         expires_at: body.expires_at,
+        kind: crate::models::TOKEN_KIND_USER.to_string(),
+        allowed_client_id: None,
     };
     if let Err(e) = db.insert_api_key(&record, &key_hash) {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
@@ -480,6 +511,11 @@ pub(crate) async fn tokens_list(req: &mut Request, depot: &mut Depot, res: &mut 
         ));
         return;
     };
+    if let Err((code, msg)) = reject_agent_token(auth) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
     let username = match validate_username(&body.username) {
         Ok(u) => u,
         Err(e) => {
@@ -555,6 +591,11 @@ pub(crate) async fn tokens_revoke(req: &mut Request, depot: &mut Depot, res: &mu
         ));
         return;
     };
+    if let Err((code, msg)) = reject_agent_token(auth) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
     let username = match validate_username(&body.username) {
         Ok(u) => u,
         Err(e) => {

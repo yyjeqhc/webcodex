@@ -17,7 +17,10 @@
 //!
 //! Polling remains a fully supported fallback transport.
 
-use crate::shell_client::{enforce_register_owner, ShellClientRegistry, TRANSPORT_WEBSOCKET};
+use crate::shell_client::{
+    effective_register_owner, enforce_register_owner, require_agent_transport_scope,
+    ShellClientRegistry, TRANSPORT_WEBSOCKET,
+};
 use crate::shell_protocol::{AgentEnvelope, ShellAgentPollRequest, ShellClientRegisterRequest};
 use futures_util::{SinkExt, StreamExt};
 use salvo::prelude::*;
@@ -92,11 +95,25 @@ async fn handle_agent_ws(
     let client_id = register_payload.client_id.clone();
     let agent_instance_id = register_payload.agent_instance_id.clone();
 
-    // 1b. Enforce the owner/auth boundary before mutating the registry. This
-    //     mirrors the polling register handler: bootstrap may register any
-    //     owner; a normal API key may only register owner == username. When
-    //     no AuthContext is present (unit tests without AuthMiddleware) the
-    //     check is a no-op; production always runs behind AuthMiddleware.
+    // 1b. Enforce the agent transport boundary before mutating the registry.
+    //     This mirrors the polling register handler: bootstrap may register
+    //     any owner; an agent token may register only when its
+    //     allowed_client_id matches and its owner matches the requested owner
+    //     (or fills it in when absent); user tokens are rejected. When no
+    //     AuthContext is present (unit tests without AuthMiddleware) the check
+    //     is a no-op; production always runs behind AuthMiddleware.
+    if let Err(e) = require_agent_transport_scope(auth.as_ref(), crate::auth::SCOPE_AGENT_REGISTER)
+    {
+        let _ = send_envelope(
+            &mut ws,
+            AgentEnvelope::Error {
+                code: "register_forbidden".to_string(),
+                message: e,
+            },
+        )
+        .await;
+        return;
+    }
     if let Err(e) = enforce_register_owner(
         auth.as_ref(),
         &register_payload.client_id,
@@ -112,6 +129,10 @@ async fn handle_agent_ws(
         .await;
         return;
     }
+    // Resolve the effective owner (agent token fills owner from its username).
+    let mut register_payload = register_payload;
+    register_payload.owner =
+        effective_register_owner(auth.as_ref(), register_payload.owner.as_deref());
 
     // 2. Register into the shared registry (same path as polling register),
     //    then flip the transport label and install a push notifier so the

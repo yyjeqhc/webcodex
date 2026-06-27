@@ -74,10 +74,10 @@ The server cache is visible via `list_agents` (a `ToolRuntime` tool) and the
 > - `POST /api/codex/project_workflow`
 > - `POST /api/codex/project_doctor`
 >
-> The `pdctl.py new`, `agent-snapshot`, `agent-precommit`, `agent-hook`,
-> `workflow-job`, `shell-job`, `shell-batch`, `doctor`, `workflow`, `snapshot`,
-> `precommit`, and `hook` subcommands depend on these removed routes and are
-> legacy (see the `scripts/pdctl.py` deprecation notice).
+> Legacy local CLI subcommands such as `new`, `agent-snapshot`, `agent-precommit`,
+> `agent-hook`, `workflow-job`, `shell-job`, `shell-batch`, `doctor`, `workflow`,
+> `snapshot`, `precommit`, and `hook` depended on these removed routes and must
+> not be used.
 
 The `[hooks]` table in a `projects.d` file is still parsed and hook **names**
 are still reported to the server, but no current runtime route invokes hook

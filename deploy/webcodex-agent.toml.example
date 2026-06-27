@@ -4,18 +4,18 @@
 # Public server URL. Must match the server's WEBCODEX_PUBLIC_URL so TLS validates.
 server_url = "https://webcodex.example.com"
 
-# Bearer token. Must equal the server's WEBCODEX_TOKEN (or a valid API key).
-# NEVER commit a real token; replace this placeholder.
-token = "REPLACE_WITH_WEBCODEX_TOKEN_OR_AGENT_TOKEN"
+# Bearer token for this agent. Prefer a Phase 3 wc_agent_ token bound to this
+# client_id. NEVER commit a real token; replace this placeholder.
+token = "REPLACE_WITH_WC_AGENT_TOKEN"
 
 # Stable unique id for this agent host. Used in runtime ids:
 #   agent:<client_id>:<project_id>
 client_id = "workstation-1"
 display_name = "Workstation"
 
-# Owner principal. A bootstrap WEBCODEX_TOKEN may register any owner; a normal API
-# key may only register owner == <username>. Applied identically to polling and
-# WebSocket.
+# Owner principal. A bootstrap WEBCODEX_TOKEN may register any owner during
+# setup; an agent token fills or verifies owner == <username>. Applied
+# identically to polling and WebSocket.
 owner = "you"
 
 # Preferred long-lived transport. WebSocket is preferred; polling is the

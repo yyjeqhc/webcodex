@@ -143,8 +143,12 @@ https://webcodex.example.com/openapi.json
 Use HTTP API key authentication in the `Authorization` header:
 
 ```text
-Bearer <WEBCODEX_TOKEN>
+Bearer <wc_pat_user_api_token>
 ```
+
+Use the server `WEBCODEX_TOKEN` only as a bootstrap/admin credential for setup.
+Use personal API tokens for GPT Actions/MCP and agent tokens for
+`webcodex-agent`.
 
 For MCP / Apps, connect to:
 
@@ -191,8 +195,9 @@ GPT Actions:
 - [ ] Schema exposes 25 operations (`scripts/e2e_zero_config_ws.sh` asserts
       this against the live schema).
 - [ ] Every operation is POST-only (asserted by the E2E schema check).
-- [ ] `WEBCODEX_TOKEN` is set on the server; GPT Action auth is configured as an
-      HTTP API key in the `Authorization` header with value `Bearer <WEBCODEX_TOKEN>`.
+- [ ] `WEBCODEX_TOKEN` is set on the server as the bootstrap/admin credential;
+      GPT Action auth is configured as an HTTP API key in the `Authorization`
+      header with a Phase 2 personal API token.
 - [ ] At least one agent is `online` (`POST /api/runtime/status`).
 - [ ] `POST /api/projects/list` shows `agent:<client_id>:<project_id>`.
 - [ ] Local full-auto loop E2E passes:

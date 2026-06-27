@@ -91,7 +91,7 @@ Agent config example:
 
 ```toml
 server_url = "https://webcodex.example.com"
-token = "REPLACE_WITH_WEBCODEX_TOKEN"
+token = "REPLACE_WITH_WC_AGENT_TOKEN"
 client_id = "workstation-1"
 display_name = "Workstation"
 owner = "you"
@@ -150,8 +150,12 @@ Configure authentication as an HTTP API key in the `Authorization` header with
 value:
 
 ```text
-Bearer <WEBCODEX_TOKEN>
+Bearer <wc_pat_user_api_token>
 ```
+
+Use the server `WEBCODEX_TOKEN` only as a bootstrap/admin credential for setup.
+Use personal API tokens for GPT Actions/MCP and agent tokens for
+`webcodex-agent`.
 
 GPT Actions and MCP are peer surfaces over the same `ToolRuntime`. GPT
 Actions expose a small typed OpenAPI surface with stable operation ids; MCP

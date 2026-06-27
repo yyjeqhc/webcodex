@@ -2,6 +2,7 @@ use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet, VecDeque};
+use std::fs::OpenOptions;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -22,6 +23,7 @@ use shell_protocol::{
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
+const DEFAULT_INIT_PROJECTS_DIR: &str = "/etc/webcodex/projects.d";
 const DEFAULT_POLL_INTERVAL_MS: u64 = 1000;
 const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
@@ -371,10 +373,62 @@ enum OutputChunk {
     Stderr(String),
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum AgentCliAction {
+    Run {
+        config_path: PathBuf,
+        once: bool,
+    },
+    Init(AgentInitOptions),
+    Exit {
+        code: i32,
+        stdout: String,
+        stderr: String,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AgentInitOptions {
+    server_url: String,
+    token: Option<String>,
+    token_file: Option<PathBuf>,
+    client_id: String,
+    owner: String,
+    display_name: Option<String>,
+    transport: String,
+    poll_interval_ms: u64,
+    projects_dir: PathBuf,
+    output: PathBuf,
+    allowed_roots: Vec<PathBuf>,
+    allow_cwd_anywhere: bool,
+    overwrite: bool,
+}
+
 fn usage() -> &'static str {
-    "Usage: webcodex-agent [--config PATH] [--once]\n\n\
+    "Usage: webcodex-agent [--config PATH] [--once]\n\
+       webcodex-agent init --server-url URL [--token TOKEN|--token-file PATH] --client-id ID --owner USER --output PATH [--allowed-root PATH...]\n\n\
+     Options:\n\
+       -h, --help                 Print help and exit\n\
+       -V, --version              Print version and exit\n\
+       -c, --config PATH          Agent config path for normal runtime\n\
+       --once                     Poll once, then exit (polling transport)\n\n\
+     Init options:\n\
+       --server-url URL           WebCodex server URL\n\
+       --token TOKEN              Agent token for generated config\n\
+       --token-file PATH          Read agent token from file\n\
+       --client-id ID             Stable agent client id\n\
+       --owner USER               Owner username\n\
+       --display-name NAME        Human-readable agent name\n\
+       --transport NAME           websocket (default) or polling\n\
+       --poll-interval-ms N       Polling interval, default 1000\n\
+       --projects-dir PATH        Project config directory, default /etc/webcodex/projects.d\n\
+       --allowed-root PATH        Allowed project/root path; repeatable\n\
+       --allow-cwd-anywhere BOOL  Allow cwd outside allowed_roots; default false\n\
+       --output PATH|-            Output config path, or '-' for stdout\n\
+       --overwrite                Replace an existing output file\n\n\
      Environment:\n\
        WEBCODEX_AGENT_CONFIG      default config path override\n\
+       WEBCODEX_AGENT_TOKEN       token fallback for init\n\
      Example agent.toml:\n\
        server_url = \"https://v4.yyjeqhc.cn\"\n\
        token = \"...\"\n\
@@ -391,17 +445,69 @@ fn usage() -> &'static str {
        max_output_bytes = 262144\n"
 }
 
-fn parse_args() -> Result<(PathBuf, bool), String> {
+fn parse_args() -> Result<AgentCliAction, String> {
+    parse_agent_args(std::env::args().skip(1))
+}
+
+fn parse_agent_args<I, S>(args: I) -> Result<AgentCliAction, String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    let args: Vec<String> = args
+        .into_iter()
+        .map(|arg| arg.as_ref().to_string())
+        .collect();
+    if args.len() == 1 {
+        match args[0].as_str() {
+            "--help" | "-h" => {
+                return Ok(AgentCliAction::Exit {
+                    code: 0,
+                    stdout: usage().to_string(),
+                    stderr: String::new(),
+                });
+            }
+            "--version" | "-V" => {
+                return Ok(AgentCliAction::Exit {
+                    code: 0,
+                    stdout: format!("webcodex-agent {}\n", env!("CARGO_PKG_VERSION")),
+                    stderr: String::new(),
+                });
+            }
+            _ => {}
+        }
+    }
+    if args.first().is_some_and(|arg| arg == "init") {
+        if args.len() == 2 && matches!(args[1].as_str(), "--help" | "-h") {
+            return Ok(AgentCliAction::Exit {
+                code: 0,
+                stdout: usage().to_string(),
+                stderr: String::new(),
+            });
+        }
+        return parse_agent_init_args(&args[1..]).map(AgentCliAction::Init);
+    }
+
     let mut config_path = std::env::var("WEBCODEX_AGENT_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_config_path());
     let mut once = false;
-    let mut args = std::env::args().skip(1);
+    let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--help" | "-h" => {
-                println!("{}", usage());
-                std::process::exit(0);
+                return Ok(AgentCliAction::Exit {
+                    code: 0,
+                    stdout: usage().to_string(),
+                    stderr: String::new(),
+                });
+            }
+            "--version" | "-V" => {
+                return Ok(AgentCliAction::Exit {
+                    code: 0,
+                    stdout: format!("webcodex-agent {}\n", env!("CARGO_PKG_VERSION")),
+                    stderr: String::new(),
+                });
             }
             "--once" => once = true,
             "--config" | "-c" => {
@@ -413,7 +519,250 @@ fn parse_args() -> Result<(PathBuf, bool), String> {
             _ => return Err(format!("unknown argument: {}\n{}", arg, usage())),
         }
     }
-    Ok((config_path, once))
+    Ok(AgentCliAction::Run { config_path, once })
+}
+
+fn parse_agent_init_args(args: &[String]) -> Result<AgentInitOptions, String> {
+    let mut opts = AgentInitOptions {
+        server_url: String::new(),
+        token: None,
+        token_file: None,
+        client_id: String::new(),
+        owner: String::new(),
+        display_name: None,
+        transport: TRANSPORT_WEBSOCKET.to_string(),
+        poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
+        projects_dir: PathBuf::from(DEFAULT_INIT_PROJECTS_DIR),
+        output: PathBuf::new(),
+        allowed_roots: Vec::new(),
+        allow_cwd_anywhere: false,
+        overwrite: false,
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--server-url" => opts.server_url = required_value(&mut iter, arg)?,
+            "--token" => opts.token = Some(required_value(&mut iter, arg)?),
+            "--token-file" => {
+                opts.token_file = Some(PathBuf::from(required_value(&mut iter, arg)?))
+            }
+            "--client-id" => opts.client_id = required_value(&mut iter, arg)?,
+            "--owner" => opts.owner = required_value(&mut iter, arg)?,
+            "--display-name" => opts.display_name = Some(required_value(&mut iter, arg)?),
+            "--transport" => opts.transport = required_value(&mut iter, arg)?,
+            "--poll-interval-ms" => {
+                let value = required_value(&mut iter, arg)?;
+                opts.poll_interval_ms = value
+                    .parse::<u64>()
+                    .map_err(|_| "--poll-interval-ms must be an integer".to_string())?;
+            }
+            "--projects-dir" => opts.projects_dir = PathBuf::from(required_value(&mut iter, arg)?),
+            "--allowed-root" => opts
+                .allowed_roots
+                .push(PathBuf::from(required_value(&mut iter, arg)?)),
+            "--allow-cwd-anywhere" => {
+                opts.allow_cwd_anywhere = parse_bool(&required_value(&mut iter, arg)?)?;
+            }
+            "--output" => opts.output = PathBuf::from(required_value(&mut iter, arg)?),
+            "--overwrite" => opts.overwrite = true,
+            "--help" | "-h" => return Err(usage().to_string()),
+            _ => return Err(format!("unknown init flag: {}", arg)),
+        }
+    }
+    validate_agent_init_options(&opts)?;
+    Ok(opts)
+}
+
+fn required_value<'a, I>(iter: &mut I, flag: &str) -> Result<String, String>
+where
+    I: Iterator<Item = &'a String>,
+{
+    iter.next()
+        .cloned()
+        .ok_or_else(|| format!("{} requires a value", flag))
+}
+
+fn parse_bool(value: &str) -> Result<bool, String> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Ok(true),
+        "0" | "false" | "no" | "off" => Ok(false),
+        _ => Err("boolean value must be true or false".to_string()),
+    }
+}
+
+fn validate_agent_init_options(opts: &AgentInitOptions) -> Result<(), String> {
+    if opts.server_url.trim().is_empty() {
+        return Err("--server-url is required".to_string());
+    }
+    if opts.token.is_some() && opts.token_file.is_some() {
+        return Err("use only one of --token or --token-file".to_string());
+    }
+    if opts.client_id.trim().is_empty() {
+        return Err("--client-id is required".to_string());
+    }
+    if opts.owner.trim().is_empty() {
+        return Err("--owner is required".to_string());
+    }
+    if opts.poll_interval_ms == 0 {
+        return Err("--poll-interval-ms must be > 0".to_string());
+    }
+    if !matches!(
+        opts.transport.as_str(),
+        TRANSPORT_WEBSOCKET | TRANSPORT_POLLING
+    ) {
+        return Err("--transport must be websocket or polling".to_string());
+    }
+    if opts.projects_dir.as_os_str().is_empty() {
+        return Err("--projects-dir cannot be empty".to_string());
+    }
+    if opts.output.as_os_str().is_empty() {
+        return Err("--output is required".to_string());
+    }
+    if !opts.allow_cwd_anywhere && opts.allowed_roots.is_empty() {
+        return Err(
+            "at least one --allowed-root is required unless --allow-cwd-anywhere true is set"
+                .to_string(),
+        );
+    }
+    if opts
+        .allowed_roots
+        .iter()
+        .any(|path| path.as_os_str().is_empty())
+    {
+        return Err("--allowed-root cannot be empty".to_string());
+    }
+    Ok(())
+}
+
+fn resolve_agent_init_token(opts: &AgentInitOptions) -> Result<String, String> {
+    if let Some(token) = &opts.token {
+        let token = token.trim().to_string();
+        if token.is_empty() {
+            return Err("--token cannot be empty".to_string());
+        }
+        return Ok(token);
+    }
+    if let Some(path) = &opts.token_file {
+        let token = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read token file {}: {}", path.display(), e))?
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            return Err("--token-file cannot be empty".to_string());
+        }
+        return Ok(token);
+    }
+    let token = std::env::var("WEBCODEX_AGENT_TOKEN")
+        .map_err(|_| "--token, --token-file, or WEBCODEX_AGENT_TOKEN is required".to_string())?
+        .trim()
+        .to_string();
+    if token.is_empty() {
+        return Err("WEBCODEX_AGENT_TOKEN cannot be empty".to_string());
+    }
+    Ok(token)
+}
+
+#[derive(Debug, Serialize)]
+struct GeneratedAgentConfig {
+    server_url: String,
+    token: String,
+    client_id: String,
+    display_name: Option<String>,
+    owner: String,
+    transport: String,
+    poll_interval_ms: u64,
+    projects_dir: PathBuf,
+    capabilities: ShellClientCapabilities,
+    policy: GeneratedAgentPolicy,
+}
+
+#[derive(Debug, Serialize)]
+struct GeneratedAgentPolicy {
+    allow_raw_shell: bool,
+    allow_cwd_anywhere: bool,
+    allowed_roots: Vec<PathBuf>,
+    max_timeout_secs: u64,
+    max_output_bytes: usize,
+}
+
+fn generated_agent_config_toml(opts: &AgentInitOptions) -> Result<String, String> {
+    let cfg = GeneratedAgentConfig {
+        server_url: opts.server_url.trim_end_matches('/').to_string(),
+        token: resolve_agent_init_token(opts)?,
+        client_id: opts.client_id.clone(),
+        display_name: opts.display_name.clone(),
+        owner: opts.owner.clone(),
+        transport: opts.transport.clone(),
+        poll_interval_ms: opts.poll_interval_ms,
+        projects_dir: opts.projects_dir.clone(),
+        capabilities: ShellClientCapabilities {
+            shell: true,
+            file_read: true,
+            file_write: true,
+            git: true,
+            jobs: true,
+            async_jobs: true,
+            async_shell_jobs: true,
+        },
+        policy: GeneratedAgentPolicy {
+            allow_raw_shell: true,
+            allow_cwd_anywhere: opts.allow_cwd_anywhere,
+            allowed_roots: opts.allowed_roots.clone(),
+            max_timeout_secs: DEFAULT_MAX_TIMEOUT_SECS,
+            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
+        },
+    };
+    toml::to_string_pretty(&cfg).map_err(|e| format!("failed to serialize agent config: {}", e))
+}
+
+fn run_agent_init(opts: AgentInitOptions) -> Result<String, String> {
+    let content = generated_agent_config_toml(&opts)?;
+    if opts.output == PathBuf::from("-") {
+        return Ok(content);
+    }
+    if opts.output.exists() && !opts.overwrite {
+        return Err(format!(
+            "{} already exists; pass --overwrite to replace it",
+            opts.output.display()
+        ));
+    }
+    if let Some(parent) = opts.output.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)
+                .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
+        }
+    }
+    let mut open = OpenOptions::new();
+    open.write(true);
+    if opts.overwrite {
+        open.create(true).truncate(true);
+    } else {
+        open.create_new(true);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        open.mode(0o600);
+    }
+    let mut file = open
+        .open(&opts.output)
+        .map_err(|e| format!("failed to write {}: {}", opts.output.display(), e))?;
+    file.write_all(content.as_bytes())
+        .map_err(|e| format!("failed to write {}: {}", opts.output.display(), e))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&opts.output, std::fs::Permissions::from_mode(0o600)).map_err(
+            |e| {
+                format!(
+                    "failed to set permissions on {}: {}",
+                    opts.output.display(),
+                    e
+                )
+            },
+        )?;
+    }
+    Ok(format!("wrote {}\n", opts.output.display()))
 }
 
 fn default_config_path() -> PathBuf {
@@ -2734,11 +3083,37 @@ async fn websocket_session(
 }
 
 fn main() {
-    let (config_path, once) = match parse_args() {
+    let action = match parse_args() {
         Ok(v) => v,
         Err(e) => {
             eprintln!("{}", e);
             std::process::exit(2);
+        }
+    };
+    let (config_path, once) = match action {
+        AgentCliAction::Run { config_path, once } => (config_path, once),
+        AgentCliAction::Init(opts) => match run_agent_init(opts) {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                std::process::exit(0);
+            }
+            Err(e) => {
+                eprintln!("{}", e);
+                std::process::exit(1);
+            }
+        },
+        AgentCliAction::Exit {
+            code,
+            stdout,
+            stderr,
+        } => {
+            if !stdout.is_empty() {
+                print!("{}", stdout);
+            }
+            if !stderr.is_empty() {
+                eprint!("{}", stderr);
+            }
+            std::process::exit(code);
         }
     };
     let cfg = match load_config(&config_path) {
@@ -2757,6 +3132,7 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+    static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn test_config(projects_dir: PathBuf) -> AgentConfig {
         AgentConfig {
@@ -2774,6 +3150,157 @@ mod tests {
             shell: ShellConfig::default(),
             transport: None,
         }
+    }
+
+    fn init_opts(output: PathBuf) -> AgentInitOptions {
+        AgentInitOptions {
+            server_url: "https://v4.example.test/".to_string(),
+            token: Some("wc_agent_fake_test_token".to_string()),
+            token_file: None,
+            client_id: "alice-laptop".to_string(),
+            owner: "alice".to_string(),
+            display_name: Some("Alice Laptop".to_string()),
+            transport: TRANSPORT_WEBSOCKET.to_string(),
+            poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
+            projects_dir: PathBuf::from("/etc/webcodex/projects.d"),
+            output,
+            allowed_roots: vec![PathBuf::from("/srv/projects")],
+            allow_cwd_anywhere: false,
+            overwrite: false,
+        }
+    }
+
+    #[test]
+    fn agent_cli_help_and_version_exit_before_runtime() {
+        match parse_agent_args(["--help"]).unwrap() {
+            AgentCliAction::Exit {
+                code,
+                stdout,
+                stderr,
+            } => {
+                assert_eq!(code, 0);
+                assert!(stdout.contains("Usage: webcodex-agent"));
+                assert!(stdout.contains("webcodex-agent init"));
+                assert!(stderr.is_empty());
+            }
+            other => panic!("expected help exit, got {other:?}"),
+        }
+        match parse_agent_args(["--version"]).unwrap() {
+            AgentCliAction::Exit {
+                code,
+                stdout,
+                stderr,
+            } => {
+                assert_eq!(code, 0);
+                assert_eq!(
+                    stdout,
+                    format!("webcodex-agent {}\n", env!("CARGO_PKG_VERSION"))
+                );
+                assert!(stderr.is_empty());
+            }
+            other => panic!("expected version exit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_cli_legacy_runtime_args_are_preserved() {
+        let action = parse_agent_args(["--config", "/tmp/agent.toml", "--once"]).unwrap();
+        assert_eq!(
+            action,
+            AgentCliAction::Run {
+                config_path: PathBuf::from("/tmp/agent.toml"),
+                once: true,
+            }
+        );
+    }
+
+    #[test]
+    fn agent_init_writes_valid_toml_that_existing_parser_accepts() {
+        let tmp = tempfile::tempdir().unwrap();
+        let output = tmp.path().join("agent.toml");
+        let msg = run_agent_init(init_opts(output.clone())).unwrap();
+        assert!(msg.contains("agent.toml"));
+
+        let cfg = load_config(&output).unwrap();
+        assert_eq!(cfg.server_url, "https://v4.example.test");
+        assert_eq!(cfg.token, "wc_agent_fake_test_token");
+        assert_eq!(cfg.client_id, "alice-laptop");
+        assert_eq!(cfg.owner.as_deref(), Some("alice"));
+        assert_eq!(cfg.display_name.as_deref(), Some("Alice Laptop"));
+        assert_eq!(cfg.transport.as_deref(), Some(TRANSPORT_WEBSOCKET));
+        assert_eq!(cfg.poll_interval_ms, DEFAULT_POLL_INTERVAL_MS);
+        assert_eq!(
+            cfg.projects_dir.as_deref(),
+            Some(Path::new("/etc/webcodex/projects.d"))
+        );
+        assert!(!cfg.policy.allow_cwd_anywhere);
+        assert_eq!(
+            cfg.policy.allowed_roots,
+            vec![PathBuf::from("/srv/projects")]
+        );
+        let caps = cfg.capabilities.unwrap();
+        assert!(caps.shell);
+        assert!(caps.file_read);
+        assert!(caps.file_write);
+        assert!(caps.git);
+        assert!(caps.jobs);
+        assert!(caps.async_jobs);
+        assert!(caps.async_shell_jobs);
+    }
+
+    #[test]
+    fn agent_init_refuses_overwrite_unless_requested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let output = tmp.path().join("agent.toml");
+        run_agent_init(init_opts(output.clone())).unwrap();
+        let err = run_agent_init(init_opts(output.clone())).unwrap_err();
+        assert!(err.contains("already exists"));
+
+        let mut overwrite = init_opts(output);
+        overwrite.overwrite = true;
+        run_agent_init(overwrite).unwrap();
+    }
+
+    #[test]
+    fn agent_init_supports_stdout_output() {
+        let content = run_agent_init(init_opts(PathBuf::from("-"))).unwrap();
+        assert!(content.contains("server_url = \"https://v4.example.test\""));
+        assert_eq!(content.matches("wc_agent_fake_test_token").count(), 1);
+        let parsed: AgentConfig = toml::from_str(&content).unwrap();
+        assert_eq!(parsed.client_id, "alice-laptop");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn agent_init_writes_0600_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let output = tmp.path().join("agent.toml");
+        run_agent_init(init_opts(output.clone())).unwrap();
+        let mode = std::fs::metadata(output).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn agent_init_token_file_and_env_fallback_work() {
+        let tmp = tempfile::tempdir().unwrap();
+        let token_file = tmp.path().join("agent.token");
+        std::fs::write(&token_file, "wc_agent_fake_file_token\n").unwrap();
+        let mut opts = init_opts(PathBuf::from("-"));
+        opts.token = None;
+        opts.token_file = Some(token_file);
+        let content = generated_agent_config_toml(&opts).unwrap();
+        assert!(content.contains("wc_agent_fake_file_token"));
+
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_AGENT_TOKEN", "wc_agent_fake_env_token");
+        let mut opts = init_opts(PathBuf::from("-"));
+        opts.token = None;
+        opts.token_file = None;
+        let content = generated_agent_config_toml(&opts).unwrap();
+        assert!(content.contains("wc_agent_fake_env_token"));
+        std::env::remove_var("WEBCODEX_AGENT_TOKEN");
     }
 
     #[test]

@@ -18,13 +18,15 @@ is **not** listed inside the schema `paths` (which is POST-only).
 ## Authentication
 
 - Scheme: HTTP Bearer (`Authorization: Bearer <token>`).
-- Token: the value of the `WEBCODEX_TOKEN` environment variable on the server.
+- Token: a Phase 2 personal API token (`wc_pat_...`) for the user that should
+  own the requested operations.
 - Bearer auth is enabled globally on the schema (`security` + `bearerAuth`).
 - When `WEBCODEX_TOKEN` is unset, the server runs in development mode and auth is
   bypassed — never do this in production.
 
 Configure the GPT Action authentication as **API Key**, type **HTTP**,
-header `Authorization`, value `Bearer <WEBCODEX_TOKEN>`.
+header `Authorization`, value `Bearer <wc_pat_user_api_token>`. Keep the server
+`WEBCODEX_TOKEN` as a bootstrap/admin credential for creating users and tokens.
 
 ## Server URL
 

@@ -164,7 +164,7 @@ The harness proves the server side. To validate with real ChatGPT:
 3. In ChatGPT: **Settings → Actions → Import from URL**, enter
    `https://your-server.example/openapi.json`.
 4. Configure Action authentication as **API Key**, type **HTTP**, header
-   `Authorization`, value `Bearer <WEBCODEX_TOKEN>`.
+   `Authorization`, value `Bearer <wc_pat_user_api_token>`.
 5. Drive the same call flow the harness exercises:
    - `getRuntimeStatus` → is the agent online?
    - `listProjects` → copy a project id like `agent:<client_id>:<project_id>`.

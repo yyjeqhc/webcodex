@@ -6,8 +6,9 @@ endpoint (MCP `tools/call`, GPT Actions, and the `/api/codex/*` routes). It is
 intentionally **not** part of the GPT Actions OpenAPI schema
 (`/openapi.json`) — it is for operators, not for ChatGPT to call.
 
-All endpoints are `POST`, protected by the same Bearer token (`WEBCODEX_TOKEN`) as
-the rest of the API, and perform no write operations.
+All endpoints are `POST` and protected by Bearer auth. Use the bootstrap/admin
+token or an admin-scoped personal API token for this admin/debug surface. The
+endpoints perform no write operations.
 
 ## Endpoints
 

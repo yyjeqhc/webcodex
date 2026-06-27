@@ -20,14 +20,18 @@ There is no second business-logic path for WebSocket.
 
 ## Authentication
 
-Both transports require Bearer auth (`WEBCODEX_TOKEN` or a token from the
-`api_keys` table):
+Both transports require Bearer auth. Use a Phase 3 `wc_agent_...` agent token
+for `webcodex-agent`; keep `WEBCODEX_TOKEN` as the bootstrap/admin credential
+for setup:
 
 - Polling: `Authorization: Bearer <token>` on every request (or `?token=`).
 - WebSocket: `Authorization: Bearer <token>` in the handshake request headers.
 
 Auth is enforced by the shared `AuthMiddleware`. The WebSocket endpoint is
 mounted under the same authenticated `/api` router as the polling endpoints.
+Server and agent binaries must be upgraded together for this protocol phase:
+current server handlers require `agent_instance_id` on register, poll, result,
+and job_update.
 
 ### Token kinds (Phase 3)
 

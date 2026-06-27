@@ -141,7 +141,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         "info": {
             "title": "WebCodex Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Self-hosted tool runtime for ChatGPT. Recommended flow: call listProjects (or listRuntimeTools) to discover available projects, then runCodexTask to start a Codex CLI task, then getRuntimeJobStatus / getRuntimeJobLog to poll the returned job_id. Use readProjectFile and getProjectGitStatus for safe project inspection. callRuntimeTool is an advanced generic entry point for any runtime tool; prefer the dedicated actions when available. All endpoints require Bearer auth (WEBCODEX_TOKEN). MCP and GPT Actions share the same ToolRuntime."
+            "description": "Self-hosted tool runtime for ChatGPT. Recommended flow: call listProjects (or listRuntimeTools) to discover available projects, then runCodexTask to start a Codex CLI task, then getRuntimeJobStatus / getRuntimeJobLog to poll the returned job_id. Use readProjectFile and getProjectGitStatus for safe project inspection. callRuntimeTool is an advanced generic entry point for any runtime tool; prefer the dedicated actions when available. All endpoints require Bearer auth; GPT Actions and MCP should use a Phase 2 personal API token, while WEBCODEX_TOKEN remains a bootstrap/admin credential. MCP and GPT Actions share the same ToolRuntime."
         },
         "servers": [
             {
@@ -732,7 +732,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "bearerAuth": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": "Bearer token. Set WEBCODEX_TOKEN on the server and send Authorization: Bearer <WEBCODEX_TOKEN>."
+                    "description": "Bearer token. GPT Actions and MCP should send a Phase 2 personal API token; WEBCODEX_TOKEN is the server bootstrap/admin credential."
                 }
             },
             "schemas": schemas()

@@ -63,7 +63,7 @@ sudo install -m 0755 target/release/webcodex-agent  /opt/webcodex/
 
 | Variable | Default | Required | Description |
 |----------|---------|----------|-------------|
-| `WEBCODEX_TOKEN` | _(unset)_ | **Yes (production)** | Bearer token for all protected endpoints and the agent handshake. When unset the server runs in **development mode without authentication** — never do this in production. |
+| `WEBCODEX_TOKEN` | _(unset)_ | **Yes (production)** | Server bootstrap/admin token. Use it only for first setup and admin CLI calls, not as the day-to-day GPT Actions/MCP/agent credential. When unset the server runs in **development mode without authentication** — never do this in production. |
 | `WEBCODEX_ADDR` | `0.0.0.0:8080` | No | Bind address for the HTTP server. Behind a reverse proxy, bind to `127.0.0.1:8080` and let the proxy terminate TLS. |
 | `WEBCODEX_DATA` | `./data` | No | Runtime data directory: SQLite DB (`webcodex.db`), uploads, job metadata (`.codex/jobs/`). Use a persistent, backed-up path in production. |
 | `WEBCODEX_PUBLIC_URL` | `http://localhost:8080` | **Yes (production)** | Public base URL used as `servers[0].url` in `/openapi.json`. Set to the externally reachable HTTPS URL (e.g. `https://webcodex.example.com`) so ChatGPT imports actions against the right host. |
@@ -123,9 +123,9 @@ Full field reference (TOML, loaded via `--config <path>`):
 | Field | Required | Description |
 |-------|----------|-------------|
 | `server_url` | **Yes** | Server base URL (e.g. `https://webcodex.example.com`). Must match the server's public URL for TLS to validate. |
-| `token` | **Yes** | Bearer token. Must equal the server's `WEBCODEX_TOKEN` (or a valid API key on the server). Sent in the `Authorization: Bearer <token>` header, including the WebSocket handshake. |
+| `token` | **Yes** | Bearer token for the agent. Prefer a Phase 3 `wc_agent_...` agent token bound to this `client_id`; bootstrap auth is for setup/admin only. Sent in the `Authorization: Bearer <token>` header, including the WebSocket handshake. |
 | `client_id` | **Yes** | Stable unique id for this agent host (e.g. `workstation-1`). Used in runtime ids `agent:<client_id>:<project_id>`. |
-| `owner` | No | Owner principal. A bootstrap `WEBCODEX_TOKEN` may register any `owner`; a normal API key may only register `owner == <username>`. |
+| `owner` | No | Owner principal. A bootstrap `WEBCODEX_TOKEN` may register any `owner`; an agent token fills or verifies `owner == <username>` and may only use its bound `client_id`. |
 | `transport` | No | `"websocket"` (preferred) or `"polling"` (fallback). Omitting it defaults to `"polling"`. **Prefer `"websocket"`** for deployments. |
 | `projects_dir` | No | Directory of agent-side project files (one `*.toml` per project). Defaults to `~/.config/webcodex/projects.d`. |
 | `poll_interval_ms` | No | Polling interval (only used by the polling transport). Default `1000`. |
@@ -139,7 +139,7 @@ Full field reference (TOML, loaded via `--config <path>`):
 
 ```toml
 server_url = "https://webcodex.example.com"
-token = "REPLACE_WITH_WEBCODEX_TOKEN"
+token = "REPLACE_WITH_WC_AGENT_TOKEN"
 client_id = "workstation-1"
 display_name = "Workstation"
 owner = "you"
@@ -259,7 +259,10 @@ https://webcodex.example.com/openapi.json
 ```
 
 Then configure Action authentication as **API Key**, type **HTTP**, header
-`Authorization`, value `Bearer <WEBCODEX_TOKEN>`.
+`Authorization`, value `Bearer <wc_pat_user_api_token>`.
+
+Use a Phase 2 personal API token for GPT Actions. Keep the server
+`WEBCODEX_TOKEN` as a bootstrap/admin credential for creating users and tokens.
 
 `/openapi.json` is the only GPT-Actions entry point. It is a `GET` route and is
 not listed inside the schema `paths` (which is POST-only). The schema exposes a
@@ -275,7 +278,8 @@ https://webcodex.example.com/mcp
 ```
 
 `/mcp` speaks JSON-RPC 2.0 over HTTP (streamable-http-jsonrpc transport),
-protected by the same Bearer token (`WEBCODEX_TOKEN`). Supported methods:
+protected by Bearer auth. Use a Phase 2 personal API token for MCP clients;
+keep `WEBCODEX_TOKEN` for bootstrap/admin setup. Supported methods:
 `initialize`, `ping`, `tools/list`, `tools/call`,
 `notifications/initialized`. MCP and GPT Actions share a single `ToolRuntime` —
 there is no separate business logic for either surface. See
@@ -329,8 +333,8 @@ See [E2E_VALIDATION.md](E2E_VALIDATION.md) for what that harness covers.
    should return JSON. If not, check `systemctl status webcodex` and the
    reverse proxy.
 2. **Auth working?** `POST /api/runtime/status` with
-   `Authorization: Bearer <WEBCODEX_TOKEN>` should return `success: true`. A `401`
-   means the token header is missing or wrong.
+   `Authorization: Bearer <wc_pat_user_api_token>` should return
+   `success: true`. A `401` means the token header is missing or wrong.
 3. **Agent registered?** `POST /api/runtime/status` → `output.agents.count`
    should be `>= 1` and the agent's `status` should be `online`. If `0`, check
    the agent service log (`journalctl -u webcodex-agent`) — common causes:

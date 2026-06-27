@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 mod action_audit;
 mod action_sessions;
+mod admin_cli;
 mod agent_tokens_http;
 mod agent_ws;
 mod audit_http;
@@ -50,6 +51,7 @@ pub(crate) use shell_client::{
 #[derive(Debug, PartialEq, Eq)]
 enum ServerCliAction {
     Run,
+    Admin(admin_cli::AdminCliCommand),
     Exit {
         code: i32,
         stdout: String,
@@ -58,18 +60,21 @@ enum ServerCliAction {
 }
 
 fn server_usage() -> String {
-    "Usage: webcodex [OPTIONS]\n\n\
+    format!(
+        "Usage: webcodex [OPTIONS]\n       webcodex <ADMIN-COMMAND>\n\n\
 Options:\n\
   -h, --help       Print help and exit\n\
   -V, --version    Print version and exit\n\n\
+{}\
 Environment:\n\
   WEBCODEX_ENV_FILE      Load environment variables from this file\n\
   WEBCODEX_TOKEN         Bearer token for protected API endpoints\n\
   WEBCODEX_ADDR          Listen address, default 0.0.0.0:8080\n\
   WEBCODEX_DATA          Data directory, default ./data\n\
   WEBCODEX_PUBLIC_URL    Public URL reported to clients\n\
-  WEBCODEX_ENABLE_SSH    Enable SSH-related runtime features\n"
-        .to_string()
+  WEBCODEX_ENABLE_SSH    Enable SSH-related runtime features\n",
+        admin_cli::usage()
+    )
 }
 
 fn server_cli_action<I, S>(args: I) -> ServerCliAction
@@ -83,6 +88,16 @@ where
         .collect();
     if args.is_empty() {
         return ServerCliAction::Run;
+    }
+    if admin_cli::is_admin_group(&args[0]) {
+        return match admin_cli::parse_admin_cli(&args) {
+            Ok(cmd) => ServerCliAction::Admin(cmd),
+            Err(e) => ServerCliAction::Exit {
+                code: 2,
+                stdout: String::new(),
+                stderr: format!("{}\n", e),
+            },
+        };
     }
     if args.len() == 1 {
         match args[0].as_str() {
@@ -122,6 +137,16 @@ where
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     match server_cli_action(std::env::args().skip(1)) {
         ServerCliAction::Run => {}
+        ServerCliAction::Admin(cmd) => match admin_cli::run_admin_command(cmd).await {
+            Ok(stdout) => {
+                println!("{}", stdout);
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
         ServerCliAction::Exit {
             code,
             stdout,
@@ -385,6 +410,7 @@ mod tests {
     {
         match server_cli_action(args) {
             ServerCliAction::Run => Ok(None),
+            ServerCliAction::Admin(_) => Ok(None),
             ServerCliAction::Exit {
                 code: 0, stdout, ..
             } => Ok(Some(stdout)),

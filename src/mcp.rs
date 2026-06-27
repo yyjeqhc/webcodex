@@ -70,7 +70,7 @@ pub async fn mcp_info(depot: &mut Depot, res: &mut Response) {
         "auth": {
             "type": "bearer",
             "required": auth_required,
-            "header": "Authorization: Bearer <WEBCODEX_TOKEN>"
+            "header": "Authorization: Bearer <wc_pat_user_api_token>"
         }
     })));
 }

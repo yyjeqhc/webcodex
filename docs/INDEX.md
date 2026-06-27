@@ -10,7 +10,8 @@ Current user and deployment docs:
 6. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) — agent project registry and project management tools.
 7. [AUDIT_API.md](AUDIT_API.md) — audit API scope and security expectations.
 8. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation guidance.
-9. [../deploy/webcodex-agent.toml.example](../deploy/webcodex-agent.toml.example) — example agent config.
-10. [../TODO.md](../TODO.md) — current maintenance backlog.
+9. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — deployment troubleshooting and operational checklist.
+10. [../deploy/webcodex-agent.toml.example](../deploy/webcodex-agent.toml.example) — example agent config.
+11. [../TODO.md](../TODO.md) — current maintenance backlog.
 
 Historical phase plans, handoff notes, and implementation audits have been removed from the user-facing documentation set.

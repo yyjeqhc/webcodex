@@ -46,3 +46,13 @@ webcodex-cli doctor --strict --server-url URL --user-token-file PATH --agent-tok
 `pairing create` is server/admin-side. `client enroll`, `agent install-service`, and `agent status` are client-side for the machine running `webcodex-agent`. Do not copy server tokens to the client; copy only the short-lived pairing code.
 
 The compatibility entry points still exist, but new validation docs should use `webcodex-cli`.
+
+## Documentation scans
+
+During docs polish or release validation, run the repository's standard documentation scans for three classes of mistakes:
+
+1. references to deleted historical planning documents,
+2. old product names or legacy environment/key names,
+3. obvious real-looking token values in user-facing docs and examples.
+
+Expected result: no stale deleted-doc references, no old product names, and no real token-looking values. Placeholder forms such as `<token>` and `<wc_pair_...>` are fine.

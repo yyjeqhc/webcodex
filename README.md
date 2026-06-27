@@ -146,6 +146,10 @@ allowed_roots = ["/root/git"]
 
 All non-Codex project tools, including read, git, patch validation, patch application, file write, and shell tools, can work without the Codex CLI.
 
+## Troubleshooting
+
+For common deployment issues and a short operational checklist, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). It covers existing systemd services, local HTTP reachability, client `PATH` setup, server-side pairing vs client-side enrollment, agent-only clients, and `client online: no` checks.
+
 ## Documentation
 
 Start here:
@@ -157,3 +161,4 @@ Start here:
 - [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md) — agent auth, transports, and observability.
 - [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md) — project registry and project management tools.
 - [docs/E2E_VALIDATION.md](docs/E2E_VALIDATION.md) — local end-to-end validation.
+- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — deployment troubleshooting and operational checklist.

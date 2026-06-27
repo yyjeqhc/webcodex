@@ -249,3 +249,7 @@ Recommended production smoke sequence:
 4. `listProjects` shows `agent:<client_id>:<project_id>` ids.
 5. Read-only project tools work on a known project.
 6. Write/replace/validate tests are limited to disposable smoke projects.
+
+## Troubleshooting
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for the operational checklist and common deployment fixes, including existing systemd services, `HTTP reachable: no`, missing client CLI on `PATH`, server-side pairing vs client-side enrollment, agent-only client warnings, and `client online: no`.

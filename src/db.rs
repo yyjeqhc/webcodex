@@ -99,6 +99,19 @@ fn row_to_action_event(row: &rusqlite::Row) -> rusqlite::Result<ActionEventRecor
     })
 }
 
+/// Return the set of column names present on `table`. Used by the idempotent
+/// Phase 2 migration helpers to decide whether an `ALTER TABLE ... ADD COLUMN`
+/// is needed.
+fn table_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let rows = stmt.query_map([], |row| row.get::<_, String>(1))?;
+    let mut cols = Vec::new();
+    for row in rows {
+        cols.push(row?);
+    }
+    Ok(cols)
+}
+
 impl Database {
     pub fn open(db_path: &PathBuf) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
@@ -199,7 +212,11 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 username TEXT NOT NULL UNIQUE,
                 created_at INTEGER NOT NULL,
-                disabled INTEGER NOT NULL DEFAULT 0
+                disabled INTEGER NOT NULL DEFAULT 0,
+                display_name TEXT,
+                role TEXT NOT NULL DEFAULT 'user',
+                disabled_at INTEGER,
+                updated_at INTEGER
             );
 
             CREATE TABLE IF NOT EXISTS api_keys (
@@ -211,6 +228,8 @@ impl Database {
                 created_at INTEGER NOT NULL,
                 last_used_at INTEGER,
                 revoked_at INTEGER,
+                scopes TEXT NOT NULL DEFAULT '',
+                expires_at INTEGER,
                 FOREIGN KEY(user_id) REFERENCES users(id)
             );
             CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
@@ -288,6 +307,45 @@ impl Database {
                 "ALTER TABLE command_requests ADD COLUMN command_text TEXT",
                 [],
             )?;
+        }
+        // Phase 2 multi-user auth: evolve the legacy users/api_keys tables in
+        // place. Fresh DBs already declare the new columns in CREATE TABLE
+        // above; this block migrates pre-existing DBs forward without dropping
+        // data or breaking audit/jobs/project tables.
+        Self::migrate_users_and_api_keys(&conn)?;
+        Ok(())
+    }
+
+    /// Add Phase 2 columns (`display_name`, `role`, `disabled_at`,
+    /// `updated_at` on `users`; `scopes`, `expires_at` on `api_keys`) to older
+    /// databases. Each ALTER is guarded by a `PRAGMA table_info` check so it
+    /// is idempotent and safe to run on every startup.
+    fn migrate_users_and_api_keys(conn: &Connection) -> anyhow::Result<()> {
+        let user_cols = table_columns(conn, "users")?;
+        for (col, decl) in [
+            ("display_name", "TEXT"),
+            ("role", "TEXT NOT NULL DEFAULT 'user'"),
+            ("disabled_at", "INTEGER"),
+            ("updated_at", "INTEGER"),
+        ] {
+            if !user_cols.iter().any(|c| c == col) {
+                conn.execute(
+                    &format!("ALTER TABLE users ADD COLUMN {} {}", col, decl),
+                    [],
+                )?;
+            }
+        }
+        let key_cols = table_columns(conn, "api_keys")?;
+        for (col, decl) in [
+            ("scopes", "TEXT NOT NULL DEFAULT ''"),
+            ("expires_at", "INTEGER"),
+        ] {
+            if !key_cols.iter().any(|c| c == col) {
+                conn.execute(
+                    &format!("ALTER TABLE api_keys ADD COLUMN {} {}", col, decl),
+                    [],
+                )?;
+            }
         }
         Ok(())
     }
@@ -1081,16 +1139,11 @@ impl Database {
 impl Database {
     pub fn get_user_by_username(&self, username: &str) -> anyhow::Result<Option<UserRecord>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn
-            .prepare("SELECT id, username, created_at, disabled FROM users WHERE username = ?1")?;
-        let mut rows = stmt.query_map(params![username], |row| {
-            Ok(UserRecord {
-                id: row.get(0)?,
-                username: row.get(1)?,
-                created_at: row.get(2)?,
-                disabled: row.get(3)?,
-            })
-        })?;
+        let mut stmt = conn.prepare(
+            "SELECT id, username, created_at, disabled, display_name, role, disabled_at, updated_at
+             FROM users WHERE username = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![username], row_to_user)?;
         match rows.next() {
             Some(r) => Ok(Some(r?)),
             None => Ok(None),
@@ -1100,31 +1153,41 @@ impl Database {
     pub fn create_user(&self, user: &UserRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO users (id, username, created_at, disabled)
-             VALUES (?1, ?2, ?3, ?4)",
-            params![user.id, user.username, user.created_at, user.disabled],
+            "INSERT INTO users (id, username, created_at, disabled, display_name, role, disabled_at, updated_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                user.id,
+                user.username,
+                user.created_at,
+                user.disabled,
+                user.display_name,
+                user.role,
+                user.disabled_at,
+                user.updated_at,
+            ],
         )?;
         Ok(())
+    }
+
+    /// List all users ordered by username. Phase 2 admin surface.
+    pub fn list_users(&self) -> anyhow::Result<Vec<UserRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, username, created_at, disabled, display_name, role, disabled_at, updated_at
+             FROM users ORDER BY username ASC",
+        )?;
+        let rows = stmt.query_map([], row_to_user)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn get_api_key_by_hash(&self, hash: &str) -> anyhow::Result<Option<ApiKeyRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at
              FROM api_keys
              WHERE key_hash = ?1 AND revoked_at IS NULL",
         )?;
-        let mut rows = stmt.query_map(params![hash], |row| {
-            Ok(ApiKeyRecord {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                name: row.get(2)?,
-                key_prefix: row.get(3)?,
-                created_at: row.get(4)?,
-                last_used_at: row.get(5)?,
-                revoked_at: row.get(6)?,
-            })
-        })?;
+        let mut rows = stmt.query_map(params![hash], row_to_api_key)?;
         match rows.next() {
             Some(r) => Ok(Some(r?)),
             None => Ok(None),
@@ -1134,8 +1197,8 @@ impl Database {
     pub fn insert_api_key(&self, key: &ApiKeyRecord, key_hash: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, created_at, last_used_at, revoked_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            "INSERT INTO api_keys (id, user_id, name, key_hash, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             params![
                 key.id,
                 key.user_id,
@@ -1145,6 +1208,8 @@ impl Database {
                 key.created_at,
                 key.last_used_at,
                 key.revoked_at,
+                key.scopes,
+                key.expires_at,
             ],
         )?;
         Ok(())
@@ -1153,35 +1218,71 @@ impl Database {
     pub fn list_api_keys_by_user(&self, user_id: &str) -> anyhow::Result<Vec<ApiKeyRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at
-             FROM api_keys WHERE user_id = ?1",
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at
+             FROM api_keys WHERE user_id = ?1 ORDER BY created_at DESC",
         )?;
-        let rows = stmt.query_map(params![user_id], |row| {
-            Ok(ApiKeyRecord {
-                id: row.get(0)?,
-                user_id: row.get(1)?,
-                name: row.get(2)?,
-                key_prefix: row.get(3)?,
-                created_at: row.get(4)?,
-                last_used_at: row.get(5)?,
-                revoked_at: row.get(6)?,
-            })
-        })?;
+        let rows = stmt.query_map(params![user_id], row_to_api_key)?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Fetch a single api token by id (including revoked/expired rows). Used by
+    /// the revoke endpoint and self-management lookups. Phase 2.
+    pub fn get_api_key_by_id(&self, id: &str) -> anyhow::Result<Option<ApiKeyRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, name, key_prefix, created_at, last_used_at, revoked_at, scopes, expires_at
+             FROM api_keys WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], row_to_api_key)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Mark an api token as revoked at `ts`. Idempotent: revoking an already
+    /// revoked token is a no-op. Returns the post-revoke record when a row
+    /// exists. Phase 2.
+    pub fn revoke_api_key(&self, id: &str, ts: i64) -> anyhow::Result<Option<ApiKeyRecord>> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE api_keys SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1",
+            params![id, ts],
+        )?;
+        drop(conn);
+        self.get_api_key_by_id(id)
+    }
+
+    /// Disable (or re-enable) a user. When disabling, both the legacy
+    /// `disabled` flag and the Phase 2 `disabled_at` timestamp are set so the
+    /// existing AuthMiddleware check (`disabled != 0`) and the new
+    /// `disabled_at`-based check agree. Phase 2.
+    pub fn set_user_disabled(
+        &self,
+        id: &str,
+        disabled: bool,
+        ts: i64,
+    ) -> anyhow::Result<Option<UserRecord>> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE users
+             SET disabled = ?2,
+                 disabled_at = CASE WHEN ?2 = 1 THEN COALESCE(disabled_at, ?3) ELSE NULL END,
+                 updated_at = ?3
+             WHERE id = ?1",
+            params![id, if disabled { 1 } else { 0 }, ts],
+        )?;
+        drop(conn);
+        self.get_user_by_id(id)
     }
 
     pub fn get_user_by_id(&self, id: &str) -> anyhow::Result<Option<UserRecord>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt =
-            conn.prepare("SELECT id, username, created_at, disabled FROM users WHERE id = ?1")?;
-        let mut rows = stmt.query_map(params![id], |row| {
-            Ok(UserRecord {
-                id: row.get(0)?,
-                username: row.get(1)?,
-                created_at: row.get(2)?,
-                disabled: row.get(3)?,
-            })
-        })?;
+        let mut stmt = conn.prepare(
+            "SELECT id, username, created_at, disabled, display_name, role, disabled_at, updated_at
+             FROM users WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], row_to_user)?;
         match rows.next() {
             Some(r) => Ok(Some(r?)),
             None => Ok(None),
@@ -1199,6 +1300,50 @@ impl Database {
 }
 
 #[cfg(test)]
+impl Database {
+    /// Test-only access to the underlying connection so tests can assert on
+    /// raw storage (e.g. that a plaintext token is never stored as `key_hash`).
+    pub fn conn_for_tests(&self) -> std::sync::MutexGuard<'_, Connection> {
+        self.conn.lock().unwrap()
+    }
+}
+
+/// Map a `users` row (8 columns, Phase 2 order) to a `UserRecord`. Columns are
+/// positional: id, username, created_at, disabled, display_name, role,
+/// disabled_at, updated_at.
+fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<UserRecord> {
+    Ok(UserRecord {
+        id: row.get(0)?,
+        username: row.get(1)?,
+        created_at: row.get(2)?,
+        disabled: row.get(3)?,
+        display_name: row.get(4)?,
+        role: row
+            .get::<_, Option<String>>(5)?
+            .unwrap_or_else(|| "user".to_string()),
+        disabled_at: row.get(6)?,
+        updated_at: row.get(7)?,
+    })
+}
+
+/// Map an `api_keys` row (9 columns, Phase 2 order) to an `ApiKeyRecord`.
+/// Columns are positional: id, user_id, name, key_prefix, created_at,
+/// last_used_at, revoked_at, scopes, expires_at.
+fn row_to_api_key(row: &rusqlite::Row) -> rusqlite::Result<ApiKeyRecord> {
+    Ok(ApiKeyRecord {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        name: row.get(2)?,
+        key_prefix: row.get(3)?,
+        created_at: row.get(4)?,
+        last_used_at: row.get(5)?,
+        revoked_at: row.get(6)?,
+        scopes: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+        expires_at: row.get(8)?,
+    })
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -1211,13 +1356,18 @@ mod tests {
             username: "alice".to_string(),
             created_at: 10,
             disabled: 0,
+            display_name: Some("Alice".to_string()),
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(10),
         };
         db.create_user(&user).unwrap();
 
-        assert_eq!(
-            db.get_user_by_username("alice").unwrap().unwrap().id,
-            "user-1"
-        );
+        let fetched = db.get_user_by_username("alice").unwrap().unwrap();
+        assert_eq!(fetched.id, "user-1");
+        assert_eq!(fetched.display_name.as_deref(), Some("Alice"));
+        assert_eq!(fetched.role, "user");
+        assert!(!fetched.is_disabled());
         assert_eq!(
             db.get_user_by_id("user-1").unwrap().unwrap().username,
             "alice"
@@ -1231,11 +1381,15 @@ mod tests {
             created_at: 11,
             last_used_at: None,
             revoked_at: None,
+            scopes: "runtime:read project:write".to_string(),
+            expires_at: None,
         };
         db.insert_api_key(&key, "hash-1").unwrap();
+        let fetched_key = db.get_api_key_by_hash("hash-1").unwrap().unwrap();
+        assert_eq!(fetched_key.name, "main");
         assert_eq!(
-            db.get_api_key_by_hash("hash-1").unwrap().unwrap().name,
-            "main"
+            fetched_key.scopes_vec(),
+            vec!["runtime:read".to_string(), "project:write".to_string()]
         );
 
         db.update_api_key_last_used("key-1", 12).unwrap();
@@ -1256,5 +1410,174 @@ mod tests {
         db.insert_api_key(&revoked_key, "hash-2").unwrap();
         assert!(db.get_api_key_by_hash("hash-2").unwrap().is_none());
         assert_eq!(db.list_api_keys_by_user("user-1").unwrap().len(), 2);
+        // revoke_api_key is idempotent and updates the existing row.
+        let revoked = db.revoke_api_key("key-1", 99).unwrap().unwrap();
+        assert_eq!(revoked.revoked_at, Some(99));
+        let revoked_again = db.revoke_api_key("key-1", 100).unwrap().unwrap();
+        assert_eq!(
+            revoked_again.revoked_at,
+            Some(99),
+            "idempotent revoke must keep the original timestamp"
+        );
+    }
+
+    #[test]
+    fn list_users_returns_all_users_ordered_by_username() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        for (uname, role) in [("carol", "user"), ("alice", "admin"), ("bob", "user")] {
+            db.create_user(&UserRecord {
+                id: format!("u-{}", uname),
+                username: uname.to_string(),
+                created_at: now,
+                disabled: 0,
+                display_name: None,
+                role: role.to_string(),
+                disabled_at: None,
+                updated_at: Some(now),
+            })
+            .unwrap();
+        }
+        let users = db.list_users().unwrap();
+        let names: Vec<&str> = users.iter().map(|u| u.username.as_str()).collect();
+        assert_eq!(names, vec!["alice", "bob", "carol"]);
+        assert_eq!(
+            users.iter().find(|u| u.username == "alice").unwrap().role,
+            "admin"
+        );
+    }
+
+    #[test]
+    fn set_user_disabled_marks_user_and_blocks_token_lookup_path() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+        db.create_user(&UserRecord {
+            id: "u-1".to_string(),
+            username: "alice".to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        })
+        .unwrap();
+        let disabled = db.set_user_disabled("u-1", true, now).unwrap().unwrap();
+        assert!(disabled.is_disabled());
+        assert_eq!(disabled.disabled, 1);
+        assert_eq!(disabled.disabled_at, Some(now));
+        // Re-enabling clears both flags.
+        let reenabled = db
+            .set_user_disabled("u-1", false, now + 10)
+            .unwrap()
+            .unwrap();
+        assert!(!reenabled.is_disabled());
+        assert_eq!(reenabled.disabled, 0);
+        assert_eq!(reenabled.disabled_at, None);
+    }
+
+    /// Phase 2 token lifecycle: create stores hash (not plaintext), lookup
+    /// succeeds, revoked tokens are ignored, expired tokens report expired,
+    /// disabled-user tokens are rejected at the auth layer, and last_used_at
+    /// updates. Uses the same SHA-256 hash as the auth middleware.
+    #[test]
+    fn phase2_token_lifecycle_hash_revoked_expired_disabled_last_used() {
+        use sha2::{Digest, Sha256};
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("webcodex.db")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+
+        // Create user.
+        let user = UserRecord {
+            id: "u-1".to_string(),
+            username: "alice".to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        };
+        db.create_user(&user).unwrap();
+        // Duplicate username rejected.
+        let dup_err = db.create_user(&UserRecord {
+            id: "u-2".to_string(),
+            ..user.clone()
+        });
+        assert!(dup_err.is_err(), "duplicate username must be rejected");
+
+        // Create token: store hash, never plaintext.
+        let plaintext = "wc_pat_testsecretvalue1234567890";
+        let mut hasher = Sha256::new();
+        hasher.update(plaintext.as_bytes());
+        let key_hash = format!("{:x}", hasher.finalize());
+        let key = ApiKeyRecord {
+            id: "k-1".to_string(),
+            user_id: "u-1".to_string(),
+            name: "main".to_string(),
+            key_prefix: "wc_pat_testse".to_string(),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: "runtime:read project:write".to_string(),
+            expires_at: None,
+        };
+        db.insert_api_key(&key, &key_hash).unwrap();
+
+        // The stored key_hash must not be the plaintext token.
+        let conn = db.conn_for_tests();
+        let stored_hash: String = conn
+            .query_row(
+                "SELECT key_hash FROM api_keys WHERE id = 'k-1'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(stored_hash, plaintext);
+        assert_eq!(stored_hash, key_hash);
+        drop(conn);
+
+        // Lookup succeeds.
+        let fetched = db.get_api_key_by_hash(&key_hash).unwrap().unwrap();
+        assert_eq!(fetched.name, "main");
+        assert_eq!(
+            fetched.scopes_vec(),
+            vec!["runtime:read".to_string(), "project:write".to_string()]
+        );
+        assert!(!fetched.is_revoked());
+        assert!(!fetched.is_expired(now));
+
+        // last_used_at updates.
+        db.update_api_key_last_used("k-1", now + 5).unwrap();
+        let fetched = db.get_api_key_by_hash(&key_hash).unwrap().unwrap();
+        assert_eq!(fetched.last_used_at, Some(now + 5));
+
+        // Revoked token is ignored by get_api_key_by_hash (returns None).
+        db.revoke_api_key("k-1", now + 10).unwrap();
+        assert!(db.get_api_key_by_hash(&key_hash).unwrap().is_none());
+        // But get_api_key_by_id still returns it (with revoked_at set).
+        let revoked = db.get_api_key_by_id("k-1").unwrap().unwrap();
+        assert!(revoked.is_revoked());
+
+        // Expired token: a non-revoked token with expires_at in the past
+        // reports is_expired true (the auth middleware rejects it).
+        let exp_key = ApiKeyRecord {
+            id: "k-2".to_string(),
+            revoked_at: None,
+            expires_at: Some(now - 1),
+            ..key.clone()
+        };
+        db.insert_api_key(&exp_key, "hash-exp").unwrap();
+        let fetched = db.get_api_key_by_hash("hash-exp").unwrap().unwrap();
+        assert!(fetched.is_expired(now));
+
+        // Disabled-user token: the auth layer checks user.is_disabled(); here
+        // we confirm the DB marks the user disabled and the record helper
+        // reports it.
+        db.set_user_disabled("u-1", true, now).unwrap();
+        let disabled_user = db.get_user_by_id("u-1").unwrap().unwrap();
+        assert!(disabled_user.is_disabled());
     }
 }

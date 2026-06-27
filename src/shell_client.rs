@@ -2898,11 +2898,23 @@ mod tests {
     use super::*;
 
     fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
+        let (role, scopes) = if is_bootstrap {
+            ("admin".to_string(), vec!["admin".to_string()])
+        } else {
+            ("user".to_string(), Vec::new())
+        };
         crate::auth::AuthContext {
+            kind: if is_bootstrap {
+                crate::auth::AuthKind::Bootstrap
+            } else {
+                crate::auth::AuthKind::ApiToken
+            },
             user_id: username.map(|username| format!("user-{}", username)),
             username: username.map(str::to_string),
             api_key_id: username.map(|username| format!("key-{}", username)),
             api_key_name: username.map(|username| format!("{} key", username)),
+            role: Some(role),
+            scopes,
             is_bootstrap,
         }
     }

@@ -26,6 +26,7 @@ mod runtime_http;
 mod shell_client;
 mod shell_protocol;
 mod tool_runtime;
+mod users_http;
 
 pub(crate) use auth::{get_db, json_error, AuthMiddleware};
 pub(crate) use config::load_startup_env_files;
@@ -262,6 +263,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             .push(Router::with_path("projects/write_file").post(runtime_http::projects_write_file))
             .push(Router::with_path("projects/run_job").post(runtime_http::projects_run_job))
             .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
+            // Phase 2 multi-user auth: user + personal API token management.
+            // REST-only admin/self-management surface; intentionally NOT
+            // exposed in /openapi.json (GPT Actions) because token creation is
+            // sensitive. All behind the shared AuthMiddleware Bearer auth.
+            .push(Router::with_path("users/create").post(users_http::users_create))
+            .push(Router::with_path("users/list").post(users_http::users_list))
+            .push(Router::with_path("tokens/create").post(users_http::tokens_create))
+            .push(Router::with_path("tokens/list").post(users_http::tokens_list))
+            .push(Router::with_path("tokens/revoke").post(users_http::tokens_revoke))
             .push(Router::with_path("shell/run").post(shell_run))
             .push(Router::with_path("shell/file").post(shell_file_op))
             .push(Router::with_path("shell/job").post(shell_job))

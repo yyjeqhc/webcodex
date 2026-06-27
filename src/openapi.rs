@@ -106,6 +106,14 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/audit/sessions",
     "/api/audit/session",
     "/api/audit/stats",
+    // Phase 2 multi-user auth: user/token management is REST-only admin/self
+    // surface. Token creation is sensitive and must not be GPT-importable, so
+    // these paths are deliberately excluded from /openapi.json.
+    "/api/users/create",
+    "/api/users/list",
+    "/api/tokens/create",
+    "/api/tokens/list",
+    "/api/tokens/revoke",
     "/mcp",
     "/openapi.json",
     // The MCP App console is a public static HTML/JS/CSS surface served via

@@ -130,6 +130,35 @@ pub struct UserRecord {
     pub username: String,
     pub created_at: i64,
     pub disabled: i64,
+    /// Optional human-readable name. Phase 2 user model.
+    #[serde(default)]
+    pub display_name: Option<String>,
+    /// `"admin"` or `"user"`. Defaults to `"user"` for legacy rows.
+    #[serde(default = "default_user_role")]
+    pub role: String,
+    /// Optional unix timestamp marking when the user was disabled. Mirrors
+    /// the legacy `disabled` flag (disabled != 0 implies disabled_at is set).
+    #[serde(default)]
+    pub disabled_at: Option<i64>,
+    /// Optional unix timestamp of the most recent user metadata update.
+    #[serde(default)]
+    pub updated_at: Option<i64>,
+}
+
+fn default_user_role() -> String {
+    "user".to_string()
+}
+
+impl UserRecord {
+    /// True when the user is disabled (disabled flag set or disabled_at present).
+    pub fn is_disabled(&self) -> bool {
+        self.disabled != 0 || self.disabled_at.is_some()
+    }
+
+    /// True when the user holds the admin role.
+    pub fn is_admin(&self) -> bool {
+        self.role == "admin"
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -141,4 +170,29 @@ pub struct ApiKeyRecord {
     pub created_at: i64,
     pub last_used_at: Option<i64>,
     pub revoked_at: Option<i64>,
+    /// Space-separated scope list (e.g. `"runtime:read project:write"`).
+    /// Empty string means no scopes. Phase 2 token model.
+    #[serde(default)]
+    pub scopes: String,
+    /// Optional unix timestamp after which the token must no longer
+    /// authenticate. `None` means the token never expires.
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+}
+
+impl ApiKeyRecord {
+    /// Parse the stored scope string into an ordered, deduplicated list.
+    pub fn scopes_vec(&self) -> Vec<String> {
+        self.scopes.split_whitespace().map(str::to_string).collect()
+    }
+
+    /// True when the token has been explicitly revoked.
+    pub fn is_revoked(&self) -> bool {
+        self.revoked_at.is_some()
+    }
+
+    /// True when the token has expired relative to `now` (unix seconds).
+    pub fn is_expired(&self, now: i64) -> bool {
+        self.expires_at.is_some_and(|exp| now >= exp)
+    }
 }

@@ -211,7 +211,9 @@ max_output_bytes = 262144
 
 Agent project files in `projects_dir` may set `shell_profile = "rust"` to bind a project to a configured profile.
 
-`runtime_status` and `listAgents` expose only a redacted policy summary: `allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`, and `max_output_bytes`. They do not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell profile `init_script` values.
+Shell profiles prepare a one-time environment snapshot per project/profile (no persistent shell, no `.bashrc`/`.profile` sourced by default). See [SHELL_PROFILES.md](SHELL_PROFILES.md) for Rust/Cargo, Python venv, and Conda examples, resolution rules, and safety boundaries. Changing a profile requires restarting `webcodex-agent` (no reload API).
+
+`runtime_status` and `listAgents` expose a redacted policy summary plus a sanitized `shell_profiles` summary (profile names, `has_init_script`, `env_keys_count`, `program`, `args_count`). `listProjects` exposes `shell_profile`, `resolved_shell_profile`, and `shell_profile_status` (`configured` / `missing` / `not_configured` / `unknown`). They do not expose tokens, env values, `Authorization` headers, full `agent.toml`, the full env snapshot, or shell profile `init_script` bodies.
 
 ## Authentication and transport
 

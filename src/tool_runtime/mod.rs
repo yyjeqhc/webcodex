@@ -502,7 +502,17 @@ impl ToolRuntime {
     async fn list_projects(&self) -> ToolResult {
         let mut list: Vec<Value> = Vec::new();
         for client in self.shell_clients.list_clients().await {
+            // Sanitized shell-profiles summary for this agent (carried inside
+            // the registration policy). Used to resolve which profile a project
+            // actually uses and whether that profile is configured. `None` for
+            // older agents that did not report one.
+            let shell_profiles = client
+                .policy
+                .as_ref()
+                .and_then(|p| p.shell_profiles.as_ref());
             for project in client.projects.iter().filter(|p| !p.disabled) {
+                let (resolved_shell_profile, shell_profile_status) =
+                    resolve_project_shell_profile(project.shell_profile.as_deref(), shell_profiles);
                 list.push(json!({
                     "id": Self::agent_project_runtime_id(&client.client_id, &project.id),
                     "agent_project_id": project.id,
@@ -512,6 +522,12 @@ impl ToolRuntime {
                     "client_id": client.client_id,
                     "allow_patch": project.allow_patch,
                     "source": "agent_registered",
+                    "agent_status": client.status,
+                    "connected": client.connected,
+                    "last_seen": client.last_seen,
+                    "shell_profile": project.shell_profile,
+                    "resolved_shell_profile": resolved_shell_profile,
+                    "shell_profile_status": shell_profile_status,
                 }));
             }
         }
@@ -544,6 +560,9 @@ impl ToolRuntime {
                     "capabilities": c.capabilities,
                     "projects": c.projects,
                     "policy": sanitized_policy_summary(c.policy.as_ref()),
+                    "shell_profiles": sanitized_shell_profiles_summary(
+                        c.policy.as_ref().and_then(|p| p.shell_profiles.as_ref())
+                    ),
                 })
             })
             .collect();
@@ -609,6 +628,9 @@ impl ToolRuntime {
                     "capabilities": c.capabilities,
                     "projects_count": c.projects.len(),
                     "policy": sanitized_policy_summary(c.policy.as_ref()),
+                    "shell_profiles": sanitized_shell_profiles_summary(
+                        c.policy.as_ref().and_then(|p| p.shell_profiles.as_ref())
+                    ),
                 })
             })
             .collect();
@@ -700,6 +722,73 @@ fn sanitized_policy_summary(policy: Option<&crate::shell_protocol::AgentPolicySu
             "max_output_bytes": p.max_output_bytes,
         }),
         None => Value::Null,
+    }
+}
+
+/// Build the sanitized shell-profiles summary JSON exposed in
+/// `runtime_status`, `listAgents`, and `listProjects`. Only safe metadata is
+/// carried: default profile name, configured count, prepared-cache count, and
+/// per-profile name / has_init_script (boolean) / env_keys_count / program /
+/// args_count. NEVER includes init_script bodies, env values, tokens, or the
+/// full env snapshot. Older agents that did not report a summary produce
+/// `Value::Null`.
+fn sanitized_shell_profiles_summary(
+    summary: Option<&crate::shell_protocol::ShellProfilesSummary>,
+) -> Value {
+    match summary {
+        Some(s) => {
+            let profiles: Vec<Value> = s
+                .profiles
+                .iter()
+                .map(|p| {
+                    json!({
+                        "name": p.name,
+                        "has_init_script": p.has_init_script,
+                        "env_keys_count": p.env_keys_count,
+                        "program": p.program,
+                        "args_count": p.args_count,
+                    })
+                })
+                .collect();
+            json!({
+                "default_profile": s.default_profile,
+                "configured_count": s.configured_count,
+                "prepared_cache_count": s.prepared_cache_count,
+                "profiles": profiles,
+            })
+        }
+        None => Value::Null,
+    }
+}
+
+/// Resolve which shell profile a project uses and whether it is configured.
+/// Returns `(resolved_name, status)` where:
+/// - `resolved_name` = `project_shell_profile` (if set) else the agent's
+///   `default_profile` (if any) else `None`.
+/// - `status` = `"configured"` if the resolved name exists in the agent's
+///   configured profiles; `"missing"` if a name resolved but is not
+///   configured; `"not_configured"` if no profile resolves at all; and
+///   `"unknown"` if the agent did not report a shell-profiles summary so the
+///   configured set cannot be checked.
+fn resolve_project_shell_profile(
+    project_shell_profile: Option<&str>,
+    summary: Option<&crate::shell_protocol::ShellProfilesSummary>,
+) -> (Option<String>, &'static str) {
+    let resolved = project_shell_profile
+        .map(str::to_string)
+        .or_else(|| summary.and_then(|s| s.default_profile.clone()));
+    match resolved {
+        None => (None, "not_configured"),
+        Some(name) => match summary {
+            None => (Some(name), "unknown"),
+            Some(s) => {
+                if s.profiles.iter().any(|p| p.name == name) {
+                    (Some(name), "configured")
+                } else {
+                    (Some(name), "missing")
+                }
+            }
+        },
     }
 }
 
@@ -2563,6 +2652,7 @@ mod tests {
             git_head: None,
             git_dirty: None,
             updated_at: 123,
+            shell_profile: None,
         }
     }
 
@@ -3152,6 +3242,197 @@ new file mode 100644\n\
         assert_eq!(projects[0]["source"], "agent_registered");
     }
 
+    /// Helper: register an agent carrying a sanitized shell-profiles summary
+    /// (inside its policy) plus a set of projects with optional per-project
+    /// `shell_profile`. Used by the shell-profile observability tests.
+    async fn register_agent_with_shell_profiles(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        policy: Option<crate::shell_protocol::AgentPolicySummary>,
+        projects: Vec<ShellAgentProjectSummary>,
+    ) {
+        use crate::shell_protocol::ShellClientRegisterRequest;
+        runtime
+            .shell_clients
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities::default()),
+                projects: Some(projects),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy,
+            })
+            .await
+            .unwrap();
+    }
+
+    fn profile_summary_entry(
+        name: &str,
+        has_init_script: bool,
+        env_keys_count: usize,
+    ) -> crate::shell_protocol::ShellProfileSummaryEntry {
+        crate::shell_protocol::ShellProfileSummaryEntry {
+            name: name.to_string(),
+            has_init_script,
+            env_keys_count,
+            program: "sh".to_string(),
+            args_count: 1,
+        }
+    }
+
+    #[tokio::test]
+    async fn list_projects_shows_shell_profile_resolution() {
+        use crate::shell_protocol::{AgentPolicySummary, ShellProfilesSummary};
+        let runtime = test_runtime();
+        let summary = ShellProfilesSummary {
+            default_profile: Some("rust".to_string()),
+            configured_count: 1,
+            prepared_cache_count: 0,
+            profiles: vec![profile_summary_entry("rust", false, 2)],
+        };
+        let policy = AgentPolicySummary {
+            allow_raw_shell: true,
+            allow_cwd_anywhere: true,
+            allowed_roots: Vec::new(),
+            max_timeout_secs: 3600,
+            max_output_bytes: 262144,
+            shell_profiles: Some(summary),
+        };
+        let mut configured = registered_project("rust-proj", "/root/git/rust");
+        configured.shell_profile = Some("rust".to_string());
+        let mut missing = registered_project("bad-proj", "/root/git/bad");
+        missing.shell_profile = Some("nope".to_string());
+        let mut fallback = registered_project("default-proj", "/root/git/default");
+        // No explicit shell_profile: should resolve to default_profile "rust".
+        let _ = fallback.shell_profile.take();
+        register_agent_with_shell_profiles(
+            &runtime,
+            "ws-1",
+            Some(policy),
+            vec![configured, missing, fallback],
+        )
+        .await;
+
+        let result = runtime.dispatch(ToolCall::ListProjects).await;
+        assert!(result.success, "{:?}", result.error);
+        let projects = result.output.as_array().unwrap();
+        let by_id: std::collections::HashMap<&str, &Value> = projects
+            .iter()
+            .map(|p| (p["agent_project_id"].as_str().unwrap(), p))
+            .collect();
+        // Explicit profile that is configured.
+        let cfg = by_id["rust-proj"];
+        assert_eq!(cfg["shell_profile"], "rust");
+        assert_eq!(cfg["resolved_shell_profile"], "rust");
+        assert_eq!(cfg["shell_profile_status"], "configured");
+        // Explicit profile that is missing.
+        let miss = by_id["bad-proj"];
+        assert_eq!(miss["shell_profile"], "nope");
+        assert_eq!(miss["resolved_shell_profile"], "nope");
+        assert_eq!(miss["shell_profile_status"], "missing");
+        // No explicit profile: resolves to default_profile "rust".
+        let def = by_id["default-proj"];
+        assert_eq!(def["shell_profile"], Value::Null);
+        assert_eq!(def["resolved_shell_profile"], "rust");
+        assert_eq!(def["shell_profile_status"], "configured");
+        // Agent liveness fields are surfaced for each project.
+        assert_eq!(def["agent_status"], "online");
+        assert_eq!(def["connected"], true);
+    }
+
+    #[tokio::test]
+    async fn list_projects_shell_profile_status_unknown_without_summary() {
+        // An older agent that did not report a shell-profiles summary (policy
+        // is None): a project with a shell_profile resolves but its configured
+        // state is "unknown" because the configured set cannot be checked.
+        let runtime = test_runtime();
+        let mut project = registered_project("proj", "/root/git/proj");
+        project.shell_profile = Some("rust".to_string());
+        register_agent_with_shell_profiles(&runtime, "legacy", None, vec![project]).await;
+
+        let result = runtime.dispatch(ToolCall::ListProjects).await;
+        assert!(result.success);
+        let projects = result.output.as_array().unwrap();
+        assert_eq!(projects[0]["resolved_shell_profile"], "rust");
+        assert_eq!(projects[0]["shell_profile_status"], "unknown");
+    }
+
+    #[tokio::test]
+    async fn runtime_status_shell_profiles_summary_is_sanitized() {
+        use crate::shell_protocol::{
+            AgentPolicySummary, ShellProfileSummaryEntry, ShellProfilesSummary,
+        };
+        let registry = Arc::new(ShellClientRegistry::default());
+        let secret_env_value = "DO_NOT_LEAK_THIS_ENV_VALUE";
+        let secret_script = "DO_NOT_LEAK_THIS_INIT_SCRIPT_BODY";
+        let summary = ShellProfilesSummary {
+            default_profile: Some("rust".to_string()),
+            configured_count: 1,
+            prepared_cache_count: 0,
+            profiles: vec![ShellProfileSummaryEntry {
+                name: "rust".to_string(),
+                has_init_script: true,
+                env_keys_count: 3,
+                program: "sh".to_string(),
+                args_count: 1,
+            }],
+        };
+        // The summary itself never carries env values or init_script bodies;
+        // the secrets below are only carried in local test variables to prove
+        // they never reach the status JSON.
+        let _ = (secret_env_value, secret_script);
+        registry
+            .register(crate::shell_protocol::ShellClientRegisterRequest {
+                client_id: "profile-agent".to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: Some("websocket-v1".to_string()),
+                policy: Some(AgentPolicySummary {
+                    allow_raw_shell: true,
+                    allow_cwd_anywhere: false,
+                    allowed_roots: Vec::new(),
+                    max_timeout_secs: 3600,
+                    max_output_bytes: 262144,
+                    shell_profiles: Some(summary),
+                }),
+            })
+            .await
+            .unwrap();
+        let runtime = ToolRuntime::new(
+            Arc::new(ProjectsState::failed(
+                "none".to_string(),
+                "test".to_string(),
+            )),
+            registry,
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        );
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        let client = &result.output["agents"]["clients"][0];
+        let sp = &client["shell_profiles"];
+        assert_eq!(sp["default_profile"], "rust");
+        assert_eq!(sp["configured_count"], 1);
+        assert_eq!(sp["profiles"][0]["name"], "rust");
+        assert_eq!(sp["profiles"][0]["has_init_script"], true);
+        assert_eq!(sp["profiles"][0]["env_keys_count"], 3);
+        assert_eq!(sp["profiles"][0]["program"], "sh");
+        assert_eq!(sp["profiles"][0]["args_count"], 1);
+        // Sanitization: never expose init_script bodies or env values.
+        let rendered = sp.to_string();
+        assert!(!rendered.contains("DO_NOT_LEAK_THIS_ENV_VALUE"));
+        assert!(!rendered.contains("DO_NOT_LEAK_THIS_INIT_SCRIPT_BODY"));
+        assert!(sp["profiles"][0].get("init_script").is_none());
+        assert!(sp["profiles"][0].get("env").is_none());
+    }
+
     #[tokio::test]
     async fn server_configured_project_id_is_not_resolved_by_runtime_surface() {
         let runtime = runtime_with_agent_project("oe");
@@ -3624,6 +3905,7 @@ new file mode 100644\n\
                     allowed_roots: vec![std::path::PathBuf::from("/root")],
                     max_timeout_secs: 3600,
                     max_output_bytes: 262144,
+                    shell_profiles: None,
                 }),
             })
             .await
@@ -3707,6 +3989,7 @@ new file mode 100644\n\
                     allowed_roots: vec![],
                     max_timeout_secs: 120,
                     max_output_bytes: 4096,
+                    shell_profiles: None,
                 }),
             })
             .await

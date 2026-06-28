@@ -189,7 +189,7 @@ agent:<client_id>:<project_id>
 
 Agent policy controls execution boundaries. When `allowed_roots` is omitted or empty, the agent defaults to `$HOME`. If `allowed_roots` is configured explicitly, that list replaces the `$HOME` default.
 
-Agent project files can bind a project to a prepared shell profile for future environment snapshot support:
+Agent project files can bind a project to a prepared shell profile. WebCodex prepares a one-time environment snapshot per project/profile (no persistent shell, no `.bashrc`/`.profile` sourced by default); see [docs/SHELL_PROFILES.md](docs/SHELL_PROFILES.md) for Rust/Cargo, Python venv, and Conda examples. Changing a profile requires restarting `webcodex-agent`.
 
 ```toml
 shell_profile = "rust"
@@ -204,7 +204,7 @@ allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
 ```
 
-`runtime_status` and `listAgents` expose a redacted policy summary for observability: `allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`, and `max_output_bytes`. They do not expose tokens, env values, `Authorization` headers, the full `agent.toml`, or shell profile `init_script` values.
+`runtime_status`, `listAgents`, and `listProjects` expose a redacted policy summary plus a sanitized `shell_profiles` summary (profile names, `has_init_script`, `env_keys_count`, `program`, `args_count`). `listProjects` also shows each project's `resolved_shell_profile` and `shell_profile_status`. They do not expose tokens, env values, `Authorization` headers, the full `agent.toml`, the full env snapshot, or shell profile `init_script` bodies.
 
 ## Optional Codex CLI jobs
 

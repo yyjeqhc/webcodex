@@ -156,6 +156,23 @@ webcodex-cli doctor --strict \
   --agent-token-file /etc/webcodex/webcodex-agent-token
 ```
 
+Add `--agent-config /etc/webcodex/agent.toml` to run local shell-profile / project
+diagnostics (parses `agent.toml`, checks `projects_dir`, project paths, and
+`shell_profile` resolution) without contacting the server. Add `--project <id>`
+to also run a remote `printf webcodex-doctor-ok` shell roundtrip against a
+specific project:
+
+```bash
+webcodex-cli doctor --strict \
+  --agent-config /etc/webcodex/agent.toml \
+  --server-url https://your-domain.example \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --project agent:oe:webcodex
+```
+
+Doctor never prints `init_script` bodies, env values, or tokens. See
+[SHELL_PROFILES.md](SHELL_PROFILES.md) for profile config and troubleshooting.
+
 Agent policy defaults:
 
 - Missing or empty `allowed_roots` defaults to `$HOME`.

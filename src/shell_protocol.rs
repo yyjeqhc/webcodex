@@ -103,13 +103,55 @@ pub struct ShellAgentProjectSummary {
     #[serde(default)]
     pub git_dirty: Option<bool>,
     pub updated_at: i64,
+    /// Project-bound shell profile name (`project.shell_profile`). Non-secret:
+    /// just a profile name. `None` means the project did not override the
+    /// profile, so the agent falls back to `shell.default_profile`. Carried so
+    /// `listProjects` / `runtime_status` can show which profile a project uses
+    /// without exposing env values or init_script contents.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_profile: Option<String>,
+}
+
+/// Sanitized summary of one configured shell profile. Exposes ONLY safe
+/// metadata: whether an init_script is set (boolean, never the body), the
+/// number of env keys (never the values), the resolved program, and the arg
+/// count. Used by `ShellProfilesSummary`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellProfileSummaryEntry {
+    pub name: String,
+    pub has_init_script: bool,
+    pub env_keys_count: usize,
+    pub program: String,
+    pub args_count: usize,
+}
+
+/// Sanitized summary of an agent's prepared-shell-profile configuration.
+/// Reported by the agent at registration (carried inside `AgentPolicySummary`)
+/// and exposed in `runtime_status` / `listAgents` / `listProjects` so users can
+/// see which profiles are configured and which one a project resolves to.
+///
+/// This summary NEVER includes: init_script bodies, env values, tokens,
+/// Authorization headers, full agent.toml, the full env snapshot, or stderr
+/// tails. `prepared_cache_count` reflects the number of prepared snapshots at
+/// the last registration (snapshots are prepared lazily on first use, so this
+/// is typically 0 right after agent start; it is not a live counter).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ShellProfilesSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub default_profile: Option<String>,
+    pub configured_count: usize,
+    pub prepared_cache_count: usize,
+    pub profiles: Vec<ShellProfileSummaryEntry>,
 }
 
 /// Sanitized agent policy summary. Carried in the registration payload and
 /// exposed in `runtime_status` / `listAgents`. Contains ONLY non-secret
 /// fields: it never includes the agent token, shell env values, init_script
 /// contents, or full agent.toml contents. `allowed_roots` is intentionally
-/// exposed as a path-policy summary.
+/// exposed as a path-policy summary. `shell_profiles` carries the sanitized
+/// prepared-shell-profile configuration summary (profile names, default
+/// profile, counts) so observability can show which profile a project uses;
+/// it never carries env values or init_script bodies.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentPolicySummary {
     #[serde(default = "default_shell_true")]
@@ -122,6 +164,10 @@ pub struct AgentPolicySummary {
     pub max_timeout_secs: u64,
     #[serde(default = "default_policy_max_output_bytes")]
     pub max_output_bytes: usize,
+    /// Sanitized prepared-shell-profile summary. `None` for older agents that
+    /// did not report one. Never carries env values or init_script bodies.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_profiles: Option<ShellProfilesSummary>,
 }
 
 impl Default for AgentPolicySummary {
@@ -132,6 +178,7 @@ impl Default for AgentPolicySummary {
             allowed_roots: Vec::new(),
             max_timeout_secs: default_policy_max_timeout_secs(),
             max_output_bytes: default_policy_max_output_bytes(),
+            shell_profiles: None,
         }
     }
 }

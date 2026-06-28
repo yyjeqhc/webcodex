@@ -22,7 +22,8 @@ use shell_protocol::{
     ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentProjectSummary,
     ShellAgentResultRequest, ShellAgentResultResponse, ShellAgentShellRequest,
     ShellClientCapabilities, ShellClientRegisterRequest, ShellClientRegisterResponse,
-    AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+    ShellProfileSummaryEntry, ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1,
+    AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 
 // Shared agent-config initialization (types, validation, TOML generation,
@@ -1181,6 +1182,12 @@ fn capture_profile_env_snapshot(
 }
 
 impl PreparedShellProfileCache {
+    /// Number of currently prepared snapshots. Used only for the sanitized
+    /// observability summary; never exposes snapshot contents.
+    fn len(&self) -> usize {
+        self.profiles.lock().unwrap().len()
+    }
+
     fn get_or_prepare(
         &self,
         shell: &ShellConfig,
@@ -1480,6 +1487,7 @@ fn agent_project_summary(
         git_head,
         git_dirty,
         updated_at,
+        shell_profile: project.shell_profile.clone(),
     }
 }
 
@@ -1626,6 +1634,7 @@ fn build_register_request(
     projects: Vec<ShellAgentProjectSummary>,
     protocol_version: &str,
     agent_instance_id: &str,
+    prepared_cache_count: usize,
 ) -> ShellClientRegisterRequest {
     let capabilities = agent_register_capabilities(cfg);
     ShellClientRegisterRequest {
@@ -1637,20 +1646,62 @@ fn build_register_request(
         capabilities: Some(capabilities),
         projects: Some(projects),
         agent_protocol_version: Some(protocol_version.to_string()),
-        policy: Some(register_policy_summary(cfg)),
+        policy: Some(register_policy_summary(cfg, prepared_cache_count)),
+    }
+}
+
+/// Build the sanitized shell-profiles summary from the static shell config.
+/// Exposes only safe metadata: profile names, whether each has an init_script
+/// (boolean, never the body), env key counts (never values), the resolved
+/// program, and arg counts. `prepared_cache_count` is the number of snapshots
+/// prepared at call time (typically 0 right after start). Never includes env
+/// values, init_script bodies, tokens, or the full env snapshot.
+fn build_shell_profiles_summary(
+    shell: &ShellConfig,
+    prepared_cache_count: usize,
+) -> ShellProfilesSummary {
+    let profiles: Vec<ShellProfileSummaryEntry> = shell
+        .profiles
+        .iter()
+        .map(|(name, profile)| {
+            let program = profile
+                .program
+                .clone()
+                .unwrap_or_else(|| shell.program.clone());
+            let args = profile.args.clone().unwrap_or_else(|| shell.args.clone());
+            ShellProfileSummaryEntry {
+                name: name.clone(),
+                has_init_script: profile.init_script.is_some(),
+                env_keys_count: profile.env.len(),
+                program,
+                args_count: args.len(),
+            }
+        })
+        .collect();
+    ShellProfilesSummary {
+        default_profile: shell.default_profile.clone(),
+        configured_count: shell.profiles.len(),
+        prepared_cache_count,
+        profiles,
     }
 }
 
 /// Build the sanitized agent policy summary sent at registration. Mirrors the
 /// local `AgentPolicy` but only carries non-secret fields. The shell env
-/// values and init_script path are intentionally NOT included.
-fn register_policy_summary(cfg: &AgentConfig) -> AgentPolicySummary {
+/// values and init_script path are intentionally NOT included. The sanitized
+/// shell-profiles summary is attached so observability can show which profile
+/// a project resolves to without exposing env values or init_script bodies.
+fn register_policy_summary(cfg: &AgentConfig, prepared_cache_count: usize) -> AgentPolicySummary {
     AgentPolicySummary {
         allow_raw_shell: cfg.policy.allow_raw_shell,
         allow_cwd_anywhere: cfg.policy.allow_cwd_anywhere,
         allowed_roots: cfg.policy.allowed_roots.clone(),
         max_timeout_secs: cfg.policy.max_timeout_secs,
         max_output_bytes: cfg.policy.max_output_bytes,
+        shell_profiles: Some(build_shell_profiles_summary(
+            &cfg.shell,
+            prepared_cache_count,
+        )),
     }
 }
 
@@ -1659,12 +1710,14 @@ fn register(
     cfg: &AgentConfig,
     project_cache: &mut AgentProjectCache,
     agent_instance_id: &str,
+    prepared_cache_count: usize,
 ) -> Result<(), String> {
     let body = build_register_request(
         cfg,
         project_cache.get(cfg),
         AGENT_PROTOCOL_VERSION_POLLING_V1,
         agent_instance_id,
+        prepared_cache_count,
     );
     let response: ShellClientRegisterResponse =
         post_json(client, cfg, "/api/shell/agent/register", &body)?;
@@ -3407,7 +3460,13 @@ fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> R
         .map_err(|e| format!("failed to create http client: {}", e))?;
     let jobs = JobManager::new(max_concurrent_jobs(&cfg));
     let mut project_cache = AgentProjectCache::default();
-    register(&client, &cfg, &mut project_cache, agent_instance_id)?;
+    register(
+        &client,
+        &cfg,
+        &mut project_cache,
+        agent_instance_id,
+        jobs.prepared_profiles.len(),
+    )?;
     eprintln!(
         "webcodex-agent registered client_id={} server={} transport=polling",
         cfg.client_id, cfg.server_url
@@ -3431,7 +3490,13 @@ fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> R
                     return Err(e);
                 }
                 std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms));
-                let _ = register(&client, &cfg, &mut project_cache, agent_instance_id);
+                let _ = register(
+                    &client,
+                    &cfg,
+                    &mut project_cache,
+                    agent_instance_id,
+                    jobs.prepared_profiles.len(),
+                );
             }
         }
     }
@@ -3538,12 +3603,15 @@ async fn websocket_session(
         .await
         .map_err(|e| format!("websocket connect failed: {}", e))?;
 
-    // Register over the socket.
+    // Register over the socket. The prepared-profile cache is empty at
+    // registration time (snapshots are prepared lazily on first use), so
+    // `prepared_cache_count` is reported as 0 here.
     let register_payload = build_register_request(
         cfg,
         projects,
         AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
         agent_instance_id,
+        0,
     );
     let reg_env = AgentEnvelope::Register {
         payload: register_payload,
@@ -4996,6 +5064,7 @@ shell_profile = "../rust"
             Vec::new(),
             AGENT_PROTOCOL_VERSION_POLLING_V1,
             "inst-1",
+            0,
         );
         assert_eq!(body.client_id, "oe");
         assert_eq!(body.agent_instance_id, "inst-1");
@@ -5011,6 +5080,57 @@ shell_profile = "../rust"
         assert!(caps.file_write);
         assert!(caps.async_jobs);
         assert!(caps.async_shell_jobs);
+    }
+
+    #[test]
+    fn register_request_carries_sanitized_shell_profiles_summary() {
+        // A config with one profile carrying a secret env value and a secret
+        // init_script body. The sanitized summary must report the profile name,
+        // has_init_script=true, and env_keys_count, but MUST NOT include the env
+        // value or the init_script body.
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("config/projects.d"));
+        let secret_env = "DO_NOT_LEAK_THIS_ENV_VALUE";
+        let secret_script = "DO_NOT_LEAK_THIS_INIT_SCRIPT_BODY";
+        cfg.shell = shell_with_profiles(
+            Some("rust"),
+            vec![(
+                "rust",
+                ShellProfileConfig {
+                    program: Some("sh".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    env: profile_env(&[("SECRET_KEY", secret_env)]),
+                    init_script: Some(secret_script.to_string()),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let body = build_register_request(
+            &cfg,
+            Vec::new(),
+            AGENT_PROTOCOL_VERSION_POLLING_V1,
+            "inst-1",
+            0,
+        );
+        let policy = body.policy.expect("agent registers a policy");
+        let summary = policy
+            .shell_profiles
+            .as_ref()
+            .expect("sanitized shell profiles summary is present");
+        assert_eq!(summary.default_profile.as_deref(), Some("rust"));
+        assert_eq!(summary.configured_count, 1);
+        assert_eq!(summary.profiles.len(), 1);
+        let entry = &summary.profiles[0];
+        assert_eq!(entry.name, "rust");
+        assert!(entry.has_init_script);
+        assert_eq!(entry.env_keys_count, 1);
+        assert_eq!(entry.program, "sh");
+        assert_eq!(entry.args_count, 1);
+        // Sanitization: the rendered summary never carries env values or the
+        // init_script body.
+        let rendered = serde_json::to_string(summary).unwrap();
+        assert!(!rendered.contains(secret_env), "{rendered}");
+        assert!(!rendered.contains(secret_script), "{rendered}");
     }
 
     // ------------------------------------------------------------------------
@@ -5044,6 +5164,7 @@ shell_profile = "../rust"
             Vec::new(),
             AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
             "inst-1",
+            0,
         );
         assert_eq!(body.agent_instance_id, "inst-1");
         assert_eq!(
@@ -5066,7 +5187,8 @@ shell_profile = "../rust"
         // The register builder carries it through unchanged.
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().join("config/projects.d"));
-        let body = build_register_request(&cfg, Vec::new(), AGENT_PROTOCOL_VERSION_POLLING_V1, &id);
+        let body =
+            build_register_request(&cfg, Vec::new(), AGENT_PROTOCOL_VERSION_POLLING_V1, &id, 0);
         assert_eq!(body.agent_instance_id, id);
         assert!(!body.agent_instance_id.is_empty());
     }

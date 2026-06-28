@@ -18,6 +18,7 @@
 use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -123,6 +124,13 @@ struct DoctorOptions {
     token_file: Option<PathBuf>,
     user_token_file: Option<PathBuf>,
     agent_token_file: Option<PathBuf>,
+    /// Local agent config path (`agent.toml`) for local shell-profile / project
+    /// diagnostics. When set, doctor parses it and checks projects_dir, project
+    /// paths, and shell_profile resolution without contacting the server.
+    agent_config: Option<PathBuf>,
+    /// Restrict the remote shell roundtrip check to a single project id (the
+    /// `agent:<client_id>:<project_id>` runtime id, or a bare project id).
+    project: Option<String>,
     json: bool,
     strict: bool,
 }
@@ -275,11 +283,15 @@ fn doctor_usage() -> &'static str {
        --token-file PATH         Read bearer token from file\n\
        --user-token-file PATH    Read user API token for runtime/project checks\n\
        --agent-token-file PATH   Read agent token for boundary checks\n\
+       --agent-config PATH       Local agent.toml for shell-profile/project diagnostics\n\
+       --project ID              Restrict the remote shell roundtrip to this project id\n\
        --json                    Print machine-readable diagnostics\n\
        --strict                  Exit non-zero if any check fails\n\
        -h, --help                Print help and exit\n\n\
      Doctor is non-destructive and never prints tokens or response bodies from\n\
-     non-JSON/HTML errors.\n"
+     non-JSON/HTML errors. With --agent-config it parses agent.toml locally and\n\
+     checks projects_dir, project paths, and shell_profile resolution without\n\
+     contacting the server. It never prints init_script bodies or env values.\n"
 }
 
 fn server_usage() -> &'static str {
@@ -1045,6 +1057,10 @@ fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
             "--agent-token-file" => {
                 opts.agent_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
             }
+            "--agent-config" => {
+                opts.agent_config = Some(PathBuf::from(next_value(&mut iter, arg)?))
+            }
+            "--project" => opts.project = Some(next_value(&mut iter, arg)?),
             "--json" => opts.json = true,
             "--strict" => opts.strict = true,
             _ => return Err(format!("unknown doctor flag: {}", arg)),
@@ -2051,6 +2067,273 @@ async fn http_get_json_status(
     Ok((status, content_type, json))
 }
 
+// ============================================================================
+// Local agent-config doctor (shell profiles / projects)
+// ============================================================================
+//
+// Parses agent.toml locally (no server contact) to diagnose shell-profile
+// configuration: whether projects_dir exists, whether project tomls parse,
+// whether project.path exists, and whether project.shell_profile resolves to
+// a configured profile (or shell.default_profile). Never prints init_script
+// bodies, env values, tokens, or the full env snapshot.
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[allow(dead_code)]
+struct DoctorShellProfileConfig {
+    #[serde(default)]
+    program: Option<String>,
+    #[serde(default)]
+    args: Option<Vec<String>>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    #[serde(default)]
+    init_script: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+struct DoctorShellConfig {
+    #[serde(default)]
+    default_profile: Option<String>,
+    #[serde(default)]
+    profiles: BTreeMap<String, DoctorShellProfileConfig>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+#[allow(dead_code)]
+struct DoctorAgentPolicy {
+    #[serde(default)]
+    allowed_roots: Vec<PathBuf>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[allow(dead_code)]
+struct DoctorAgentConfig {
+    #[serde(default)]
+    server_url: String,
+    #[serde(default)]
+    client_id: String,
+    #[serde(default)]
+    projects_dir: Option<PathBuf>,
+    #[serde(default)]
+    shell: DoctorShellConfig,
+    #[serde(default)]
+    policy: DoctorAgentPolicy,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DoctorAgentProject {
+    id: String,
+    path: String,
+    #[serde(default)]
+    shell_profile: Option<String>,
+    #[serde(default)]
+    disabled: bool,
+}
+
+/// Resolve the effective profile name for a project: `project.shell_profile`
+/// first, else `shell.default_profile`, else `None`. Used to report which
+/// profile a project would use without exposing env values or init_script.
+fn resolve_doctor_profile_name(
+    project: &DoctorAgentProject,
+    shell: &DoctorShellConfig,
+) -> Option<String> {
+    project
+        .shell_profile
+        .clone()
+        .or_else(|| shell.default_profile.clone())
+}
+
+/// Run the local agent-config doctor checks. Returns one or more
+/// `DoctorCheck`s. Never prints init_script bodies or env values: profile env
+/// is reported only as a key count, and init_script only as a boolean.
+fn run_local_agent_doctor(config_path: &Path) -> Vec<DoctorCheck> {
+    let mut checks = Vec::new();
+    let content = match std::fs::read_to_string(config_path) {
+        Ok(content) => content,
+        Err(e) => {
+            checks.push(DoctorCheck::fail(
+                "agent config",
+                format!("failed to read {}: {}", config_path.display(), e),
+            ));
+            return checks;
+        }
+    };
+    let cfg: DoctorAgentConfig = match toml::from_str(&content) {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            checks.push(DoctorCheck::fail(
+                "agent config",
+                format!("failed to parse {}: {}", config_path.display(), e),
+            ));
+            return checks;
+        }
+    };
+    checks.push(DoctorCheck::pass(
+        "agent config",
+        format!(
+            "parsed {}; client_id={}",
+            config_path.display(),
+            if cfg.client_id.trim().is_empty() {
+                "(empty)"
+            } else {
+                cfg.client_id.as_str()
+            }
+        ),
+    ));
+
+    // shell.profiles summary (sanitized: no env values, no init_script bodies).
+    let configured_count = cfg.shell.profiles.len();
+    let profile_names: Vec<&str> = cfg.shell.profiles.keys().map(String::as_str).collect();
+    checks.push(DoctorCheck::pass(
+        "shell profiles",
+        format!(
+            "configured_count={} default_profile={} profiles=[{}]",
+            configured_count,
+            cfg.shell.default_profile.as_deref().unwrap_or("(none)"),
+            profile_names.join(", ")
+        ),
+    ));
+    if let Some(default_profile) = &cfg.shell.default_profile {
+        if !cfg.shell.profiles.contains_key(default_profile) {
+            checks.push(DoctorCheck::fail(
+                "shell default_profile",
+                format!(
+                    "shell.default_profile '{}' does not match any shell.profiles entry",
+                    default_profile
+                ),
+            ));
+        }
+    }
+
+    // projects_dir + per-project checks.
+    let projects_dir = cfg.projects_dir.clone().unwrap_or_else(|| {
+        std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".config/webcodex/projects.d")
+    });
+    if !projects_dir.exists() {
+        checks.push(DoctorCheck::warn(
+            "projects_dir",
+            format!("{} does not exist", projects_dir.display()),
+        ));
+        return checks;
+    }
+    let mut project_files = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&projects_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("toml") {
+                project_files.push(path);
+            }
+        }
+    }
+    project_files.sort();
+    let mut loaded = 0usize;
+    let mut parse_errors = 0usize;
+    for file in &project_files {
+        let content = match std::fs::read_to_string(file) {
+            Ok(content) => content,
+            Err(e) => {
+                parse_errors += 1;
+                checks.push(DoctorCheck::warn(
+                    "project config",
+                    format!("failed to read {}: {}", file.display(), e),
+                ));
+                continue;
+            }
+        };
+        let project: DoctorAgentProject = match toml::from_str(&content) {
+            Ok(project) => project,
+            Err(e) => {
+                parse_errors += 1;
+                checks.push(DoctorCheck::warn(
+                    "project config",
+                    format!("failed to parse {}: {}", file.display(), e),
+                ));
+                continue;
+            }
+        };
+        if project.disabled {
+            continue;
+        }
+        loaded += 1;
+        let project_path = PathBuf::from(&project.path);
+        if !project_path.exists() {
+            checks.push(DoctorCheck::fail(
+                format!("project '{}' path", project.id),
+                format!("path {} does not exist", project_path.display()),
+            ));
+        }
+        // allowed_roots membership (only when not allow_cwd_anywhere; the
+        // local doctor does not parse allow_cwd_anywhere, so this is a
+        // best-effort informational check).
+        if !cfg.policy.allowed_roots.is_empty() {
+            let inside = match project_path.canonicalize() {
+                Ok(canon) => cfg.policy.allowed_roots.iter().any(|root| {
+                    root.canonicalize()
+                        .map(|root| canon == root || canon.starts_with(&root))
+                        .unwrap_or(false)
+                }),
+                Err(_) => false,
+            };
+            if !inside {
+                checks.push(DoctorCheck::warn(
+                    format!("project '{}' allowed_roots", project.id),
+                    format!(
+                        "path {} is outside the configured allowed_roots",
+                        project_path.display()
+                    ),
+                ));
+            }
+        }
+        // shell_profile resolution.
+        let resolved = resolve_doctor_profile_name(&project, &cfg.shell);
+        match resolved {
+            None => checks.push(DoctorCheck::pass(
+                format!("project '{}' shell_profile", project.id),
+                "no profile configured (fallback to plain shell)".to_string(),
+            )),
+            Some(name) => {
+                if cfg.shell.profiles.contains_key(&name) {
+                    // Sanitized prepare-shape check: report has_init_script and
+                    // env key count only, never the contents.
+                    let profile = cfg.shell.profiles.get(&name).expect("checked above");
+                    checks.push(DoctorCheck::pass(
+                        format!("project '{}' shell_profile", project.id),
+                        format!(
+                            "resolved='{}' has_init_script={} env_keys_count={}",
+                            name,
+                            profile.init_script.is_some(),
+                            profile.env.len()
+                        ),
+                    ));
+                } else {
+                    checks.push(DoctorCheck::fail(
+                        format!("project '{}' shell_profile", project.id),
+                        format!(
+                            "resolved profile '{}' is not in shell.profiles (project.shell_profile={}, default_profile={})",
+                            name,
+                            project.shell_profile.as_deref().unwrap_or("(none)"),
+                            cfg.shell.default_profile.as_deref().unwrap_or("(none)")
+                        ),
+                    ));
+                }
+            }
+        }
+    }
+    checks.push(DoctorCheck::pass(
+        "projects_dir",
+        format!(
+            "{} loaded={} parse_errors={}",
+            projects_dir.display(),
+            loaded,
+            parse_errors
+        ),
+    ));
+    checks
+}
+
 async fn run_doctor(opts: DoctorOptions) -> Result<(String, bool), String> {
     let mut checks = Vec::new();
     for name in ["webcodex", "webcodex-agent", "webcodex-cli"] {
@@ -2064,6 +2347,17 @@ async fn run_doctor(opts: DoctorOptions) -> Result<(String, bool), String> {
                 "not found in PATH",
             )),
         }
+    }
+
+    // Local agent-config doctor (shell profiles / projects). Runs without
+    // contacting the server; never prints init_script bodies or env values.
+    if let Some(agent_config) = opts.agent_config.as_deref() {
+        checks.extend(run_local_agent_doctor(agent_config));
+    } else {
+        checks.push(DoctorCheck::warn(
+            "agent config",
+            "--agent-config not provided; skipped local shell-profile/project checks",
+        ));
     }
 
     let general_token = resolve_doctor_general_token(&opts)?;
@@ -2212,6 +2506,56 @@ async fn run_doctor(opts: DoctorOptions) -> Result<(String, bool), String> {
                     format!("HTTP {} content-type {}", status, content_type),
                 )),
                 Err(e) => checks.push(DoctorCheck::warn("projects", e)),
+            }
+
+            // Basic remote shell roundtrip: run `printf webcodex-doctor-ok`
+            // through the run_shell tool on the requested project and verify
+            // the marker comes back. Requires --project. Non-strict: a failure
+            // is a WARN (the project/agent may be offline). Never prints
+            // command output beyond the marker check.
+            if let Some(project) = opts.project.as_deref() {
+                match http_post_json_status(
+                    server_url,
+                    "/api/tools/call",
+                    Some(token),
+                    json!({"tool":"run_shell","params":{"project":project,"command":"printf webcodex-doctor-ok"}}),
+                )
+                .await
+                {
+                    Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+                        let stdout = value
+                            .pointer("/output/stdout")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let exit_code = value
+                            .pointer("/output/exit_code")
+                            .and_then(Value::as_i64);
+                        if stdout.contains("webcodex-doctor-ok") && exit_code == Some(0) {
+                            checks.push(DoctorCheck::pass(
+                                "shell roundtrip",
+                                format!("project '{}' roundtrip ok", project),
+                            ));
+                        } else {
+                            checks.push(DoctorCheck::warn(
+                                "shell roundtrip",
+                                format!(
+                                    "project '{}' returned exit_code={:?} without the expected marker",
+                                    project, exit_code
+                                ),
+                            ));
+                        }
+                    }
+                    Ok((status, content_type, _)) => checks.push(DoctorCheck::warn(
+                        "shell roundtrip",
+                        format!("HTTP {} content-type {}", status, content_type),
+                    )),
+                    Err(e) => checks.push(DoctorCheck::warn("shell roundtrip", e)),
+                }
+            } else {
+                checks.push(DoctorCheck::warn(
+                    "shell roundtrip",
+                    "--project not provided; skipped remote shell roundtrip",
+                ));
             }
         } else {
             checks.push(DoctorCheck::warn(
@@ -3853,6 +4197,150 @@ mod tests {
         assert!(!output.contains("secret-doctor-token"));
         assert!(!output.contains("secret-token-in-body"));
         assert!(output.contains("non-JSON response"));
+    }
+
+    /// Write a minimal agent.toml (with shell profiles) into `dir` and return
+    /// its path. Used by the local agent-config doctor tests.
+    fn write_doctor_agent_config(
+        dir: &Path,
+        projects_dir: &Path,
+        default_profile: Option<&str>,
+    ) -> PathBuf {
+        let default_line = default_profile
+            .map(|p| format!("default_profile = {:?}\n", p))
+            .unwrap_or_default();
+        let agent_toml = format!(
+            "server_url = \"http://127.0.0.1:8000\"\n\
+             token = \"test-token\"\n\
+             client_id = \"oe\"\n\
+             projects_dir = {:?}\n\
+             [shell]\n\
+             {default_line}\
+             [shell.profiles.rust]\n\
+             program = \"sh\"\n\
+             args = [\"-c\"]\n\
+             init_script = \"export SECRET=DO_NOT_LEAK_THIS_INIT_SCRIPT_BODY\"\n\
+             [shell.profiles.rust.env]\n\
+             CARGO_HOME = \"/root/.cargo\"\n\
+             SECRET_ENV = \"DO_NOT_LEAK_THIS_ENV_VALUE\"\n",
+            projects_dir
+        );
+        let path = dir.join("agent.toml");
+        std::fs::write(&path, agent_toml).unwrap();
+        path
+    }
+
+    fn write_doctor_project(
+        projects_dir: &Path,
+        id: &str,
+        path: &Path,
+        shell_profile: Option<&str>,
+    ) {
+        std::fs::create_dir_all(projects_dir).unwrap();
+        let shell_line = shell_profile
+            .map(|p| format!("shell_profile = {:?}\n", p))
+            .unwrap_or_default();
+        std::fs::write(
+            projects_dir.join(format!("{id}.toml")),
+            format!(
+                "id = {:?}\npath = {:?}\nname = {:?}\n{shell_line}",
+                id,
+                path.to_string_lossy(),
+                id
+            ),
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn doctor_local_agent_config_detects_configured_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("projects.d");
+        let project_dir = tmp.path().join("rust-proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        write_doctor_project(&projects_dir, "rust-proj", &project_dir, Some("rust"));
+        let cfg_path = write_doctor_agent_config(tmp.path(), &projects_dir, Some("rust"));
+        let checks = run_local_agent_doctor(&cfg_path);
+        let names: Vec<&str> = checks.iter().map(|c| c.name.as_str()).collect();
+        assert!(names.contains(&"agent config"), "{names:?}");
+        assert!(names.contains(&"shell profiles"), "{names:?}");
+        assert!(names.contains(&"projects_dir"), "{names:?}");
+        // The configured profile resolves successfully.
+        let profile_check = checks
+            .iter()
+            .find(|c| c.name == "project 'rust-proj' shell_profile")
+            .expect("shell_profile check present");
+        assert_eq!(profile_check.status, "PASS", "{:?}", profile_check);
+        assert!(profile_check.detail.contains("resolved='rust'"));
+        assert!(profile_check.detail.contains("has_init_script=true"));
+        assert!(profile_check.detail.contains("env_keys_count=2"));
+        // Sanitization: never print the init_script body or env value.
+        assert!(!profile_check
+            .detail
+            .contains("DO_NOT_LEAK_THIS_INIT_SCRIPT_BODY"));
+        let all_rendered = format!(
+            "{}",
+            checks
+                .iter()
+                .map(|c| c.detail.as_str())
+                .collect::<Vec<_>>()
+                .join("|")
+        );
+        assert!(
+            !all_rendered.contains("DO_NOT_LEAK_THIS_ENV_VALUE"),
+            "{all_rendered}"
+        );
+    }
+
+    #[test]
+    fn doctor_local_agent_config_detects_missing_shell_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let projects_dir = tmp.path().join("projects.d");
+        let project_dir = tmp.path().join("bad-proj");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        // Project asks for a profile that is not configured, and there is no
+        // default_profile to fall back to.
+        write_doctor_project(&projects_dir, "bad-proj", &project_dir, Some("nope"));
+        let cfg_path = write_doctor_agent_config(tmp.path(), &projects_dir, None);
+        let checks = run_local_agent_doctor(&cfg_path);
+        let profile_check = checks
+            .iter()
+            .find(|c| c.name == "project 'bad-proj' shell_profile")
+            .expect("shell_profile check present");
+        assert_eq!(profile_check.status, "FAIL", "{:?}", profile_check);
+        assert!(profile_check.detail.contains("not in shell.profiles"));
+    }
+
+    #[test]
+    fn doctor_parse_accepts_agent_config_and_project_flags() {
+        let opts = parse_doctor(&args(&[
+            "--agent-config",
+            "/tmp/agent.toml",
+            "--project",
+            "agent:oe:webcodex",
+            "--strict",
+        ]))
+        .unwrap();
+        assert_eq!(
+            opts.agent_config.as_deref(),
+            Some(Path::new("/tmp/agent.toml"))
+        );
+        assert_eq!(opts.project.as_deref(), Some("agent:oe:webcodex"));
+        assert!(opts.strict);
+    }
+
+    #[test]
+    fn shell_profiles_doc_exists_and_index_links_it() {
+        // The shell-profiles user doc must exist and be linked from INDEX.md.
+        let doc = Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/SHELL_PROFILES.md");
+        assert!(doc.is_file(), "docs/SHELL_PROFILES.md must exist");
+        let index =
+            std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/INDEX.md"))
+                .unwrap();
+        assert!(
+            index.contains("SHELL_PROFILES.md"),
+            "INDEX.md must link SHELL_PROFILES.md"
+        );
     }
 
     #[test]

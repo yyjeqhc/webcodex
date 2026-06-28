@@ -3155,6 +3155,7 @@ mod tests {
             git_head: Some("9a7d3ce".to_string()),
             git_dirty: Some(false),
             updated_at: 123456,
+            shell_profile: None,
         }
     }
 

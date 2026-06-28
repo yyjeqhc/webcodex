@@ -41,10 +41,32 @@ This is only an example of a narrowed deployment, not the default.
 
 ## Observability
 
-`runtime_status` and `listAgents` show project summaries and redacted policy summaries. They do not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell `init_script` values.
+`runtime_status`, `listAgents`, and `listProjects` show project summaries, redacted policy summaries, and a sanitized `shell_profiles` summary. They do not expose tokens, env values, `Authorization` headers, full `agent.toml`, the full env snapshot, or shell `init_script` bodies.
+
+Each project in `listProjects` also carries `agent_status` (`online` / `stale`), `connected`, `last_seen`, `shell_profile` (the project's setting), `resolved_shell_profile` (the actually-used name), and `shell_profile_status` (`configured` / `missing` / `not_configured` / `unknown`).
+
+## Server-side `projects.toml` vs agent-registered projects
+
+> The server-side `projects.toml` config is legacy/metadata only. Runtime tool
+> execution (run_shell, apply_patch, git, …) uses **agent-registered**
+> projects. A project listed only in the server-side `projects.toml` is **not**
+> executable through the runtime surface; use an agent-registered id like
+> `agent:<client_id>:<project_id>` from `listProjects`.
+
+This is why a project may appear in `runtime_status` (`projects.configured =
+true`) but still be rejected by tool calls with an "Unknown project" /
+"projects.toml" error: the executable set comes from the connected agent's
+registry, not the server-side file. If a project seems to flicker in and out of
+`listProjects`, check the owning agent's liveness (`agent_status`, `connected`,
+`last_seen`): a `stale` or disconnected agent's projects are listed but cannot
+execute until the agent reconnects.
 
 ## Troubleshooting
 
 If `createProject` or `registerProject` returns a policy error, check whether the requested path is under the agent's effective `allowed_roots`.
 
 If a new project does not appear in `listProjects`, verify the agent is online and that its project registry refresh succeeded.
+
+For shell-profile diagnostics (missing profile, prepare failure, project
+binding), run `webcodex-cli doctor --agent-config /etc/webcodex/agent.toml
+--strict` and see [SHELL_PROFILES.md](SHELL_PROFILES.md).

@@ -365,6 +365,7 @@ fn parse_project_summary_from_result(
         git_head: None,
         git_dirty: None,
         updated_at: chrono::Utc::now().timestamp(),
+        shell_profile: None,
     })
 }
 

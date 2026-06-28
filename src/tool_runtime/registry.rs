@@ -291,6 +291,69 @@ fn output_schema_for_tool(name: &str) -> Value {
                 schema_type("string", "Patch diff stat, when available."),
             ),
         ]),
+        "replace_line_range" | "delete_line_range" => wrapped_output_schema(vec![
+            ("path", schema_type("string", "Project-relative path.")),
+            (
+                "start_line",
+                schema_type("integer", "1-based inclusive start line."),
+            ),
+            (
+                "end_line",
+                schema_type("integer", "1-based inclusive end line."),
+            ),
+            (
+                "old_sha256",
+                schema_type("string", "sha256 of the original selected range."),
+            ),
+            (
+                "new_sha256",
+                schema_type("string", "sha256 of the entire file after the edit."),
+            ),
+            (
+                "old_line_count",
+                schema_type("integer", "Number of original selected lines."),
+            ),
+            (
+                "new_line_count",
+                schema_type("integer", "Number of replacement lines."),
+            ),
+            (
+                "bytes_written",
+                schema_type("integer", "Bytes in the file written after the edit."),
+            ),
+            (
+                "changed",
+                schema_type("boolean", "Whether file contents changed."),
+            ),
+        ]),
+        "insert_at_line" => wrapped_output_schema(vec![
+            ("path", schema_type("string", "Project-relative path.")),
+            ("line", schema_type("integer", "1-based insertion line.")),
+            (
+                "old_sha256",
+                schema_type("string", "sha256 of the anchor line, or empty EOF anchor."),
+            ),
+            (
+                "new_sha256",
+                schema_type("string", "sha256 of the entire file after the edit."),
+            ),
+            (
+                "old_line_count",
+                schema_type("integer", "Anchor line count: 1 or 0 at EOF."),
+            ),
+            (
+                "new_line_count",
+                schema_type("integer", "Number of inserted lines."),
+            ),
+            (
+                "bytes_written",
+                schema_type("integer", "Bytes in the file written after the edit."),
+            ),
+            (
+                "changed",
+                schema_type("boolean", "Whether file contents changed."),
+            ),
+        ]),
         _ => default_output_schema(),
     }
 }
@@ -716,6 +779,46 @@ impl ToolRuntime {
                 ]),
                 output_schema: output_schema_for_tool("write_project_file"),
             },
+            ToolSpec {
+                name: "replace_line_range".to_string(),
+                description: "Replace a 1-based inclusive line range in a UTF-8 file. Adds one trailing newline to non-empty new_text. new_sha256 is the whole file digest.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("start_line", "integer", "1-based inclusive start line.", true),
+                    ("end_line", "integer", "1-based inclusive end line.", true),
+                    ("new_text", "string", "Replacement text; empty deletes the range.", true),
+                    ("expected_old_sha256", "string", "Optional sha256 guard for the original range text.", false),
+                    ("expected_old_prefix", "string", "Optional prefix guard for the original range text.", false),
+                ]),
+                output_schema: output_schema_for_tool("replace_line_range"),
+            },
+            ToolSpec {
+                name: "insert_at_line".to_string(),
+                description: "Insert text before a 1-based line, or at EOF with total_lines+1. Adds one trailing newline to non-empty text. new_sha256 is whole file.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("line", "integer", "1-based insertion line; total_lines+1 appends at EOF.", true),
+                    ("text", "string", "Text to insert.", true),
+                    ("expected_anchor_sha256", "string", "Optional sha256 guard for anchor line or empty EOF anchor.", false),
+                    ("expected_anchor_prefix", "string", "Optional prefix guard for anchor line or empty EOF anchor.", false),
+                ]),
+                output_schema: output_schema_for_tool("insert_at_line"),
+            },
+            ToolSpec {
+                name: "delete_line_range".to_string(),
+                description: "Delete a 1-based inclusive line range in a UTF-8 file. Equivalent to replace_line_range with empty new_text. new_sha256 is whole file.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("start_line", "integer", "1-based inclusive start line.", true),
+                    ("end_line", "integer", "1-based inclusive end line.", true),
+                    ("expected_old_sha256", "string", "Optional sha256 guard for the original range text.", false),
+                    ("expected_old_prefix", "string", "Optional prefix guard for the original range text.", false),
+                ]),
+                output_schema: output_schema_for_tool("delete_line_range"),
+            },
         ]
     }
 
@@ -747,7 +850,10 @@ impl ToolRuntime {
                 "git_restore_paths", "discard_untracked"
             ]),
             "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
-            "edit": pick(&["replace_in_file", "write_project_file"]),
+            "edit": pick(&[
+                "replace_in_file", "write_project_file",
+                "replace_line_range", "insert_at_line", "delete_line_range"
+            ]),
             "shell": pick(&["run_shell", "run_job"]),
             "jobs": pick(&[
                 "run_codex", "run_job", "job_status", "job_log",

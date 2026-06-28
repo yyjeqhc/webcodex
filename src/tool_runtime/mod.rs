@@ -144,12 +144,14 @@ impl ToolRuntime {
             // the agent shell path; it requires the same shell capability as
             // apply_patch but never mutates the worktree.
             ToolCall::ValidatePatch { .. } => Some(AgentCapability::Shell),
-            // replace_in_file / write_project_file run a fixed python3 helper
-            // over the agent shell path (old/new/content travel via stdin, the
-            // command itself is a constant). They require the shell capability.
-            ToolCall::ReplaceInFile { .. } | ToolCall::WriteProjectFile { .. } => {
-                Some(AgentCapability::Shell)
-            }
+            // Structured edit tools run a fixed python3 helper over the agent
+            // shell path (caller text travels via stdin; the command itself is
+            // constant). They require the shell capability.
+            ToolCall::ReplaceInFile { .. }
+            | ToolCall::WriteProjectFile { .. }
+            | ToolCall::ReplaceLineRange { .. }
+            | ToolCall::InsertAtLine { .. }
+            | ToolCall::DeleteLineRange { .. } => Some(AgentCapability::Shell),
             ToolCall::ReadFile { .. } | ToolCall::ListProjectFiles { .. } => {
                 Some(AgentCapability::FileRead)
             }
@@ -196,6 +198,9 @@ impl ToolRuntime {
             | ToolCall::ValidatePatch { project, .. }
             | ToolCall::ReplaceInFile { project, .. }
             | ToolCall::WriteProjectFile { project, .. }
+            | ToolCall::ReplaceLineRange { project, .. }
+            | ToolCall::InsertAtLine { project, .. }
+            | ToolCall::DeleteLineRange { project, .. }
             | ToolCall::GitStatus { project }
             | ToolCall::GitDiff { project, .. }
             | ToolCall::GitDiffSummary { project }
@@ -493,6 +498,65 @@ impl ToolRuntime {
                     overwrite,
                     expected_sha256,
                     expected_content_prefix,
+                )
+                .await
+            }
+
+            ToolCall::ReplaceLineRange {
+                project,
+                path,
+                start_line,
+                end_line,
+                new_text,
+                expected_old_sha256,
+                expected_old_prefix,
+            } => {
+                self.replace_line_range(
+                    project,
+                    path,
+                    start_line,
+                    end_line,
+                    new_text,
+                    expected_old_sha256,
+                    expected_old_prefix,
+                )
+                .await
+            }
+
+            ToolCall::InsertAtLine {
+                project,
+                path,
+                line,
+                text,
+                expected_anchor_sha256,
+                expected_anchor_prefix,
+            } => {
+                self.insert_at_line(
+                    project,
+                    path,
+                    line,
+                    text,
+                    expected_anchor_sha256,
+                    expected_anchor_prefix,
+                )
+                .await
+            }
+
+            ToolCall::DeleteLineRange {
+                project,
+                path,
+                start_line,
+                end_line,
+                expected_old_sha256,
+                expected_old_prefix,
+            } => {
+                self.delete_line_range(
+                    project,
+                    path,
+                    start_line,
+                    end_line,
+                    expected_old_sha256,
+                    expected_old_prefix,
                 )
                 .await
             }
@@ -5211,12 +5275,59 @@ new file mode 100644\n\
                 && expected_sha256.is_none()
                 && expected_content_prefix.is_none()
         ));
+
+        let replace_lines = ToolCall::from_tool_name(
+            "replace_line_range",
+            json!({
+                "project": "agent:c:p",
+                "path": "src/main.rs",
+                "start_line": 2,
+                "end_line": 4,
+                "new_text": "replacement",
+                "expected_old_prefix": "old"
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            replace_lines,
+            ToolCall::ReplaceLineRange { project, path, start_line, end_line, new_text, expected_old_prefix, .. }
+                if project == "agent:c:p"
+                && path == "src/main.rs"
+                && start_line == 2
+                && end_line == 4
+                && new_text == "replacement"
+                && expected_old_prefix.as_deref() == Some("old")
+        ));
+
+        let insert = ToolCall::from_tool_name(
+            "insert_at_line",
+            json!({"project": "agent:c:p", "path": "src/main.rs", "line": 1, "text": "use x;"}),
+        )
+        .unwrap();
+        assert!(matches!(insert, ToolCall::InsertAtLine { line: 1, .. }));
+
+        let delete = ToolCall::from_tool_name(
+            "delete_line_range",
+            json!({"project": "agent:c:p", "path": "src/main.rs", "start_line": 8, "end_line": 9}),
+        )
+        .unwrap();
+        assert!(matches!(
+            delete,
+            ToolCall::DeleteLineRange {
+                start_line: 8,
+                end_line: 9,
+                ..
+            }
+        ));
     }
 
     #[test]
     fn known_tool_names_includes_phase4_edit_tools() {
         assert!(KNOWN_TOOL_NAMES.contains(&"replace_in_file"));
         assert!(KNOWN_TOOL_NAMES.contains(&"write_project_file"));
+        assert!(KNOWN_TOOL_NAMES.contains(&"replace_line_range"));
+        assert!(KNOWN_TOOL_NAMES.contains(&"insert_at_line"));
+        assert!(KNOWN_TOOL_NAMES.contains(&"delete_line_range"));
     }
 
     #[test]
@@ -5237,6 +5348,14 @@ new file mode 100644\n\
             "tool_specs must include write_project_file: {:?}",
             names
         );
+        for required in ["replace_line_range", "insert_at_line", "delete_line_range"] {
+            assert!(
+                names.iter().any(|n| n == required),
+                "tool_specs must include {}: {:?}",
+                required,
+                names
+            );
+        }
         for spec in runtime.tool_specs() {
             assert!(
                 spec.description.chars().count() <= 300,
@@ -5254,6 +5373,9 @@ new file mode 100644\n\
         let edit = cats["edit"].as_array().expect("edit category present");
         assert!(edit.iter().any(|v| v == "replace_in_file"));
         assert!(edit.iter().any(|v| v == "write_project_file"));
+        assert!(edit.iter().any(|v| v == "replace_line_range"));
+        assert!(edit.iter().any(|v| v == "insert_at_line"));
+        assert!(edit.iter().any(|v| v == "delete_line_range"));
     }
 
     #[test]
@@ -5316,6 +5438,343 @@ new file mode 100644\n\
         assert!(!is_hex_sha256(
             "z3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         ));
+    }
+
+    #[test]
+    fn replace_line_range_helper_replaces_middle_multiline() {
+        let (updated, out) = files::apply_line_edit_content(
+            "one\ntwo\nthree\nfour\n",
+            "src/example.rs",
+            files::LineEditOperation::Replace,
+            Some(2),
+            Some(3),
+            None,
+            "TWO\nTHREE",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(updated, "one\nTWO\nTHREE\nfour\n");
+        assert_eq!(out["path"], "src/example.rs");
+        assert_eq!(out["start_line"], 2);
+        assert_eq!(out["end_line"], 3);
+        assert_eq!(out["old_line_count"], 2);
+        assert_eq!(out["new_line_count"], 2);
+        assert_eq!(out["changed"], true);
+    }
+
+    #[test]
+    fn replace_line_range_helper_rejects_sha_mismatch_without_write() {
+        let original = "one\ntwo\nthree\n";
+        let err = files::apply_line_edit_content(
+            original,
+            "src/example.rs",
+            files::LineEditOperation::Replace,
+            Some(2),
+            Some(2),
+            None,
+            "TWO",
+            Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, "expected_old_sha256 mismatch");
+        assert_eq!(original, "one\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn replace_line_range_helper_rejects_out_of_range() {
+        let err = files::apply_line_edit_content(
+            "one\ntwo\n",
+            "src/example.rs",
+            files::LineEditOperation::Replace,
+            Some(2),
+            Some(3),
+            None,
+            "x",
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, "invalid line range");
+    }
+
+    #[test]
+    fn insert_at_line_helper_inserts_start_middle_and_eof() {
+        let (start, out) = files::apply_line_edit_content(
+            "one\ntwo\n",
+            "src/example.rs",
+            files::LineEditOperation::Insert,
+            None,
+            None,
+            Some(1),
+            "zero",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(start, "zero\none\ntwo\n");
+        assert_eq!(out["line"], 1);
+        assert_eq!(out["old_line_count"], 1);
+
+        let (middle, _) = files::apply_line_edit_content(
+            "one\ntwo\n",
+            "src/example.rs",
+            files::LineEditOperation::Insert,
+            None,
+            None,
+            Some(2),
+            "middle\n",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(middle, "one\nmiddle\ntwo\n");
+
+        let (eof, out) = files::apply_line_edit_content(
+            "one\ntwo\n",
+            "src/example.rs",
+            files::LineEditOperation::Insert,
+            None,
+            None,
+            Some(3),
+            "three",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(eof, "one\ntwo\nthree\n");
+        assert_eq!(out["old_line_count"], 0);
+    }
+
+    #[test]
+    fn insert_at_line_helper_rejects_anchor_prefix_mismatch() {
+        let err = files::apply_line_edit_content(
+            "one\ntwo\n",
+            "src/example.rs",
+            files::LineEditOperation::Insert,
+            None,
+            None,
+            Some(2),
+            "middle",
+            None,
+            Some("three"),
+        )
+        .unwrap_err();
+        assert_eq!(err, "expected_anchor_prefix mismatch");
+    }
+
+    #[test]
+    fn delete_line_range_helper_deletes_single_and_multiple_lines() {
+        let (single, out) = files::apply_line_edit_content(
+            "one\ntwo\nthree\n",
+            "src/example.rs",
+            files::LineEditOperation::Delete,
+            Some(2),
+            Some(2),
+            None,
+            "",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(single, "one\nthree\n");
+        assert_eq!(out["old_line_count"], 1);
+        assert_eq!(out["new_line_count"], 0);
+
+        let (multi, _) = files::apply_line_edit_content(
+            "one\ntwo\nthree\nfour\n",
+            "src/example.rs",
+            files::LineEditOperation::Delete,
+            Some(2),
+            Some(3),
+            None,
+            "",
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(multi, "one\nfour\n");
+    }
+
+    #[test]
+    fn delete_line_range_helper_rejects_out_of_range() {
+        let err = files::apply_line_edit_content(
+            "one\n",
+            "src/example.rs",
+            files::LineEditOperation::Delete,
+            Some(1),
+            Some(2),
+            None,
+            "",
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(err, "invalid line range");
+    }
+
+    #[test]
+    fn line_edit_helper_script_replace_line_range_happy_path() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        std::fs::write(tmp.path().join("src/example.rs"), "one\ntwo\nthree\nfour\n").unwrap();
+        let payload = json!({
+            "op": "replace",
+            "path": "src/example.rs",
+            "start_line": 2,
+            "end_line": 3,
+            "text": "TWO\nTHREE",
+            "expected_sha256": null,
+            "expected_prefix": null
+        });
+        let out = run_helper_locally(LINE_EDIT_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["path"], "src/example.rs");
+        assert_eq!(out["start_line"], 2);
+        assert_eq!(out["end_line"], 3);
+        assert_eq!(out["old_line_count"], 2);
+        assert_eq!(out["new_line_count"], 2);
+        assert_eq!(out["old_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(out["new_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("src/example.rs")).unwrap(),
+            "one\nTWO\nTHREE\nfour\n"
+        );
+    }
+
+    #[test]
+    fn line_edit_helper_script_insert_at_line_happy_path() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("example.rs"), "one\ntwo\n").unwrap();
+        let payload = json!({
+            "op": "insert",
+            "path": "example.rs",
+            "line": 2,
+            "text": "middle",
+            "expected_sha256": null,
+            "expected_prefix": null
+        });
+        let out = run_helper_locally(LINE_EDIT_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["path"], "example.rs");
+        assert_eq!(out["line"], 2);
+        assert_eq!(out["old_line_count"], 1);
+        assert_eq!(out["new_line_count"], 1);
+        assert_eq!(out["old_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(out["new_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("example.rs")).unwrap(),
+            "one\nmiddle\ntwo\n"
+        );
+    }
+
+    #[test]
+    fn line_edit_helper_script_delete_line_range_happy_path() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("example.rs"), "one\ntwo\nthree\nfour\n").unwrap();
+        let payload = json!({
+            "op": "delete",
+            "path": "example.rs",
+            "start_line": 2,
+            "end_line": 3,
+            "text": "",
+            "expected_sha256": null,
+            "expected_prefix": null
+        });
+        let out = run_helper_locally(LINE_EDIT_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["path"], "example.rs");
+        assert_eq!(out["start_line"], 2);
+        assert_eq!(out["end_line"], 3);
+        assert_eq!(out["old_line_count"], 2);
+        assert_eq!(out["new_line_count"], 0);
+        assert_eq!(out["old_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(out["new_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("example.rs")).unwrap(),
+            "one\nfour\n"
+        );
+    }
+
+    #[test]
+    fn line_edit_helper_script_guard_mismatch_leaves_file_unchanged() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join("example.rs"), "one\ntwo\nthree\n").unwrap();
+        let payload = json!({
+            "op": "replace",
+            "path": "example.rs",
+            "start_line": 2,
+            "end_line": 2,
+            "text": "TWO",
+            "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "expected_prefix": null
+        });
+        let out = run_helper_locally(LINE_EDIT_HELPER, &payload, tmp.path());
+        assert_eq!(out["changed"], false);
+        assert!(out["error"].as_str().unwrap().contains("mismatch"));
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("example.rs")).unwrap(),
+            "one\ntwo\nthree\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn line_edit_tools_reject_oversized_expected_prefix_before_agent_dispatch() {
+        let runtime = test_runtime();
+        let big_prefix = "x".repeat(MAX_EXPECTED_PREFIX_BYTES + 1);
+
+        let result = runtime
+            .replace_line_range(
+                "agent:c:p".to_string(),
+                "EDIT_PROBE.txt".to_string(),
+                1,
+                1,
+                "new".to_string(),
+                None,
+                Some(big_prefix.clone()),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("expected prefix too large"));
+
+        let result = runtime
+            .insert_at_line(
+                "agent:c:p".to_string(),
+                "EDIT_PROBE.txt".to_string(),
+                1,
+                "new".to_string(),
+                None,
+                Some(big_prefix.clone()),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("expected prefix too large"));
+
+        let result = runtime
+            .delete_line_range(
+                "agent:c:p".to_string(),
+                "EDIT_PROBE.txt".to_string(),
+                1,
+                1,
+                None,
+                Some(big_prefix),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("expected prefix too large"));
     }
 
     #[tokio::test]

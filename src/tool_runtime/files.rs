@@ -1,4 +1,6 @@
 use serde_json::{json, Value};
+#[cfg(test)]
+use sha2::{Digest, Sha256};
 use std::path::Path;
 use std::time::Duration;
 
@@ -151,6 +153,11 @@ pub(crate) const MAX_REPLACE_FIELD_BYTES: usize = 256 * 1024; // 256 KiB
 /// agent run-shell stdin transport (`RUN_HELPER_STDIN_BUDGET`).
 pub(crate) const MAX_WRITE_CONTENT_BYTES: usize = 256 * 1024; // 256 KiB
 
+/// Maximum accepted size for line-edit expected prefix guards. Keep this well
+/// below the helper stdin budget so oversized optimistic-concurrency guards
+/// fail locally before any agent helper request is enqueued.
+pub(crate) const MAX_EXPECTED_PREFIX_BYTES: usize = 64 * 1024; // 64 KiB
+
 /// Hard cap on the serialized helper payload sent to the agent over the
 /// run-shell stdin transport. Mirrors `MAX_RUN_STDIN_BYTES` in shell_client
 /// without coupling this module to that private constant.
@@ -224,6 +231,245 @@ pub(crate) fn is_hex_sha256(s: &str) -> bool {
         && s.bytes()
             .all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase())
 }
+
+#[cfg(test)]
+pub(crate) fn sha256_hex_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LineEditOperation {
+    Replace,
+    Insert,
+    Delete,
+}
+
+#[cfg(test)]
+fn normalize_line_edit_text(text: &str) -> String {
+    if text.is_empty() || text.ends_with('\n') {
+        text.to_string()
+    } else {
+        format!("{}\n", text)
+    }
+}
+
+#[cfg(test)]
+fn line_edit_text_line_count(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else {
+        text.lines().count()
+    }
+}
+
+/// Apply a structured line edit to UTF-8 `content` and return the new content
+/// plus the JSON payload shared by the runtime and tests. `new_sha256` is the
+/// sha256 digest of the entire file after the operation. Range tools hash the
+/// original replaced/deleted text; insert hashes the anchor line (or empty EOF
+/// anchor). This pure helper mirrors `LINE_EDIT_HELPER` so unit tests can cover
+/// edit semantics without needing an end-to-end agent.
+#[cfg(test)]
+pub(crate) fn apply_line_edit_content(
+    content: &str,
+    path: &str,
+    op: LineEditOperation,
+    start_line: Option<usize>,
+    end_line: Option<usize>,
+    line: Option<usize>,
+    text: &str,
+    expected_sha256: Option<&str>,
+    expected_prefix: Option<&str>,
+) -> Result<(String, Value), String> {
+    let lines: Vec<&str> = if content.is_empty() {
+        Vec::new()
+    } else {
+        content.split_inclusive('\n').collect()
+    };
+    let total_lines = lines.len();
+    let (old_text, new_text, new_content, old_line_count, new_line_count, range) = match op {
+        LineEditOperation::Replace | LineEditOperation::Delete => {
+            let start = start_line.ok_or_else(|| "invalid line range".to_string())?;
+            let end = end_line.ok_or_else(|| "invalid line range".to_string())?;
+            if start == 0 || end < start || end > total_lines {
+                return Err("invalid line range".to_string());
+            }
+            let old = lines[start - 1..end].concat();
+            let replacement = if op == LineEditOperation::Delete {
+                String::new()
+            } else {
+                normalize_line_edit_text(text)
+            };
+            let mut next = String::new();
+            next.push_str(&lines[..start - 1].concat());
+            next.push_str(&replacement);
+            next.push_str(&lines[end..].concat());
+            let inserted_lines = line_edit_text_line_count(&replacement);
+            (
+                old,
+                replacement,
+                next,
+                end - start + 1,
+                inserted_lines,
+                Some((start, end)),
+            )
+        }
+        LineEditOperation::Insert => {
+            let at = line.ok_or_else(|| "line out of range".to_string())?;
+            if at == 0 || at > total_lines + 1 {
+                return Err("line out of range".to_string());
+            }
+            let anchor = if at <= total_lines {
+                lines[at - 1].to_string()
+            } else {
+                String::new()
+            };
+            let insertion = normalize_line_edit_text(text);
+            let mut next = String::new();
+            next.push_str(&lines[..at - 1].concat());
+            next.push_str(&insertion);
+            next.push_str(&lines[at - 1..].concat());
+            let inserted_lines = line_edit_text_line_count(&insertion);
+            let anchor_count = if at <= total_lines { 1 } else { 0 };
+            (anchor, insertion, next, anchor_count, inserted_lines, None)
+        }
+    };
+    let old_sha256 = sha256_hex_bytes(old_text.as_bytes());
+    if let Some(expected) = expected_sha256 {
+        if old_sha256 != expected {
+            let label = match op {
+                LineEditOperation::Insert => "expected_anchor_sha256 mismatch",
+                _ => "expected_old_sha256 mismatch",
+            };
+            return Err(label.to_string());
+        }
+    }
+    if let Some(prefix) = expected_prefix {
+        if !old_text.starts_with(prefix) {
+            let label = match op {
+                LineEditOperation::Insert => "expected_anchor_prefix mismatch",
+                _ => "expected_old_prefix mismatch",
+            };
+            return Err(label.to_string());
+        }
+    }
+    let new_sha256 = sha256_hex_bytes(new_content.as_bytes());
+    let mut output = json!({
+        "path": path,
+        "old_sha256": old_sha256,
+        "new_sha256": new_sha256,
+        "old_line_count": old_line_count,
+        "new_line_count": new_line_count,
+        "bytes_written": new_content.len(),
+        "changed": new_content != content,
+    });
+    if let Some((start, end)) = range {
+        output["start_line"] = json!(start);
+        output["end_line"] = json!(end);
+    } else if let Some(at) = line {
+        output["line"] = json!(at);
+    }
+    let _ = new_text;
+    Ok((new_content, output))
+}
+
+/// Fixed python3 helper run on the owning agent for line-structured edits.
+///
+/// The script follows the same fixed-command, JSON-over-stdin pattern as the
+/// other edit helpers. It prints one JSON object and exits 0; logical failures
+/// carry an `error` field. `new_sha256` is the sha256 digest of the entire file
+/// after the operation.
+pub(crate) const LINE_EDIT_HELPER: &str = r#"
+import sys, json, hashlib, os, tempfile
+NUL = "\x00"
+def emit(obj):
+    sys.stdout.write(json.dumps(obj))
+    sys.exit(0)
+def sha(s):
+    return hashlib.sha256(s.encode("utf-8")).hexdigest()
+def normalized(s):
+    if s == "" or s.endswith("\n"):
+        return s
+    return s + "\n"
+def line_count(s):
+    if s == "":
+        return 0
+    return len(s.splitlines())
+try:
+    req = json.load(sys.stdin)
+except Exception as e:
+    emit({"changed": False, "error": "invalid json: " + str(e)})
+path = req.get("path", "")
+op = req.get("op", "")
+if not isinstance(path, str) or not path or path.startswith("/") or NUL in path or ".." in path.split("/"):
+    emit({"changed": False, "path": path if isinstance(path, str) else None, "error": "invalid path"})
+if op not in ["replace", "insert", "delete"]:
+    emit({"changed": False, "path": path, "error": "invalid operation"})
+try:
+    with open(path, "r", encoding="utf-8") as f:
+        content = f.read()
+except FileNotFoundError:
+    emit({"changed": False, "path": path, "error": "file not found"})
+except UnicodeDecodeError:
+    emit({"changed": False, "path": path, "error": "file is not valid UTF-8"})
+except Exception as e:
+    emit({"changed": False, "path": path, "error": "read failed: " + str(e)})
+lines = [] if content == "" else content.splitlines(True)
+total = len(lines)
+try:
+    if op in ["replace", "delete"]:
+        start = int(req.get("start_line"))
+        end = int(req.get("end_line"))
+        if start < 1 or end < start or end > total:
+            emit({"changed": False, "path": path, "start_line": start, "end_line": end, "error": "invalid line range"})
+        old_text = "".join(lines[start - 1:end])
+        replacement = "" if op == "delete" else normalized(req.get("text", ""))
+        if not isinstance(replacement, str) or NUL in replacement:
+            emit({"changed": False, "path": path, "error": "text cannot contain NUL bytes"})
+        new_content = "".join(lines[:start - 1]) + replacement + "".join(lines[end:])
+        old_count = end - start + 1
+        new_count = line_count(replacement)
+        coords = {"start_line": start, "end_line": end}
+    else:
+        at = int(req.get("line"))
+        if at < 1 or at > total + 1:
+            emit({"changed": False, "path": path, "line": at, "error": "line out of range"})
+        old_text = lines[at - 1] if at <= total else ""
+        insertion = normalized(req.get("text", ""))
+        if not isinstance(insertion, str) or NUL in insertion:
+            emit({"changed": False, "path": path, "error": "text cannot contain NUL bytes"})
+        new_content = "".join(lines[:at - 1]) + insertion + "".join(lines[at - 1:])
+        old_count = 1 if at <= total else 0
+        new_count = line_count(insertion)
+        coords = {"line": at}
+except Exception:
+    emit({"changed": False, "path": path, "error": "invalid line range" if op != "insert" else "line out of range"})
+old_digest = sha(old_text)
+exp_sha = req.get("expected_sha256", None)
+exp_prefix = req.get("expected_prefix", None)
+if exp_sha is not None and old_digest != exp_sha:
+    emit(dict({"changed": False, "path": path, "old_sha256": old_digest, "error": "expected_anchor_sha256 mismatch" if op == "insert" else "expected_old_sha256 mismatch"}, **coords))
+if exp_prefix is not None and (not isinstance(exp_prefix, str) or not old_text.startswith(exp_prefix)):
+    emit(dict({"changed": False, "path": path, "old_sha256": old_digest, "error": "expected_anchor_prefix mismatch" if op == "insert" else "expected_old_prefix mismatch"}, **coords))
+base_dir = os.path.dirname(path) or "."
+tmp = None
+try:
+    fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-line-")
+    with os.fdopen(fd, "w", encoding="utf-8") as f:
+        f.write(new_content)
+    os.replace(tmp, path)
+except Exception as e:
+    if tmp is not None:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    emit(dict({"changed": False, "path": path, "old_sha256": old_digest, "error": "write failed: " + str(e)}, **coords))
+out = dict({"path": path, "old_sha256": old_digest, "new_sha256": sha(new_content), "old_line_count": old_count, "new_line_count": new_count, "bytes_written": len(new_content.encode("utf-8")), "changed": new_content != content}, **coords)
+emit(out)
+"#;
 
 /// Fixed python3 helper run on the owning agent for `replace_in_file`.
 ///
@@ -559,6 +805,181 @@ impl ToolRuntime {
             };
         }
         ToolResult::ok(obj)
+    }
+
+    fn validate_line_edit_common(
+        path: &str,
+        text: &str,
+        expected_sha256: Option<&str>,
+        expected_prefix: Option<&str>,
+    ) -> Result<(), String> {
+        validate_edit_file_path(path)?;
+        if text.contains('\0') {
+            return Err("text cannot contain NUL bytes".to_string());
+        }
+        if text.len() > MAX_WRITE_CONTENT_BYTES {
+            return Err(format!(
+                "text too large; maximum is {} bytes",
+                MAX_WRITE_CONTENT_BYTES
+            ));
+        }
+        if let Some(hash) = expected_sha256 {
+            if !is_hex_sha256(hash) {
+                return Err(
+                    "expected sha256 must be a lowercase 64-char hex sha256 digest".to_string(),
+                );
+            }
+        }
+        if let Some(prefix) = expected_prefix {
+            if prefix.contains('\0') {
+                return Err("expected prefix cannot contain NUL bytes".to_string());
+            }
+            if prefix.len() > MAX_EXPECTED_PREFIX_BYTES {
+                return Err(format!(
+                    "expected prefix too large; maximum is {} bytes",
+                    MAX_EXPECTED_PREFIX_BYTES
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    async fn run_line_edit(&self, project: String, path: String, payload: Value) -> ToolResult {
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "line edit tools require an agent-registered project; \
+                 server-configured projects are not supported",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+        let command = format!("python3 -c '{}'", LINE_EDIT_HELPER);
+        let obj = match self
+            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(err),
+            };
+        }
+        if obj.get("path").is_none() {
+            let mut obj = obj;
+            obj["path"] = json!(path);
+            return ToolResult::ok(obj);
+        }
+        ToolResult::ok(obj)
+    }
+
+    pub(crate) async fn replace_line_range(
+        &self,
+        project: String,
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        new_text: String,
+        expected_old_sha256: Option<String>,
+        expected_old_prefix: Option<String>,
+    ) -> ToolResult {
+        if start_line == 0 || end_line < start_line {
+            return ToolResult::err("invalid line range");
+        }
+        if let Err(e) = Self::validate_line_edit_common(
+            &path,
+            &new_text,
+            expected_old_sha256.as_deref(),
+            expected_old_prefix.as_deref(),
+        ) {
+            return ToolResult::err(e);
+        }
+        let payload = json!({
+            "op": "replace",
+            "path": path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "text": new_text,
+            "expected_sha256": expected_old_sha256,
+            "expected_prefix": expected_old_prefix,
+        });
+        self.run_line_edit(project, path, payload).await
+    }
+
+    pub(crate) async fn insert_at_line(
+        &self,
+        project: String,
+        path: String,
+        line: usize,
+        text: String,
+        expected_anchor_sha256: Option<String>,
+        expected_anchor_prefix: Option<String>,
+    ) -> ToolResult {
+        if line == 0 {
+            return ToolResult::err("line out of range");
+        }
+        if let Err(e) = Self::validate_line_edit_common(
+            &path,
+            &text,
+            expected_anchor_sha256.as_deref(),
+            expected_anchor_prefix.as_deref(),
+        ) {
+            return ToolResult::err(e);
+        }
+        let payload = json!({
+            "op": "insert",
+            "path": path,
+            "line": line,
+            "text": text,
+            "expected_sha256": expected_anchor_sha256,
+            "expected_prefix": expected_anchor_prefix,
+        });
+        self.run_line_edit(project, path, payload).await
+    }
+
+    pub(crate) async fn delete_line_range(
+        &self,
+        project: String,
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        expected_old_sha256: Option<String>,
+        expected_old_prefix: Option<String>,
+    ) -> ToolResult {
+        if start_line == 0 || end_line < start_line {
+            return ToolResult::err("invalid line range");
+        }
+        if let Err(e) = Self::validate_line_edit_common(
+            &path,
+            "",
+            expected_old_sha256.as_deref(),
+            expected_old_prefix.as_deref(),
+        ) {
+            return ToolResult::err(e);
+        }
+        let payload = json!({
+            "op": "delete",
+            "path": path,
+            "start_line": start_line,
+            "end_line": end_line,
+            "text": "",
+            "expected_sha256": expected_old_sha256,
+            "expected_prefix": expected_old_prefix,
+        });
+        self.run_line_edit(project, path, payload).await
     }
 
     /// Run a fixed agent-side helper `command` with a JSON `payload` on stdin

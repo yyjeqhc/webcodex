@@ -200,6 +200,48 @@ pub enum ToolCall {
         expected_content_prefix: Option<String>,
     },
 
+    /// Replace a 1-based inclusive line range in a UTF-8 file via the owning
+    /// agent. The original range may be guarded by sha256 and/or prefix checks.
+    ReplaceLineRange {
+        project: String,
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        new_text: String,
+        #[serde(default)]
+        expected_old_sha256: Option<String>,
+        #[serde(default)]
+        expected_old_prefix: Option<String>,
+    },
+
+    /// Insert text before a 1-based line in a UTF-8 file via the owning agent.
+    /// `line == total_lines + 1` appends at EOF; optional guards apply to the
+    /// anchor line (or the empty EOF anchor).
+    InsertAtLine {
+        project: String,
+        path: String,
+        line: usize,
+        text: String,
+        #[serde(default)]
+        expected_anchor_sha256: Option<String>,
+        #[serde(default)]
+        expected_anchor_prefix: Option<String>,
+    },
+
+    /// Delete a 1-based inclusive line range in a UTF-8 file via the owning
+    /// agent. Equivalent to `replace_line_range` with an empty replacement but
+    /// exposed separately for easier tool selection.
+    DeleteLineRange {
+        project: String,
+        path: String,
+        start_line: usize,
+        end_line: usize,
+        #[serde(default)]
+        expected_old_sha256: Option<String>,
+        #[serde(default)]
+        expected_old_prefix: Option<String>,
+    },
+
     /// List all agent-registered runtime projects.
     ListProjects,
 
@@ -278,6 +320,9 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "validate_patch",
     "replace_in_file",
     "write_project_file",
+    "replace_line_range",
+    "insert_at_line",
+    "delete_line_range",
     "git_status",
     "git_diff",
     "read_file",

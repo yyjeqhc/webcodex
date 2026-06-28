@@ -262,7 +262,7 @@ fn client_enroll_usage() -> &'static str {
        --pairing-code CODE           Temporary one-time pairing code\n\
        --client-id CLIENT_ID         Client id matching the pairing record\n\
        --display-name NAME           Optional agent display name\n\
-       --transport websocket|polling Agent transport [default: websocket]\n\
+       --transport websocket|polling|quic Agent transport [default: websocket]\n\
        --output-dir DIR              Output dir [root: /etc/webcodex; user: ~/.config/webcodex]\n\
        --agent-config PATH           Agent config path [default: <output-dir>/agent.toml]\n\
        --projects-dir PATH           Projects registry dir [default: <output-dir>/projects.d]\n\
@@ -990,9 +990,11 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     }
     if !matches!(
         transport.as_str(),
-        agent_init::TRANSPORT_WEBSOCKET | agent_init::TRANSPORT_POLLING
+        agent_init::TRANSPORT_WEBSOCKET
+            | agent_init::TRANSPORT_POLLING
+            | agent_init::TRANSPORT_QUIC
     ) {
-        return Err("--transport must be websocket or polling".to_string());
+        return Err("--transport must be websocket, polling, or quic".to_string());
     }
     let output_dir = output_dir.unwrap_or_else(default_client_output_dir);
     if output_dir.as_os_str().is_empty() {

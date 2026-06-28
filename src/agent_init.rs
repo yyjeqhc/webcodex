@@ -27,6 +27,10 @@ pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 pub const TRANSPORT_POLLING: &str = "polling";
 /// Config value selecting the WebSocket transport (preferred long-lived).
 pub const TRANSPORT_WEBSOCKET: &str = "websocket";
+/// Config value selecting the experimental custom QUIC stream transport
+/// (Phase 5A). Opt-in; requires a `[quic]` section in `agent.toml` with
+/// `server_addr` / `server_name`. Default transport remains `websocket`.
+pub const TRANSPORT_QUIC: &str = "quic";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentInitOptions {
@@ -103,9 +107,9 @@ pub fn validate_agent_init_options(opts: &AgentInitOptions) -> Result<(), String
     }
     if !matches!(
         opts.transport.as_str(),
-        TRANSPORT_WEBSOCKET | TRANSPORT_POLLING
+        TRANSPORT_WEBSOCKET | TRANSPORT_POLLING | TRANSPORT_QUIC
     ) {
-        return Err("--transport must be websocket or polling".to_string());
+        return Err("--transport must be websocket, polling, or quic".to_string());
     }
     if opts.projects_dir.as_os_str().is_empty() {
         return Err("--projects-dir cannot be empty".to_string());

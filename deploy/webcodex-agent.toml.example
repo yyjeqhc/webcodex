@@ -12,6 +12,20 @@ transport = "websocket"
 poll_interval_ms = 1000
 projects_dir = "/etc/webcodex/projects.d"
 
+# Experimental custom QUIC agent transport (Phase 5A). Default transport stays
+# "websocket"; set transport = "quic" and fill in [quic] to opt in. This is a
+# custom QUIC stream transport, NOT HTTP/3. Phase 5A only supports
+# register/ack/ping/pong and cannot execute runtime requests; use websocket or
+# polling for command/file/job execution until Phase 5B. See
+# docs/AGENT_TRANSPORTS.md.
+# transport = "quic"
+# [quic]
+# server_addr = "webcodex.example.com:8443"
+# server_name = "webcodex.example.com"
+# alpn = "webcodex-agent/1"
+# connect_timeout_secs = 10
+# keepalive_interval_secs = 20
+
 # Shell profiles describe prepared development environments for projects.
 # init_script is inline shell text, not a file path. runtime_status/listAgents
 # do not expose profile env values or init_script text.

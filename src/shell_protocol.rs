@@ -48,6 +48,15 @@ pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
 #[allow(dead_code)]
 pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
 
+/// Protocol version announced by `webcodex-agent` builds that connect over the
+/// experimental custom QUIC stream transport. Kept in the shared protocol
+/// module so the server and the agent binary reference the same literal.
+/// Note: this is a *protocol* version label (reported in
+/// `agent_protocol_version`); the transport label is `"quic"` (see
+/// `TRANSPORT_QUIC`).
+#[allow(dead_code)]
+pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
     #[serde(default = "default_shell_true")]
@@ -247,8 +256,9 @@ pub struct ShellClientView {
     /// that registered before this field existed.
     #[serde(default = "default_agent_protocol_version")]
     pub agent_protocol_version: String,
-    /// Transport the agent is currently connected over: `"polling"` or
-    /// `"websocket"`. Defaults to `"polling"` for older agents/views.
+    /// Transport the agent is currently connected over: `"polling"`,
+    /// `"websocket"`, or `"quic"`. Defaults to `"polling"` for older
+    /// agents/views.
     #[serde(default = "default_transport_polling")]
     pub transport: String,
     /// Sanitized agent policy summary reported at registration. `None`
@@ -707,6 +717,16 @@ pub enum AgentEnvelope {
     Register {
         #[serde(flatten)]
         payload: ShellClientRegisterRequest,
+        /// Optional agent/bearer token carried inline. Used ONLY by the QUIC
+        /// transport, which has no HTTP middleware to inject an
+        /// `Authorization` header. WebSocket always leaves this `None` (auth
+        /// is enforced by `AuthMiddleware` on the HTTP handshake) and the
+        /// server ignores it on that path. The field is
+        /// `skip_serializing_if = None` so the WebSocket wire format is
+        /// byte-identical to before. Never logged: the QUIC handler reads it
+        /// once and drops it before any tracing.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        auth_token: Option<String>,
     },
     /// Server -> agent. Acknowledgement of `Register`.
     Registered {
@@ -770,6 +790,124 @@ impl AgentEnvelope {
     }
 }
 
+// ============================================================================
+// QUIC length-prefixed frame codec
+// ============================================================================
+//
+// The experimental custom QUIC agent transport (Phase 5A) frames each
+// [`AgentEnvelope`] as:
+//
+//   u32_be length (big-endian)
+//   JSON bytes
+//
+// Length-prefixing (rather than newline-delimited JSON) avoids boundary
+// problems when a payload contains embedded newlines. The codec lives in this
+// shared module so the server (`agent_quic.rs`) and the `webcodex-agent`
+// binary (which inlines this file) use byte-identical framing.
+//
+// This is a custom QUIC *stream* transport, NOT HTTP/3. It is transport-
+// neutral framing over a single QUIC bidirectional stream.
+
+/// Maximum frame body size. Matches the WebSocket `WS_MAX_MESSAGE_SIZE` head
+/// room and the registry output cap; bounds memory per peer.
+pub const QUIC_FRAME_MAX_BYTES: usize = 8 * 1024 * 1024;
+
+/// Errors produced by the QUIC frame codec.
+#[derive(Debug)]
+pub enum QuicFrameError {
+    /// Underlying I/O error reading/writing the stream.
+    Io(std::io::Error),
+    /// JSON encode/decode failure.
+    Json(serde_json::Error),
+    /// Announced frame length exceeds `QUIC_FRAME_MAX_BYTES`. `len` is the
+    /// announced (attacker-controlled) length; rejected before allocation.
+    Oversized { len: usize, max: usize },
+    /// The peer closed the stream cleanly before any frame was read.
+    EmptyStream,
+    /// A frame header announced a length but the body was short / invalid.
+    Malformed(&'static str),
+}
+
+impl std::fmt::Display for QuicFrameError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            QuicFrameError::Io(e) => write!(f, "quic frame io error: {}", e),
+            QuicFrameError::Json(e) => write!(f, "quic frame json error: {}", e),
+            QuicFrameError::Oversized { len, max } => write!(
+                f,
+                "quic frame oversized: announced {} bytes, max {}",
+                len, max
+            ),
+            QuicFrameError::EmptyStream => write!(f, "quic stream closed before any frame"),
+            QuicFrameError::Malformed(msg) => write!(f, "quic frame malformed: {}", msg),
+        }
+    }
+}
+
+impl std::error::Error for QuicFrameError {}
+
+/// Encode an envelope as a length-prefixed frame: `u32_be(len) || json`.
+pub fn encode_quic_frame(env: &AgentEnvelope) -> Result<Vec<u8>, QuicFrameError> {
+    let json = serde_json::to_vec(env).map_err(QuicFrameError::Json)?;
+    // u32 cap is far above QUIC_FRAME_MAX_BYTES, but guard anyway so a
+    // pathological payload can never overflow the length prefix.
+    if json.len() > QUIC_FRAME_MAX_BYTES {
+        return Err(QuicFrameError::Oversized {
+            len: json.len(),
+            max: QUIC_FRAME_MAX_BYTES,
+        });
+    }
+    let len = u32::try_from(json.len()).expect("checked against MAX");
+    let mut out = Vec::with_capacity(4 + json.len());
+    out.extend_from_slice(&len.to_be_bytes());
+    out.extend_from_slice(&json);
+    Ok(out)
+}
+
+/// Write a single length-prefixed frame to an async sink.
+pub async fn write_quic_frame<W>(w: &mut W, env: &AgentEnvelope) -> Result<(), QuicFrameError>
+where
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    use tokio::io::AsyncWriteExt;
+    let buf = encode_quic_frame(env)?;
+    w.write_all(&buf).await.map_err(QuicFrameError::Io)?;
+    Ok(())
+}
+
+/// Read a single length-prefixed frame from an async source and decode it.
+pub async fn read_quic_frame<R>(r: &mut R) -> Result<AgentEnvelope, QuicFrameError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+{
+    use tokio::io::AsyncReadExt;
+    let mut len_buf = [0u8; 4];
+    match r.read_exact(&mut len_buf).await {
+        Ok(_) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => {
+            return Err(QuicFrameError::EmptyStream);
+        }
+        Err(e) => return Err(QuicFrameError::Io(e)),
+    }
+    let len = u32::from_be_bytes(len_buf) as usize;
+    if len > QUIC_FRAME_MAX_BYTES {
+        // Reject before allocating. `len` is peer-controlled.
+        return Err(QuicFrameError::Oversized {
+            len,
+            max: QUIC_FRAME_MAX_BYTES,
+        });
+    }
+    let mut buf = vec![0u8; len];
+    r.read_exact(&mut buf).await.map_err(|e| {
+        if e.kind() == std::io::ErrorKind::UnexpectedEof {
+            QuicFrameError::Malformed("announced frame length but stream ended early")
+        } else {
+            QuicFrameError::Io(e)
+        }
+    })?;
+    AgentEnvelope::from_slice(&buf).map_err(QuicFrameError::Json)
+}
+
 #[cfg(test)]
 mod envelope_tests {
     use super::*;
@@ -800,13 +938,17 @@ mod envelope_tests {
     fn register_envelope_round_trips_with_type_tag() {
         let env = AgentEnvelope::Register {
             payload: sample_register(),
+            auth_token: None,
         };
         let json = env.to_json().unwrap();
         assert!(json.contains(r#""type":"register""#), "json was: {json}");
         assert!(json.contains(r#""client_id":"ws-1""#));
+        // WebSocket sets auth_token=None; the field must not appear on the
+        // wire so the websocket format is unchanged.
+        assert!(!json.contains(r#""auth_token""#), "json was: {json}");
         let back = AgentEnvelope::from_slice(json.as_bytes()).unwrap();
         match back {
-            AgentEnvelope::Register { payload } => {
+            AgentEnvelope::Register { payload, .. } => {
                 assert_eq!(payload.client_id, "ws-1");
                 assert_eq!(
                     payload.agent_protocol_version.as_deref(),
@@ -1037,5 +1179,113 @@ mod envelope_tests {
             r#"{"client_id":"oe","job_id":"j1","status":"running"}"#
         )
         .is_err());
+    }
+
+    #[test]
+    fn quic_frame_encode_prefixes_u32_be_length() {
+        let env = AgentEnvelope::Ping { ts: 42 };
+        let frame = encode_quic_frame(&env).unwrap();
+        // First 4 bytes are the big-endian JSON length.
+        let len = u32::from_be_bytes(frame[0..4].try_into().unwrap()) as usize;
+        assert_eq!(len, frame.len() - 4);
+        // The body is valid JSON containing the ping.
+        let body = &frame[4..];
+        assert!(std::str::from_utf8(body)
+            .unwrap()
+            .contains(r#""type":"ping""#));
+    }
+
+    #[tokio::test]
+    async fn quic_frame_round_trips_through_read_write() {
+        use tokio::io::AsyncReadExt;
+        let env = AgentEnvelope::Pong { ts: 99 };
+        let mut buf: Vec<u8> = Vec::new();
+        write_quic_frame(&mut buf, &env).await.unwrap();
+        // Drain the written bytes through a slice reader.
+        let mut reader: &[u8] = &buf;
+        let back = read_quic_frame(&mut reader).await.unwrap();
+        assert!(matches!(back, AgentEnvelope::Pong { ts: 99 }));
+        // The stream is fully consumed.
+        let mut tail = Vec::new();
+        let n = reader.read_to_end(&mut tail).await.unwrap();
+        assert_eq!(n, 0);
+    }
+
+    #[tokio::test]
+    async fn quic_frame_rejects_oversized_announced_length() {
+        // Craft a header announcing a length far above the cap, followed by a
+        // tiny body. The codec must reject *before* allocating/reading the
+        // announced body.
+        let huge = (QUIC_FRAME_MAX_BYTES as u32 + 1).to_be_bytes();
+        let mut bad: Vec<u8> = Vec::new();
+        bad.extend_from_slice(&huge);
+        bad.extend_from_slice(b"{}");
+        let mut reader: &[u8] = &bad;
+        let err = read_quic_frame(&mut reader).await.unwrap_err();
+        match err {
+            QuicFrameError::Oversized { len, max } => {
+                assert_eq!(len, QUIC_FRAME_MAX_BYTES + 1);
+                assert_eq!(max, QUIC_FRAME_MAX_BYTES);
+            }
+            other => panic!("expected Oversized, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn quic_frame_rejects_malformed_body_and_short_stream() {
+        // Announced length says 5 bytes but the body is invalid JSON.
+        let mut bad: Vec<u8> = Vec::new();
+        bad.extend_from_slice(&5u32.to_be_bytes());
+        bad.extend_from_slice(b"notjs");
+        let mut reader: &[u8] = &bad;
+        let err = read_quic_frame(&mut reader).await.unwrap_err();
+        assert!(matches!(err, QuicFrameError::Json(_)), "got {err:?}");
+
+        // Announced length says 10 bytes but the stream ends after 2.
+        let mut short: Vec<u8> = Vec::new();
+        short.extend_from_slice(&10u32.to_be_bytes());
+        short.extend_from_slice(b"ab");
+        let mut reader: &[u8] = &short;
+        let err = read_quic_frame(&mut reader).await.unwrap_err();
+        assert!(matches!(err, QuicFrameError::Malformed(_)), "got {err:?}");
+
+        // Empty stream -> EmptyStream, not Malformed.
+        let empty: Vec<u8> = Vec::new();
+        let mut reader: &[u8] = &empty;
+        let err = read_quic_frame(&mut reader).await.unwrap_err();
+        assert!(matches!(err, QuicFrameError::EmptyStream), "got {err:?}");
+    }
+
+    #[test]
+    fn register_envelope_with_auth_token_serializes_when_some() {
+        // QUIC sets auth_token=Some; the field appears on the wire so the
+        // server can authenticate the agent. WebSocket leaves it None (tested
+        // separately) so its wire format is unchanged.
+        let env = AgentEnvelope::Register {
+            payload: ShellClientRegisterRequest {
+                client_id: "q-1".to_string(),
+                agent_instance_id: "11111111-1111-1111-1111-111111111111".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+                projects: None,
+                agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
+                policy: None,
+            },
+            auth_token: Some("wc_agent_secret".to_string()),
+        };
+        let json = env.to_json().unwrap();
+        assert!(
+            json.contains(r#""auth_token":"wc_agent_secret""#),
+            "json was: {json}"
+        );
+        let back = AgentEnvelope::from_slice(json.as_bytes()).unwrap();
+        match back {
+            AgentEnvelope::Register { auth_token, .. } => {
+                assert_eq!(auth_token.as_deref(), Some("wc_agent_secret"));
+            }
+            other => panic!("expected register, got {:?}", other.kind()),
+        }
     }
 }

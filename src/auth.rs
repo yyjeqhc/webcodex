@@ -194,6 +194,90 @@ pub(crate) fn hash_token(token: &str) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+/// Authenticate a bearer token *outside* the HTTP request path, reusing the
+/// exact same validation as [`AuthMiddleware`]. Used by the experimental QUIC
+/// agent transport, which has no HTTP middleware to inject an `AuthContext`.
+///
+/// Mirrors `AuthMiddleware::handle`:
+/// - When auth is disabled (`!config.is_auth_enabled()`), returns a bootstrap
+///   context (full access). This matches the HTTP behavior where unauthenticated
+///   dev mode is treated as bootstrap.
+/// - When auth is enabled, the bootstrap token is checked first
+///   (`config.validate_token`); otherwise the token is hashed and looked up in
+///   the `api_keys` table (personal API tokens and Phase 3 agent tokens).
+///   Disabled users and expired tokens are rejected. Returns `None` for an
+///   unknown/invalid token; the caller MUST treat `None` as "reject the
+///   connection".
+///
+/// The `is_agent_transport_path` gate from `AuthMiddleware` does not apply
+/// here: the QUIC listener is inherently an agent-only transport, so an agent
+/// token reaching it is already on an allowed surface.
+pub(crate) fn authenticate_bearer(
+    config: &Config,
+    db: Option<&Arc<Database>>,
+    token: Option<&str>,
+) -> Option<AuthContext> {
+    // Auth disabled in development -> bootstrap (full access), identical to
+    // AuthMiddleware's `!config.is_auth_enabled()` branch. This lets local
+    // QUIC integration tests run without a configured token.
+    if !config.is_auth_enabled() {
+        return Some(bootstrap_context());
+    }
+    let token = token?;
+    if config.validate_token(token) {
+        return Some(bootstrap_context());
+    }
+    let db = db?;
+    let key_hash = hash_token(token);
+    let api_key = db.get_api_key_by_hash(&key_hash).ok()??;
+    let user = db.get_user_by_id(&api_key.user_id).ok()??;
+    if user.is_disabled() {
+        return None;
+    }
+    let now = chrono::Utc::now().timestamp();
+    if api_key.is_expired(now) {
+        return None;
+    }
+    if let Err(e) = db.update_api_key_last_used(&api_key.id, now) {
+        tracing::warn!("failed to update api key last_used_at: {}", e);
+    }
+    let auth_kind = if api_key.is_agent_token() {
+        AuthKind::AgentToken
+    } else {
+        AuthKind::ApiToken
+    };
+    Some(AuthContext {
+        kind: auth_kind,
+        user_id: Some(user.id.clone()),
+        username: Some(user.username.clone()),
+        api_key_id: Some(api_key.id.clone()),
+        api_key_name: Some(api_key.name.clone()),
+        role: Some(user.role.clone()),
+        scopes: api_key.scopes_vec(),
+        is_bootstrap: false,
+        token_kind: Some(api_key.kind().to_string()),
+        allowed_client_id: api_key.allowed_client_id.clone(),
+    })
+}
+
+/// Build the bootstrap `AuthContext` used when auth is disabled or the
+/// server-wide `WEBCODEX_TOKEN` is presented. Kept private to `auth`; the only
+/// callers are `AuthMiddleware` (inline) and `authenticate_bearer`.
+fn bootstrap_context() -> AuthContext {
+    AuthContext {
+        kind: AuthKind::Bootstrap,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        api_key_name: None,
+        role: Some("admin".to_string()),
+        scopes: vec![SCOPE_ADMIN.to_string()],
+        is_bootstrap: true,
+        token_kind: None,
+        allowed_client_id: None,
+    }
+}
+
 /// Random component length (hex characters) for generated personal API tokens.
 /// Two uuid v4 simple values concatenated = 64 hex chars = 256 bits of entropy.
 const TOKEN_RANDOM_HEX_LEN: usize = 64;

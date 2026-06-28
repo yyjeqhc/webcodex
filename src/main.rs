@@ -12,6 +12,7 @@ use uuid::Uuid;
 mod action_audit;
 mod action_sessions;
 mod admin_cli;
+mod agent_quic;
 mod agent_tokens_http;
 mod agent_ws;
 mod audit_http;
@@ -73,7 +74,12 @@ Environment:\n\
   WEBCODEX_ADDR          Listen address, default 0.0.0.0:8080\n\
   WEBCODEX_DATA          Data directory, default ./data\n\
   WEBCODEX_PUBLIC_URL    Public URL reported to clients\n\
-  WEBCODEX_ENABLE_SSH    Enable SSH-related runtime features\n",
+  WEBCODEX_ENABLE_SSH    Enable SSH-related runtime features\n\
+  WEBCODEX_QUIC_ENABLED  Enable experimental QUIC agent transport (default off)\n\
+  WEBCODEX_QUIC_LISTEN   QUIC UDP listen addr, default 0.0.0.0:8443\n\
+  WEBCODEX_QUIC_CERT     PEM cert path for the QUIC listener\n\
+  WEBCODEX_QUIC_KEY      PEM key path for the QUIC listener\n\
+  WEBCODEX_QUIC_ALPN     QUIC ALPN, default webcodex-agent/1\n",
         admin_cli::usage()
     )
 }
@@ -233,6 +239,40 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Arc::new(config.codex.clone()),
         runtime_info.clone(),
     ));
+
+    // Experimental custom QUIC agent transport (Phase 5A). Default disabled;
+    // only starts when WEBCODEX_QUIC_ENABLED=true. Runs a separate quinn UDP
+    // listener in parallel with the HTTP server. HTTP/WebSocket/polling and
+    // the GPT Actions / Nginx path are completely unaffected. This is NOT
+    // HTTP/3 and Nginx does not terminate QUIC.
+    let quic_cfg = config::QuicServerConfig::from_env();
+    if quic_cfg.enabled {
+        if let Err(e) = quic_cfg.validate() {
+            tracing::error!("QUIC listener disabled due to config error: {}", e);
+        } else {
+            let quic_config = config.clone();
+            let quic_db = db.clone();
+            let quic_registry = shell_registry.clone();
+            let quic_cfg_task = quic_cfg.clone();
+            tokio::spawn(async move {
+                if let Err(e) = agent_quic::run_quic_agent_listener(
+                    quic_config,
+                    Some(quic_db),
+                    quic_registry,
+                    quic_cfg_task,
+                )
+                .await
+                {
+                    tracing::error!("QUIC agent listener exited with error: {}", e);
+                }
+            });
+            tracing::info!(
+                "Agent QUIC (experimental) configured on UDP {} ALPN {}",
+                quic_cfg.listen,
+                quic_cfg.alpn
+            );
+        }
+    }
 
     let authed_api_router = Router::new()
         .hoop(AuthMiddleware)
@@ -422,6 +462,11 @@ mod tests {
             "WEBCODEX_DATA",
             "WEBCODEX_PUBLIC_URL",
             "WEBCODEX_ENABLE_SSH",
+            "WEBCODEX_QUIC_ENABLED",
+            "WEBCODEX_QUIC_LISTEN",
+            "WEBCODEX_QUIC_CERT",
+            "WEBCODEX_QUIC_KEY",
+            "WEBCODEX_QUIC_ALPN",
         ] {
             assert!(output.contains(key), "help missing {key}");
         }
@@ -471,6 +516,11 @@ mod tests {
             "WEBCODEX_DATA",
             "WEBCODEX_PUBLIC_URL",
             "WEBCODEX_ENABLE_SSH",
+            "WEBCODEX_QUIC_ENABLED",
+            "WEBCODEX_QUIC_LISTEN",
+            "WEBCODEX_QUIC_CERT",
+            "WEBCODEX_QUIC_KEY",
+            "WEBCODEX_QUIC_ALPN",
         ] {
             assert!(stdout.contains(key), "usage missing {key}");
         }

@@ -7,12 +7,13 @@ Current user and deployment docs:
 3. [DEPLOYMENT.md](DEPLOYMENT.md) — production server bootstrap, agent service installation, enrollment, and operations guide.
 4. [GPT_ACTIONS.md](GPT_ACTIONS.md) — GPT Actions import, auth, tool flow, and exposed surface.
 5. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — agent transports, auth, identity, and redacted policy summaries.
-6. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) — agent project registry and project management tools.
-7. [SHELL_PROFILES.md](SHELL_PROFILES.md) — prepared shell env snapshots, profile config, resolution rules, and safety boundaries.
-8. [AUDIT_API.md](AUDIT_API.md) — audit API scope and security expectations.
-9. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation guidance.
-10. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — deployment troubleshooting and operational checklist.
-11. [../deploy/webcodex-agent.toml.example](../deploy/webcodex-agent.toml.example) — example agent config.
-12. [../TODO.md](../TODO.md) — current maintenance backlog.
+6. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) — experimental QUIC agent transport (not HTTP/3), Phase 5A limits, server/agent config, and fallback.
+7. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) — agent project registry and project management tools.
+8. [SHELL_PROFILES.md](SHELL_PROFILES.md) — prepared shell env snapshots, profile config, resolution rules, and safety boundaries.
+9. [AUDIT_API.md](AUDIT_API.md) — audit API scope and security expectations.
+10. [E2E_VALIDATION.md](E2E_VALIDATION.md) — local end-to-end validation guidance.
+11. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — deployment troubleshooting and operational checklist.
+12. [../deploy/webcodex-agent.toml.example](../deploy/webcodex-agent.toml.example) — example agent config.
+13. [../TODO.md](../TODO.md) — current maintenance backlog.
 
 Historical phase plans, handoff notes, and implementation audits have been removed from the user-facing documentation set.

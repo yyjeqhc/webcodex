@@ -9,7 +9,7 @@ use crate::shell_protocol::{
     ShellClientJobsListRequest, ShellClientJobsListResponse, ShellClientRegisterRequest,
     ShellClientRegisterResponse, ShellClientView, ShellFileOpRequest, ShellFileOpResponse,
     ShellJobCodexMetadata, ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest,
-    ShellRunResponse,
+    ShellRunResponse, AGENT_PROTOCOL_VERSION_QUIC_V1,
 };
 use salvo::prelude::*;
 use serde_json::json;
@@ -34,6 +34,7 @@ const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
+const QUIC_PHASE_5A_DISPATCH_ERROR: &str = "QUIC transport is connected in phase 5A, but request dispatch is not implemented yet; use websocket/polling or upgrade to a QUIC dispatch-capable agent.";
 
 /// Maximum number of pending requests queued for a single agent client.
 /// Bounds memory when an agent is slow or disconnected: once a client's
@@ -50,6 +51,11 @@ const MAX_QUEUED_REQUESTS_PER_CLIENT: usize = 256;
 pub const TRANSPORT_POLLING: &str = "polling";
 /// Transport label for agents connected over the WebSocket endpoint.
 pub const TRANSPORT_WEBSOCKET: &str = "websocket";
+/// Transport label for agents connected over the experimental custom QUIC
+/// stream transport (Phase 5A). Reported in `ShellClientView.transport` and
+/// surfaced by `runtime_status` / `listAgents`. Default transport stays
+/// `websocket`; QUIC is opt-in via `transport = "quic"` in `agent.toml`.
+pub const TRANSPORT_QUIC: &str = "quic";
 
 #[derive(Debug, Clone)]
 struct ShellClientRecord {
@@ -65,7 +71,8 @@ struct ShellClientRecord {
     projects: Vec<ShellAgentProjectSummary>,
     last_seen: i64,
     agent_protocol_version: String,
-    /// How this client is currently connected: `"polling"` or `"websocket"`.
+    /// How this client is currently connected: `"polling"`, `"websocket"`,
+    /// or `"quic"`.
     transport: String,
     /// Sanitized agent policy summary reported at registration. `None` for
     /// older agents that did not report a policy. Exposed in
@@ -690,6 +697,24 @@ fn ensure_queue_capacity_locked(
     Ok(())
 }
 
+/// Phase 5A QUIC agents are online for register/ack/ping/pong only. They do
+/// not have a server->agent request pump yet, so enqueue paths must reject
+/// instead of leaving runtime requests in a queue that no QUIC task consumes.
+fn ensure_dispatch_supported_locked(
+    inner: &ShellClientRegistryInner,
+    client_id: &str,
+) -> Result<(), String> {
+    let Some(client) = inner.clients.get(client_id) else {
+        return Err(format!("unknown shell client: {}", client_id));
+    };
+    if client.transport == TRANSPORT_QUIC
+        && client.agent_protocol_version == AGENT_PROTOCOL_VERSION_QUIC_V1
+    {
+        return Err(QUIC_PHASE_5A_DISPATCH_ERROR.to_string());
+    }
+    Ok(())
+}
+
 fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, job_id: &str) {
     let Some(job) = inner.jobs_by_id.get(job_id) else {
         return;
@@ -1095,9 +1120,7 @@ impl ShellClientRegistry {
             created_at: now_ts(),
         };
         let mut inner = self.inner.lock().await;
-        if !inner.clients.contains_key(&body.client_id) {
-            return Err(format!("unknown shell client: {}", body.client_id));
-        }
+        ensure_dispatch_supported_locked(&inner, &body.client_id)?;
         ensure_queue_capacity_locked(&inner, &body.client_id)?;
         inner
             .queues_by_client
@@ -1142,9 +1165,7 @@ impl ShellClientRegistry {
             created_at: now_ts(),
         };
         let mut inner = self.inner.lock().await;
-        if !inner.clients.contains_key(&body.client_id) {
-            return Err(format!("unknown shell client: {}", body.client_id));
-        }
+        ensure_dispatch_supported_locked(&inner, &body.client_id)?;
         ensure_queue_capacity_locked(&inner, &body.client_id)?;
         inner
             .queues_by_client
@@ -1211,9 +1232,7 @@ impl ShellClientRegistry {
             created_at: now_ts(),
         };
         let mut inner = self.inner.lock().await;
-        if !inner.clients.contains_key(&client_id) {
-            return Err(format!("unknown shell client: {}", client_id));
-        }
+        ensure_dispatch_supported_locked(&inner, &client_id)?;
         ensure_queue_capacity_locked(&inner, &client_id)?;
         inner
             .queues_by_client
@@ -1393,6 +1412,7 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
+        ensure_dispatch_supported_locked(&inner, &client_id)?;
         if !(client.capabilities.async_jobs || client.capabilities.async_shell_jobs) {
             return Err(format!(
                 "agent client {} does not support async shell jobs",
@@ -1565,6 +1585,7 @@ impl ShellClientRegistry {
                     requested_by,
                     created_at: now_ts(),
                 };
+                ensure_dispatch_supported_locked(&inner, &client_id)?;
                 ensure_queue_capacity_locked(&inner, &client_id)?;
                 inner
                     .queues_by_client
@@ -3569,6 +3590,182 @@ mod tests {
             .await
             .unwrap_err();
         assert!(err.contains("unknown shell client"));
+    }
+
+    async fn register_quic_v1_client(registry: &ShellClientRegistry, client_id: &str) {
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: Some(vec![project_summary("webcodex", "/tmp/webcodex")]),
+                agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
+                policy: None,
+            })
+            .await
+            .unwrap();
+        registry
+            .set_transport(client_id, TRANSPORT_QUIC)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn registry_rejects_quic_v1_run_without_queueing() {
+        let registry = ShellClientRegistry::default();
+        register_quic_v1_client(&registry, "quic-run").await;
+
+        let err = registry
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: "quic-run".to_string(),
+                    cwd: None,
+                    command: "echo hi".to_string(),
+                    stdin: None,
+                    timeout_secs: 5,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err, QUIC_PHASE_5A_DISPATCH_ERROR);
+        let view = registry.get_client_view("quic-run").await.unwrap();
+        assert_eq!(view.pending_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn registry_rejects_quic_v1_file_and_project_ops_without_queueing() {
+        let registry = ShellClientRegistry::default();
+        register_quic_v1_client(&registry, "quic-ops").await;
+
+        let file_err = registry
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: "read".to_string(),
+                    client_id: "quic-ops".to_string(),
+                    path: "README.md".to_string(),
+                    cwd: None,
+                    content: None,
+                    max_bytes: None,
+                    expected_sha256: None,
+                    create_dirs: false,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(file_err, QUIC_PHASE_5A_DISPATCH_ERROR);
+
+        let project_err = registry
+            .enqueue_project_op(
+                "quic-ops".to_string(),
+                "register_project",
+                "{}".to_string(),
+                "tester".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(project_err, QUIC_PHASE_5A_DISPATCH_ERROR);
+
+        let view = registry.get_client_view("quic-ops").await.unwrap();
+        assert_eq!(view.pending_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn registry_rejects_quic_v1_start_job_without_job_or_queue_entry() {
+        let registry = ShellClientRegistry::default();
+        register_quic_v1_client(&registry, "quic-job").await;
+
+        let err = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("quic-job".to_string()),
+                    cwd: None,
+                    command: Some("sleep 1".to_string()),
+                    timeout_secs: Some(5),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err, QUIC_PHASE_5A_DISPATCH_ERROR);
+
+        let view = registry.get_client_view("quic-job").await.unwrap();
+        assert_eq!(view.pending_requests, 0);
+        assert!(registry.list_jobs(Some(10)).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn registry_rejects_quic_v1_stop_job_delivery_without_queueing() {
+        let registry = ShellClientRegistry::default();
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "quic-stop".to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: None,
+                agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
+                policy: None,
+            })
+            .await
+            .unwrap();
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("quic-stop".to_string()),
+                    cwd: None,
+                    command: Some("sleep 10".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+        let _ = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "quic-stop".to_string(),
+                agent_instance_id: "inst".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        registry
+            .set_transport("quic-stop", TRANSPORT_QUIC)
+            .await
+            .unwrap();
+
+        let err = registry
+            .stop_job(&job.job_id, "tester".to_string())
+            .await
+            .unwrap_err();
+        assert_eq!(err, QUIC_PHASE_5A_DISPATCH_ERROR);
+        let view = registry.get_client_view("quic-stop").await.unwrap();
+        assert_eq!(view.pending_requests, 0);
+        let still_agent_queued = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(still_agent_queued.status, "agent_queued");
     }
 
     #[test]

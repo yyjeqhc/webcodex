@@ -401,7 +401,7 @@ async fn read_register(ws: &mut WebSocket) -> Result<ShellClientRegisterRequest,
     let env = AgentEnvelope::from_slice(text.as_bytes())
         .map_err(|e| format!("register message is not a valid envelope: {}", e))?;
     match env {
-        AgentEnvelope::Register { payload } => Ok(payload),
+        AgentEnvelope::Register { payload, .. } => Ok(payload),
         other => Err(format!("expected register envelope, got {}", other.kind())),
     }
 }
@@ -462,6 +462,7 @@ mod tests {
                 ),
                 policy: None,
             },
+            auth_token: None,
         }
     }
 

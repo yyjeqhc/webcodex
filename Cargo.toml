@@ -22,7 +22,23 @@ base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 url = "2"
 sha2 = "0.10"
+# Phase 5A: experimental custom QUIC agent transport. Quinn reuses the
+# rustls 0.23 + aws-lc-rs provider already present transitively (via
+# tokio-tungstenite / salvo). `rustls-pemfile` loads PEM cert/key on the
+# server. Versions are pinned to the 0.11 / 0.23 / 2.x lines already
+# resolved in Cargo.lock to avoid introducing a second rustls major.
+quinn = "0.11"
+rustls = "0.23"
+rustls-pemfile = "2"
+# Mozilla root store for the agent's QUIC client cert verification. Reuses the
+# 0.26 line already pulled transitively by tokio-tungstenite's
+# `rustls-tls-webpki-roots` feature, so it does not add a new major version.
+webpki-roots = "0.26"
 
 [dev-dependencies]
 tempfile = "3"
 salvo = { version = "0.93", features = ["test"] }
+# Self-signed cert generation for QUIC integration tests. Uses the `ring`
+# provider that is already in the dependency tree (via quinn-proto), so it
+# does not pull a new crypto backend.
+rcgen = "0.13"

@@ -11,6 +11,89 @@ pub struct Config {
     pub codex: CodexConfig,
 }
 
+/// Server-side QUIC agent transport configuration (Phase 5A). Sourced from
+/// `WEBCODEX_QUIC_*` env vars, mirroring the project's env-var config pattern.
+/// Kept as a standalone struct (not embedded in [`Config`]) so existing
+/// `Config { ... }` test literals and constructors are untouched. The listener
+/// is **off by default**; operators must explicitly set
+/// `WEBCODEX_QUIC_ENABLED=true` and provide a cert/key.
+///
+/// This is an experimental custom QUIC stream transport, NOT HTTP/3. Nginx is
+/// not involved; the server listens on UDP directly. The cert/key paths are
+/// NOT hardcoded to production Let's Encrypt paths — they are read from env so
+/// dev/staging/prod can differ. Paths are validated at listener startup so a
+/// missing cert produces a clear runtime error.
+#[derive(Debug, Clone)]
+pub struct QuicServerConfig {
+    pub enabled: bool,
+    pub listen: String,
+    pub cert: PathBuf,
+    pub key: PathBuf,
+    pub alpn: String,
+}
+
+impl QuicServerConfig {
+    /// Parse from `WEBCODEX_QUIC_*` env vars. Disabled by default.
+    pub fn from_env() -> Self {
+        Self {
+            enabled: env_flag("WEBCODEX_QUIC_ENABLED").unwrap_or(false),
+            listen: std::env::var("WEBCODEX_QUIC_LISTEN")
+                .unwrap_or_else(|_| "0.0.0.0:8443".to_string()),
+            cert: std::env::var("WEBCODEX_QUIC_CERT")
+                .map(PathBuf::from)
+                .unwrap_or_default(),
+            key: std::env::var("WEBCODEX_QUIC_KEY")
+                .map(PathBuf::from)
+                .unwrap_or_default(),
+            alpn: std::env::var("WEBCODEX_QUIC_ALPN")
+                .unwrap_or_else(|_| "webcodex-agent/1".to_string()),
+        }
+    }
+
+    /// Validate that the required cert/key paths are present and readable when
+    /// the listener is enabled. Returns a clear error naming the missing field;
+    /// never reads or returns file *contents* (in particular, never the key).
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.enabled {
+            return Ok(());
+        }
+        if self.cert.as_os_str().is_empty() {
+            return Err("WEBCODEX_QUIC_CERT is not set; QUIC listener requires a cert path".into());
+        }
+        if self.key.as_os_str().is_empty() {
+            return Err("WEBCODEX_QUIC_KEY is not set; QUIC listener requires a key path".into());
+        }
+        if !self.cert.exists() {
+            return Err(format!(
+                "WEBCODEX_QUIC_CERT path does not exist: {}",
+                self.cert.display()
+            ));
+        }
+        if !self.key.exists() {
+            return Err(format!(
+                "WEBCODEX_QUIC_KEY path does not exist: {}",
+                self.key.display()
+            ));
+        }
+        if self.alpn.trim().is_empty() {
+            return Err("WEBCODEX_QUIC_ALPN cannot be empty".into());
+        }
+        Ok(())
+    }
+}
+
+impl Default for QuicServerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            listen: "0.0.0.0:8443".to_string(),
+            cert: PathBuf::new(),
+            key: PathBuf::new(),
+            alpn: "webcodex-agent/1".to_string(),
+        }
+    }
+}
+
 /// Codex CLI execution configuration, sourced from `CODEX_*` env vars.
 ///
 /// Codex is an **optional advanced capability**. When Codex is not installed,
@@ -241,6 +324,71 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn quic_server_config_defaults_to_disabled() {
+        let cfg = QuicServerConfig::default();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.listen, "0.0.0.0:8443");
+        assert_eq!(cfg.alpn, "webcodex-agent/1");
+        // A disabled config is always valid (no cert/key required).
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn quic_server_config_enabled_requires_cert_and_key_paths() {
+        // Missing cert path.
+        let cfg = QuicServerConfig {
+            enabled: true,
+            listen: "0.0.0.0:8443".to_string(),
+            cert: PathBuf::new(),
+            key: PathBuf::from("/tmp/key.pem"),
+            alpn: "webcodex-agent/1".to_string(),
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("WEBCODEX_QUIC_CERT"), "err was: {err}");
+
+        // Missing key path.
+        let cfg = QuicServerConfig {
+            enabled: true,
+            listen: "0.0.0.0:8443".to_string(),
+            cert: PathBuf::from("/tmp/cert.pem"),
+            key: PathBuf::new(),
+            alpn: "webcodex-agent/1".to_string(),
+        };
+        let err = cfg.validate().unwrap_err();
+        assert!(err.contains("WEBCODEX_QUIC_KEY"), "err was: {err}");
+    }
+
+    #[test]
+    fn quic_server_config_enabled_rejects_nonexistent_paths() {
+        let cfg = QuicServerConfig {
+            enabled: true,
+            listen: "0.0.0.0:8443".to_string(),
+            cert: PathBuf::from("/definitely/does/not/exist/cert.pem"),
+            key: PathBuf::from("/definitely/does/not/exist/key.pem"),
+            alpn: "webcodex-agent/1".to_string(),
+        };
+        let err = cfg.validate().unwrap_err();
+        // Names the missing path without dumping file contents.
+        assert!(err.contains("does not exist"), "err was: {err}");
+        assert!(!err.contains("BEGIN PRIVATE KEY"));
+        assert!(!err.contains("BEGIN CERTIFICATE"));
+    }
+
+    #[test]
+    fn quic_server_config_from_env_disabled_by_default() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_QUIC_ENABLED");
+        std::env::remove_var("WEBCODEX_QUIC_LISTEN");
+        std::env::remove_var("WEBCODEX_QUIC_CERT");
+        std::env::remove_var("WEBCODEX_QUIC_KEY");
+        std::env::remove_var("WEBCODEX_QUIC_ALPN");
+        let cfg = QuicServerConfig::from_env();
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.listen, "0.0.0.0:8443");
+        assert_eq!(cfg.alpn, "webcodex-agent/1");
+    }
 
     #[test]
     fn codex_config_defaults() {

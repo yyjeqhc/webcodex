@@ -18,11 +18,12 @@ mod shell_protocol;
 mod agent_init;
 
 use shell_protocol::{
-    AgentEnvelope, AgentPolicySummary, ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse,
-    ShellAgentPollRequest, ShellAgentPollResponse, ShellAgentProjectSummary,
-    ShellAgentResultRequest, ShellAgentResultResponse, ShellAgentShellRequest,
-    ShellClientCapabilities, ShellClientRegisterRequest, ShellClientRegisterResponse,
-    ShellProfileSummaryEntry, ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1,
+    read_quic_frame, write_quic_frame, AgentEnvelope, AgentPolicySummary, QuicFrameError,
+    ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
+    ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
+    ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
+    ShellClientRegisterRequest, ShellClientRegisterResponse, ShellProfileSummaryEntry,
+    ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_QUIC_V1,
     AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 
@@ -32,7 +33,7 @@ use agent_init::{
     effective_allowed_roots, parse_bool, required_value, run_agent_init,
     validate_agent_init_options, AgentInitOptions, DEFAULT_INIT_PROJECTS_DIR,
     DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS, DEFAULT_POLL_INTERVAL_MS,
-    TRANSPORT_POLLING, TRANSPORT_WEBSOCKET,
+    TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
@@ -80,8 +81,47 @@ struct AgentConfig {
     /// `"websocket"` (preferred long-lived connection).
     #[serde(default)]
     transport: Option<String>,
+    /// Experimental custom QUIC agent transport config (Phase 5A). Only used
+    /// when `transport = "quic"`. `None` keeps the default websocket/polling
+    /// behavior unchanged.
+    #[serde(default)]
+    quic: Option<QuicClientConfig>,
     #[serde(default)]
     shell: ShellConfig,
+}
+
+/// Agent-side QUIC transport configuration (`[quic]` in `agent.toml`). All
+/// fields are required when `transport = "quic"`; `run_quic_agent` validates
+/// them before connecting. The token is NOT stored here — it stays in the
+/// top-level `token` field and is carried in the `Register` envelope's
+/// `auth_token` field, mirroring the `Authorization: Bearer` header used by
+/// the websocket/polling paths.
+#[derive(Debug, Clone, Deserialize)]
+struct QuicClientConfig {
+    /// `host:port` of the server's QUIC listener (e.g. `host:8443`).
+    server_addr: String,
+    /// TLS SNI / server name to verify the certificate against. Must match the
+    /// cert's SAN (typically the domain name).
+    server_name: String,
+    /// ALPN protocol; must match the server's `WEBCODEX_QUIC_ALPN`.
+    #[serde(default = "default_quic_alpn")]
+    alpn: String,
+    /// Connection timeout in seconds.
+    #[serde(default = "default_quic_connect_timeout_secs")]
+    connect_timeout_secs: u64,
+    /// QUIC keepalive interval in seconds.
+    #[serde(default = "default_quic_keepalive_interval_secs")]
+    keepalive_interval_secs: u64,
+}
+
+fn default_quic_alpn() -> String {
+    "webcodex-agent/1".to_string()
+}
+fn default_quic_connect_timeout_secs() -> u64 {
+    10
+}
+fn default_quic_keepalive_interval_secs() -> u64 {
+    20
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -472,7 +512,7 @@ fn usage() -> &'static str {
        --client-id ID             Stable agent client id\n\
        --owner USER               Owner username\n\
        --display-name NAME        Human-readable agent name\n\
-       --transport NAME           websocket (default) or polling\n\
+       --transport NAME           websocket (default), polling, or quic (experimental)\n\
        --poll-interval-ms N       Polling interval, default 1000\n\
        --projects-dir PATH        Project config directory, default /etc/webcodex/projects.d\n\
        --allowed-root PATH        Allowed project/root path; repeatable\n\
@@ -3449,6 +3489,7 @@ fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
         .to_string();
     match transport.as_str() {
         TRANSPORT_WEBSOCKET => run_websocket_agent(cfg, once, &agent_instance_id),
+        TRANSPORT_QUIC => run_quic_agent(cfg, once, &agent_instance_id),
         _ => run_polling_agent(cfg, once, &agent_instance_id),
     }
 }
@@ -3497,6 +3538,251 @@ fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> R
                     agent_instance_id,
                     jobs.prepared_profiles.len(),
                 );
+            }
+        }
+    }
+}
+
+// ============================================================================
+// Experimental custom QUIC agent transport (Phase 5A)
+// ============================================================================
+//
+// A custom QUIC *stream* transport (NOT HTTP/3). The agent opens a single QUIC
+// bidirectional stream to the server, sends a `Register` envelope carrying the
+// agent token in `auth_token` (there is no HTTP middleware to set an
+// `Authorization` header), reads a `Registered` ack, then keeps the connection
+// alive with `Ping`/`Pong`. Phase 5A does NOT implement request dispatch /
+// `job_update` over QUIC — the agent registers and shows online, but does not
+// receive `Request` envelopes. WebSocket/polling behavior is unchanged.
+
+/// Reconnect backoff after a QUIC session ends.
+const QUIC_RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
+/// Interval between agent-initiated keepalive Pings.
+const QUIC_PING_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Entry point for the QUIC transport. Runs a tokio current-thread runtime and
+/// reconnects on session failure, mirroring `run_websocket_agent`.
+fn run_quic_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Result<(), String> {
+    let agent_instance_id = agent_instance_id.to_string();
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to create tokio runtime: {}", e))?;
+    rt.block_on(async move {
+        let mut project_cache = AgentProjectCache::default();
+        loop {
+            let projects = project_cache.get(&cfg);
+            match quic_session(&cfg, projects, &agent_instance_id, once).await {
+                Ok(()) => {
+                    project_cache.invalidate();
+                    if once {
+                        return Ok(());
+                    }
+                    eprintln!("webcodex-agent quic session ended; reconnecting");
+                    tokio::time::sleep(QUIC_RECONNECT_BACKOFF).await;
+                }
+                Err(e) => {
+                    project_cache.invalidate();
+                    eprintln!("webcodex-agent quic error: {}", e);
+                    if once {
+                        return Err(e);
+                    }
+                    tokio::time::sleep(QUIC_RECONNECT_BACKOFF).await;
+                }
+            }
+        }
+    })
+}
+
+/// Validate the `[quic]` config section. Returns a cloned, resolved config so
+/// the session owns a concrete value (defaults applied).
+fn resolve_quic_config(cfg: &AgentConfig) -> Result<QuicClientConfig, String> {
+    let quic = cfg
+        .quic
+        .clone()
+        .ok_or_else(|| "transport=quic requires a [quic] section in agent.toml".to_string())?;
+    if quic.server_addr.trim().is_empty() {
+        return Err("[quic] server_addr is required for transport=quic".to_string());
+    }
+    if quic.server_name.trim().is_empty() {
+        return Err("[quic] server_name is required for transport=quic".to_string());
+    }
+    if quic.alpn.trim().is_empty() {
+        return Err("[quic] alpn cannot be empty".to_string());
+    }
+    if quic.connect_timeout_secs == 0 {
+        return Err("[quic] connect_timeout_secs must be > 0".to_string());
+    }
+    if quic.keepalive_interval_secs == 0 {
+        return Err("[quic] keepalive_interval_secs must be > 0".to_string());
+    }
+    Ok(quic)
+}
+
+/// The rustls crypto provider for the QUIC client. The dependency tree pulls
+/// both `aws-lc-rs` and `ring`, so rustls cannot auto-select; pin aws-lc-rs
+/// explicitly per config via `builder_with_provider` (thread-safe, no global
+/// install).
+fn rustls_provider() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+}
+
+/// Build the quinn-wrapped rustls client config for the QUIC transport. The
+/// agent validates the server certificate against the Mozilla root store
+/// (webpki-roots) using `server_name` as the SNI/verification name — TLS is
+/// transport security, not authentication; the agent token still authenticates
+/// the agent.
+fn build_quic_client_crypto(
+    quic: &QuicClientConfig,
+) -> Result<quinn::crypto::rustls::QuicClientConfig, String> {
+    let mut roots = rustls::RootCertStore::empty();
+    // `RootCertStore` implements `Extend<TrustAnchor>` (in-place, infallible).
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let mut client_crypto = rustls::ClientConfig::builder_with_provider(rustls_provider())
+        .with_safe_default_protocol_versions()
+        .map_err(|e| format!("failed to select rustls protocol versions: {}", e))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    client_crypto.alpn_protocols = vec![quic.alpn.as_bytes().to_vec()];
+    quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
+        .map_err(|e| format!("failed to build quinn client crypto: {}", e))
+}
+
+/// One QUIC connection lifecycle: connect, register, keepalive until the stream
+/// closes or a fatal server error arrives. Phase 5A: register + ack + ping/pong
+/// only; no `Request` dispatch. In `--once` mode, completes one ping/pong after
+/// the ack then returns.
+async fn quic_session(
+    cfg: &AgentConfig,
+    projects: Vec<ShellAgentProjectSummary>,
+    agent_instance_id: &str,
+    once: bool,
+) -> Result<(), String> {
+    let quic = resolve_quic_config(cfg)?;
+    let client_crypto = build_quic_client_crypto(&quic)?;
+    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
+    let client_endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())
+        .map_err(|e| format!("failed to bind quic client endpoint: {}", e))?;
+    let server_addr: std::net::SocketAddr = quic
+        .server_addr
+        .parse()
+        .map_err(|e| format!("invalid [quic] server_addr '{}': {}", quic.server_addr, e))?;
+    let connect = client_endpoint
+        .connect_with(client_config, server_addr, &quic.server_name)
+        .map_err(|e| format!("failed to start quic connect: {}", e))?;
+    let conn = tokio::time::timeout(Duration::from_secs(quic.connect_timeout_secs), connect)
+        .await
+        .map_err(|_| format!("quic connect to {} timed out", quic.server_addr))?
+        .map_err(|e| format!("quic connect to {} failed: {}", quic.server_addr, e))?;
+
+    // ALPN is enforced by quinn during the TLS handshake: a connection only
+    // completes when the client and server agree on a matching ALPN. A
+    // mismatch fails the handshake (surfaced as the connect error above).
+
+    // Open a single bidirectional stream for register/ack/keepalive.
+    let (mut send, mut recv) = conn
+        .open_bi()
+        .await
+        .map_err(|e| format!("failed to open quic bidirectional stream: {}", e))?;
+
+    // Register. The token is carried in `auth_token`; the server authenticates
+    // it exactly like the websocket/polling paths. It is never logged.
+    let register_payload = build_register_request(
+        cfg,
+        projects,
+        AGENT_PROTOCOL_VERSION_QUIC_V1,
+        agent_instance_id,
+        0,
+    );
+    let reg_env = AgentEnvelope::Register {
+        payload: register_payload,
+        auth_token: Some(cfg.token.clone()),
+    };
+    write_quic_frame(&mut send, &reg_env)
+        .await
+        .map_err(|e| format!("failed to send quic register: {}", e))?;
+
+    // Wait for the Registered ack.
+    let ack = tokio::time::timeout(Duration::from_secs(15), read_quic_frame(&mut recv))
+        .await
+        .map_err(|_| "quic register ack timed out".to_string())?
+        .map_err(|e| format!("failed to read quic register ack: {}", e))?;
+    match ack {
+        AgentEnvelope::Registered { success: true, .. } => {}
+        AgentEnvelope::Registered { error, .. } => {
+            return Err(error.unwrap_or_else(|| "register rejected".to_string()));
+        }
+        AgentEnvelope::Error { message, .. } => return Err(message),
+        other => return Err(format!("expected registered ack, got {}", other.kind())),
+    }
+    eprintln!(
+        "webcodex-agent registered client_id={} server={} transport=quic",
+        cfg.client_id, quic.server_addr
+    );
+
+    if once {
+        // Complete one ping/pong round trip then exit, mirroring the websocket
+        // `--once` semantics.
+        let ping = AgentEnvelope::Ping {
+            ts: chrono::Utc::now().timestamp(),
+        };
+        write_quic_frame(&mut send, &ping)
+            .await
+            .map_err(|e| format!("quic once ping send failed: {}", e))?;
+        let resp = tokio::time::timeout(Duration::from_secs(10), read_quic_frame(&mut recv))
+            .await
+            .map_err(|_| "quic once pong timed out".to_string())?
+            .map_err(|e| format!("quic once pong read failed: {}", e))?;
+        match resp {
+            AgentEnvelope::Pong { .. } => {}
+            other => return Err(format!("expected pong, got {}", other.kind())),
+        }
+        let _ = send.finish();
+        return Ok(());
+    }
+
+    // Keepalive loop: wait up to QUIC_PING_INTERVAL for a frame; if the server
+    // is silent, emit a Ping. A Pong (reply) or Ping (server-initiated) keeps
+    // the connection live. A server Error or a clean stream EOF ends the
+    // session. The server does not push Request envelopes in 5A.
+    loop {
+        match tokio::time::timeout(QUIC_PING_INTERVAL, read_quic_frame(&mut recv)).await {
+            Ok(Ok(AgentEnvelope::Pong { .. })) => {
+                // Keepalive reply; connection is live.
+            }
+            Ok(Ok(AgentEnvelope::Ping { ts })) => {
+                let pong = AgentEnvelope::Pong { ts };
+                write_quic_frame(&mut send, &pong)
+                    .await
+                    .map_err(|e| format!("quic pong send failed: {}", e))?;
+            }
+            Ok(Ok(AgentEnvelope::Registered { .. })) => {
+                // Ignore a redundant ack.
+            }
+            Ok(Ok(AgentEnvelope::Error { message, .. })) => {
+                return Err(format!("server error: {}", message));
+            }
+            Ok(Ok(other)) => {
+                eprintln!(
+                    "webcodex-agent quic received unexpected envelope {}; ignoring",
+                    other.kind()
+                );
+            }
+            Ok(Err(QuicFrameError::EmptyStream)) => {
+                // Server closed the stream cleanly.
+                return Ok(());
+            }
+            Ok(Err(e)) => {
+                return Err(format!("quic stream read error: {}", e));
+            }
+            Err(_) => {
+                // Timeout with no frame: emit a keepalive Ping.
+                let ping = AgentEnvelope::Ping {
+                    ts: chrono::Utc::now().timestamp(),
+                };
+                write_quic_frame(&mut send, &ping)
+                    .await
+                    .map_err(|e| format!("quic ping send failed: {}", e))?;
             }
         }
     }
@@ -3615,6 +3901,7 @@ async fn websocket_session(
     );
     let reg_env = AgentEnvelope::Register {
         payload: register_payload,
+        auth_token: None,
     };
     let reg_json =
         serde_json::to_string(&reg_env).map_err(|e| format!("failed to encode register: {}", e))?;
@@ -3851,6 +4138,7 @@ mod tests {
             policy: AgentPolicy::default(),
             shell: ShellConfig::default(),
             transport: None,
+            quic: None,
         }
     }
 
@@ -3870,6 +4158,98 @@ mod tests {
             allow_cwd_anywhere: false,
             overwrite: false,
         }
+    }
+
+    fn quic_client_config() -> QuicClientConfig {
+        QuicClientConfig {
+            server_addr: "v4.example.test:8443".to_string(),
+            server_name: "v4.example.test".to_string(),
+            alpn: default_quic_alpn(),
+            connect_timeout_secs: default_quic_connect_timeout_secs(),
+            keepalive_interval_secs: default_quic_keepalive_interval_secs(),
+        }
+    }
+
+    #[test]
+    fn agent_config_defaults_transport_to_polling_without_quic_section() {
+        // No transport field and no [quic] section: defaults stay unchanged.
+        let toml = r#"
+server_url = "http://127.0.0.1:8000"
+token = "t"
+client_id = "oe"
+"#;
+        let cfg: AgentConfig = toml::from_str(toml).unwrap();
+        assert!(cfg.transport.is_none());
+        assert!(cfg.quic.is_none());
+    }
+
+    #[test]
+    fn agent_config_accepts_transport_quic_with_quic_section() {
+        let toml = r#"
+server_url = "http://127.0.0.1:8000"
+token = "t"
+client_id = "oe"
+transport = "quic"
+
+[quic]
+server_addr = "v4.example.test:8443"
+server_name = "v4.example.test"
+"#;
+        let cfg: AgentConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.transport.as_deref(), Some("quic"));
+        let quic = cfg.quic.expect("quic section");
+        assert_eq!(quic.server_addr, "v4.example.test:8443");
+        assert_eq!(quic.server_name, "v4.example.test");
+        // Defaults applied.
+        assert_eq!(quic.alpn, "webcodex-agent/1");
+        assert_eq!(quic.connect_timeout_secs, 10);
+        assert_eq!(quic.keepalive_interval_secs, 20);
+    }
+
+    #[test]
+    fn resolve_quic_config_errors_when_section_missing() {
+        let mut cfg = test_config(PathBuf::from("/tmp/x"));
+        cfg.transport = Some("quic".to_string());
+        let err = resolve_quic_config(&cfg).unwrap_err();
+        assert!(err.contains("[quic]"), "err was: {err}");
+    }
+
+    #[test]
+    fn resolve_quic_config_errors_when_server_addr_or_name_missing() {
+        let mut cfg = test_config(PathBuf::from("/tmp/x"));
+        cfg.transport = Some("quic".to_string());
+
+        // Missing server_addr.
+        cfg.quic = Some(QuicClientConfig {
+            server_addr: "  ".to_string(),
+            server_name: "v4.example.test".to_string(),
+            alpn: default_quic_alpn(),
+            connect_timeout_secs: 10,
+            keepalive_interval_secs: 20,
+        });
+        let err = resolve_quic_config(&cfg).unwrap_err();
+        assert!(err.contains("server_addr"), "err was: {err}");
+
+        // Missing server_name.
+        cfg.quic = Some(QuicClientConfig {
+            server_addr: "v4.example.test:8443".to_string(),
+            server_name: String::new(),
+            alpn: default_quic_alpn(),
+            connect_timeout_secs: 10,
+            keepalive_interval_secs: 20,
+        });
+        let err = resolve_quic_config(&cfg).unwrap_err();
+        assert!(err.contains("server_name"), "err was: {err}");
+    }
+
+    #[test]
+    fn resolve_quic_config_accepts_valid_section() {
+        let mut cfg = test_config(PathBuf::from("/tmp/x"));
+        cfg.transport = Some("quic".to_string());
+        cfg.quic = Some(quic_client_config());
+        let resolved = resolve_quic_config(&cfg).unwrap();
+        assert_eq!(resolved.server_addr, "v4.example.test:8443");
+        assert_eq!(resolved.server_name, "v4.example.test");
     }
 
     #[test]

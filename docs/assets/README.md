@@ -1,6 +1,6 @@
-# Image placeholders
+# Planned images
 
-The README references product screenshots and diagrams that maintainers can add manually later.
+This directory is reserved for future product diagrams and screenshots.
 
 Planned image files:
 
@@ -12,4 +12,4 @@ Planned image files:
 - `runtime-tools.png`
 - `agent-project-online.png`
 
-Do not commit empty binary image files. Add real screenshots or diagrams when they are ready.
+The main README intentionally avoids referencing files that are not committed yet. Add real screenshots or diagrams here when they are ready, then add the corresponding Markdown image links.

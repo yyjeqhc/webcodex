@@ -8,6 +8,12 @@ WebCodex exposes the same runtime tools used by GPT Actions through an MCP endpo
 https://your-domain.example/mcp
 ```
 
+## Deployment model
+
+WebCodex currently exposes a remote MCP endpoint backed by WebCodex runtime tools. The connected `webcodex-agent` is a local execution agent, not the MCP client in the protocol sense.
+
+In MCP terminology, the AI host creates the MCP client connection, WebCodex server acts as the MCP server, and the WebCodex agent executes project work behind that server. Local stdio MCP-server registration and external MCP-server brokering are separate future extensions, not required for the current endpoint.
+
 Use your own WebCodex HTTPS domain in place of `your-domain.example`.
 
 ## Authentication
@@ -28,14 +34,15 @@ MCP and GPT Actions share the same `ToolRuntime`. A tool call made through MCP r
 
 Typical MCP tools include:
 
-- `list_tools`
-- `runtime_status`
-- `list_projects`
-- `git_status`
-- `read_file`
-- `validate_patch`
-- `run_shell`
-- `run_codex`
+- Discovery and health: `list_tools`, `runtime_status`, `list_projects`, `list_agents`.
+- Read-only project inspection: `list_project_files`, `read_file`, `search_project_text`, `git_status`, `git_diff`, `git_diff_summary`, `git_diff_hunks`.
+- Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`.
+- Patch workflows: `validate_patch`, `apply_patch_checked`.
+- Project commands and jobs: `run_shell`, `run_job`, `job_status`, `job_log`, `job_tail`.
+- Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
+- Optional Codex CLI launcher: `run_codex`.
+
+Use the structured line edit tools when you already know the target line range. Use patch tools for broader multi-file changes. Treat `run_shell` as a diagnostics/build/test fallback, not as the first source-editing path.
 
 Use agent-backed project ids such as:
 
@@ -44,7 +51,6 @@ agent:<client_id>:<project_id>
 ```
 
 For example, the sg4 smoke test used `agent:ubuntu-client:webcodex`.
-
 ## Example client configuration
 
 The exact shape depends on your MCP client. Use placeholders and environment variables for secrets; do not paste real tokens into committed config files.

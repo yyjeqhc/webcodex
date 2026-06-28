@@ -59,15 +59,15 @@ It does not expose user, API-token, agent-token, pairing/enrollment, setup, doct
 Use `webcodex-cli` for those management tasks.
 
 ## Recommended flow
-
 1. `getRuntimeStatus` — verify runtime health and redacted agent policy summaries.
 2. `listAgents` — confirm an online agent and its `agent_instance_id`.
 3. `listProjects` — choose an `agent:<client_id>:<project_id>`.
-4. `getProjectGitStatus`, `listProjectFiles`, `readProjectFile` — inspect first.
-5. `validateProjectPatch` — dry-run patches before applying.
-6. `applyProjectPatchChecked`, `writeProjectFile`, or `replaceProjectFileText` — mutate only when intended.
-7. `runProjectShellCommand` or `startProjectShellJob` — execute only bounded commands in registered projects.
-8. `runCodexTask` — optional advanced path when Codex CLI is installed and configured on the agent machine.
+4. `getProjectGitStatus`, `listProjectFiles`, `readProjectFile`, and `searchProjectText` — inspect before editing.
+5. For scoped source edits with known line numbers, use `callRuntimeTool` with the structured line edit tools: `replace_line_range`, `insert_at_line`, and `delete_line_range`.
+6. For broader multi-file edits, use `validateProjectPatch` first, then `applyProjectPatchChecked` only when the patch is intentional.
+7. Use `writeProjectFile` only for new files or deliberate small whole-file overwrites; use `replaceProjectFileText` only for short exact substring changes.
+8. `runProjectShellCommand` or `startProjectShellJob` — execute only bounded commands in registered projects after file edits are complete.
+9. `runCodexTask` — optional advanced path when Codex CLI is installed and configured on the agent machine.
 
 `runCodexTask` does not launch a new agent. It asks the already connected agent to run the Codex CLI in a project.
 

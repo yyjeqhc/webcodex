@@ -160,7 +160,10 @@ async fn serve_quic_endpoint(
                     handle_quic_connection(conn, &alpn, config, db, registry).await;
                 }
                 Err(e) => {
-                    tracing::debug!(error = ?e, "quic agent connection handshake failed");
+                    tracing::warn!(
+                        error = ?e,
+                        "quic agent connection handshake failed; check UDP reachability, certificate trust/SAN, and ALPN"
+                    );
                 }
             }
         });
@@ -187,7 +190,10 @@ async fn handle_quic_connection(
     let (mut send, mut recv) = match conn.accept_bi().await {
         Ok(pair) => pair,
         Err(e) => {
-            tracing::debug!(error = ?e, "quic agent accept_bi failed");
+            tracing::debug!(
+                error = ?e,
+                "quic agent accept_bi failed before register frame"
+            );
             return;
         }
     };
@@ -197,10 +203,15 @@ async fn handle_quic_connection(
         match tokio::time::timeout(REGISTER_TIMEOUT, read_quic_frame(&mut recv)).await {
             Ok(Ok(env)) => env,
             Ok(Err(e)) => {
+                tracing::debug!(
+                    error = %e,
+                    "quic agent wrong first frame or register read failed"
+                );
                 send_error(&mut send, &mut recv, "expected_register", &e.to_string()).await;
                 return;
             }
             Err(_) => {
+                tracing::debug!("quic agent register timed out waiting for first frame");
                 send_error(
                     &mut send,
                     &mut recv,
@@ -217,6 +228,10 @@ async fn handle_quic_connection(
             auth_token,
         } => (payload, auth_token),
         other => {
+            tracing::debug!(
+                kind = other.kind(),
+                "quic agent wrong first frame; expected register"
+            );
             send_error(
                 &mut send,
                 &mut recv,
@@ -250,6 +265,11 @@ async fn handle_quic_connection(
 
     // 3. Enforce the same transport scope/owner boundary as the WS handler.
     if let Err(e) = require_agent_transport_scope(Some(&auth), SCOPE_AGENT_REGISTER) {
+        tracing::warn!(
+            client_id = %client_id,
+            error = %e,
+            "quic agent register rejected: forbidden scope"
+        );
         send_error(&mut send, &mut recv, "register_forbidden", &e).await;
         return;
     }
@@ -258,6 +278,11 @@ async fn handle_quic_connection(
         &register_payload.client_id,
         register_payload.owner.as_deref(),
     ) {
+        tracing::warn!(
+            client_id = %client_id,
+            error = %e,
+            "quic agent register rejected: client_id/owner binding mismatch"
+        );
         send_error(&mut send, &mut recv, "register_forbidden", &e).await;
         return;
     }
@@ -279,6 +304,11 @@ async fn handle_quic_connection(
         register_payload.capabilities = Some(quic_phase_5a_capabilities());
     }
     if let Err(e) = registry.register(register_payload).await {
+        tracing::warn!(
+            client_id = %client_id,
+            error = %e,
+            "quic agent register failed in registry"
+        );
         send_error(&mut send, &mut recv, "register_failed", &e).await;
         return;
     }
@@ -397,6 +427,10 @@ async fn handle_quic_connection(
                     }
                 }
             }
+            tracing::debug!(
+                client_id = %pump_client_id,
+                "quic request pump stopped"
+            );
         }))
     } else {
         None

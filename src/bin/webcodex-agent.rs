@@ -3658,6 +3658,29 @@ fn build_quic_client_crypto(
         .map_err(|e| format!("failed to build quinn client crypto: {}", e))
 }
 
+fn classify_quic_agent_connect_error(error: &str) -> &'static str {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("certificate")
+        || lower.contains("cert")
+        || lower.contains("webpki")
+        || lower.contains("notvalidforname")
+        || lower.contains("unknownissuer")
+    {
+        "certificate verify failed; check [quic].server_name and the certificate SAN/issuer"
+    } else if lower.contains("timed out") || lower.contains("timeout") {
+        "connect timeout; check UDP firewall/security group/NAT and that the server QUIC listener is enabled"
+    } else if lower.contains("alpn")
+        || lower.contains("no application protocol")
+        || lower.contains("applicationclosed")
+        || lower.contains("connectionclosed")
+        || lower.contains("closed")
+    {
+        "handshake failed; check WEBCODEX_QUIC_ENABLED, listener bind, and ALPN"
+    } else {
+        "handshake failed"
+    }
+}
+
 /// One QUIC connection lifecycle: connect, register, dispatch requests until
 /// the stream closes or a fatal server error arrives. In `--once` mode,
 /// completes one ping/pong after the ack then returns.
@@ -3681,8 +3704,21 @@ async fn quic_session(
         .map_err(|e| format!("failed to start quic connect: {}", e))?;
     let conn = tokio::time::timeout(Duration::from_secs(quic.connect_timeout_secs), connect)
         .await
-        .map_err(|_| format!("quic connect to {} timed out", quic.server_addr))?
-        .map_err(|e| format!("quic connect to {} failed: {}", quic.server_addr, e))?;
+        .map_err(|_| {
+            format!(
+                "quic connect timeout to {} after {}s; check UDP firewall/security group/NAT and that the server QUIC listener is enabled",
+                quic.server_addr, quic.connect_timeout_secs
+            )
+        })?
+        .map_err(|e| {
+            let raw = e.to_string();
+            format!(
+                "quic connect to {} failed: {} ({})",
+                quic.server_addr,
+                classify_quic_agent_connect_error(&raw),
+                raw
+            )
+        })?;
 
     // ALPN is enforced by quinn during the TLS handshake: a connection only
     // completes when the client and server agree on a matching ALPN. A
@@ -3719,9 +3755,17 @@ async fn quic_session(
     match ack {
         AgentEnvelope::Registered { success: true, .. } => {}
         AgentEnvelope::Registered { error, .. } => {
-            return Err(error.unwrap_or_else(|| "register rejected".to_string()));
+            return Err(format!(
+                "register rejected by server: {}",
+                error.unwrap_or_else(|| "no server error message".to_string())
+            ));
         }
-        AgentEnvelope::Error { message, .. } => return Err(message),
+        AgentEnvelope::Error { code, message } => {
+            return Err(format!(
+                "server error during register {}: {}",
+                code, message
+            ));
+        }
         other => return Err(format!("expected registered ack, got {}", other.kind())),
     }
     eprintln!(

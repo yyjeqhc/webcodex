@@ -6,7 +6,7 @@
 | ----------- | ---------------- | ------- | ------------- |
 | WebSocket   | `websocket`      | yes     | stable        |
 | Polling     | `polling`        | no      | stable (fallback) |
-| QUIC        | `quic`           | no      | **experimental** (Phase 5B) |
+| QUIC        | `quic`           | no      | **experimental** (Phase 5C) |
 
 ## QUIC (experimental custom transport)
 
@@ -112,7 +112,7 @@ either direction: Pong       { ts }
 The current model is **one bidirectional stream** per agent connection with
 serialized frames. Stream multiplexing is not implemented yet.
 
-### Phase 5B capabilities
+### Phase 5B/5C capabilities
 
 With a `quic-v2` agent, QUIC can execute the basic agent transport loop:
 
@@ -126,6 +126,38 @@ With a `quic-v2` agent, QUIC can execute the basic agent transport loop:
 `quic-v1` agents remain visible as online QUIC agents, but are intentionally
 register-only and must be upgraded to `quic-v2` before they can execute runtime
 requests.
+
+### Phase 5C validation
+
+Use the built-in doctor diagnostics for repeatable QUIC checks:
+
+```sh
+webcodex-cli doctor --quic --server-only \
+  --server-url https://v4.example.com \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-config /etc/webcodex/agent.toml \
+  --strict
+```
+
+With a real QUIC agent already running:
+
+```sh
+webcodex-cli doctor --quic --agent-e2e \
+  --server-url https://v4.example.com \
+  --user-token-file /etc/webcodex/webcodex-user-token \
+  --agent-config /etc/webcodex/agent.toml \
+  --project agent:CLIENT_ID:PROJECT_ID \
+  --strict
+```
+
+The server-only mode separates UDP/listener/cert/ALPN failures from runtime
+dispatch failures. The agent E2E mode checks `runtime_status`, confirms a
+`transport=quic` / `agent_protocol_version=quic-v2` agent, runs a
+`run_shell` marker command, starts an async `run_job`, polls `job_status`, and
+reads `job_log`.
+
+See [QUIC_E2E.md](QUIC_E2E.md) for the full one-machine/two-machine manual
+flow, disconnect reconciliation check, and WebSocket fallback procedure.
 
 ### Fallback
 
@@ -144,6 +176,4 @@ by default until later phases add more operational validation.
 - HTTP/3 polling,
 - Nginx QUIC / HTTP/3 integration,
 - UDP 443 defaulting,
-- stream multiplexing,
-- `doctor` QUIC connectivity check,
-- deployment validation on UDP 8443.
+- stream multiplexing.

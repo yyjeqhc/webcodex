@@ -248,7 +248,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let quic_cfg = config::QuicServerConfig::from_env();
     if quic_cfg.enabled {
         if let Err(e) = quic_cfg.validate() {
-            tracing::error!("QUIC listener disabled due to config error: {}", e);
+            tracing::error!(
+                "QUIC listener disabled due to config error: {}; check WEBCODEX_QUIC_LISTEN/CERT/KEY/ALPN",
+                e
+            );
         } else {
             let quic_config = config.clone();
             let quic_db = db.clone();
@@ -263,7 +266,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 )
                 .await
                 {
-                    tracing::error!("QUIC agent listener exited with error: {}", e);
+                    tracing::error!(
+                        "QUIC agent listener exited with error: {}; check bind address, UDP port availability, certificate/key readability, and ALPN",
+                        e
+                    );
                 }
             });
             tracing::info!(

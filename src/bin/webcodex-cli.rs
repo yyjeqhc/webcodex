@@ -19,7 +19,10 @@ use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 use uuid::Uuid;
 
 #[allow(dead_code)]
@@ -131,6 +134,17 @@ struct DoctorOptions {
     /// Restrict the remote shell roundtrip check to a single project id (the
     /// `agent:<client_id>:<project_id>` runtime id, or a bare project id).
     project: Option<String>,
+    /// Run QUIC transport diagnostics. By default this performs server-only
+    /// QUIC DNS/TLS/ALPN handshake checks; combine with --agent-e2e for
+    /// runtime dispatch checks against an already-running QUIC agent.
+    quic: bool,
+    quic_server_addr: Option<String>,
+    quic_server_name: Option<String>,
+    quic_alpn: String,
+    quic_timeout_secs: u64,
+    quic_server_only: bool,
+    quic_agent_e2e: bool,
+    quic_client_id: Option<String>,
     json: bool,
     strict: bool,
 }
@@ -285,6 +299,14 @@ fn doctor_usage() -> &'static str {
        --agent-token-file PATH   Read agent token for boundary checks\n\
        --agent-config PATH       Local agent.toml for shell-profile/project diagnostics\n\
        --project ID              Restrict the remote shell roundtrip to this project id\n\
+       --quic                    Run QUIC transport diagnostics\n\
+       --server-only             With --quic, only check API + QUIC UDP/TLS/ALPN handshake\n\
+       --agent-e2e               With --quic, require an online quic-v2 agent and run dispatch checks\n\
+       --quic-server-addr ADDR   QUIC UDP host:port; falls back to [quic].server_addr\n\
+       --quic-server-name NAME   QUIC TLS/SNI name; falls back to [quic].server_name\n\
+       --quic-alpn ALPN          QUIC ALPN [default: webcodex-agent/1]\n\
+       --quic-timeout-secs SECS  QUIC connect timeout [default: 10]\n\
+       --quic-client-id ID       Expected QUIC agent client id; falls back to agent.toml client_id\n\
        --json                    Print machine-readable diagnostics\n\
        --strict                  Exit non-zero if any check fails\n\
        -h, --help                Print help and exit\n\n\
@@ -1046,7 +1068,10 @@ fn parse_doctor_command(args: &[String]) -> CliAction {
 }
 
 fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
-    let mut opts = DoctorOptions::default();
+    let mut opts = DoctorOptions {
+        quic_timeout_secs: 10,
+        ..DoctorOptions::default()
+    };
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -1063,6 +1088,19 @@ fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
                 opts.agent_config = Some(PathBuf::from(next_value(&mut iter, arg)?))
             }
             "--project" => opts.project = Some(next_value(&mut iter, arg)?),
+            "--quic" => opts.quic = true,
+            "--server-only" => opts.quic_server_only = true,
+            "--agent-e2e" => opts.quic_agent_e2e = true,
+            "--quic-server-addr" => opts.quic_server_addr = Some(next_value(&mut iter, arg)?),
+            "--quic-server-name" => opts.quic_server_name = Some(next_value(&mut iter, arg)?),
+            "--quic-alpn" => opts.quic_alpn = next_value(&mut iter, arg)?,
+            "--quic-timeout-secs" => {
+                let value = next_value(&mut iter, arg)?;
+                opts.quic_timeout_secs = value
+                    .parse::<u64>()
+                    .map_err(|_| "--quic-timeout-secs must be an integer".to_string())?;
+            }
+            "--quic-client-id" => opts.quic_client_id = Some(next_value(&mut iter, arg)?),
             "--json" => opts.json = true,
             "--strict" => opts.strict = true,
             _ => return Err(format!("unknown doctor flag: {}", arg)),
@@ -1072,6 +1110,15 @@ fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
         if url.trim().is_empty() {
             return Err("--server-url cannot be empty".to_string());
         }
+    }
+    if opts.quic_server_only || opts.quic_agent_e2e {
+        opts.quic = true;
+    }
+    if opts.quic_timeout_secs == 0 {
+        return Err("--quic-timeout-secs must be > 0".to_string());
+    }
+    if opts.quic_server_only && opts.quic_agent_e2e {
+        return Err("--server-only and --agent-e2e are mutually exclusive".to_string());
     }
     Ok(opts)
 }
@@ -2069,6 +2116,530 @@ async fn http_get_json_status(
     Ok((status, content_type, json))
 }
 
+fn rustls_provider() -> Arc<rustls::crypto::CryptoProvider> {
+    Arc::new(rustls::crypto::aws_lc_rs::default_provider())
+}
+
+fn build_doctor_quic_client_crypto(
+    alpn: &str,
+) -> Result<quinn::crypto::rustls::QuicClientConfig, String> {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.extend(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
+    let mut client_crypto = rustls::ClientConfig::builder_with_provider(rustls_provider())
+        .with_safe_default_protocol_versions()
+        .map_err(|e| format!("failed to select rustls protocol versions: {}", e))?
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    client_crypto.alpn_protocols = vec![alpn.as_bytes().to_vec()];
+    quinn::crypto::rustls::QuicClientConfig::try_from(client_crypto)
+        .map_err(|e| format!("failed to build quic client crypto: {}", e))
+}
+
+#[derive(Debug, Clone)]
+struct DoctorQuicResolved {
+    server_addr: String,
+    server_name: String,
+    alpn: String,
+    timeout_secs: u64,
+    client_id: Option<String>,
+}
+
+fn read_doctor_agent_config(path: &Path) -> Result<DoctorAgentConfig, String> {
+    let content = std::fs::read_to_string(path)
+        .map_err(|e| format!("failed to read agent config {}: {}", path.display(), e))?;
+    toml::from_str(&content)
+        .map_err(|e| format!("failed to parse agent config {}: {}", path.display(), e))
+}
+
+fn resolve_doctor_quic_options(opts: &DoctorOptions) -> Result<DoctorQuicResolved, String> {
+    let agent_cfg = match opts.agent_config.as_deref() {
+        Some(path) => Some(read_doctor_agent_config(path)?),
+        None => None,
+    };
+    let quic_cfg = agent_cfg.as_ref().and_then(|cfg| cfg.quic.as_ref());
+    let server_addr = opts
+        .quic_server_addr
+        .clone()
+        .or_else(|| quic_cfg.map(|q| q.server_addr.clone()))
+        .unwrap_or_default();
+    let server_name = opts
+        .quic_server_name
+        .clone()
+        .or_else(|| quic_cfg.map(|q| q.server_name.clone()))
+        .unwrap_or_default();
+    let alpn = if opts.quic_alpn.trim().is_empty() {
+        quic_cfg
+            .map(|q| q.alpn.clone())
+            .unwrap_or_else(default_doctor_quic_alpn)
+    } else {
+        opts.quic_alpn.clone()
+    };
+    let timeout_secs = if opts.quic_timeout_secs == 0 {
+        quic_cfg
+            .map(|q| q.connect_timeout_secs)
+            .filter(|v| *v > 0)
+            .unwrap_or_else(default_doctor_quic_connect_timeout_secs)
+    } else {
+        opts.quic_timeout_secs
+    };
+    let client_id = opts.quic_client_id.clone().or_else(|| {
+        agent_cfg.as_ref().and_then(|cfg| {
+            let id = cfg.client_id.trim();
+            if id.is_empty() {
+                None
+            } else {
+                Some(id.to_string())
+            }
+        })
+    });
+    if server_addr.trim().is_empty() {
+        return Err(
+            "--quic-server-addr is required for --quic unless [quic].server_addr is in --agent-config"
+                .to_string(),
+        );
+    }
+    if server_name.trim().is_empty() {
+        return Err(
+            "--quic-server-name is required for --quic unless [quic].server_name is in --agent-config"
+                .to_string(),
+        );
+    }
+    Ok(DoctorQuicResolved {
+        server_addr,
+        server_name,
+        alpn,
+        timeout_secs,
+        client_id,
+    })
+}
+
+fn classify_quic_connect_error(error: &str) -> String {
+    let lower = error.to_ascii_lowercase();
+    if lower.contains("certificate")
+        || lower.contains("cert")
+        || lower.contains("webpki")
+        || lower.contains("notvalidforname")
+        || lower.contains("unknownissuer")
+    {
+        "certificate verify failed (check server_name and certificate SAN/issuer)".to_string()
+    } else if lower.contains("timed out") || lower.contains("timeout") {
+        "connect timeout (check UDP firewall/security group/NAT and listener bind)".to_string()
+    } else if lower.contains("applicationclosed")
+        || lower.contains("connectionclosed")
+        || lower.contains("closed")
+        || lower.contains("no application protocol")
+        || lower.contains("alpn")
+    {
+        "handshake failed (check QUIC listener is enabled and ALPN matches)".to_string()
+    } else {
+        "quic connect failed".to_string()
+    }
+}
+
+async fn doctor_quic_handshake(
+    addr: SocketAddr,
+    server_name: &str,
+    alpn: &str,
+    timeout_secs: u64,
+) -> Result<(), String> {
+    let client_crypto = build_doctor_quic_client_crypto(alpn)?;
+    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
+    let endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().expect("valid local addr"))
+        .map_err(|e| format!("failed to bind local quic UDP socket: {}", e))?;
+    let connect = endpoint
+        .connect_with(client_config, addr, server_name)
+        .map_err(|e| format!("failed to start quic connect: {}", e))?;
+    let conn = tokio::time::timeout(Duration::from_secs(timeout_secs), connect)
+        .await
+        .map_err(|_| format!("quic connect to {} timed out after {}s", addr, timeout_secs))?
+        .map_err(|e| {
+            let raw = e.to_string();
+            format!("{}: {}", classify_quic_connect_error(&raw), raw)
+        })?;
+    conn.close(0u32.into(), b"webcodex doctor done");
+    endpoint.wait_idle().await;
+    Ok(())
+}
+
+async fn run_quic_doctor_checks(
+    opts: &DoctorOptions,
+    preferred_token: Option<&str>,
+) -> Vec<DoctorCheck> {
+    let mut checks = Vec::new();
+    let resolved = match resolve_doctor_quic_options(opts) {
+        Ok(resolved) => resolved,
+        Err(e) => {
+            checks.push(DoctorCheck::fail("quic config", e));
+            return checks;
+        }
+    };
+    checks.push(DoctorCheck::pass(
+        "quic config",
+        format!(
+            "server_addr={} server_name={} alpn={} timeout_secs={} client_id={}",
+            resolved.server_addr,
+            resolved.server_name,
+            resolved.alpn,
+            resolved.timeout_secs,
+            resolved.client_id.as_deref().unwrap_or("(not specified)")
+        ),
+    ));
+
+    let addrs = match resolved.server_addr.to_socket_addrs() {
+        Ok(iter) => iter.collect::<Vec<_>>(),
+        Err(e) => {
+            checks.push(DoctorCheck::fail(
+                "quic resolve",
+                format!("failed to resolve {}: {}", resolved.server_addr, e),
+            ));
+            return checks;
+        }
+    };
+    if addrs.is_empty() {
+        checks.push(DoctorCheck::fail(
+            "quic resolve",
+            format!("{} resolved to no socket addresses", resolved.server_addr),
+        ));
+        return checks;
+    }
+    checks.push(DoctorCheck::pass(
+        "quic resolve",
+        format!(
+            "{} -> {}",
+            resolved.server_addr,
+            addrs
+                .iter()
+                .map(SocketAddr::to_string)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    ));
+
+    let mut handshake_ok = false;
+    let mut handshake_errors = Vec::new();
+    for addr in &addrs {
+        match doctor_quic_handshake(
+            *addr,
+            &resolved.server_name,
+            &resolved.alpn,
+            resolved.timeout_secs,
+        )
+        .await
+        {
+            Ok(()) => {
+                checks.push(DoctorCheck::pass(
+                    "quic handshake",
+                    format!(
+                        "{} ok; ALPN '{}' negotiated and certificate SAN/chain verified for {}",
+                        addr, resolved.alpn, resolved.server_name
+                    ),
+                ));
+                handshake_ok = true;
+                break;
+            }
+            Err(e) => handshake_errors.push(format!("{}: {}", addr, e)),
+        }
+    }
+    if !handshake_ok {
+        checks.push(DoctorCheck::fail(
+            "quic handshake",
+            handshake_errors.join("; "),
+        ));
+        return checks;
+    }
+
+    if opts.quic_server_only || !opts.quic_agent_e2e {
+        checks.push(DoctorCheck::warn(
+            "quic agent e2e",
+            "skipped; pass --agent-e2e with --server-url, --user-token-file, --project, and an online quic-v2 agent",
+        ));
+        return checks;
+    }
+
+    let Some(server_url) = opts.server_url.as_deref() else {
+        checks.push(DoctorCheck::fail(
+            "quic agent e2e",
+            "--server-url is required for --agent-e2e",
+        ));
+        return checks;
+    };
+    let Some(token) = preferred_token else {
+        checks.push(DoctorCheck::fail(
+            "quic agent e2e",
+            "--user-token-file or --token-file/--env-file is required for runtime API checks",
+        ));
+        return checks;
+    };
+    let Some(project) = opts.project.as_deref() else {
+        checks.push(DoctorCheck::fail(
+            "quic agent e2e",
+            "--project is required for run_shell/run_job checks",
+        ));
+        return checks;
+    };
+
+    checks.extend(
+        run_quic_agent_e2e_checks(server_url, token, project, resolved.client_id.as_deref()).await,
+    );
+    checks
+}
+
+async fn run_quic_agent_e2e_checks(
+    server_url: &str,
+    token: &str,
+    project: &str,
+    expected_client_id: Option<&str>,
+) -> Vec<DoctorCheck> {
+    let mut checks = Vec::new();
+    match http_post_json_status(server_url, "/api/runtime/status", Some(token), json!({})).await {
+        Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+            let output = value.get("output").unwrap_or(&value);
+            let clients = output
+                .pointer("/agents/clients")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let matching = clients.iter().find(|client| {
+                let transport = client.get("transport").and_then(Value::as_str);
+                let protocol = client.get("agent_protocol_version").and_then(Value::as_str);
+                let client_id_matches = expected_client_id
+                    .is_none_or(|id| client.get("client_id").and_then(Value::as_str) == Some(id));
+                client_id_matches && transport == Some("quic") && protocol == Some("quic-v2")
+            });
+            match matching {
+                Some(client) => {
+                    let connected = client.get("connected").and_then(Value::as_bool);
+                    let pending = client.get("pending_requests").and_then(Value::as_u64);
+                    checks.push(DoctorCheck::pass(
+                        "quic agent online",
+                        format!(
+                            "client_id={} transport=quic protocol=quic-v2 connected={:?} pending_requests={} last_seen={}",
+                            client
+                                .get("client_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("(unknown)"),
+                            connected,
+                            pending
+                                .map(|v| v.to_string())
+                                .unwrap_or_else(|| "unknown".to_string()),
+                            client
+                                .get("last_seen")
+                                .map(Value::to_string)
+                                .unwrap_or_else(|| "unknown".to_string())
+                        ),
+                    ));
+                    if connected != Some(true) {
+                        checks.push(DoctorCheck::fail(
+                            "quic agent connected",
+                            "matching quic-v2 agent is not connected",
+                        ));
+                    }
+                    if !client
+                        .get("capabilities")
+                        .is_some_and(|cap| cap.is_object() && cap.get("shell").is_some())
+                    {
+                        checks.push(DoctorCheck::warn(
+                            "quic capabilities",
+                            "matching agent did not expose a shell capability summary",
+                        ));
+                    }
+                }
+                None => checks.push(DoctorCheck::fail(
+                    "quic agent online",
+                    match expected_client_id {
+                        Some(id) => format!("no online quic-v2 agent found for client_id={}", id),
+                        None => "no online quic-v2 agent found".to_string(),
+                    },
+                )),
+            }
+            if output.get("quic").is_some() {
+                checks.push(DoctorCheck::pass(
+                    "quic runtime config",
+                    "runtime_status exposes non-secret quic config".to_string(),
+                ));
+            } else {
+                checks.push(DoctorCheck::warn(
+                    "quic runtime config",
+                    "runtime_status does not expose quic listener config; check server logs for listener startup",
+                ));
+            }
+        }
+        Ok((status, content_type, _)) => checks.push(DoctorCheck::fail(
+            "quic agent online",
+            format!(
+                "runtime_status HTTP {} content-type {}",
+                status, content_type
+            ),
+        )),
+        Err(e) => checks.push(DoctorCheck::fail("quic agent online", e)),
+    }
+
+    match http_post_json_status(
+        server_url,
+        "/api/tools/call",
+        Some(token),
+        json!({"tool":"run_shell","params":{"project":project,"command":"printf webcodex-quic-ok"}}),
+    )
+    .await
+    {
+        Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+            let stdout = value
+                .pointer("/output/stdout")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            let exit_code = value.pointer("/output/exit_code").and_then(Value::as_i64);
+            if stdout.contains("webcodex-quic-ok") && exit_code == Some(0) {
+                checks.push(DoctorCheck::pass(
+                    "quic run_shell",
+                    format!("project '{}' returned marker", project),
+                ));
+            } else {
+                checks.push(DoctorCheck::fail(
+                    "quic run_shell",
+                    format!(
+                        "project '{}' exit_code={:?} without expected marker",
+                        project, exit_code
+                    ),
+                ));
+            }
+        }
+        Ok((status, content_type, _)) => checks.push(DoctorCheck::fail(
+            "quic run_shell",
+            format!("HTTP {} content-type {}", status, content_type),
+        )),
+        Err(e) => checks.push(DoctorCheck::fail("quic run_shell", e)),
+    }
+
+    let job_id = match http_post_json_status(
+        server_url,
+        "/api/tools/call",
+        Some(token),
+        json!({"tool":"run_job","params":{"project":project,"command":"printf webcodex-quic-job-ok","timeout_secs":10}}),
+    )
+    .await
+    {
+        Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+            match value.pointer("/output/job_id").and_then(Value::as_str) {
+                Some(job_id) => {
+                    checks.push(DoctorCheck::pass(
+                        "quic run_job",
+                        format!("started job_id={}", job_id),
+                    ));
+                    Some(job_id.to_string())
+                }
+                None => {
+                    checks.push(DoctorCheck::fail(
+                        "quic run_job",
+                        "response did not include output.job_id",
+                    ));
+                    None
+                }
+            }
+        }
+        Ok((status, content_type, _)) => {
+            checks.push(DoctorCheck::fail(
+                "quic run_job",
+                format!("HTTP {} content-type {}", status, content_type),
+            ));
+            None
+        }
+        Err(e) => {
+            checks.push(DoctorCheck::fail("quic run_job", e));
+            None
+        }
+    };
+
+    let Some(job_id) = job_id else {
+        return checks;
+    };
+    let mut final_status = None;
+    for _ in 0..20 {
+        match http_post_json_status(
+            server_url,
+            "/api/tools/call",
+            Some(token),
+            json!({"tool":"job_status","params":{"job_id":job_id}}),
+        )
+        .await
+        {
+            Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+                let status = value
+                    .pointer("/output/status")
+                    .and_then(Value::as_str)
+                    .unwrap_or("unknown")
+                    .to_string();
+                if matches!(status.as_str(), "completed" | "failed" | "stopped" | "lost") {
+                    final_status = Some(status);
+                    break;
+                }
+            }
+            Ok((status, content_type, _)) => {
+                checks.push(DoctorCheck::fail(
+                    "quic job_status",
+                    format!("HTTP {} content-type {}", status, content_type),
+                ));
+                return checks;
+            }
+            Err(e) => {
+                checks.push(DoctorCheck::fail("quic job_status", e));
+                return checks;
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    match final_status.as_deref() {
+        Some("completed") => checks.push(DoctorCheck::pass(
+            "quic job_status",
+            format!("job_id={} completed", job_id),
+        )),
+        Some(status) => checks.push(DoctorCheck::fail(
+            "quic job_status",
+            format!("job_id={} ended with status={}", job_id, status),
+        )),
+        None => checks.push(DoctorCheck::fail(
+            "quic job_status",
+            format!("job_id={} did not finish before timeout", job_id),
+        )),
+    }
+
+    match http_post_json_status(
+        server_url,
+        "/api/tools/call",
+        Some(token),
+        json!({"tool":"job_log","params":{"job_id":job_id,"tail_lines":50}}),
+    )
+    .await
+    {
+        Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+            let stdout = value
+                .pointer("/output/stdout")
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if stdout.contains("webcodex-quic-job-ok") {
+                checks.push(DoctorCheck::pass(
+                    "quic job_log",
+                    format!("job_id={} output marker found", job_id),
+                ));
+            } else {
+                checks.push(DoctorCheck::fail(
+                    "quic job_log",
+                    format!("job_id={} output marker missing", job_id),
+                ));
+            }
+        }
+        Ok((status, content_type, _)) => checks.push(DoctorCheck::fail(
+            "quic job_log",
+            format!("HTTP {} content-type {}", status, content_type),
+        )),
+        Err(e) => checks.push(DoctorCheck::fail("quic job_log", e)),
+    }
+    checks.push(DoctorCheck::warn(
+        "quic disconnect",
+        "manual step: stop the agent and rerun runtime_status/list_agents to observe stale/offline reconciliation",
+    ));
+    checks
+}
+
 // ============================================================================
 // Local agent-config doctor (shell profiles / projects)
 // ============================================================================
@@ -2115,11 +2686,35 @@ struct DoctorAgentConfig {
     #[serde(default)]
     client_id: String,
     #[serde(default)]
+    transport: Option<String>,
+    #[serde(default)]
+    quic: Option<DoctorQuicConfig>,
+    #[serde(default)]
     projects_dir: Option<PathBuf>,
     #[serde(default)]
     shell: DoctorShellConfig,
     #[serde(default)]
     policy: DoctorAgentPolicy,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct DoctorQuicConfig {
+    #[serde(default)]
+    server_addr: String,
+    #[serde(default)]
+    server_name: String,
+    #[serde(default = "default_doctor_quic_alpn")]
+    alpn: String,
+    #[serde(default = "default_doctor_quic_connect_timeout_secs")]
+    connect_timeout_secs: u64,
+}
+
+fn default_doctor_quic_alpn() -> String {
+    "webcodex-agent/1".to_string()
+}
+
+fn default_doctor_quic_connect_timeout_secs() -> u64 {
+    10
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -2602,6 +3197,10 @@ async fn run_doctor(opts: DoctorOptions) -> Result<(String, bool), String> {
             "server checks",
             "--server-url not provided; skipped HTTP/OpenAPI checks",
         ));
+    }
+
+    if opts.quic {
+        checks.extend(run_quic_doctor_checks(&opts, preferred_token).await);
     }
 
     let has_fail = checks.iter().any(|c| c.status == "FAIL");
@@ -4036,6 +4635,75 @@ mod tests {
         assert_eq!(opts.projects_dir, opts.output_dir.join("projects.d"));
         assert_eq!(opts.transport, TRANSPORT_WEBSOCKET);
         assert!(!opts.overwrite);
+    }
+
+    #[test]
+    fn doctor_parse_quic_flags() {
+        let opts = parse_doctor(&args(&[
+            "--quic",
+            "--server-only",
+            "--quic-server-addr",
+            "v4.example.test:8443",
+            "--quic-server-name",
+            "v4.example.test",
+            "--quic-alpn",
+            "webcodex-agent/1",
+            "--quic-timeout-secs",
+            "7",
+            "--quic-client-id",
+            "alice-laptop",
+        ]))
+        .unwrap();
+        assert!(opts.quic);
+        assert!(opts.quic_server_only);
+        assert!(!opts.quic_agent_e2e);
+        assert_eq!(
+            opts.quic_server_addr.as_deref(),
+            Some("v4.example.test:8443")
+        );
+        assert_eq!(opts.quic_server_name.as_deref(), Some("v4.example.test"));
+        assert_eq!(opts.quic_alpn, "webcodex-agent/1");
+        assert_eq!(opts.quic_timeout_secs, 7);
+        assert_eq!(opts.quic_client_id.as_deref(), Some("alice-laptop"));
+    }
+
+    #[test]
+    fn doctor_parse_quic_modes_are_mutually_exclusive() {
+        let err = parse_doctor(&args(&["--quic", "--server-only", "--agent-e2e"])).unwrap_err();
+        assert!(err.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn doctor_quic_options_fall_back_to_agent_config() {
+        let tmp = tempfile::tempdir().unwrap();
+        let config = tmp.path().join("agent.toml");
+        std::fs::write(
+            &config,
+            r#"
+server_url = "https://v4.example.test"
+token = "redacted"
+client_id = "alice-laptop"
+transport = "quic"
+
+[quic]
+server_addr = "v4.example.test:8443"
+server_name = "v4.example.test"
+alpn = "webcodex-agent/1"
+connect_timeout_secs = 12
+"#,
+        )
+        .unwrap();
+        let opts = parse_doctor(&args(&[
+            "--quic",
+            "--agent-config",
+            config.to_str().unwrap(),
+        ]))
+        .unwrap();
+        let resolved = resolve_doctor_quic_options(&opts).unwrap();
+        assert_eq!(resolved.server_addr, "v4.example.test:8443");
+        assert_eq!(resolved.server_name, "v4.example.test");
+        assert_eq!(resolved.alpn, "webcodex-agent/1");
+        assert_eq!(resolved.client_id.as_deref(), Some("alice-laptop"));
     }
 
     #[test]

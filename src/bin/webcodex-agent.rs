@@ -4284,6 +4284,8 @@ async fn websocket_session(
 }
 
 fn main() {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+
     let action = match parse_args() {
         Ok(v) => v,
         Err(e) => {

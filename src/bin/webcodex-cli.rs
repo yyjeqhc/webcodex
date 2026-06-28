@@ -4199,6 +4199,7 @@ async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> 
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
     match cli_action(std::env::args().skip(1)) {
         CliAction::Admin(cmd) => match run_admin_command(cmd).await {
             Ok(stdout) => {

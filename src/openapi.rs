@@ -120,6 +120,7 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     // excluded from GPT Actions. Agent tokens are bound to an owner and an
     // allowed_client_id and are only used by the webcodex-agent transport.
     "/api/agent-tokens/create",
+    "/api/agent-tokens/register_hash",
     "/api/agent-tokens/list",
     "/api/agent-tokens/revoke",
     // Pairing/enrollment creates temporary credentials and enrollment tokens.
@@ -2479,6 +2480,7 @@ mod tests {
         let paths = spec["paths"].as_object().unwrap();
         for path in [
             "/api/agent-tokens/create",
+            "/api/agent-tokens/register_hash",
             "/api/agent-tokens/list",
             "/api/agent-tokens/revoke",
         ] {

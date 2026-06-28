@@ -26,6 +26,7 @@ pub(crate) enum AdminCliCommand {
     TokensList(AdminOptions, UsernameArgs),
     TokensRevoke(AdminOptions, RevokeTokenArgs),
     AgentTokensCreate(AdminOptions, AgentTokenCreateArgs),
+    AgentTokensRegisterHash(AdminOptions, AgentTokenRegisterHashArgs),
     AgentTokensList(AdminOptions, UsernameArgs),
     AgentTokensRevoke(AdminOptions, RevokeTokenArgs),
 }
@@ -84,6 +85,16 @@ pub(crate) struct AgentTokenCreateArgs {
     pub(crate) scopes: Vec<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct AgentTokenRegisterHashArgs {
+    pub(crate) username: String,
+    pub(crate) client_id: String,
+    pub(crate) name: Option<String>,
+    pub(crate) token_hash: String,
+    pub(crate) token_prefix: String,
+    pub(crate) scopes: Vec<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct AdminCliRequest {
     pub(crate) server_url: String,
@@ -129,7 +140,10 @@ impl FlagParser {
 }
 
 pub(crate) fn is_admin_group(arg: &str) -> bool {
-    matches!(arg, "user" | "users" | "token" | "tokens" | "agent-tokens")
+    matches!(
+        arg,
+        "user" | "users" | "token" | "tokens" | "agent-token" | "agent-tokens"
+    )
 }
 
 pub(crate) fn usage() -> &'static str {
@@ -141,6 +155,7 @@ pub(crate) fn usage() -> &'static str {
       webcodex tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\
       webcodex agent-tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER --client-id ID [--name NAME] [--scope SCOPE...]\n\
+      webcodex agent-tokens register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex agent-tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex agent-tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\n\
     Token fallback: WEBCODEX_TOKEN\n\
@@ -161,9 +176,10 @@ pub(crate) fn parse_admin_cli(args: &[String]) -> Result<AdminCliCommand, String
         ("tokens" | "token", "register-hash") => parse_tokens_register_hash(rest),
         ("tokens" | "token", "list") => parse_tokens_list(rest),
         ("tokens" | "token", "revoke") => parse_tokens_revoke(rest),
-        ("agent-tokens", "create") => parse_agent_tokens_create(rest),
-        ("agent-tokens", "list") => parse_agent_tokens_list(rest),
-        ("agent-tokens", "revoke") => parse_agent_tokens_revoke(rest),
+        ("agent-token" | "agent-tokens", "create") => parse_agent_tokens_create(rest),
+        ("agent-token" | "agent-tokens", "register-hash") => parse_agent_tokens_register_hash(rest),
+        ("agent-token" | "agent-tokens", "list") => parse_agent_tokens_list(rest),
+        ("agent-token" | "agent-tokens", "revoke") => parse_agent_tokens_revoke(rest),
         _ => Err(format!(
             "unknown admin command: {} {}\n{}",
             group,
@@ -347,6 +363,45 @@ fn parse_agent_tokens_create(args: &[String]) -> Result<AdminCliCommand, String>
     Ok(AdminCliCommand::AgentTokensCreate(opts, t))
 }
 
+fn parse_agent_tokens_register_hash(args: &[String]) -> Result<AdminCliCommand, String> {
+    let mut opts = AdminOptions::default();
+    let mut t = AgentTokenRegisterHashArgs::default();
+    let mut p = FlagParser::new(args);
+    while let Some(flag) = p.next() {
+        if parse_common_flag(&mut opts, &mut p, &flag)? {
+            continue;
+        }
+        match flag.as_str() {
+            "--username" | "--user" => t.username = p.value(&flag)?,
+            "--client-id" => t.client_id = p.value(&flag)?,
+            "--name" => t.name = Some(p.value(&flag)?),
+            "--hash" | "--token-hash" => t.token_hash = p.value(&flag)?,
+            "--prefix" | "--token-prefix" => t.token_prefix = p.value(&flag)?,
+            "--scope" => t.scopes.push(p.value(&flag)?),
+            "--scopes" => {
+                t.scopes.extend(
+                    p.value(&flag)?
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string),
+                );
+            }
+            _ => return Err(format!("unknown agent-tokens register-hash flag: {}", flag)),
+        }
+    }
+    p.finish()?;
+    require_common(&opts)?;
+    require_non_empty("--username", &t.username)?;
+    require_non_empty("--client-id", &t.client_id)?;
+    require_non_empty("--hash", &t.token_hash)?;
+    require_non_empty("--prefix", &t.token_prefix)?;
+    if t.scopes.is_empty() {
+        t.scopes = DEFAULT_AGENT_SCOPES.iter().map(|s| s.to_string()).collect();
+    }
+    Ok(AdminCliCommand::AgentTokensRegisterHash(opts, t))
+}
+
 fn parse_agent_tokens_list(args: &[String]) -> Result<AdminCliCommand, String> {
     let (opts, username) = parse_username_command(args, "agent-tokens list")?;
     Ok(AdminCliCommand::AgentTokensList(
@@ -468,6 +523,19 @@ pub(crate) fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliReque
             }
             (opts, "/api/agent-tokens/create", body)
         }
+        AdminCliCommand::AgentTokensRegisterHash(opts, t) => {
+            let mut body = json!({
+                "username": t.username,
+                "client_id": t.client_id,
+                "token_hash": t.token_hash,
+                "token_prefix": t.token_prefix,
+                "scopes": t.scopes,
+            });
+            if let Some(name) = &t.name {
+                body["name"] = json!(name);
+            }
+            (opts, "/api/agent-tokens/register_hash", body)
+        }
         AdminCliCommand::AgentTokensList(opts, t) => (
             opts,
             "/api/agent-tokens/list",
@@ -486,6 +554,7 @@ pub(crate) fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliReque
             matches!(
                 cmd,
                 AdminCliCommand::TokensRegisterHash(_, _)
+                    | AdminCliCommand::AgentTokensRegisterHash(_, _)
                     | AdminCliCommand::TokensList(_, _)
                     | AdminCliCommand::TokensRevoke(_, _)
             ),
@@ -742,6 +811,119 @@ mod tests {
             "agent:poll",
         ]);
         assert_eq!(req.body["scopes"], json!(["agent:register", "agent:poll"]));
+    }
+
+    #[test]
+    fn agent_tokens_register_hash_builds_hash_registration_request() {
+        let req = request(&[
+            "agent-token",
+            "register-hash",
+            "--server-url",
+            "https://example.test",
+            "--credential",
+            "wc_acct_fake",
+            "--username",
+            "alice",
+            "--client-id",
+            "alice-laptop",
+            "--name",
+            "alice laptop",
+            "--hash",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--prefix",
+            "wc_agent_aaaaaaa",
+            "--scope",
+            "agent:register",
+            "--scope",
+            "agent:poll",
+        ]);
+        assert_eq!(req.path, "/api/agent-tokens/register_hash");
+        assert_eq!(req.token, "wc_acct_fake");
+        assert_eq!(req.body["username"], "alice");
+        assert_eq!(req.body["client_id"], "alice-laptop");
+        assert_eq!(req.body["name"], "alice laptop");
+        assert_eq!(
+            req.body["token_hash"],
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        );
+        assert_eq!(req.body["token_prefix"], "wc_agent_aaaaaaa");
+        assert_eq!(req.body["scopes"], json!(["agent:register", "agent:poll"]));
+        assert!(req.body.get("token").is_none());
+    }
+
+    #[test]
+    fn agent_tokens_register_hash_defaults_agent_scopes_and_prefers_admin_token() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+        let req = request(&[
+            "agent-tokens",
+            "register-hash",
+            "--server-url",
+            "https://example.test",
+            "--admin-token",
+            "fake-admin",
+            "--username",
+            "alice",
+            "--client-id",
+            "alice-laptop",
+            "--hash",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--prefix",
+            "wc_agent_aaaaaaa",
+        ]);
+        assert_eq!(req.token, "fake-admin");
+        assert_eq!(
+            req.body["scopes"],
+            json!([
+                "agent:register",
+                "agent:poll",
+                "agent:result",
+                "agent:job_update"
+            ])
+        );
+        std::env::remove_var("WEBCODEX_ACCOUNT_CREDENTIAL");
+    }
+
+    #[test]
+    fn agent_tokens_register_hash_uses_credential_env_and_default_account_credential() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("CUSTOM_ACCT", "wc_acct_custom");
+        let req = request(&[
+            "agent-tokens",
+            "register-hash",
+            "--server-url",
+            "https://example.test",
+            "--credential-env",
+            "CUSTOM_ACCT",
+            "--username",
+            "alice",
+            "--client-id",
+            "alice-laptop",
+            "--hash",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--prefix",
+            "wc_agent_aaaaaaa",
+        ]);
+        assert_eq!(req.token, "wc_acct_custom");
+        std::env::remove_var("CUSTOM_ACCT");
+
+        std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+        let req = request(&[
+            "agent-tokens",
+            "register-hash",
+            "--server-url",
+            "https://example.test",
+            "--username",
+            "alice",
+            "--client-id",
+            "alice-laptop",
+            "--hash",
+            "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "--prefix",
+            "wc_agent_bbbbbbb",
+        ]);
+        assert_eq!(req.token, "wc_acct_default");
+        std::env::remove_var("WEBCODEX_ACCOUNT_CREDENTIAL");
     }
 
     #[test]

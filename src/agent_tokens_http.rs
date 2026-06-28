@@ -55,6 +55,20 @@ pub(crate) struct CreateAgentTokenRequest {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RegisterAgentTokenHashRequest {
+    pub username: String,
+    pub name: Option<String>,
+    pub client_id: String,
+    pub token_hash: String,
+    pub token_prefix: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct ListAgentTokensRequest {
     pub username: String,
 }
@@ -135,6 +149,37 @@ fn agent_token_summary(key: &ApiKeyRecord) -> Value {
         "expires_at": key.expires_at,
         "revoked_at": key.revoked_at,
     })
+}
+
+fn normalize_token_hash(value: &str) -> Result<String, String> {
+    let raw = value
+        .trim()
+        .strip_prefix("sha256:")
+        .unwrap_or_else(|| value.trim());
+    if raw.len() != 64 || !raw.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("token_hash must be sha256:<64 hex> or bare 64 hex".to_string());
+    }
+    Ok(raw.to_ascii_lowercase())
+}
+
+fn validate_agent_prefix(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if !value.starts_with("wc_agent_") {
+        return Err("token_prefix must start with wc_agent_".to_string());
+    }
+    if value.len() <= "wc_agent_".len() || value.len() > 32 {
+        return Err("token_prefix length is invalid".to_string());
+    }
+    if !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("token_prefix contains invalid characters".to_string());
+    }
+    Ok(value.to_string())
+}
+
+fn is_unique_constraint_error(e: &anyhow::Error) -> bool {
+    e.to_string()
+        .to_ascii_lowercase()
+        .contains("unique constraint failed")
 }
 
 // ---------------------------------------------------------------------------
@@ -313,6 +358,207 @@ pub(crate) async fn agent_tokens_create(req: &mut Request, depot: &mut Depot, re
         "scopes": scopes,
         "created_at": record.created_at,
         "expires_at": record.expires_at,
+    })));
+}
+
+/// `POST /api/agent-tokens/register_hash`
+///
+/// Registers an agent token hash generated locally by the CLI. The server
+/// receives only hash/prefix/metadata, stores `kind='agent'` and binds the row
+/// to `allowed_client_id = client_id`. It never accepts or returns the
+/// plaintext `wc_agent_*` token.
+#[handler]
+pub(crate) async fn agent_tokens_register_hash(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let body: RegisterAgentTokenHashRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("invalid request body: {}", e),
+            ));
+            return;
+        }
+    };
+
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "no auth context",
+        ));
+        return;
+    };
+    if auth.is_agent_token() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(json_error(
+            StatusCode::FORBIDDEN,
+            "agent tokens may not manage agent tokens",
+        ));
+        return;
+    }
+
+    let username = match validate_username(&body.username) {
+        Ok(u) => u,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    if let Err((code, msg)) = require_admin_or_self(auth, &username) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
+
+    let allowed_client_id = match validate_allowed_client_id(&body.client_id) {
+        Ok(c) => c,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    let token_name = body
+        .name
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| allowed_client_id.clone());
+    if token_name.chars().count() > MAX_TOKEN_NAME_LEN {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(json_error(
+            StatusCode::BAD_REQUEST,
+            "token name is too long",
+        ));
+        return;
+    }
+    let token_hash = match normalize_token_hash(&body.token_hash) {
+        Ok(h) => h,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    let token_prefix = match validate_agent_prefix(&body.token_prefix) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    let raw_scopes = if body.scopes.is_empty() {
+        AGENT_SCOPES.iter().map(|s| s.to_string()).collect()
+    } else {
+        body.scopes
+    };
+    let scopes = match validate_agent_scopes(&raw_scopes) {
+        Ok(s) => s,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    if scopes.iter().any(|s| !is_agent_scope(s)) {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(json_error(
+            StatusCode::BAD_REQUEST,
+            "agent tokens may only carry agent:* scopes",
+        ));
+        return;
+    }
+    if let Some(exp) = body.expires_at {
+        if exp <= chrono::Utc::now().timestamp() {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                "expires_at must be in the future",
+            ));
+            return;
+        }
+    }
+
+    let Some(db) = crate::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB not available",
+        ));
+        return;
+    };
+    let user = match require_user_by_username(&db, &username) {
+        Ok(u) => u,
+        Err((code, msg)) => {
+            res.status_code(code);
+            res.render(json_error(code, msg));
+            return;
+        }
+    };
+    if user.is_disabled() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(json_error(StatusCode::FORBIDDEN, "user is disabled"));
+        return;
+    }
+    match db.get_account_credential_by_hash(&token_hash) {
+        Ok(Some(_)) => {
+            res.status_code(StatusCode::CONFLICT);
+            res.render(json_error(StatusCode::CONFLICT, "credential hash conflict"));
+            return;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            return;
+        }
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let record = ApiKeyRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: user.id.clone(),
+        name: token_name,
+        key_prefix: token_prefix,
+        created_at: now,
+        last_used_at: None,
+        revoked_at: None,
+        scopes: scopes_to_string(&scopes),
+        expires_at: body.expires_at,
+        kind: TOKEN_KIND_AGENT.to_string(),
+        allowed_client_id: Some(allowed_client_id),
+    };
+    if let Err(e) = db.insert_api_key(&record, &token_hash) {
+        if is_unique_constraint_error(&e) {
+            res.status_code(StatusCode::CONFLICT);
+            res.render(json_error(
+                StatusCode::CONFLICT,
+                "token hash already exists",
+            ));
+        } else {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+        }
+        return;
+    }
+
+    res.render(Json(json!({
+        "success": true,
+        "token": {
+            "id": record.id,
+            "name": record.name,
+            "token_prefix": record.key_prefix,
+            "allowed_client_id": record.allowed_client_id,
+            "scopes": scopes,
+            "created_at": record.created_at,
+            "expires_at": record.expires_at,
+        },
     })));
 }
 
@@ -561,6 +807,10 @@ mod tests {
                 Router::with_path("api")
                     .hoop(crate::AuthMiddleware)
                     .push(Router::with_path("agent-tokens/create").post(agent_tokens_create))
+                    .push(
+                        Router::with_path("agent-tokens/register_hash")
+                            .post(agent_tokens_register_hash),
+                    )
                     .push(Router::with_path("agent-tokens/list").post(agent_tokens_list))
                     .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_revoke)),
             )
@@ -586,6 +836,76 @@ mod tests {
         };
         db.create_user(&user).unwrap();
         user
+    }
+
+    fn seed_account_credential(db: &crate::Database, user: &crate::models::UserRecord) -> String {
+        let plaintext = crate::auth::generate_account_credential();
+        let now = chrono::Utc::now().timestamp();
+        let record = crate::models::AccountCredentialRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: user.id.clone(),
+            credential_prefix: crate::auth::token_prefix(&plaintext),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+        };
+        db.insert_account_credential(&record, &hash_token(&plaintext))
+            .unwrap();
+        plaintext
+    }
+
+    fn register_hash_body(token: &str, username: &str, client_id: &str) -> Value {
+        json!({
+            "username": username,
+            "client_id": client_id,
+            "name": client_id,
+            "token_hash": format!("sha256:{}", hash_token(token)),
+            "token_prefix": crate::auth::token_prefix(token),
+            "scopes": [
+                "agent:register",
+                "agent:poll",
+                "agent:result",
+                "agent:job_update"
+            ],
+        })
+    }
+
+    fn build_transport_router(
+        config: Arc<crate::Config>,
+        db: Arc<crate::Database>,
+    ) -> (Router, Arc<crate::shell_client::ShellClientRegistry>) {
+        let registry = Arc::new(crate::shell_client::ShellClientRegistry::default());
+        let router = Router::new()
+            .hoop(affix_state::inject(config))
+            .hoop(affix_state::inject(db))
+            .hoop(affix_state::inject(registry.clone()))
+            .push(
+                Router::with_path("api")
+                    .hoop(crate::AuthMiddleware)
+                    .push(
+                        Router::with_path("agent-tokens/register_hash")
+                            .post(agent_tokens_register_hash),
+                    )
+                    .push(
+                        Router::with_path("shell/agent/register")
+                            .post(crate::shell_client::shell_agent_register),
+                    )
+                    .push(
+                        Router::with_path("runtime/status")
+                            .post(crate::runtime_http::runtime_status),
+                    )
+                    .push(Router::with_path("tools/list").post(crate::runtime_http::tools_list))
+                    .push(
+                        Router::with_path("projects/list").post(crate::runtime_http::projects_list),
+                    )
+                    .push(Router::with_path("tokens/list").post(crate::users_http::tokens_list)),
+            )
+            .push(
+                Router::with_path("mcp")
+                    .hoop(crate::AuthMiddleware)
+                    .post(crate::mcp::mcp_post),
+            );
+        (router, registry)
     }
 
     /// Create a Phase 2 user token for `username` by calling the existing
@@ -808,6 +1128,309 @@ mod tests {
             .send(&service)
             .await;
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+    }
+
+    // =========================================================================
+    // registerAgentTokenHash
+    // =========================================================================
+
+    #[tokio::test]
+    async fn http_agent_tokens_register_hash_bootstrap_registers_for_any_user() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        seed_user(&db, "alice", "user");
+        let service = Service::new(build_router(config, db.clone()));
+        let token = crate::auth::generate_agent_token();
+        let mut resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&register_hash_body(&token, "alice", "alice-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["token"]["name"], "alice-laptop");
+        assert_eq!(body["token"]["allowed_client_id"], "alice-laptop");
+        assert_eq!(
+            body["token"]["token_prefix"],
+            crate::auth::token_prefix(&token)
+        );
+        let serialized = serde_json::to_string(&body).unwrap();
+        assert!(!serialized.contains(&token));
+        assert!(!serialized.contains(&hash_token(&token)));
+
+        let stored = db
+            .get_api_key_by_hash(&hash_token(&token))
+            .unwrap()
+            .unwrap();
+        assert!(stored.is_agent_token());
+        assert_eq!(stored.allowed_client_id(), Some("alice-laptop"));
+        assert_eq!(
+            stored.scopes_vec(),
+            AGENT_SCOPES
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn http_agent_tokens_register_hash_account_credential_self_only() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let alice = seed_user(&db, "alice", "user");
+        seed_user(&db, "bob", "user");
+        let alice_credential = seed_account_credential(&db, &alice);
+        let service = Service::new(build_router(config, db));
+
+        let alice_agent = crate::auth::generate_agent_token();
+        let resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth(&alice_credential)
+            .json(&register_hash_body(&alice_agent, "alice", "alice-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+
+        let bob_agent = crate::auth::generate_agent_token();
+        let resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth(&alice_credential)
+            .json(&register_hash_body(&bob_agent, "bob", "bob-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn http_agent_tokens_register_hash_accepts_user_token_for_self() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        seed_user(&db, "alice", "user");
+        let router = Router::new()
+            .hoop(affix_state::inject(config.clone()))
+            .hoop(affix_state::inject(db.clone()))
+            .push(
+                Router::with_path("api")
+                    .hoop(crate::AuthMiddleware)
+                    .push(Router::with_path("tokens/create").post(crate::users_http::tokens_create))
+                    .push(
+                        Router::with_path("agent-tokens/register_hash")
+                            .post(agent_tokens_register_hash),
+                    ),
+            );
+        let service = Service::new(router);
+        let alice_token =
+            mint_user_token(&service, "alice", vec!["runtime:read".to_string()]).await;
+        let agent_token = crate::auth::generate_agent_token();
+        let resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth(&alice_token)
+            .json(&register_hash_body(&agent_token, "alice", "alice-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn http_agent_tokens_register_hash_validates_hash_prefix_scope_and_duplicate() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        seed_user(&db, "alice", "user");
+        let service = Service::new(build_router(config, db.clone()));
+        let token = crate::auth::generate_agent_token();
+        let hash = hash_token(&token);
+        let prefix = crate::auth::token_prefix(&token);
+        for (field, body) in [
+            (
+                "bad hash",
+                json!({"username":"alice","client_id":"alice-laptop","token_hash":"not-a-hash","token_prefix":prefix,"scopes":["agent:register"]}),
+            ),
+            (
+                "plaintext token field",
+                json!({"username":"alice","client_id":"alice-laptop","token":"wc_agent_plaintext","token_hash":hash,"token_prefix":prefix,"scopes":["agent:register"]}),
+            ),
+            (
+                "bad prefix",
+                json!({"username":"alice","client_id":"alice-laptop","token_hash":hash,"token_prefix":"wc_pat_bad","scopes":["agent:register"]}),
+            ),
+            (
+                "bad client_id",
+                json!({"username":"alice","client_id":"bad/client","token_hash":hash,"token_prefix":prefix,"scopes":["agent:register"]}),
+            ),
+            (
+                "non-agent scope",
+                json!({"username":"alice","client_id":"alice-laptop","token_hash":hash,"token_prefix":prefix,"scopes":["runtime:read"]}),
+            ),
+        ] {
+            let resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+                .bearer_auth("secret")
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::BAD_REQUEST,
+                "{} should fail",
+                field
+            );
+        }
+
+        let resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&register_hash_body(&token, "alice", "alice-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let dup = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&register_hash_body(&token, "alice", "alice-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&dup), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn http_agent_tokens_register_hash_rejects_account_credential_hash_conflict() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let alice = seed_user(&db, "alice", "user");
+        let credential = seed_account_credential(&db, &alice);
+        let service = Service::new(build_router(config, db));
+        let resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&json!({
+                "username": "alice",
+                "client_id": "alice-laptop",
+                "token_hash": hash_token(&credential),
+                "token_prefix": "wc_agent_conf",
+                "scopes": ["agent:register"],
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::CONFLICT);
+    }
+
+    #[tokio::test]
+    async fn http_agent_tokens_register_hash_rejects_disabled_user() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let alice = seed_user(&db, "alice", "user");
+        db.set_user_disabled(&alice.id, true, chrono::Utc::now().timestamp())
+            .unwrap();
+        let service = Service::new(build_router(config, db));
+        let token = crate::auth::generate_agent_token();
+        let resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&register_hash_body(&token, "alice", "alice-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn http_agent_tokens_register_hash_enforces_transport_and_client_id_binding() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        seed_user(&db, "alice", "user");
+        let (router, _registry) = build_transport_router(config, db);
+        let service = Service::new(router);
+        let token = crate::auth::generate_agent_token();
+        let resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&register_hash_body(&token, "alice", "alice-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+
+        let mut resp = TestClient::post("http://localhost/api/shell/agent/register")
+            .bearer_auth(&token)
+            .json(&json!({
+                "client_id": "alice-laptop",
+                "agent_instance_id": "inst-1",
+                "owner": "alice",
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["client"]["client_id"], "alice-laptop");
+        assert_eq!(body["client"]["owner"], "alice");
+
+        let resp = TestClient::post("http://localhost/api/shell/agent/register")
+            .bearer_auth(&token)
+            .json(&json!({
+                "client_id": "other-laptop",
+                "agent_instance_id": "inst-2",
+                "owner": "alice",
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::FORBIDDEN);
+
+        for path in [
+            "/api/runtime/status",
+            "/api/tools/list",
+            "/api/projects/list",
+            "/api/tokens/list",
+            "/mcp",
+        ] {
+            let body = if path == "/api/tokens/list" {
+                json!({"username": "alice"})
+            } else if path == "/mcp" {
+                json!({"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}})
+            } else {
+                json!({})
+            };
+            let resp = TestClient::post(&format!("http://localhost{}", path))
+                .bearer_auth(&token)
+                .json(&body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::FORBIDDEN,
+                "agent token must not call {}",
+                path
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn http_agent_tokens_register_hash_list_and_revoke_do_not_return_secrets() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        seed_user(&db, "alice", "user");
+        let service = Service::new(build_router(config, db.clone()));
+        let token = crate::auth::generate_agent_token();
+        let mut resp = TestClient::post("http://localhost/api/agent-tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&register_hash_body(&token, "alice", "alice-laptop"))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let token_id = resp.take_json::<Value>().await.unwrap()["token"]["id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let mut resp = TestClient::post("http://localhost/api/agent-tokens/list")
+            .bearer_auth("secret")
+            .json(&json!({"username": "alice"}))
+            .send(&service)
+            .await;
+        let list_body: Value = resp.take_json().await.unwrap();
+        let mut resp = TestClient::post("http://localhost/api/agent-tokens/revoke")
+            .bearer_auth("secret")
+            .json(&json!({"username": "alice", "token_id": token_id}))
+            .send(&service)
+            .await;
+        let revoke_body: Value = resp.take_json().await.unwrap();
+        for body in [list_body, revoke_body] {
+            let serialized = serde_json::to_string(&body).unwrap();
+            assert!(!serialized.contains(&token));
+            assert!(!serialized.contains(&hash_token(&token)));
+            assert!(!serialized.contains("key_hash"));
+            assert!(!serialized.contains("token_hash"));
+        }
     }
 
     // =========================================================================
@@ -1056,6 +1679,10 @@ mod tests {
                 Router::with_path("api")
                     .hoop(crate::AuthMiddleware)
                     .push(Router::with_path("agent-tokens/create").post(agent_tokens_create))
+                    .push(
+                        Router::with_path("agent-tokens/register_hash")
+                            .post(agent_tokens_register_hash),
+                    )
                     .push(Router::with_path("agent-tokens/list").post(agent_tokens_list))
                     .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_revoke)),
             );
@@ -1073,6 +1700,7 @@ mod tests {
         // The agent token must not be able to call create/list/revoke.
         for path in [
             "/api/agent-tokens/create",
+            "/api/agent-tokens/register_hash",
             "/api/agent-tokens/list",
             "/api/agent-tokens/revoke",
         ] {
@@ -1081,6 +1709,10 @@ mod tests {
                     "username": "alice",
                     "client_id": "alice-laptop",
                 }),
+                "/api/agent-tokens/register_hash" => {
+                    let token = crate::auth::generate_agent_token();
+                    register_hash_body(&token, "alice", "alice-laptop")
+                }
                 "/api/agent-tokens/list" => json!({"username": "alice"}),
                 "/api/agent-tokens/revoke" => json!({
                     "username": "alice",
@@ -1113,6 +1745,7 @@ mod tests {
         let service = Service::new(build_router(config, db));
         for path in [
             "/api/agent-tokens/create",
+            "/api/agent-tokens/register_hash",
             "/api/agent-tokens/list",
             "/api/agent-tokens/revoke",
         ] {

@@ -356,6 +356,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Bearer auth. Agent tokens themselves are rejected from these
         // endpoints so a leaked agent token cannot mint more tokens.
         .push(Router::with_path("agent-tokens/create").post(agent_tokens_http::agent_tokens_create))
+        .push(
+            Router::with_path("agent-tokens/register_hash")
+                .post(agent_tokens_http::agent_tokens_register_hash),
+        )
         .push(Router::with_path("agent-tokens/list").post(agent_tokens_http::agent_tokens_list))
         .push(Router::with_path("agent-tokens/revoke").post(agent_tokens_http::agent_tokens_revoke))
         .push(Router::with_path("shell/run").post(shell_run))

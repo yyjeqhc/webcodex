@@ -59,6 +59,7 @@ enum CliAction {
     Admin(AdminCliCommand),
     TokenGenerate(TokenGenerateOptions),
     TokenCreateLocal(TokenCreateLocalOptions),
+    AgentTokenCreateLocal(AgentTokenCreateLocalOptions),
     AgentInit(AgentInitOptions),
     SetupSingleUser(SetupSingleUserOptions),
     PairingCreate(PairingCreateOptions),
@@ -87,6 +88,15 @@ struct TokenCreateLocalOptions {
     username: String,
     credential: Option<String>,
     credential_env: Option<String>,
+    name: Option<String>,
+    scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+struct AgentTokenCreateLocalOptions {
+    admin: AdminOptions,
+    username: String,
+    client_id: String,
     name: Option<String>,
     scopes: Vec<String>,
 }
@@ -459,6 +469,9 @@ where
         "client" => parse_client_subcommand(&args[1..]),
         "doctor" => parse_doctor_command(&args[1..]),
         "agent" => parse_agent_subcommand(&args[1..]),
+        "agent-token" | "agent-tokens" => {
+            parse_agent_token_subcommand(args[0].as_str(), &args[1..])
+        }
         "setup" => parse_setup_subcommand(&args[1..]),
         "token" => parse_token_subcommand(&args[1..]),
         _ => {
@@ -522,15 +535,90 @@ fn parse_token_generate(args: &[String]) -> Result<TokenGenerateOptions, String>
         match flag.as_str() {
             "--kind" => kind = p.value(&flag)?,
             "-h" | "--help" => {
-                return Err("Usage: webcodex-cli token generate --kind api".to_string())
+                return Err("Usage: webcodex-cli token generate --kind api|agent".to_string())
             }
             _ => return Err(format!("unknown token generate flag: {}", flag)),
         }
     }
-    if kind != "api" {
-        return Err("--kind currently supports only 'api'".to_string());
+    if kind != "api" && kind != "agent" {
+        return Err("--kind must be 'api' or 'agent'".to_string());
     }
     Ok(TokenGenerateOptions { kind })
+}
+
+fn parse_agent_token_subcommand(group: &str, args: &[String]) -> CliAction {
+    if args.is_empty() {
+        return CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: "missing agent-token subcommand\n".to_string(),
+        };
+    }
+    match args[0].as_str() {
+        "create-local" => match parse_agent_token_create_local(&args[1..]) {
+            Ok(opts) => CliAction::AgentTokenCreateLocal(opts),
+            Err(e) => CliAction::Exit {
+                code: 2,
+                stdout: String::new(),
+                stderr: format!("{}\n", e),
+            },
+        },
+        _ => {
+            let mut forwarded = vec![group.to_string()];
+            forwarded.extend_from_slice(args);
+            match parse_admin_cli(&forwarded) {
+                Ok(cmd) => CliAction::Admin(cmd),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
+    }
+}
+
+fn parse_agent_token_create_local(args: &[String]) -> Result<AgentTokenCreateLocalOptions, String> {
+    let mut opts = AgentTokenCreateLocalOptions::default();
+    let mut p = SimpleFlagParser::new(args);
+    while let Some(flag) = p.next() {
+        match flag.as_str() {
+            "--server" | "--server-url" => opts.admin.server_url = p.value(&flag)?,
+            "--user" | "--username" => opts.username = p.value(&flag)?,
+            "--client-id" => opts.client_id = p.value(&flag)?,
+            "--credential" => opts.admin.credential = Some(p.value(&flag)?),
+            "--credential-env" => opts.admin.credential_env = Some(p.value(&flag)?),
+            "--token" | "--admin-token" => opts.admin.token = Some(p.value(&flag)?),
+            "--token-env" | "--admin-token-env" => opts.admin.token_env = Some(p.value(&flag)?),
+            "--token-file" => opts.admin.token_file = Some(PathBuf::from(p.value(&flag)?)),
+            "--name" => opts.name = Some(p.value(&flag)?),
+            "--scope" => opts.scopes.push(p.value(&flag)?),
+            "--scopes" => {
+                opts.scopes.extend(
+                    p.value(&flag)?
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string),
+                );
+            }
+            "-h" | "--help" => return Err("Usage: webcodex-cli agent-token create-local --server URL --user USER --credential CRED --client-id ID [--name NAME] [--scopes S1,S2]".to_string()),
+            _ => return Err(format!("unknown agent-token create-local flag: {}", flag)),
+        }
+    }
+    if opts.admin.server_url.trim().is_empty() {
+        return Err("--server is required".to_string());
+    }
+    if opts.username.trim().is_empty() {
+        return Err("--user is required".to_string());
+    }
+    if opts.client_id.trim().is_empty() {
+        return Err("--client-id is required".to_string());
+    }
+    if opts.scopes.is_empty() {
+        opts.scopes = SETUP_AGENT_SCOPES.iter().map(|s| s.to_string()).collect();
+    }
+    Ok(opts)
 }
 
 fn parse_token_create_local(args: &[String]) -> Result<TokenCreateLocalOptions, String> {
@@ -1473,24 +1561,36 @@ fn generate_local_api_token() -> String {
     )
 }
 
+fn generate_local_agent_token() -> String {
+    format!(
+        "wc_agent_{}{}",
+        Uuid::new_v4().simple(),
+        Uuid::new_v4().simple()
+    )
+}
+
 fn hash_local_token(token: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     format!("{:x}", hasher.finalize())
 }
 
-fn api_token_prefix(token: &str) -> String {
+fn local_token_prefix(token: &str) -> String {
     token[..token.len().min(16)].to_string()
 }
 
-fn render_token_generate(_opts: TokenGenerateOptions) -> String {
-    let token = generate_local_api_token();
+fn render_token_generate(opts: TokenGenerateOptions) -> String {
+    let token = if opts.kind == "agent" {
+        generate_local_agent_token()
+    } else {
+        generate_local_api_token()
+    };
     let hash = hash_local_token(&token);
     format!(
         "Token:\n{}\n\nHash:\nsha256:{}\n\nPrefix:\n{}\n",
         token,
         hash,
-        api_token_prefix(&token)
+        local_token_prefix(&token)
     )
 }
 
@@ -1535,7 +1635,7 @@ async fn run_token_create_local(opts: TokenCreateLocalOptions) -> Result<String,
     let credential = resolve_account_credential(&opts.credential, &opts.credential_env)?;
     let token = generate_local_api_token();
     let hash = hash_local_token(&token);
-    let prefix = api_token_prefix(&token);
+    let prefix = local_token_prefix(&token);
     let mut body = json!({
         "username": opts.username,
         "token_hash": format!("sha256:{}", hash),
@@ -1582,6 +1682,66 @@ async fn run_token_create_local(opts: TokenCreateLocalOptions) -> Result<String,
         "API token created locally and registered with server.\n\nToken:\n{}\n\nUse this as Bearer token in GPT Action or MCP.\nThis token will not be shown again.\n",
         token
     ))
+}
+
+async fn run_agent_token_create_local(
+    opts: AgentTokenCreateLocalOptions,
+) -> Result<String, String> {
+    let token = generate_local_agent_token();
+    let hash = hash_local_token(&token);
+    let prefix = local_token_prefix(&token);
+    let cmd = AdminCliCommand::AgentTokensRegisterHash(
+        opts.admin,
+        admin_cli::AgentTokenRegisterHashArgs {
+            username: opts.username,
+            client_id: opts.client_id.clone(),
+            name: opts.name,
+            token_hash: format!("sha256:{}", hash),
+            token_prefix: prefix,
+            scopes: opts.scopes,
+        },
+    );
+    let req = build_admin_request(&cmd)?;
+    post_json_with_bearer(&req).await?;
+    Ok(format!(
+        "Agent token created locally and registered with server.\n\nClient ID:\n{}\n\nToken:\n{}\n\nUse this token in webcodex-agent config or WEBCODEX_AGENT_TOKEN.\nThis token will not be shown again.\n",
+        opts.client_id, token
+    ))
+}
+
+async fn post_json_with_bearer(req: &admin_cli::AdminCliRequest) -> Result<(), String> {
+    let url = format!("{}{}", req.server_url, req.path);
+    let client = reqwest::Client::builder()
+        .no_proxy()
+        .build()
+        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
+    let resp = client
+        .post(url)
+        .bearer_auth(&req.token)
+        .json(&req.body)
+        .send()
+        .await
+        .map_err(|e| format!("request failed: {}", e).replace(&req.token, "[redacted]"))?;
+    let status = resp.status();
+    let content_type = resp
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("unknown")
+        .to_string();
+    let _text = resp
+        .text()
+        .await
+        .map_err(|e| format!("failed to read response: {}", e))?;
+    if !status.is_success() {
+        return Err(format!(
+            "request failed: HTTP {} (content-type: {})",
+            status.as_u16(),
+            content_type
+        )
+        .replace(&req.token, "[redacted]"));
+    }
+    Ok(())
 }
 
 fn render_server_env(opts: &ServerInitOptions, token: &str) -> String {
@@ -4494,6 +4654,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 std::process::exit(1);
             }
         },
+        CliAction::AgentTokenCreateLocal(opts) => match run_agent_token_create_local(opts).await {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
         CliAction::AgentInit(opts) => match run_agent_init(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
@@ -4779,6 +4949,20 @@ mod tests {
     }
 
     #[test]
+    fn token_generate_agent_prints_token_hash_and_prefix() {
+        let action = cli_action(args(&["token", "generate", "--kind", "agent"]));
+        match action {
+            CliAction::TokenGenerate(opts) => {
+                let out = render_token_generate(opts);
+                assert!(out.contains("Token:\nwc_agent_"));
+                assert!(out.contains("\nHash:\nsha256:"));
+                assert!(out.contains("\nPrefix:\nwc_agent_"));
+            }
+            other => panic!("expected TokenGenerate, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn credential_resolution_priority_is_explicit_then_env_name_then_default_env() {
         let _guard = admin_cli::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
@@ -4831,6 +5015,45 @@ mod tests {
                 assert_eq!(req.body["scopes"], json!(["runtime:read", "project:read"]));
             }
             other => panic!("expected TokensRegisterHash, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_token_register_hash_builds_hash_registration_request() {
+        let action = cli_action(args(&[
+            "agent-token",
+            "register-hash",
+            "--server",
+            "https://example.test",
+            "--user",
+            "alice",
+            "--credential",
+            "wc_acct_fake",
+            "--client-id",
+            "alice-laptop",
+            "--name",
+            "alice laptop",
+            "--hash",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--prefix",
+            "wc_agent_aaaaaaa",
+            "--scopes",
+            "agent:register,agent:poll",
+        ]));
+        match action {
+            CliAction::Admin(AdminCliCommand::AgentTokensRegisterHash(opts, t)) => {
+                let req = build_admin_request(&AdminCliCommand::AgentTokensRegisterHash(opts, t))
+                    .unwrap();
+                assert_eq!(req.path, "/api/agent-tokens/register_hash");
+                assert_eq!(req.token, "wc_acct_fake");
+                assert_eq!(req.body["username"], "alice");
+                assert_eq!(req.body["client_id"], "alice-laptop");
+                assert_eq!(req.body["name"], "alice laptop");
+                assert_eq!(req.body["token_prefix"], "wc_agent_aaaaaaa");
+                assert_eq!(req.body["scopes"], json!(["agent:register", "agent:poll"]));
+                assert!(req.body.get("token").is_none());
+            }
+            other => panic!("expected AgentTokensRegisterHash, got {other:?}"),
         }
     }
 
@@ -4953,6 +5176,132 @@ mod tests {
         .unwrap();
         assert_eq!(out.matches("wc_pat_").count(), 1);
         handle.join().unwrap();
+    }
+
+    #[tokio::test]
+    async fn agent_token_create_local_does_not_send_plaintext_token_to_server() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]);
+            assert!(request.starts_with("POST /api/agent-tokens/register_hash "));
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer wc_acct_fake"));
+            assert!(request.contains(r#""token_hash":"sha256:"#));
+            assert!(request.contains(r#""token_prefix":"wc_agent_"#));
+            assert!(request.contains(r#""client_id":"alice-laptop""#));
+            assert!(!request.contains(r#""token":"wc_agent_"#));
+            let body = r#"{"success":true,"token":{"id":"tok-1","token_prefix":"wc_agent_fake","allowed_client_id":"alice-laptop"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
+            admin: AdminOptions {
+                server_url: format!("http://{}", addr),
+                credential: Some("wc_acct_fake".to_string()),
+                ..AdminOptions::default()
+            },
+            username: "alice".to_string(),
+            client_id: "alice-laptop".to_string(),
+            name: Some("alice laptop".to_string()),
+            scopes: SETUP_AGENT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        })
+        .await
+        .unwrap();
+        assert!(out.contains("Agent token created locally and registered with server."));
+        assert!(out.contains("Client ID:\nalice-laptop"));
+        assert_eq!(out.matches("wc_agent_").count(), 1);
+        handle.join().unwrap();
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn agent_token_create_local_prefers_admin_token_over_default_account_credential() {
+        let _guard = admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]);
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer fake-admin"));
+            let body = r#"{"success":true,"token":{"id":"tok-1","token_prefix":"wc_agent_fake","allowed_client_id":"alice-laptop"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
+            admin: AdminOptions {
+                server_url: format!("http://{}", addr),
+                token: Some("fake-admin".to_string()),
+                ..AdminOptions::default()
+            },
+            username: "alice".to_string(),
+            client_id: "alice-laptop".to_string(),
+            name: None,
+            scopes: SETUP_AGENT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(out.matches("wc_agent_").count(), 1);
+        handle.join().unwrap();
+        std::env::remove_var("WEBCODEX_ACCOUNT_CREDENTIAL");
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn agent_token_create_local_uses_default_account_credential() {
+        let _guard = admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "wc_acct_default");
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut buf = [0u8; 8192];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]);
+            assert!(request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer wc_acct_default"));
+            let body = r#"{"success":true,"token":{"id":"tok-1","token_prefix":"wc_agent_fake","allowed_client_id":"alice-laptop"}}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+        let out = run_agent_token_create_local(AgentTokenCreateLocalOptions {
+            admin: AdminOptions {
+                server_url: format!("http://{}", addr),
+                ..AdminOptions::default()
+            },
+            username: "alice".to_string(),
+            client_id: "alice-laptop".to_string(),
+            name: None,
+            scopes: SETUP_AGENT_SCOPES.iter().map(|s| s.to_string()).collect(),
+        })
+        .await
+        .unwrap();
+        assert_eq!(out.matches("wc_agent_").count(), 1);
+        handle.join().unwrap();
+        std::env::remove_var("WEBCODEX_ACCOUNT_CREDENTIAL");
     }
 
     #[test]

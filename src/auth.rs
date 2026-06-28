@@ -475,6 +475,7 @@ pub(crate) const ACCOUNT_CONTROL_PATHS: &[&str] = &[
     "/api/tokens/list",
     "/api/tokens/register_hash",
     "/api/tokens/revoke",
+    "/api/agent-tokens/register_hash",
 ];
 
 pub(crate) fn is_account_control_path(path: &str) -> bool {
@@ -852,6 +853,7 @@ mod tests {
 
         // Everything else is rejected — including paths that look similar.
         assert!(!is_agent_transport_path("/api/agent-tokens/create"));
+        assert!(!is_agent_transport_path("/api/agent-tokens/register_hash"));
         assert!(!is_agent_transport_path("/api/agent-tokens/list"));
         assert!(!is_agent_transport_path("/api/agent-tokens/revoke"));
         assert!(!is_agent_transport_path("/api/pairing/create"));
@@ -1040,6 +1042,7 @@ mod tests {
                     .push(Router::with_path("tokens/list").post(echo_ok))
                     .push(Router::with_path("tokens/register_hash").post(echo_ok))
                     .push(Router::with_path("tokens/revoke").post(echo_ok))
+                    .push(Router::with_path("agent-tokens/register_hash").post(echo_ok))
                     .push(Router::with_path("agent-tokens/list").post(echo_ok))
                     .push(Router::with_path("shell/agent/register").post(echo_ok))
                     .push(Router::with_path("shell/agent/poll").post(echo_ok))
@@ -1209,6 +1212,7 @@ mod tests {
         assert!(is_account_control_path("/api/tokens/list"));
         assert!(is_account_control_path("/api/tokens/register_hash"));
         assert!(is_account_control_path("/api/tokens/revoke"));
+        assert!(is_account_control_path("/api/agent-tokens/register_hash"));
         assert!(!is_account_control_path("/api/runtime/status"));
         assert!(!is_account_control_path("/api/projects/list"));
         assert!(!is_account_control_path("/api/tools/list"));
@@ -1234,6 +1238,7 @@ mod tests {
             "/api/tokens/list",
             "/api/tokens/register_hash",
             "/api/tokens/revoke",
+            "/api/agent-tokens/register_hash",
         ] {
             let (status, body) = gate_send(&service, path, Some(&credential)).await;
             assert_eq!(

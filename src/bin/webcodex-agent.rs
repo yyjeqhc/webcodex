@@ -56,6 +56,27 @@ const WS_RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 /// makes progress instead of stalling forever after a disconnect.
 const WS_WRITER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
 
+#[cfg(unix)]
+async fn shutdown_signal() {
+    let mut sigterm =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).ok();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => {}
+        _ = async {
+            if let Some(signal) = sigterm.as_mut() {
+                let _ = signal.recv().await;
+            } else {
+                std::future::pending::<()>().await;
+            }
+        } => {}
+    }
+}
+
+#[cfg(not(unix))]
+async fn shutdown_signal() {
+    let _ = tokio::signal::ctrl_c().await;
+}
+
 #[derive(Debug, Clone, Deserialize)]
 struct AgentConfig {
     server_url: String,
@@ -3539,8 +3560,9 @@ fn run_auto_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
             TRANSPORT_QUIC => {
                 eprintln!("webcodex-agent transport auto: trying quic");
                 match run_quic_agent_single_session(&cfg, once, agent_instance_id) {
-                    Ok(()) if once => return Ok(()),
-                    Ok(()) => {
+                    Ok(AgentSessionExit::Shutdown) => return Ok(()),
+                    Ok(AgentSessionExit::Ended) if once => return Ok(()),
+                    Ok(AgentSessionExit::Ended) => {
                         eprintln!(
                             "webcodex-agent transport auto: quic session ended; trying websocket"
                         );
@@ -3562,8 +3584,9 @@ fn run_auto_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
                     eprintln!("webcodex-agent transport auto: trying websocket");
                 }
                 match run_websocket_agent_single_session(&cfg, agent_instance_id) {
-                    Ok(()) if once => return Ok(()),
-                    Ok(()) => {
+                    Ok(AgentSessionExit::Shutdown) => return Ok(()),
+                    Ok(AgentSessionExit::Ended) if once => return Ok(()),
+                    Ok(AgentSessionExit::Ended) => {
                         eprintln!(
                             "webcodex-agent transport auto: websocket session ended; falling back to polling"
                         );
@@ -3653,6 +3676,12 @@ const QUIC_RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 /// Interval between agent-initiated keepalive Pings.
 const QUIC_PING_INTERVAL: Duration = Duration::from_secs(30);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentSessionExit {
+    Ended,
+    Shutdown,
+}
+
 /// Entry point for the QUIC transport. Runs a tokio current-thread runtime and
 /// reconnects on session failure, mirroring `run_websocket_agent`.
 fn run_quic_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Result<(), String> {
@@ -3666,7 +3695,12 @@ fn run_quic_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
         loop {
             let projects = project_cache.get(&cfg);
             match quic_session(&cfg, projects, &agent_instance_id, once).await {
-                Ok(()) => {
+                Ok(AgentSessionExit::Shutdown) => {
+                    project_cache.invalidate();
+                    eprintln!("webcodex-agent quic shutdown complete");
+                    return Ok(());
+                }
+                Ok(AgentSessionExit::Ended) => {
                     project_cache.invalidate();
                     if once {
                         return Ok(());
@@ -3691,7 +3725,7 @@ fn run_quic_agent_single_session(
     cfg: &AgentConfig,
     once: bool,
     agent_instance_id: &str,
-) -> Result<(), String> {
+) -> Result<AgentSessionExit, String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -3788,7 +3822,7 @@ async fn quic_session(
     projects: Vec<ShellAgentProjectSummary>,
     agent_instance_id: &str,
     once: bool,
-) -> Result<(), String> {
+) -> Result<AgentSessionExit, String> {
     let quic = resolve_quic_config(cfg)?;
     let client_crypto = build_quic_client_crypto(&quic)?;
     let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
@@ -3891,8 +3925,15 @@ async fn quic_session(
             AgentEnvelope::Pong { .. } => {}
             other => return Err(format!("expected pong, got {}", other.kind())),
         }
+        let _ = write_quic_frame(
+            &mut send,
+            &AgentEnvelope::Goodbye {
+                reason: Some("once complete".to_string()),
+            },
+        )
+        .await;
         let _ = send.finish();
-        return Ok(());
+        return Ok(AgentSessionExit::Ended);
     }
 
     // Split into a single writer task and a reader/dispatch loop. Outgoing
@@ -3916,14 +3957,25 @@ async fn quic_session(
     let jobs = JobManager::new(max_concurrent_jobs(cfg));
     let mut ping_interval = tokio::time::interval(QUIC_PING_INTERVAL);
     ping_interval.tick().await; // skip immediate first tick
+    let mut shutdown = Box::pin(shutdown_signal());
+    let mut shutdown_requested = false;
+    let mut session_error: Option<String> = None;
 
     loop {
         tokio::select! {
+            _ = &mut shutdown => {
+                eprintln!("webcodex-agent quic shutdown signal received");
+                shutdown_requested = true;
+                break;
+            }
             frame = read_quic_frame(&mut recv) => {
                 let env = match frame {
                     Ok(env) => env,
                     Err(QuicFrameError::EmptyStream) => break,
-                    Err(e) => return Err(format!("quic stream read error: {}", e)),
+                    Err(e) => {
+                        session_error = Some(format!("quic stream read error: {}", e));
+                        break;
+                    }
                 };
                 match env {
                     AgentEnvelope::Request { request } => {
@@ -3953,7 +4005,8 @@ async fn quic_session(
                         // Ignore a redundant ack.
                     }
                     AgentEnvelope::Error { code, message } => {
-                        return Err(format!("server error {}: {}", code, message));
+                        session_error = Some(format!("server error {}: {}", code, message));
+                        break;
                     }
                     other => {
                         eprintln!(
@@ -3973,6 +4026,11 @@ async fn quic_session(
         }
     }
 
+    let _ = out_tx
+        .send(AgentEnvelope::Goodbye {
+            reason: Some("session ending".to_string()),
+        })
+        .await;
     drop(out_tx);
     let mut writer_task = writer_task;
     if tokio::time::timeout(WS_WRITER_CLOSE_TIMEOUT, &mut writer_task)
@@ -3981,7 +4039,14 @@ async fn quic_session(
     {
         writer_task.abort();
     }
-    Ok(())
+    if let Some(error) = session_error {
+        return Err(error);
+    }
+    Ok(if shutdown_requested {
+        AgentSessionExit::Shutdown
+    } else {
+        AgentSessionExit::Ended
+    })
 }
 
 // ============================================================================
@@ -4048,7 +4113,12 @@ fn run_websocket_agent(
         loop {
             let projects = project_cache.get(&cfg);
             match websocket_session(&cfg, projects, &agent_instance_id).await {
-                Ok(()) => {
+                Ok(AgentSessionExit::Shutdown) => {
+                    project_cache.invalidate();
+                    eprintln!("webcodex-agent websocket shutdown complete");
+                    return Ok(());
+                }
+                Ok(AgentSessionExit::Ended) => {
                     project_cache.invalidate();
                     if once {
                         return Ok(());
@@ -4072,7 +4142,7 @@ fn run_websocket_agent(
 fn run_websocket_agent_single_session(
     cfg: &AgentConfig,
     agent_instance_id: &str,
-) -> Result<(), String> {
+) -> Result<AgentSessionExit, String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -4090,7 +4160,7 @@ async fn websocket_session(
     cfg: &AgentConfig,
     projects: Vec<ShellAgentProjectSummary>,
     agent_instance_id: &str,
-) -> Result<(), String> {
+) -> Result<AgentSessionExit, String> {
     use futures_util::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message as WsMessage;
 
@@ -4178,9 +4248,16 @@ async fn websocket_session(
     let jobs = JobManager::new(max_concurrent_jobs(cfg));
     let mut ping_interval = tokio::time::interval(WS_PING_INTERVAL);
     ping_interval.tick().await; // skip immediate first tick
+    let mut shutdown = Box::pin(shutdown_signal());
+    let mut quit_after_session = false;
 
     loop {
         tokio::select! {
+            _ = &mut shutdown => {
+                quit_after_session = true;
+                eprintln!("webcodex-agent websocket shutdown signal received");
+                break;
+            }
             msg = stream.next() => {
                 let msg = match msg {
                     Some(Ok(m)) => m,
@@ -4266,6 +4343,11 @@ async fn websocket_session(
     // must NOT await an unbounded graceful close (see the writer task note):
     // bounding here guarantees `websocket_session` (and therefore the
     // reconnect loop) always makes progress after a disconnect.
+    let _ = out_tx
+        .send(AgentEnvelope::Goodbye {
+            reason: Some("session ending".to_string()),
+        })
+        .await;
     drop(out_tx);
     drop(stream);
     let mut writer_task = writer_task;
@@ -4280,7 +4362,11 @@ async fn websocket_session(
     while jobs.has_work() {
         std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms.min(1000)));
     }
-    Ok(())
+    Ok(if quit_after_session {
+        AgentSessionExit::Shutdown
+    } else {
+        AgentSessionExit::Ended
+    })
 }
 
 fn main() {

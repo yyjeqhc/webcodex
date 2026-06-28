@@ -343,6 +343,7 @@ mod tests {
             assert!(tool["name"].is_string());
             assert!(tool["description"].is_string());
             assert!(tool["inputSchema"].is_object());
+            assert!(tool["outputSchema"].is_object());
         }
     }
 
@@ -633,6 +634,7 @@ mod tests {
             assert!(tool["name"].is_string());
             assert!(tool["description"].is_string());
             assert!(tool["inputSchema"].is_object());
+            assert!(tool["outputSchema"].is_object());
         }
     }
 

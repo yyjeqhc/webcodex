@@ -708,6 +708,7 @@ pub struct ShellClientJobsListResponse {
 //   {"type":"job_update","client_id":"...","job_id":"...","status":"running",...}
 //   {"type":"ping","ts":1700000000}
 //   {"type":"pong","ts":1700000000}
+//   {"type":"goodbye","reason":"shutdown"}
 //   {"type":"error","code":"bad_request","message":"..."}
 //
 // The envelope is transport-neutral: it carries no WebSocket-specific fields
@@ -764,6 +765,12 @@ pub enum AgentEnvelope {
     Ping { ts: i64 },
     /// Either direction. Reply to `Ping`.
     Pong { ts: i64 },
+    /// Agent -> server. Best-effort graceful shutdown notice. Older agents do
+    /// not send this frame; transports still reconcile on observed disconnect.
+    Goodbye {
+        #[serde(skip_serializing_if = "Option::is_none")]
+        reason: Option<String>,
+    },
     /// Server -> agent. Fatal protocol error; the agent should reconnect.
     Error { code: String, message: String },
 }
@@ -781,6 +788,7 @@ impl AgentEnvelope {
             AgentEnvelope::JobUpdate { .. } => "job_update",
             AgentEnvelope::Ping { .. } => "ping",
             AgentEnvelope::Pong { .. } => "pong",
+            AgentEnvelope::Goodbye { .. } => "goodbye",
             AgentEnvelope::Error { .. } => "error",
         }
     }
@@ -1073,6 +1081,29 @@ mod envelope_tests {
             }
             other => panic!("expected error, got {:?}", other.kind()),
         }
+    }
+
+    #[test]
+    fn goodbye_envelope_round_trips_and_reason_is_optional() {
+        let env = AgentEnvelope::Goodbye {
+            reason: Some("shutdown".to_string()),
+        };
+        let json = env.to_json().unwrap();
+        assert!(json.contains(r#""type":"goodbye""#));
+        assert!(json.contains(r#""reason":"shutdown""#));
+        match AgentEnvelope::from_slice(json.as_bytes()).unwrap() {
+            AgentEnvelope::Goodbye { reason } => assert_eq!(reason.as_deref(), Some("shutdown")),
+            other => panic!("expected goodbye, got {:?}", other.kind()),
+        }
+
+        let env = AgentEnvelope::Goodbye { reason: None };
+        let json = env.to_json().unwrap();
+        assert!(json.contains(r#""type":"goodbye""#));
+        assert!(!json.contains(r#""reason""#));
+        assert!(matches!(
+            AgentEnvelope::from_slice(json.as_bytes()).unwrap(),
+            AgentEnvelope::Goodbye { reason: None }
+        ));
     }
 
     #[test]

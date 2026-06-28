@@ -527,6 +527,17 @@ async fn handle_quic_connection(
                     );
                 }
             }
+            AgentEnvelope::Goodbye { reason } => {
+                tracing::debug!(
+                    client_id = %client_id,
+                    reason = reason.as_deref().unwrap_or("unspecified"),
+                    "quic agent sent goodbye"
+                );
+                registry
+                    .reconcile_disconnect(&client_id, &agent_instance_id)
+                    .await;
+                break;
+            }
             AgentEnvelope::Result { payload } => {
                 if let Err(e) = registry.complete(payload).await {
                     tracing::warn!(client_id = %client_id, error = %e, "quic result rejected");
@@ -1191,6 +1202,14 @@ mod tests {
                 .pending_requests,
             0
         );
+        assert!(
+            !registry
+                .get_client_view("quic-disc")
+                .await
+                .unwrap()
+                .connected,
+            "quic transport disconnect must release active lease immediately"
+        );
 
         let (_request_id, _rx) = registry
             .enqueue_run(
@@ -1216,6 +1235,103 @@ mod tests {
             1,
             "disconnected notifier must not keep pumping queued requests"
         );
+    }
+
+    #[tokio::test]
+    async fn quic_goodbye_releases_lease_for_new_instance() {
+        let (cert_der, key_der) = self_signed_cert();
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_quic_server(
+            registry.clone(),
+            test_config(None),
+            cert_der.clone(),
+            key_der,
+        )
+        .await;
+        let (endpoint_a, conn_a, mut send_a, mut recv_a) =
+            connect_quic_client(&cert_der, addr).await;
+
+        write_quic_frame(
+            &mut send_a,
+            &register_envelope_with_protocol(
+                "quic-goodbye",
+                "inst-a",
+                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv_a))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(
+            registry
+                .get_client_view("quic-goodbye")
+                .await
+                .unwrap()
+                .connected
+        );
+
+        write_quic_frame(
+            &mut send_a,
+            &AgentEnvelope::Goodbye {
+                reason: Some("test shutdown".to_string()),
+            },
+        )
+        .await
+        .unwrap();
+        for _ in 0..40 {
+            if !registry
+                .get_client_view("quic-goodbye")
+                .await
+                .unwrap()
+                .connected
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        assert!(
+            !registry
+                .get_client_view("quic-goodbye")
+                .await
+                .unwrap()
+                .connected
+        );
+
+        let (endpoint_b, conn_b, mut send_b, mut recv_b) =
+            connect_quic_client(&cert_der, addr).await;
+        write_quic_frame(
+            &mut send_b,
+            &register_envelope_with_protocol(
+                "quic-goodbye",
+                "inst-b",
+                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        let ack = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv_b))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            ack,
+            AgentEnvelope::Registered { success: true, .. }
+        ));
+        let view = registry.get_client_view("quic-goodbye").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-b");
+        assert!(view.connected);
+
+        let _ = send_a.finish();
+        endpoint_a.close(quinn::VarInt::from_u32(0), b"");
+        conn_a.close(quinn::VarInt::from_u32(0), b"done");
+        let _ = send_b.finish();
+        endpoint_b.close(quinn::VarInt::from_u32(0), b"");
+        conn_b.close(quinn::VarInt::from_u32(0), b"done");
     }
 
     #[tokio::test]

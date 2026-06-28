@@ -357,6 +357,17 @@ async fn handle_agent_ws(
                     tracing::debug!(client_id = %client_id, error = %e, "ws pong liveness touch failed");
                 }
             }
+            AgentEnvelope::Goodbye { reason } => {
+                tracing::debug!(
+                    client_id = %client_id,
+                    reason = reason.as_deref().unwrap_or("unspecified"),
+                    "agent websocket sent goodbye"
+                );
+                registry
+                    .reconcile_disconnect(&client_id, &agent_instance_id)
+                    .await;
+                break;
+            }
             AgentEnvelope::Register { .. } => {
                 // Ignore a redundant register mid-session.
             }
@@ -1098,6 +1109,68 @@ mod tests {
         ));
         let view = registry.get_client_view("ws-same").await.unwrap();
         assert_eq!(view.agent_instance_id, "inst-x");
+        assert!(view.connected);
+    }
+
+    #[tokio::test]
+    async fn ws_goodbye_releases_lease_for_new_instance() {
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_server(registry.clone()).await;
+        let url = format!("ws://{}/api/agents/ws", addr);
+
+        let (mut ws_a, _resp) = connect_async(url.clone()).await.unwrap();
+        ws_a.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-goodbye", "inst-a")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        assert!(matches!(
+            recv_envelope(&mut ws_a).await,
+            AgentEnvelope::Registered { success: true, .. }
+        ));
+
+        ws_a.send(TungsteniteMessage::Text(
+            AgentEnvelope::Goodbye {
+                reason: Some("test shutdown".to_string()),
+            }
+            .to_json()
+            .unwrap()
+            .into(),
+        ))
+        .await
+        .unwrap();
+        for _ in 0..40 {
+            if !registry
+                .get_client_view("ws-goodbye")
+                .await
+                .unwrap()
+                .connected
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        let offline = registry.get_client_view("ws-goodbye").await.unwrap();
+        assert!(!offline.connected);
+
+        let (mut ws_b, _resp) = connect_async(url).await.unwrap();
+        ws_b.send(TungsteniteMessage::Text(
+            register_envelope_with_instance("ws-goodbye", "inst-b")
+                .to_json()
+                .unwrap()
+                .into(),
+        ))
+        .await
+        .unwrap();
+        assert!(matches!(
+            recv_envelope(&mut ws_b).await,
+            AgentEnvelope::Registered { success: true, .. }
+        ));
+        let view = registry.get_client_view("ws-goodbye").await.unwrap();
+        assert_eq!(view.agent_instance_id, "inst-b");
         assert!(view.connected);
     }
 

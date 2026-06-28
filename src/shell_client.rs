@@ -655,6 +655,10 @@ fn client_is_connected_locked(inner: &ShellClientRegistryInner, client_id: &str)
         .unwrap_or(false)
 }
 
+fn offline_last_seen(now: i64) -> i64 {
+    now.saturating_sub(CLIENT_ONLINE_WINDOW_SECS.saturating_add(1))
+}
+
 /// Verify that `client_id` exists and that `agent_instance_id` matches the
 /// instance that currently holds the lease for it. A stale/replaced instance
 /// (e.g. a second process that was rejected, or the previous process after a
@@ -908,16 +912,18 @@ impl ShellClientRegistry {
         Ok(())
     }
 
-    /// Reconcile state after an agent transport disconnects (currently only
-    /// the WebSocket handler calls this). Conservative strategy:
+    /// Reconcile state after an agent transport disconnects or sends a
+    /// graceful offline notice. Active-instance strategy:
     ///
     /// - remove the push notifier so the request pump is not re-armed;
     /// - mark every non-final, running-like job owned by the client as
     ///   `"lost"` with a descriptive error, and drop its pending request (the
     ///   oneshot waiter resolves to a "dropped" error on the caller side);
     /// - the client record itself is retained so late results/updates can be
-    ///   logged, and `last_seen` is left untouched so the client decays to
-    ///   `"stale"`/offline through the normal 60s online window.
+    ///   logged and runtime_status/list_agents keep observability history;
+    /// - `last_seen` is moved just outside the online window so the active
+    ///   lease is released immediately and a restarted agent can register
+    ///   without waiting for the normal 60s timeout.
     ///
     /// `agent_instance_id` identifies *which* agent process disconnected. The
     /// cleanup only fires when that id matches the currently active instance
@@ -925,7 +931,7 @@ impl ShellClientRegistry {
     /// tearing down after instance B already replaced it) must NOT remove
     /// B's notifier or mark B's jobs lost.
     ///
-    /// This is intentionally conservative: a reconnecting agent that keeps
+    /// This is intentionally conservative about jobs: a reconnecting agent that keeps
     /// running the same job will see the server-side job as `"lost"` (final),
     /// so its late `job_update`/`result` is ignored by `update_job`/`complete`.
     /// Operators should treat `"lost"` as "the server no longer tracks this
@@ -956,6 +962,9 @@ impl ShellClientRegistry {
         }
         let lost_error = "agent transport disconnected".to_string();
         let now = now_ts();
+        if let Some(client) = inner.clients.get_mut(client_id) {
+            client.last_seen = offline_last_seen(now);
+        }
         let lost_job_ids: Vec<String> = inner
             .jobs_by_id
             .iter()
@@ -4472,6 +4481,28 @@ mod tests {
         // Pending request was dropped: no dangling waiter / queue entry.
         let after = registry.get_client_view("oe").await.unwrap();
         assert_eq!(after.pending_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn reconcile_disconnect_releases_active_lease_immediately() {
+        let registry = ShellClientRegistry::default();
+        register_with_instance(&registry, "oe", "inst-a").await;
+
+        registry.reconcile_disconnect("oe", "inst-a").await;
+
+        let offline = registry.get_client_view("oe").await.unwrap();
+        assert!(
+            !offline.connected,
+            "active disconnect must immediately leave online window"
+        );
+        assert!(now_ts().saturating_sub(offline.last_seen) > CLIENT_ONLINE_WINDOW_SECS);
+
+        let new_view = register_with_instance(&registry, "oe", "inst-b").await;
+        assert_eq!(new_view.agent_instance_id, "inst-b");
+        assert!(
+            new_view.connected,
+            "new instance should register without waiting 60 seconds"
+        );
     }
 
     // ------------------------------------------------------------------------

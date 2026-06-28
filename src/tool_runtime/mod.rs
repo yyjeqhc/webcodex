@@ -1104,6 +1104,99 @@ mod tests {
     }
 
     #[test]
+    fn tool_specs_output_schemas_are_objects() {
+        let runtime = test_runtime();
+        for spec in runtime.tool_specs() {
+            let schema = &spec.output_schema;
+            assert_eq!(
+                schema["type"].as_str(),
+                Some("object"),
+                "tool '{}' output schema must be type object",
+                spec.name
+            );
+            assert!(
+                schema["properties"].is_object(),
+                "tool '{}' output schema must have properties object",
+                spec.name
+            );
+            assert!(
+                schema["required"]
+                    .as_array()
+                    .is_some_and(|required| required.iter().any(|v| v == "success")),
+                "tool '{}' output schema must require success",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn key_tool_output_schemas_include_expected_fields() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let has_output_field = |name: &str, field: &str| {
+            let spec = spec_named(&specs, name);
+            spec.output_schema["properties"]["output"]["properties"]
+                .as_object()
+                .is_some_and(|props| props.contains_key(field))
+        };
+
+        for field in ["duration_ms", "exit_code", "stdout", "stderr"] {
+            assert!(
+                has_output_field("run_shell", field),
+                "run_shell missing {field}"
+            );
+        }
+        for field in ["job_id", "kind", "status", "project"] {
+            assert!(
+                has_output_field("run_job", field),
+                "run_job missing {field}"
+            );
+        }
+        for field in [
+            "job_id",
+            "status",
+            "exit_code",
+            "started_at",
+            "ended_at",
+            "error",
+        ] {
+            assert!(
+                has_output_field("job_status", field),
+                "job_status missing {field}"
+            );
+        }
+        for field in [
+            "job_id",
+            "stdout",
+            "stderr",
+            "offset",
+            "next_offset",
+            "tail_lines",
+        ] {
+            assert!(
+                has_output_field("job_log", field),
+                "job_log missing {field}"
+            );
+        }
+        for field in [
+            "service",
+            "version",
+            "auth_enabled",
+            "configured_public_url",
+            "agents",
+            "projects",
+            "jobs",
+            "tools",
+            "quic",
+        ] {
+            assert!(
+                has_output_field("runtime_status", field),
+                "runtime_status missing {field}"
+            );
+        }
+    }
+
+    #[test]
     fn tool_specs_required_fields_match_deserialization() {
         // For every tool spec, building arguments with only the required
         // fields must deserialize successfully, and omitting any required

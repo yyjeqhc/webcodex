@@ -32,6 +32,269 @@ pub(crate) fn object_schema(fields: Vec<(&str, &str, &str, bool)>) -> Value {
     })
 }
 
+fn schema_type(kind: &str, description: &str) -> Value {
+    json!({
+        "type": kind,
+        "description": description,
+    })
+}
+
+fn nullable_schema(kind: &str, description: &str) -> Value {
+    json!({
+        "anyOf": [
+            { "type": kind },
+            { "type": "null" }
+        ],
+        "description": description,
+    })
+}
+
+fn array_schema(items: Value, description: &str) -> Value {
+    json!({
+        "type": "array",
+        "items": items,
+        "description": description,
+    })
+}
+
+fn open_object_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": true,
+    })
+}
+
+fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
+    let properties = output_properties
+        .into_iter()
+        .map(|(name, schema)| (name.to_string(), schema))
+        .collect::<serde_json::Map<_, _>>();
+    json!({
+        "type": "object",
+        "properties": {
+            "success": { "type": "boolean" },
+            "output": {
+                "type": "object",
+                "properties": properties,
+                "additionalProperties": true
+            },
+            "error": {
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "null" }
+                ]
+            }
+        },
+        "required": ["success"],
+        "additionalProperties": true,
+    })
+}
+
+fn default_output_schema() -> Value {
+    wrapped_output_schema(vec![])
+}
+
+fn output_schema_for_tool(name: &str) -> Value {
+    match name {
+        "run_shell" => wrapped_output_schema(vec![
+            (
+                "duration_ms",
+                schema_type("integer", "Command duration in milliseconds."),
+            ),
+            (
+                "exit_code",
+                nullable_schema("integer", "Process exit code, when available."),
+            ),
+            ("stdout", schema_type("string", "Captured stdout.")),
+            ("stderr", schema_type("string", "Captured stderr.")),
+        ]),
+        "run_job" | "run_codex" => wrapped_output_schema(vec![
+            ("job_id", schema_type("string", "Runtime job id.")),
+            ("kind", schema_type("string", "Job kind.")),
+            ("status", schema_type("string", "Initial job status.")),
+            ("project", schema_type("string", "Project id.")),
+        ]),
+        "job_status" => wrapped_output_schema(vec![
+            ("job_id", schema_type("string", "Runtime job id.")),
+            ("status", schema_type("string", "Current job status.")),
+            (
+                "exit_code",
+                nullable_schema("integer", "Process exit code, when available."),
+            ),
+            (
+                "started_at",
+                nullable_schema("string", "Job start timestamp."),
+            ),
+            ("ended_at", nullable_schema("string", "Job end timestamp.")),
+            (
+                "error",
+                nullable_schema("string", "Job error message, when available."),
+            ),
+        ]),
+        "job_log" => wrapped_output_schema(vec![
+            ("job_id", schema_type("string", "Runtime job id.")),
+            (
+                "stdout",
+                schema_type("string", "Captured stdout or selected stdout tail."),
+            ),
+            (
+                "stderr",
+                schema_type("string", "Captured stderr or selected stderr tail."),
+            ),
+            (
+                "offset",
+                schema_type("integer", "Requested stdout line offset."),
+            ),
+            (
+                "next_offset",
+                schema_type("integer", "Next stdout line offset."),
+            ),
+            (
+                "tail_lines",
+                schema_type("integer", "Requested tail line count."),
+            ),
+        ]),
+        "runtime_status" => wrapped_output_schema(vec![
+            ("service", schema_type("string", "Runtime service name.")),
+            ("version", schema_type("string", "Runtime version.")),
+            ("server_time", schema_type("integer", "Server timestamp.")),
+            ("pid", schema_type("integer", "Server process id.")),
+            (
+                "auth_enabled",
+                schema_type("boolean", "Whether bearer auth is enabled."),
+            ),
+            (
+                "configured_public_url",
+                nullable_schema("string", "Configured public URL, when set."),
+            ),
+            (
+                "projects",
+                open_object_schema("Projects configuration status."),
+            ),
+            (
+                "agents",
+                open_object_schema("Agent counts and client summaries."),
+            ),
+            ("jobs", open_object_schema("Runtime job counts.")),
+            (
+                "tools",
+                open_object_schema("Runtime tool counts and names."),
+            ),
+            (
+                "quic",
+                open_object_schema("QUIC transport status, when enabled."),
+            ),
+        ]),
+        "list_projects" => wrapped_output_schema(vec![
+            (
+                "projects",
+                array_schema(open_object_schema("Project summary."), "Runtime projects."),
+            ),
+            ("count", schema_type("integer", "Project count.")),
+        ]),
+        "list_agents" => wrapped_output_schema(vec![
+            (
+                "agents",
+                array_schema(open_object_schema("Agent summary."), "Agent summaries."),
+            ),
+            (
+                "clients",
+                array_schema(open_object_schema("Client summary."), "Client summaries."),
+            ),
+            ("count", schema_type("integer", "Agent/client count.")),
+        ]),
+        "list_tools" => wrapped_output_schema(vec![
+            (
+                "tools",
+                array_schema(open_object_schema("Tool metadata."), "Runtime tool specs."),
+            ),
+            ("count", schema_type("integer", "Tool count.")),
+        ]),
+        "read_file" => wrapped_output_schema(vec![
+            ("content", schema_type("string", "File content.")),
+            ("path", schema_type("string", "Project-relative path.")),
+            (
+                "start_line",
+                schema_type("integer", "1-based starting line."),
+            ),
+            (
+                "total_lines",
+                schema_type("integer", "Total line count, when available."),
+            ),
+        ]),
+        "git_status" | "git_diff" => wrapped_output_schema(vec![
+            (
+                "exit_code",
+                nullable_schema("integer", "Git command exit code."),
+            ),
+            ("stdout", schema_type("string", "Git command stdout.")),
+            ("stderr", schema_type("string", "Git command stderr.")),
+        ]),
+        "git_diff_summary" => wrapped_output_schema(vec![
+            (
+                "status",
+                schema_type("string", "Porcelain git status output."),
+            ),
+            (
+                "diff_stat",
+                schema_type("string", "Git diff --stat output."),
+            ),
+            (
+                "changed_files",
+                array_schema(
+                    open_object_schema("Changed file summary."),
+                    "Changed files.",
+                ),
+            ),
+        ]),
+        "apply_patch" | "apply_patch_checked" => wrapped_output_schema(vec![
+            (
+                "exit_code",
+                nullable_schema("integer", "Patch command exit code."),
+            ),
+            ("stdout", schema_type("string", "Patch command stdout.")),
+            ("stderr", schema_type("string", "Patch command stderr.")),
+            (
+                "changed_files",
+                array_schema(
+                    open_object_schema("Changed file summary."),
+                    "Changed files.",
+                ),
+            ),
+            (
+                "applied",
+                schema_type("boolean", "Whether the patch was applied."),
+            ),
+            (
+                "check",
+                open_object_schema("Patch validation/check result."),
+            ),
+        ]),
+        "validate_patch" => wrapped_output_schema(vec![
+            (
+                "valid",
+                schema_type("boolean", "Whether the patch passed validation."),
+            ),
+            (
+                "applies",
+                schema_type("boolean", "Whether git apply --check succeeded."),
+            ),
+            (
+                "exit_code",
+                nullable_schema("integer", "Validation command exit code."),
+            ),
+            ("stdout", schema_type("string", "Validation stdout.")),
+            ("stderr", schema_type("string", "Validation stderr.")),
+            (
+                "diff_stat",
+                schema_type("string", "Patch diff stat, when available."),
+            ),
+        ]),
+        _ => default_output_schema(),
+    }
+}
+
 impl ToolRuntime {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
         vec![
@@ -39,12 +302,14 @@ impl ToolRuntime {
                 name: "list_tools".to_string(),
                 description: "List tools exposed by this WebCodex runtime.".to_string(),
                 input_schema: object_schema(vec![]),
+                output_schema: output_schema_for_tool("list_tools"),
             },
             ToolSpec {
                 name: "list_projects".to_string(),
                 description: "List agent-registered runtime projects and their execution mode."
                     .to_string(),
                 input_schema: object_schema(vec![]),
+                output_schema: output_schema_for_tool("list_projects"),
             },
             ToolSpec {
                 name: "register_project".to_string(),
@@ -62,6 +327,7 @@ impl ToolRuntime {
                     ("allow_patch", "boolean", "Allow patch operations on this project (default true).", false),
                     ("overwrite", "boolean", "Overwrite an existing project config file (default false).", false),
                 ]),
+                output_schema: output_schema_for_tool("register_project"),
             },
             ToolSpec {
                 name: "create_project".to_string(),
@@ -82,11 +348,13 @@ impl ToolRuntime {
                     ("allow_existing_empty", "boolean", "Allow registering an existing empty directory (default false).", false),
                     ("overwrite", "boolean", "Overwrite an existing project config file (default false).", false),
                 ]),
+                output_schema: output_schema_for_tool("create_project"),
             },
             ToolSpec {
                 name: "list_agents".to_string(),
                 description: "List connected local/remote execution agents.".to_string(),
                 input_schema: object_schema(vec![]),
+                output_schema: output_schema_for_tool("list_agents"),
             },
             ToolSpec {
                 name: "runtime_status".to_string(),
@@ -95,6 +363,7 @@ impl ToolRuntime {
                     + "metadata, projects config status, agent client summaries, and job counts). "
                     + "Read-only; never exposes tokens, secrets, full env, or stdout/stderr.",
                 input_schema: object_schema(vec![]),
+                output_schema: output_schema_for_tool("runtime_status"),
             },
             ToolSpec {
                 name: "run_shell".to_string(),
@@ -116,6 +385,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("run_shell"),
             },
             ToolSpec {
                 name: "run_job".to_string(),
@@ -142,6 +412,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("run_job"),
             },
             ToolSpec {
                 name: "run_codex".to_string(),
@@ -179,11 +450,13 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("run_codex"),
             },
             ToolSpec {
                 name: "job_status".to_string(),
                 description: "Get status for a runtime job.".to_string(),
                 input_schema: object_schema(vec![("job_id", "string", "Job id.", true)]),
+                output_schema: output_schema_for_tool("job_status"),
             },
             ToolSpec {
                 name: "job_log".to_string(),
@@ -203,6 +476,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("job_log"),
             },
             ToolSpec {
                 name: "list_project_files".to_string(),
@@ -226,6 +500,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("list_project_files"),
             },
             ToolSpec {
                 name: "search_project_text".to_string(),
@@ -250,6 +525,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("search_project_text"),
             },
             ToolSpec {
                 name: "git_diff_summary".to_string(),
@@ -263,6 +539,7 @@ impl ToolRuntime {
                     "Agent-registered project id.",
                     true,
                 )]),
+                output_schema: output_schema_for_tool("git_diff_summary"),
             },
             ToolSpec {
                 name: "list_jobs".to_string(),
@@ -284,6 +561,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("list_jobs"),
             },
             ToolSpec {
                 name: "job_tail".to_string(),
@@ -297,6 +575,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("job_tail"),
             },
             ToolSpec {
                 name: "read_file".to_string(),
@@ -307,6 +586,7 @@ impl ToolRuntime {
                     ("start_line", "integer", "1-based line offset.", false),
                     ("limit", "integer", "Maximum line count.", false),
                 ]),
+                output_schema: output_schema_for_tool("read_file"),
             },
             ToolSpec {
                 name: "git_status".to_string(),
@@ -317,6 +597,7 @@ impl ToolRuntime {
                     "Configured project id.",
                     true,
                 )]),
+                output_schema: output_schema_for_tool("git_status"),
             },
             ToolSpec {
                 name: "git_diff".to_string(),
@@ -325,6 +606,7 @@ impl ToolRuntime {
                     ("project", "string", "Configured project id.", true),
                     ("args", "array", "Optional path list.", false),
                 ]),
+                output_schema: output_schema_for_tool("git_diff"),
             },
             ToolSpec {
                 name: "apply_patch".to_string(),
@@ -334,6 +616,7 @@ impl ToolRuntime {
                     ("project", "string", "Configured project id.", true),
                     ("patch", "string", "Unified diff patch.", true),
                 ]),
+                output_schema: output_schema_for_tool("apply_patch"),
             },
             ToolSpec {
                 name: "apply_patch_checked".to_string(),
@@ -343,6 +626,7 @@ impl ToolRuntime {
                     ("patch", "string", "Unified diff patch.", true),
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings before applying.", false),
                 ]),
+                output_schema: output_schema_for_tool("apply_patch_checked"),
             },
             ToolSpec {
                 name: "delete_project_files".to_string(),
@@ -351,6 +635,7 @@ impl ToolRuntime {
                     ("project", "string", "Agent-registered project id.", true),
                     ("paths", "array", "Project-relative file paths to delete.", true),
                 ]),
+                output_schema: output_schema_for_tool("delete_project_files"),
             },
             ToolSpec {
                 name: "git_restore_paths".to_string(),
@@ -359,6 +644,7 @@ impl ToolRuntime {
                     ("project", "string", "Agent-registered project id.", true),
                     ("paths", "array", "Project-relative tracked paths to restore.", true),
                 ]),
+                output_schema: output_schema_for_tool("git_restore_paths"),
             },
             ToolSpec {
                 name: "discard_untracked".to_string(),
@@ -367,6 +653,7 @@ impl ToolRuntime {
                     ("project", "string", "Agent-registered project id.", true),
                     ("paths", "array", "Project-relative untracked paths to remove.", true),
                 ]),
+                output_schema: output_schema_for_tool("discard_untracked"),
             },
             ToolSpec {
                 name: "validate_patch".to_string(),
@@ -376,6 +663,7 @@ impl ToolRuntime {
                     ("patch", "string", "Unified diff patch to validate.", true),
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings.", false),
                 ]),
+                output_schema: output_schema_for_tool("validate_patch"),
             },
             ToolSpec {
                 name: "replace_in_file".to_string(),
@@ -398,6 +686,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("replace_in_file"),
             },
             ToolSpec {
                 name: "write_project_file".to_string(),
@@ -425,6 +714,7 @@ impl ToolRuntime {
                         false,
                     ),
                 ]),
+                output_schema: output_schema_for_tool("write_project_file"),
             },
         ]
     }

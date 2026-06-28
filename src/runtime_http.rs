@@ -2122,6 +2122,10 @@ mod tests {
         assert!(names.iter().any(|n| n == "list_tools"));
         assert!(names.iter().any(|n| n == "git_diff_summary"));
         assert_eq!(body["count"], names.len());
+        for tool in body["tools"].as_array().unwrap() {
+            assert!(tool["inputSchema"].is_object());
+            assert!(tool["outputSchema"].is_object());
+        }
         // Optional enrichment fields.
         assert!(body["categories"].is_object(), "categories must be present");
         assert!(

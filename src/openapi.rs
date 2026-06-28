@@ -1270,11 +1270,12 @@ fn schemas() -> Value {
         },
         "ToolSpec": {
             "type": "object",
-            "required": ["name", "description", "inputSchema"],
+            "required": ["name", "description", "inputSchema", "outputSchema"],
             "properties": {
                 "name": { "type": "string" },
                 "description": { "type": "string" },
-                "inputSchema": { "type": "object", "additionalProperties": true }
+                "inputSchema": { "type": "object", "additionalProperties": true },
+                "outputSchema": { "type": "object", "additionalProperties": true }
             }
         },
         "ToolsListResponse": {
@@ -2054,6 +2055,18 @@ mod tests {
         assert!(props.contains_key("count"));
         assert!(props.contains_key("categories"));
         assert!(props.contains_key("recommended_flows"));
+    }
+
+    #[test]
+    fn openapi_tool_spec_includes_output_schema() {
+        let spec = build_openapi_spec();
+        let tool_spec = &spec["components"]["schemas"]["ToolSpec"];
+        let required = tool_spec["required"].as_array().unwrap();
+        assert!(required.iter().any(|v| v == "inputSchema"));
+        assert!(required.iter().any(|v| v == "outputSchema"));
+        let props = tool_spec["properties"].as_object().unwrap();
+        assert!(props["inputSchema"].is_object());
+        assert!(props["outputSchema"].is_object());
     }
 
     #[test]

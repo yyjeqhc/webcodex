@@ -1570,6 +1570,35 @@ mod tests {
         for flow in &flows {
             assert!(flow.chars().count() <= 300, "flow too long: {}", flow);
         }
+        let joined_flows = flows.join("\n").to_lowercase();
+        assert!(joined_flows.contains("source code edit"));
+        for name in ["replace_line_range", "insert_at_line", "delete_line_range"] {
+            assert!(
+                joined_flows.contains(name),
+                "recommended flows should mention {}",
+                name
+            );
+        }
+        assert!(joined_flows.contains("run_shell"));
+        assert!(
+            joined_flows.contains("validation") || joined_flows.contains("checks"),
+            "run_shell guidance should mention validation/checks"
+        );
+        assert!(
+            joined_flows.contains("not primary"),
+            "run_shell should not be the primary edit path"
+        );
+        let specs = runtime.tool_specs();
+        for name in ["replace_line_range", "insert_at_line", "delete_line_range"] {
+            let desc = spec_named(&specs, name).description.to_lowercase();
+            assert!(desc.contains("preferred"), "{} should be preferred", name);
+            assert!(desc.contains("source"), "{} should mention source", name);
+            assert!(desc.contains("line"), "{} should mention line", name);
+        }
+
+        let run_shell_desc = spec_named(&specs, "run_shell").description.to_lowercase();
+        assert!(run_shell_desc.contains("file editing path"));
+        assert!(run_shell_desc.contains("not"));
     }
 
     #[test]

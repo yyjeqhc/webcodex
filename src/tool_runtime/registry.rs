@@ -430,8 +430,9 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "run_shell".to_string(),
-                description: "Run a short shell command inside an agent-registered project."
-                    .to_string(),
+                description: "Run checks, builds, tests, read-only diagnostics, or necessary commands in a project. "
+                    .to_string()
+                    + "Do not use as the primary project file editing path; prefer structured line edit tools for source edits.",
                 input_schema: object_schema(vec![
                     ("project", "string", "Configured project id.", true),
                     ("command", "string", "Shell command to run.", true),
@@ -683,7 +684,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "apply_patch_checked".to_string(),
-                description: "Validate a patch, apply it only if it can apply, then return the post-apply diff summary.".to_string(),
+                description: "Validate/apply a unified diff and return a diff summary. Best for broad or multi-file patches; for local line edits prefer structured line edit tools.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("patch", "string", "Unified diff patch.", true),
@@ -730,7 +731,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "replace_in_file".to_string(),
-                description: "Replace a unique substring in a project file via the owning agent. Safer than run_shell sed/awk for text edits. Rejects sensitive paths; fails without writing when old is missing or ambiguous.".to_string(),
+                description: "Replace a short unique substring in a project file. Good for small exact text changes; not for large source rewrites. Fails without writing when old is missing or ambiguous.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -753,7 +754,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "write_project_file".to_string(),
-                description: "Write a UTF-8 file in a project via the owning agent. Creates or overwrites; rejects sensitive paths. Provide expected_sha256 for safe overwrites. Server never reads the agent filesystem directly.".to_string(),
+                description: "Create a new UTF-8 file or deliberately overwrite a small whole file. Not the first choice for ordinary local source edits; prefer line edit tools when scoped by line.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -781,7 +782,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "replace_line_range".to_string(),
-                description: "Replace a 1-based inclusive line range in a UTF-8 file. Adds one trailing newline to non-empty new_text. new_sha256 is the whole file digest.".to_string(),
+                description: "Preferred source-code edit tool for local changes with clear line numbers. Replaces a 1-based inclusive line range; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -795,7 +796,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "insert_at_line".to_string(),
-                description: "Insert text before a 1-based line, or at EOF with total_lines+1. Adds one trailing newline to non-empty text. new_sha256 is whole file.".to_string(),
+                description: "Preferred source-code edit tool for local changes with clear line numbers. Inserts before a specified 1-based line; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -808,7 +809,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "delete_line_range".to_string(),
-                description: "Delete a 1-based inclusive line range in a UTF-8 file. Equivalent to replace_line_range with empty new_text. new_sha256 is whole file.".to_string(),
+                description: "Preferred source-code edit tool for local changes with clear line numbers. Deletes a 1-based inclusive line range; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -874,6 +875,7 @@ impl ToolRuntime {
         vec![
             "Discovery: call list_projects then runtime_status to see agents and projects.",
             "Inspect: use git_diff_summary then read_file before proposing changes.",
+            "Source code edit: inspect with read_file/search_project_text; prefer replace_line_range/insert_at_line/delete_line_range with guards. apply_patch_checked for broad diffs; replace_in_file short unique text; write_project_file new/whole files; run_shell validation/checks, not primary edits.",
             "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",
             "Cleanup: use delete_project_files / git_restore_paths / discard_untracked instead of ad hoc rm.",
             "Jobs: start run_codex, then poll job_status and read job_log/job_tail.",

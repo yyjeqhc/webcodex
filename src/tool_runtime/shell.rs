@@ -6,7 +6,83 @@ use super::types::ToolResult;
 use super::ToolRuntime;
 use crate::shell_protocol::ShellRunRequest;
 
+pub(crate) struct ProjectCommandOutput {
+    pub(crate) exit_code: Option<i32>,
+    pub(crate) stdout: String,
+    pub(crate) stderr: String,
+    pub(crate) duration_ms: u64,
+}
+
 impl ToolRuntime {
+    pub(crate) async fn run_project_command_capture(
+        &self,
+        project: &str,
+        command: String,
+        timeout_secs: u64,
+        cwd: Option<String>,
+    ) -> Result<ProjectCommandOutput, String> {
+        let proj = self.resolve_project(project).await?;
+        let timeout = timeout_secs.max(1);
+        if proj.is_agent() {
+            let client_id = proj.agent_client_id()?.to_string();
+            let effective_cwd = match cwd {
+                Some(cwd) => {
+                    let joined = std::path::Path::new(&proj.path).join(cwd);
+                    Some(joined.to_string_lossy().to_string())
+                }
+                None => Some(proj.path.clone()),
+            };
+            let wait_timeout = timeout.min(1_800);
+            let (request_id, rx) = self
+                .shell_clients
+                .enqueue_run(
+                    ShellRunRequest {
+                        client_id,
+                        cwd: effective_cwd,
+                        command,
+                        stdin: None,
+                        timeout_secs: timeout,
+                        wait_timeout_secs: wait_timeout,
+                    },
+                    "tool_runtime".to_string(),
+                )
+                .await?;
+            match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
+                Ok(Ok(response)) => Ok(ProjectCommandOutput {
+                    exit_code: response.exit_code,
+                    stdout: response.stdout.unwrap_or_default(),
+                    stderr: response.stderr.unwrap_or_default(),
+                    duration_ms: response.duration_ms.unwrap_or_default(),
+                }),
+                Ok(Err(_)) => {
+                    self.shell_clients.cancel_request(&request_id).await;
+                    Err("shell request waiter was dropped".to_string())
+                }
+                Err(_) => {
+                    self.shell_clients.cancel_request(&request_id).await;
+                    Err(format!(
+                        "timed out waiting {} seconds for agent shell result",
+                        wait_timeout
+                    ))
+                }
+            }
+        } else {
+            let cwd_path = resolve_local_cwd(&proj, cwd.as_deref())?;
+            let result = tokio::task::spawn_blocking({
+                let cmd = command;
+                move || run_command_sync(&cmd, &cwd_path, timeout)
+            })
+            .await
+            .map_err(|e| format!("task join error: {}", e))?;
+            Ok(ProjectCommandOutput {
+                exit_code: Some(result.0),
+                stdout: result.1,
+                stderr: result.2,
+                duration_ms: result.3,
+            })
+        }
+    }
+
     pub(crate) async fn run_shell(
         &self,
         project: String,

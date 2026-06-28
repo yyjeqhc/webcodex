@@ -3,6 +3,7 @@
 //! Both protocol adapters call `ToolRuntime::dispatch()`.
 //! No HTTP framework types here — pure Rust input/output.
 
+mod cargo;
 mod codex;
 mod files;
 mod git;
@@ -159,7 +160,11 @@ impl ToolRuntime {
             ToolCall::SearchProjectText { .. } => Some(AgentCapability::Shell),
             ToolCall::GitStatus { .. }
             | ToolCall::GitDiff { .. }
+            | ToolCall::GitDiffHunks { .. }
             | ToolCall::GitDiffSummary { .. } => Some(AgentCapability::GitOrShell),
+            ToolCall::CargoFmt { .. }
+            | ToolCall::CargoCheck { .. }
+            | ToolCall::CargoTest { .. } => Some(AgentCapability::Shell),
             ToolCall::RunJob { .. } | ToolCall::RunCodex { .. } => Some(AgentCapability::AsyncJobs),
             ToolCall::ListTools
             | ToolCall::ListProjects
@@ -203,6 +208,10 @@ impl ToolRuntime {
             | ToolCall::DeleteLineRange { project, .. }
             | ToolCall::GitStatus { project }
             | ToolCall::GitDiff { project, .. }
+            | ToolCall::GitDiffHunks { project, .. }
+            | ToolCall::CargoFmt { project, .. }
+            | ToolCall::CargoCheck { project, .. }
+            | ToolCall::CargoTest { project, .. }
             | ToolCall::GitDiffSummary { project }
             | ToolCall::ReadFile { project, .. }
             | ToolCall::ListProjectFiles { project, .. }
@@ -400,6 +409,74 @@ impl ToolRuntime {
             ToolCall::GitStatus { project } => self.git_status(project).await,
 
             ToolCall::GitDiff { project, args } => self.git_diff(project, args).await,
+
+            ToolCall::GitDiffHunks {
+                project,
+                paths,
+                max_hunks,
+                max_hunk_lines,
+                cached,
+            } => {
+                self.git_diff_hunks(project, paths, max_hunks, max_hunk_lines, cached)
+                    .await
+            }
+
+            ToolCall::CargoFmt {
+                project,
+                cwd,
+                check,
+                timeout_secs,
+            } => self.cargo_fmt(project, cwd, check, timeout_secs).await,
+
+            ToolCall::CargoCheck {
+                project,
+                cwd,
+                all_targets,
+                all_features,
+                no_default_features,
+                features,
+                package,
+                timeout_secs,
+            } => {
+                self.cargo_check(
+                    project,
+                    cwd,
+                    all_targets,
+                    all_features,
+                    no_default_features,
+                    features,
+                    package,
+                    timeout_secs,
+                )
+                .await
+            }
+
+            ToolCall::CargoTest {
+                project,
+                cwd,
+                filter,
+                all_targets,
+                all_features,
+                no_default_features,
+                features,
+                package,
+                no_run,
+                timeout_secs,
+            } => {
+                self.cargo_test(
+                    project,
+                    cwd,
+                    filter,
+                    all_targets,
+                    all_features,
+                    no_default_features,
+                    features,
+                    package,
+                    no_run,
+                    timeout_secs,
+                )
+                .await
+            }
 
             ToolCall::ReadFile {
                 project,
@@ -873,6 +950,7 @@ fn resolve_project_shell_profile(
 
 #[cfg(test)]
 mod tests {
+    use super::cargo::*;
     use super::codex::*;
     use super::files::*;
     use super::git::*;
@@ -1455,6 +1533,240 @@ mod tests {
     }
 
     #[test]
+    fn cargo_runtime_tools_are_known_and_parse() {
+        for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+            assert!(KNOWN_TOOL_NAMES.contains(&name), "{name} missing");
+        }
+        assert!(matches!(
+            ToolCall::from_tool_name(
+                "cargo_fmt",
+                json!({"project":"agent:oe:webcodex","check":true,"cwd":"crates/app"})
+            )
+            .unwrap(),
+            ToolCall::CargoFmt {
+                check: Some(true),
+                ..
+            }
+        ));
+        assert!(matches!(
+            ToolCall::from_tool_name("cargo_check", json!({"project":"agent:oe:webcodex"}))
+                .unwrap(),
+            ToolCall::CargoCheck {
+                all_targets: None,
+                ..
+            }
+        ));
+        assert!(matches!(
+            ToolCall::from_tool_name(
+                "cargo_test",
+                json!({"project":"agent:oe:webcodex","filter":"tool_runtime"})
+            )
+            .unwrap(),
+            ToolCall::CargoTest { filter: Some(filter), .. } if filter == "tool_runtime"
+        ));
+    }
+
+    #[test]
+    fn tool_specs_cargo_tools_schema_and_output() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+            let spec = spec_named(&specs, name);
+            let required = required_fields(spec);
+            assert_eq!(required, vec!["project".to_string()]);
+            assert!(spec.input_schema["properties"]
+                .as_object()
+                .unwrap()
+                .contains_key("cwd"));
+            for field in [
+                "exit_code",
+                "duration_ms",
+                "stdout_tail",
+                "stderr_tail",
+                "passed",
+            ] {
+                assert!(
+                    spec.output_schema["properties"]["output"]["properties"]
+                        .as_object()
+                        .unwrap()
+                        .contains_key(field),
+                    "{} missing output field {}",
+                    name,
+                    field
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn cargo_command_builders_use_expected_defaults_and_escaping() {
+        assert_eq!(cargo_fmt_command(true), "cargo fmt -- --check");
+        assert_eq!(
+            cargo_check_command(None, None, None, None, None).unwrap(),
+            "cargo check --all-targets"
+        );
+        assert_eq!(
+            cargo_test_command(
+                Some("tool_runtime".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None
+            )
+            .unwrap(),
+            "cargo test 'tool_runtime'"
+        );
+        assert!(cargo_check_command(None, None, None, Some("feat\0x".to_string()), None).is_err());
+    }
+
+    #[tokio::test]
+    async fn cargo_tools_reject_unsafe_cwd_before_project_dispatch() {
+        let runtime = test_runtime();
+        let fmt = runtime
+            .cargo_fmt(
+                "agent:oe:webcodex".to_string(),
+                Some("../outside".to_string()),
+                None,
+                None,
+            )
+            .await;
+        assert!(!fmt.success);
+        assert!(fmt.error.unwrap().contains("parent traversal"));
+
+        let check = runtime
+            .cargo_check(
+                "agent:oe:webcodex".to_string(),
+                Some("/tmp".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(!check.success);
+        assert!(check.error.unwrap().contains("project-relative"));
+
+        let test = runtime
+            .cargo_test(
+                "agent:oe:webcodex".to_string(),
+                Some("src\0bad".to_string()),
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(!test.success);
+        assert!(test.error.unwrap().contains("NUL"));
+    }
+
+    #[test]
+    fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
+        assert!(KNOWN_TOOL_NAMES.contains(&"git_diff_hunks"));
+        let call = ToolCall::from_tool_name(
+            "git_diff_hunks",
+            json!({
+                "project":"agent:oe:webcodex",
+                "paths":["src/runtime_http.rs"],
+                "max_hunks":20,
+                "max_hunk_lines":120,
+                "cached":true
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            call,
+            ToolCall::GitDiffHunks { project, cached: Some(true), .. }
+                if project == "agent:oe:webcodex"
+        ));
+
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "git_diff_hunks");
+        let props = spec.input_schema["properties"].as_object().unwrap();
+        for field in ["project", "paths", "max_hunks", "max_hunk_lines", "cached"] {
+            assert!(props.contains_key(field), "missing {}", field);
+        }
+        let output_props = spec.output_schema["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap();
+        for field in ["files", "hunk_count", "truncated", "exit_code", "stderr"] {
+            assert!(output_props.contains_key(field), "missing {}", field);
+        }
+    }
+
+    #[test]
+    fn git_diff_hunks_parser_handles_modified_empty_and_limits() {
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,2 +1,3 @@ fn demo()
+ line one
+-old
++new
++added
+";
+        let (files, hunk_count, truncated) = parse_git_diff_hunks(diff, 10, 20);
+        assert!(!truncated);
+        assert_eq!(hunk_count, 1);
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0]["path"], "src/lib.rs");
+        assert_eq!(files[0]["status"], "modified");
+        assert_eq!(files[0]["hunks"][0]["old_start"], 1);
+        assert!(files[0]["hunks"][0]["diff"]
+            .as_str()
+            .unwrap()
+            .contains("+new"));
+
+        let (files, hunk_count, truncated) = parse_git_diff_hunks("", 10, 20);
+        assert!(files.is_empty());
+        assert_eq!(hunk_count, 0);
+        assert!(!truncated);
+
+        let (_files, hunk_count, truncated) = parse_git_diff_hunks(diff, 0, 20);
+        assert_eq!(hunk_count, 0);
+        assert!(truncated);
+
+        let (files, _hunk_count, truncated) = parse_git_diff_hunks(diff, 10, 2);
+        assert!(truncated);
+        assert_eq!(files[0]["hunks"][0]["truncated"], true);
+    }
+
+    #[test]
+    fn git_diff_hunks_command_rejects_unsafe_paths() {
+        assert!(git_diff_hunks_command(&["src/lib.rs".to_string()], false)
+            .unwrap()
+            .contains("git diff --unified=80 -- 'src/lib.rs'"));
+        assert!(validate_project_relative_path("../outside").is_err());
+    }
+
+    #[tokio::test]
+    async fn git_diff_hunks_rejects_unsafe_paths_before_project_dispatch() {
+        let runtime = test_runtime();
+        let result = runtime
+            .git_diff_hunks(
+                "agent:oe:webcodex".to_string(),
+                Some(vec!["../outside".to_string()]),
+                None,
+                None,
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("parent traversal"));
+    }
+
+    #[test]
     fn tool_specs_delete_project_files_schema() {
         let runtime = test_runtime();
         let specs = runtime.tool_specs();
@@ -1556,7 +1868,15 @@ mod tests {
         }
         // Each expected category is present.
         for cat in [
-            "inspect", "git", "patch", "shell", "jobs", "runtime", "cleanup",
+            "inspect",
+            "git",
+            "review",
+            "validation",
+            "patch",
+            "shell",
+            "jobs",
+            "runtime",
+            "cleanup",
         ] {
             assert!(
                 categories.as_object().unwrap().contains_key(cat),
@@ -1564,6 +1884,12 @@ mod tests {
                 cat
             );
         }
+        let validation = categories["validation"].as_array().unwrap();
+        for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+            assert!(validation.iter().any(|v| v == name));
+        }
+        let review = categories["review"].as_array().unwrap();
+        assert!(review.iter().any(|v| v == "git_diff_hunks"));
         // recommended_flows are short and non-empty.
         let flows = ToolRuntime::recommended_flows();
         assert!(!flows.is_empty());
@@ -1588,6 +1914,13 @@ mod tests {
             joined_flows.contains("not primary"),
             "run_shell should not be the primary edit path"
         );
+        for name in ["cargo_fmt", "cargo_check", "cargo_test", "git_diff_hunks"] {
+            assert!(
+                joined_flows.contains(name),
+                "recommended flows should mention {}",
+                name
+            );
+        }
         let specs = runtime.tool_specs();
         for name in ["replace_line_range", "insert_at_line", "delete_line_range"] {
             let desc = spec_named(&specs, name).description.to_lowercase();
@@ -1599,6 +1932,64 @@ mod tests {
         let run_shell_desc = spec_named(&specs, "run_shell").description.to_lowercase();
         assert!(run_shell_desc.contains("file editing path"));
         assert!(run_shell_desc.contains("not"));
+    }
+
+    #[test]
+    fn tool_specs_annotations_cover_safety_hints() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        for spec in &specs {
+            let annotations = spec
+                .annotations
+                .as_object()
+                .unwrap_or_else(|| panic!("{} annotations must be an object", spec.name));
+            for field in [
+                "readOnlyHint",
+                "destructiveHint",
+                "idempotentHint",
+                "openWorldHint",
+            ] {
+                assert!(
+                    annotations.contains_key(field),
+                    "{} missing annotation {}",
+                    spec.name,
+                    field
+                );
+            }
+        }
+
+        for name in [
+            "read_file",
+            "git_status",
+            "git_diff_summary",
+            "git_diff_hunks",
+        ] {
+            assert_eq!(spec_named(&specs, name).annotations["readOnlyHint"], true);
+        }
+        for name in ["replace_line_range", "insert_at_line", "delete_line_range"] {
+            let annotations = &spec_named(&specs, name).annotations;
+            assert_eq!(annotations["readOnlyHint"], false);
+            assert_eq!(annotations["openWorldHint"], false);
+        }
+        for name in ["run_shell", "run_job", "run_codex"] {
+            assert_eq!(spec_named(&specs, name).annotations["openWorldHint"], true);
+        }
+        for name in [
+            "delete_project_files",
+            "discard_untracked",
+            "git_restore_paths",
+        ] {
+            assert_eq!(
+                spec_named(&specs, name).annotations["destructiveHint"],
+                true
+            );
+        }
+        for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+            let annotations = &spec_named(&specs, name).annotations;
+            assert_eq!(annotations["readOnlyHint"], false);
+            assert_eq!(annotations["destructiveHint"], false);
+            assert_eq!(annotations["openWorldHint"], false);
+        }
     }
 
     #[test]

@@ -838,7 +838,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, read_file, git_status, git_diff, git_diff_summary, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
                 "params": {
                     "type": "object",
@@ -877,12 +877,61 @@ fn schemas() -> Value {
                     "items": {"type": "string"},
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
                 "pattern": {
                     "type": "string",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
                 "limit": {
                     "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "max_hunks": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "max_hunk_lines": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "cached": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "check": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "all_targets": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "all_features": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "no_default_features": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "features": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "package": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "filter": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "no_run": {
+                    "type": "boolean",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
                 "start_line": {
@@ -1441,12 +1490,17 @@ fn schemas() -> Value {
         },
         "ToolSpec": {
             "type": "object",
-            "required": ["name", "description", "inputSchema", "outputSchema"],
+            "required": ["name", "description", "inputSchema", "outputSchema", "annotations"],
             "properties": {
                 "name": { "type": "string" },
                 "description": { "type": "string" },
                 "inputSchema": { "type": "object", "additionalProperties": true },
-                "outputSchema": { "type": "object", "additionalProperties": true }
+                "outputSchema": { "type": "object", "additionalProperties": true },
+                "annotations": {
+                    "type": "object",
+                    "description": "Tool annotations / client hints.",
+                    "additionalProperties": true
+                }
             }
         },
         "ToolsListResponse": {
@@ -1474,7 +1528,7 @@ fn schemas() -> Value {
                         "type": "array",
                         "items": { "type": "string" }
                     },
-                    "description": "Optional grouping by family: inspect, git, patch, shell, jobs, runtime, cleanup. A tool may appear in more than one category."
+                    "description": "Optional grouping by family: inspect, git, review, validation, patch, edit, shell, jobs, runtime, cleanup. A tool may appear in more than one category."
                 },
                 "recommended_flows": {
                     "type": "array",
@@ -1847,6 +1901,10 @@ mod tests {
         for name in [
             "git_status",
             "read_file",
+            "git_diff_hunks",
+            "cargo_fmt",
+            "cargo_check",
+            "cargo_test",
             "run_codex",
             "job_status",
             "job_log",
@@ -2272,9 +2330,30 @@ mod tests {
         let required = tool_spec["required"].as_array().unwrap();
         assert!(required.iter().any(|v| v == "inputSchema"));
         assert!(required.iter().any(|v| v == "outputSchema"));
+        assert!(required.iter().any(|v| v == "annotations"));
         let props = tool_spec["properties"].as_object().unwrap();
         assert!(props["inputSchema"].is_object());
         assert!(props["outputSchema"].is_object());
+        assert!(props["annotations"].is_object());
+        assert_eq!(props["annotations"]["additionalProperties"], true);
+    }
+
+    #[test]
+    fn openapi_runtime_only_tools_do_not_get_dedicated_paths() {
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        for forbidden in [
+            "/api/projects/cargo_fmt",
+            "/api/projects/cargo_check",
+            "/api/projects/cargo_test",
+            "/api/projects/git_diff_hunks",
+        ] {
+            assert!(
+                !paths.contains_key(forbidden),
+                "{} must remain runtime-only via callRuntimeTool",
+                forbidden
+            );
+        }
     }
 
     #[test]

@@ -95,6 +95,65 @@ fn default_output_schema() -> Value {
     wrapped_output_schema(vec![])
 }
 
+fn tool_annotations(name: &str) -> Value {
+    let read_only = matches!(
+        name,
+        "list_tools"
+            | "list_projects"
+            | "list_agents"
+            | "runtime_status"
+            | "read_file"
+            | "list_project_files"
+            | "search_project_text"
+            | "git_status"
+            | "git_diff"
+            | "git_diff_summary"
+            | "git_diff_hunks"
+            | "job_status"
+            | "job_log"
+            | "job_tail"
+            | "list_jobs"
+            | "validate_patch"
+    );
+    let destructive = matches!(
+        name,
+        "run_shell"
+            | "run_job"
+            | "run_codex"
+            | "delete_project_files"
+            | "git_restore_paths"
+            | "discard_untracked"
+            | "register_project"
+            | "create_project"
+    );
+    let open_world = matches!(name, "run_shell" | "run_job" | "run_codex");
+    let idempotent = matches!(
+        name,
+        "list_tools"
+            | "list_projects"
+            | "list_agents"
+            | "runtime_status"
+            | "read_file"
+            | "list_project_files"
+            | "search_project_text"
+            | "git_status"
+            | "git_diff"
+            | "git_diff_summary"
+            | "git_diff_hunks"
+            | "job_status"
+            | "job_log"
+            | "job_tail"
+            | "list_jobs"
+            | "validate_patch"
+    );
+    json!({
+        "readOnlyHint": read_only,
+        "destructiveHint": destructive,
+        "idempotentHint": idempotent,
+        "openWorldHint": open_world,
+    })
+}
+
 fn output_schema_for_tool(name: &str) -> Value {
     match name {
         "run_shell" => wrapped_output_schema(vec![
@@ -248,6 +307,68 @@ fn output_schema_for_tool(name: &str) -> Value {
                 ),
             ),
         ]),
+        "git_diff_hunks" => wrapped_output_schema(vec![
+            (
+                "files",
+                array_schema(open_object_schema("File diff hunks."), "Changed files."),
+            ),
+            ("hunk_count", schema_type("integer", "Returned hunk count.")),
+            (
+                "truncated",
+                schema_type("boolean", "Whether output was bounded/truncated."),
+            ),
+            (
+                "exit_code",
+                nullable_schema("integer", "Git diff exit code."),
+            ),
+            ("stderr", schema_type("string", "Git diff stderr.")),
+        ]),
+        "cargo_fmt" | "cargo_check" | "cargo_test" => wrapped_output_schema(vec![
+            ("project", schema_type("string", "Runtime project id.")),
+            ("command", schema_type("string", "Cargo command executed.")),
+            (
+                "cwd",
+                schema_type("string", "Project-relative working directory."),
+            ),
+            (
+                "exit_code",
+                nullable_schema("integer", "Cargo command exit code."),
+            ),
+            (
+                "duration_ms",
+                schema_type("integer", "Command duration in milliseconds."),
+            ),
+            ("stdout_tail", schema_type("string", "Bounded stdout tail.")),
+            ("stderr_tail", schema_type("string", "Bounded stderr tail.")),
+            (
+                "stdout_truncated",
+                schema_type("boolean", "Whether stdout was truncated."),
+            ),
+            (
+                "stderr_truncated",
+                schema_type("boolean", "Whether stderr was truncated."),
+            ),
+            (
+                "passed",
+                schema_type("boolean", "Whether exit_code was zero."),
+            ),
+            (
+                "warnings_count",
+                nullable_schema("integer", "Heuristic warning count for cargo_check."),
+            ),
+            (
+                "errors_count",
+                nullable_schema("integer", "Heuristic error count for cargo_check."),
+            ),
+            (
+                "tests_passed",
+                nullable_schema("integer", "Parsed passed test count for cargo_test."),
+            ),
+            (
+                "tests_failed",
+                nullable_schema("integer", "Parsed failed test count for cargo_test."),
+            ),
+        ]),
         "apply_patch" | "apply_patch_checked" => wrapped_output_schema(vec![
             (
                 "exit_code",
@@ -366,6 +487,7 @@ impl ToolRuntime {
                 description: "List tools exposed by this WebCodex runtime.".to_string(),
                 input_schema: object_schema(vec![]),
                 output_schema: output_schema_for_tool("list_tools"),
+                annotations: tool_annotations("list_tools"),
             },
             ToolSpec {
                 name: "list_projects".to_string(),
@@ -373,6 +495,7 @@ impl ToolRuntime {
                     .to_string(),
                 input_schema: object_schema(vec![]),
                 output_schema: output_schema_for_tool("list_projects"),
+                annotations: tool_annotations("list_projects"),
             },
             ToolSpec {
                 name: "register_project".to_string(),
@@ -391,6 +514,7 @@ impl ToolRuntime {
                     ("overwrite", "boolean", "Overwrite an existing project config file (default false).", false),
                 ]),
                 output_schema: output_schema_for_tool("register_project"),
+                annotations: tool_annotations("register_project"),
             },
             ToolSpec {
                 name: "create_project".to_string(),
@@ -412,12 +536,14 @@ impl ToolRuntime {
                     ("overwrite", "boolean", "Overwrite an existing project config file (default false).", false),
                 ]),
                 output_schema: output_schema_for_tool("create_project"),
+                annotations: tool_annotations("create_project"),
             },
             ToolSpec {
                 name: "list_agents".to_string(),
                 description: "List connected local/remote execution agents.".to_string(),
                 input_schema: object_schema(vec![]),
                 output_schema: output_schema_for_tool("list_agents"),
+                annotations: tool_annotations("list_agents"),
             },
             ToolSpec {
                 name: "runtime_status".to_string(),
@@ -427,6 +553,7 @@ impl ToolRuntime {
                     + "Read-only; never exposes tokens, secrets, full env, or stdout/stderr.",
                 input_schema: object_schema(vec![]),
                 output_schema: output_schema_for_tool("runtime_status"),
+                annotations: tool_annotations("runtime_status"),
             },
             ToolSpec {
                 name: "run_shell".to_string(),
@@ -450,6 +577,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("run_shell"),
+                annotations: tool_annotations("run_shell"),
             },
             ToolSpec {
                 name: "run_job".to_string(),
@@ -477,6 +605,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("run_job"),
+                annotations: tool_annotations("run_job"),
             },
             ToolSpec {
                 name: "run_codex".to_string(),
@@ -515,12 +644,14 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("run_codex"),
+                annotations: tool_annotations("run_codex"),
             },
             ToolSpec {
                 name: "job_status".to_string(),
                 description: "Get status for a runtime job.".to_string(),
                 input_schema: object_schema(vec![("job_id", "string", "Job id.", true)]),
                 output_schema: output_schema_for_tool("job_status"),
+                annotations: tool_annotations("job_status"),
             },
             ToolSpec {
                 name: "job_log".to_string(),
@@ -541,6 +672,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("job_log"),
+                annotations: tool_annotations("job_log"),
             },
             ToolSpec {
                 name: "list_project_files".to_string(),
@@ -565,6 +697,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("list_project_files"),
+                annotations: tool_annotations("list_project_files"),
             },
             ToolSpec {
                 name: "search_project_text".to_string(),
@@ -590,6 +723,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("search_project_text"),
+                annotations: tool_annotations("search_project_text"),
             },
             ToolSpec {
                 name: "git_diff_summary".to_string(),
@@ -604,6 +738,7 @@ impl ToolRuntime {
                     true,
                 )]),
                 output_schema: output_schema_for_tool("git_diff_summary"),
+                annotations: tool_annotations("git_diff_summary"),
             },
             ToolSpec {
                 name: "list_jobs".to_string(),
@@ -626,6 +761,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("list_jobs"),
+                annotations: tool_annotations("list_jobs"),
             },
             ToolSpec {
                 name: "job_tail".to_string(),
@@ -640,6 +776,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("job_tail"),
+                annotations: tool_annotations("job_tail"),
             },
             ToolSpec {
                 name: "read_file".to_string(),
@@ -651,6 +788,7 @@ impl ToolRuntime {
                     ("limit", "integer", "Maximum line count.", false),
                 ]),
                 output_schema: output_schema_for_tool("read_file"),
+                annotations: tool_annotations("read_file"),
             },
             ToolSpec {
                 name: "git_status".to_string(),
@@ -662,6 +800,7 @@ impl ToolRuntime {
                     true,
                 )]),
                 output_schema: output_schema_for_tool("git_status"),
+                annotations: tool_annotations("git_status"),
             },
             ToolSpec {
                 name: "git_diff".to_string(),
@@ -671,6 +810,66 @@ impl ToolRuntime {
                     ("args", "array", "Optional path list.", false),
                 ]),
                 output_schema: output_schema_for_tool("git_diff"),
+                annotations: tool_annotations("git_diff"),
+            },
+            ToolSpec {
+                name: "git_diff_hunks".to_string(),
+                description: "Return bounded structured git diff hunks for review. Supports optional paths and cached diff; does not modify the worktree.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("paths", "array", "Optional project-relative paths to scope diff.", false),
+                    ("max_hunks", "integer", "Maximum hunks to return (clamped).", false),
+                    ("max_hunk_lines", "integer", "Maximum lines per hunk (clamped).", false),
+                    ("cached", "boolean", "Use staged diff via git diff --cached.", false),
+                ]),
+                output_schema: output_schema_for_tool("git_diff_hunks"),
+                annotations: tool_annotations("git_diff_hunks"),
+            },
+            ToolSpec {
+                name: "cargo_fmt".to_string(),
+                description: "Run cargo fmt in an agent-registered project. Use check=true for cargo fmt -- --check before broader validation.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("cwd", "string", "Optional project-relative working directory.", false),
+                    ("check", "boolean", "Run cargo fmt -- --check instead of formatting.", false),
+                    ("timeout_secs", "integer", "Command timeout in seconds.", false),
+                ]),
+                output_schema: output_schema_for_tool("cargo_fmt"),
+                annotations: tool_annotations("cargo_fmt"),
+            },
+            ToolSpec {
+                name: "cargo_check".to_string(),
+                description: "Run structured cargo check. Defaults to --all-targets; supports features/package/cwd without shell interpolation.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("cwd", "string", "Optional project-relative working directory.", false),
+                    ("all_targets", "boolean", "Include --all-targets (default true).", false),
+                    ("all_features", "boolean", "Include --all-features.", false),
+                    ("no_default_features", "boolean", "Include --no-default-features.", false),
+                    ("features", "string", "Feature list passed to --features.", false),
+                    ("package", "string", "Package passed to -p.", false),
+                    ("timeout_secs", "integer", "Command timeout in seconds.", false),
+                ]),
+                output_schema: output_schema_for_tool("cargo_check"),
+                annotations: tool_annotations("cargo_check"),
+            },
+            ToolSpec {
+                name: "cargo_test".to_string(),
+                description: "Run structured cargo test. Supports optional filter, feature flags, package, --no-run, and bounded output tails.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("cwd", "string", "Optional project-relative working directory.", false),
+                    ("filter", "string", "Optional cargo test filter.", false),
+                    ("all_targets", "boolean", "Include --all-targets.", false),
+                    ("all_features", "boolean", "Include --all-features.", false),
+                    ("no_default_features", "boolean", "Include --no-default-features.", false),
+                    ("features", "string", "Feature list passed to --features.", false),
+                    ("package", "string", "Package passed to -p.", false),
+                    ("no_run", "boolean", "Include --no-run.", false),
+                    ("timeout_secs", "integer", "Command timeout in seconds.", false),
+                ]),
+                output_schema: output_schema_for_tool("cargo_test"),
+                annotations: tool_annotations("cargo_test"),
             },
             ToolSpec {
                 name: "apply_patch".to_string(),
@@ -681,6 +880,7 @@ impl ToolRuntime {
                     ("patch", "string", "Unified diff patch.", true),
                 ]),
                 output_schema: output_schema_for_tool("apply_patch"),
+                annotations: tool_annotations("apply_patch"),
             },
             ToolSpec {
                 name: "apply_patch_checked".to_string(),
@@ -691,6 +891,7 @@ impl ToolRuntime {
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings before applying.", false),
                 ]),
                 output_schema: output_schema_for_tool("apply_patch_checked"),
+                annotations: tool_annotations("apply_patch_checked"),
             },
             ToolSpec {
                 name: "delete_project_files".to_string(),
@@ -700,6 +901,7 @@ impl ToolRuntime {
                     ("paths", "array", "Project-relative file paths to delete.", true),
                 ]),
                 output_schema: output_schema_for_tool("delete_project_files"),
+                annotations: tool_annotations("delete_project_files"),
             },
             ToolSpec {
                 name: "git_restore_paths".to_string(),
@@ -709,6 +911,7 @@ impl ToolRuntime {
                     ("paths", "array", "Project-relative tracked paths to restore.", true),
                 ]),
                 output_schema: output_schema_for_tool("git_restore_paths"),
+                annotations: tool_annotations("git_restore_paths"),
             },
             ToolSpec {
                 name: "discard_untracked".to_string(),
@@ -718,6 +921,7 @@ impl ToolRuntime {
                     ("paths", "array", "Project-relative untracked paths to remove.", true),
                 ]),
                 output_schema: output_schema_for_tool("discard_untracked"),
+                annotations: tool_annotations("discard_untracked"),
             },
             ToolSpec {
                 name: "validate_patch".to_string(),
@@ -728,6 +932,7 @@ impl ToolRuntime {
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings.", false),
                 ]),
                 output_schema: output_schema_for_tool("validate_patch"),
+                annotations: tool_annotations("validate_patch"),
             },
             ToolSpec {
                 name: "replace_in_file".to_string(),
@@ -751,6 +956,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("replace_in_file"),
+                annotations: tool_annotations("replace_in_file"),
             },
             ToolSpec {
                 name: "write_project_file".to_string(),
@@ -779,6 +985,7 @@ impl ToolRuntime {
                     ),
                 ]),
                 output_schema: output_schema_for_tool("write_project_file"),
+                annotations: tool_annotations("write_project_file"),
             },
             ToolSpec {
                 name: "replace_line_range".to_string(),
@@ -793,6 +1000,7 @@ impl ToolRuntime {
                     ("expected_old_prefix", "string", "Optional prefix guard for the original range text.", false),
                 ]),
                 output_schema: output_schema_for_tool("replace_line_range"),
+                annotations: tool_annotations("replace_line_range"),
             },
             ToolSpec {
                 name: "insert_at_line".to_string(),
@@ -806,6 +1014,7 @@ impl ToolRuntime {
                     ("expected_anchor_prefix", "string", "Optional prefix guard for anchor line or empty EOF anchor.", false),
                 ]),
                 output_schema: output_schema_for_tool("insert_at_line"),
+                annotations: tool_annotations("insert_at_line"),
             },
             ToolSpec {
                 name: "delete_line_range".to_string(),
@@ -819,6 +1028,7 @@ impl ToolRuntime {
                     ("expected_old_prefix", "string", "Optional prefix guard for the original range text.", false),
                 ]),
                 output_schema: output_schema_for_tool("delete_line_range"),
+                annotations: tool_annotations("delete_line_range"),
             },
         ]
     }
@@ -843,19 +1053,26 @@ impl ToolRuntime {
             "inspect": pick(&[
                 "list_tools", "list_projects", "list_agents", "runtime_status",
                 "read_file", "list_project_files", "search_project_text",
-                "git_status", "git_diff", "git_diff_summary"
+                "git_status", "git_diff", "git_diff_summary", "git_diff_hunks"
             ]),
             "projects": pick(&["list_projects", "register_project", "create_project"]),
             "git": pick(&[
-                "git_status", "git_diff", "git_diff_summary",
+                "git_status", "git_diff", "git_diff_summary", "git_diff_hunks",
                 "git_restore_paths", "discard_untracked"
+            ]),
+            "review": pick(&[
+                "git_diff_hunks", "git_diff_summary", "git_status", "git_diff"
+            ]),
+            "validation": pick(&[
+                "cargo_fmt", "cargo_check", "cargo_test", "validate_patch"
             ]),
             "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
             "edit": pick(&[
                 "replace_in_file", "write_project_file",
-                "replace_line_range", "insert_at_line", "delete_line_range"
+                "replace_line_range", "insert_at_line", "delete_line_range",
+                "apply_patch_checked"
             ]),
-            "shell": pick(&["run_shell", "run_job"]),
+            "shell": pick(&["run_shell", "run_job", "cargo_fmt", "cargo_check", "cargo_test"]),
             "jobs": pick(&[
                 "run_codex", "run_job", "job_status", "job_log",
                 "list_jobs", "job_tail"
@@ -875,7 +1092,9 @@ impl ToolRuntime {
         vec![
             "Discovery: call list_projects then runtime_status to see agents and projects.",
             "Inspect: use git_diff_summary then read_file before proposing changes.",
-            "Source code edit: inspect with read_file/search_project_text; prefer replace_line_range/insert_at_line/delete_line_range with guards. apply_patch_checked for broad diffs; replace_in_file short unique text; write_project_file new/whole files; run_shell validation/checks, not primary edits.",
+            "Review: use git_diff_summary for changed files, git_diff_hunks for bounded hunk review, then git_status.",
+            "Source code edit: inspect with read_file/search_project_text; prefer replace_line_range/insert_at_line/delete_line_range with guards. apply_patch_checked for broad diffs; run_shell not primary; validate with cargo tools.",
+            "Rust validation: use cargo_fmt, cargo_check, cargo_test before run_shell for common checks.",
             "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",
             "Cleanup: use delete_project_files / git_restore_paths / discard_untracked instead of ad hoc rm.",
             "Jobs: start run_codex, then poll job_status and read job_log/job_tail.",

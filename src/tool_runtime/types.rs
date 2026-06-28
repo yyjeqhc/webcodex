@@ -72,6 +72,72 @@ pub enum ToolCall {
         args: Option<Vec<String>>,
     },
 
+    /// Return bounded structured hunks from `git diff`.
+    GitDiffHunks {
+        project: String,
+        #[serde(default)]
+        paths: Option<Vec<String>>,
+        #[serde(default)]
+        max_hunks: Option<usize>,
+        #[serde(default)]
+        max_hunk_lines: Option<usize>,
+        #[serde(default)]
+        cached: Option<bool>,
+    },
+
+    /// Run `cargo fmt` in an agent-registered Rust project.
+    CargoFmt {
+        project: String,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        check: Option<bool>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+    },
+
+    /// Run `cargo check` in an agent-registered Rust project.
+    CargoCheck {
+        project: String,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        all_targets: Option<bool>,
+        #[serde(default)]
+        all_features: Option<bool>,
+        #[serde(default)]
+        no_default_features: Option<bool>,
+        #[serde(default)]
+        features: Option<String>,
+        #[serde(default)]
+        package: Option<String>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+    },
+
+    /// Run `cargo test` in an agent-registered Rust project.
+    CargoTest {
+        project: String,
+        #[serde(default)]
+        cwd: Option<String>,
+        #[serde(default)]
+        filter: Option<String>,
+        #[serde(default)]
+        all_targets: Option<bool>,
+        #[serde(default)]
+        all_features: Option<bool>,
+        #[serde(default)]
+        no_default_features: Option<bool>,
+        #[serde(default)]
+        features: Option<String>,
+        #[serde(default)]
+        package: Option<String>,
+        #[serde(default)]
+        no_run: Option<bool>,
+        #[serde(default)]
+        timeout_secs: Option<u64>,
+    },
+
     /// Read a file from a project.
     ReadFile {
         project: String,
@@ -325,6 +391,10 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "delete_line_range",
     "git_status",
     "git_diff",
+    "git_diff_hunks",
+    "cargo_fmt",
+    "cargo_check",
+    "cargo_test",
     "read_file",
     "run_job",
     "run_codex",
@@ -427,6 +497,7 @@ pub struct ToolSpec {
     pub description: String,
     pub input_schema: Value,
     pub output_schema: Value,
+    pub annotations: Value,
 }
 
 #[derive(Debug, Clone)]

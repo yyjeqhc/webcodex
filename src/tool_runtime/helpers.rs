@@ -191,6 +191,15 @@ pub(crate) fn shell_join_paths(paths: &[String]) -> String {
         .join(" ")
 }
 
+pub(crate) fn bounded_tail(text: &str, max_chars: usize) -> (String, bool) {
+    let total = text.chars().count();
+    if total <= max_chars {
+        return (text.to_string(), false);
+    }
+    let tail: String = text.chars().skip(total - max_chars).collect();
+    (tail, true)
+}
+
 pub(crate) fn is_safe_job_id(job_id: &str) -> bool {
     if job_id.is_empty() || job_id.len() > 80 || job_id.contains("..") {
         return false;

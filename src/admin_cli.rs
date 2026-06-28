@@ -496,6 +496,9 @@ pub(crate) fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliReque
 }
 
 fn resolve_bearer_token(opts: &AdminOptions, prefer_credential: bool) -> Result<String, String> {
+    if opts.token.is_some() || opts.token_file.is_some() || opts.token_env.is_some() {
+        return resolve_token(opts, "WEBCODEX_TOKEN");
+    }
     if prefer_credential {
         if let Some(token) = resolve_credential_token(opts)? {
             return Ok(token);
@@ -807,6 +810,30 @@ mod tests {
         let req = build_admin_request(&cmd).unwrap();
         assert_eq!(req.token, "fake-env-token");
         std::env::remove_var("WEBCODEX_TOKEN");
+    }
+
+    #[test]
+    fn explicit_admin_token_wins_over_default_account_credential_env() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_ACCOUNT_CREDENTIAL", "fake-account-credential");
+        let cmd = parse_admin_cli(&args(&[
+            "tokens",
+            "register-hash",
+            "--server-url",
+            "https://example.test",
+            "--admin-token",
+            "fake-admin",
+            "--username",
+            "alice",
+            "--hash",
+            "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "--prefix",
+            "wc_pat_aaaaaaaa",
+        ]))
+        .unwrap();
+        let req = build_admin_request(&cmd).unwrap();
+        assert_eq!(req.token, "fake-admin");
+        std::env::remove_var("WEBCODEX_ACCOUNT_CREDENTIAL");
     }
 
     #[test]

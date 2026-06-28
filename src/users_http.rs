@@ -736,6 +736,19 @@ pub(crate) async fn tokens_register_hash(req: &mut Request, depot: &mut Depot, r
         res.render(json_error(StatusCode::FORBIDDEN, "user is disabled"));
         return;
     }
+    match db.get_account_credential_by_hash(&token_hash) {
+        Ok(Some(_)) => {
+            res.status_code(StatusCode::CONFLICT);
+            res.render(json_error(StatusCode::CONFLICT, "credential hash conflict"));
+            return;
+        }
+        Ok(None) => {}
+        Err(e) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            return;
+        }
+    }
 
     let now = chrono::Utc::now().timestamp();
     let record = ApiKeyRecord {
@@ -1475,6 +1488,34 @@ mod tests {
             .send(&service)
             .await;
         assert_eq!(effective_status(&resp), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn http_tokens_register_hash_rejects_existing_account_credential_hash() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db.clone()));
+        let mut resp = TestClient::post("http://localhost/api/users/create")
+            .bearer_auth("secret")
+            .json(&json!({"username": "alice", "issue_credential": true}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let credential = resp.take_json::<Value>().await.unwrap()["account_credential"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let resp = TestClient::post("http://localhost/api/tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&json!({
+                "username": "alice",
+                "token_hash": hash_token(&credential),
+                "token_prefix": "wc_pat_conflict",
+                "scopes": ["runtime:read"],
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::CONFLICT);
     }
 
     #[tokio::test]

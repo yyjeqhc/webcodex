@@ -1,5 +1,7 @@
 # sg4 manual smoke test: account credential, PAT, agent token, and project call
 
+[English](smoke-test-sg4.md) | [简体中文](smoke-test-sg4.zh-CN.md)
+
 This document records the manually verified onboarding loop for `https://sg4.yyjeqhc.cn`. Replace the domain, username, `client_id`, project id, and paths for another deployment.
 
 Verified example values:
@@ -44,9 +46,9 @@ Keep `WEBCODEX_TOKEN` on the server. It is not the GPT Action/MCP token and it i
 ## 2. Create user and issue account credential
 
 ```bash
-./webcodex-cli user create \
-  --server https://sg4.yyjeqhc.cn \
-  --admin-token "$WEBCODEX_TOKEN" \
+./webcodex-cli users create \
+  --server-url https://sg4.yyjeqhc.cn \
+  --token "$WEBCODEX_TOKEN" \
   --username alice \
   --display-name "Alice" \
   --role user \

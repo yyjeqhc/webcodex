@@ -1,5 +1,7 @@
 # Build and Install Quick Reference
 
+[English](BUILD_INSTALL.md) | [简体中文](BUILD_INSTALL.zh-CN.md)
+
 This is the short install path. See [DEPLOYMENT.md](DEPLOYMENT.md) for production details.
 
 ## Build binaries
@@ -13,6 +15,26 @@ webcodex-cli
 ```
 
 Do not run unauthenticated production deployments.
+
+## Help-verified command shape
+
+The examples in this guide were checked against the current binary help output from `webcodex-cli -h`, `webcodex-agent -h`, and `webcodex -h`. Keep these flag differences in mind:
+
+| Task | Preferred command shape |
+| --- | --- |
+| Server env bootstrap | `webcodex-cli server init --listen ... --data-dir ... --env-file ...` |
+| Server systemd unit | `webcodex-cli server install-service --env-file ... --bin ...` |
+| Server status | `webcodex-cli server status --env-file ...` |
+| Admin-created account credential | `webcodex-cli users create --server-url ... --token ... --username ... --issue-credential` |
+| User-created PAT | `webcodex-cli token create-local --server ... --user ... --credential ... --scopes ...` |
+| User-created agent token | `webcodex-cli agent-token create-local --server ... --user ... --credential ... --client-id ...` |
+| Pairing code | `webcodex-cli pairing create --server-url ... --username ... --client-id ...` |
+| Client enrollment | `webcodex-cli client enroll --server-url ... --pairing-code ... --client-id ...` |
+| Agent foreground run | `webcodex-agent --config ...` |
+| Agent service | `webcodex-cli agent install-service --config ... --bin ...` |
+| Doctor | `webcodex-cli doctor --server-url ... --user-token-file ... --strict` |
+
+The account-management command uses `users create` and `--server-url`; local token creation commands use `--server`. That difference comes from the current CLI surface and is intentionally reflected in the examples.
 
 ## Install packages
 

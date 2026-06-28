@@ -1,5 +1,7 @@
 # WebCodex
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 Self-hosted runtime for letting ChatGPT GPT Actions and MCP clients work on private code through a controlled server and a local execution agent.
 
 WebCodex is for developers and teams who want an AI assistant to inspect repositories, edit files, run Git/test/build commands, and optionally launch Codex CLI workflows without handing project execution to a hosted black box.
@@ -69,7 +71,7 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 
 ## Quick start
 
-This is the shortest path from zero to a working private project runtime. For production deployment details, service files, reverse proxy setup, and the full sg4 smoke record, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md).
+This is the shortest path from zero to a working private project runtime. For production deployment details, service files, reverse proxy setup, and the full sg4 smoke record, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) / [简体中文](docs/DEPLOYMENT.zh-CN.md) and [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md).
 
 ### 1. Install
 
@@ -95,9 +97,9 @@ Put the server behind your own HTTPS domain before connecting GPT Actions or rem
 ### 3. Create a user and account credential
 
 ```bash
-webcodex-cli user create \
-  --server https://your-domain.example \
-  --admin-token "$WEBCODEX_TOKEN" \
+webcodex-cli users create \
+  --server-url https://your-domain.example \
+  --token "$WEBCODEX_TOKEN" \
   --username alice \
   --display-name "Alice" \
   --role user \
@@ -196,7 +198,7 @@ GPT Actions are one of the main reasons to use WebCodex: your GPT gets a structu
 3. Import the OpenAPI schema from `https://your-domain.example/openapi.json`.
 4. Configure authentication as Bearer/API key in the GPT Action settings.
 5. Use a `wc_pat_xxx` personal API token. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
-6. Test `listTools` and `callRuntimeTool` against a registered project such as `agent:alice-laptop:my-repo`.
+6. Test `listRuntimeTools` and `callRuntimeTool` against a registered project such as `agent:alice-laptop:my-repo`.
 
 See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the full GPT Action setup guide and supported tool surface.
 
@@ -225,15 +227,16 @@ The server stores only hashes for user-created PATs and agent tokens. See [docs/
 
 ## Documentation
 
-- Install and deploy: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
-- Create a GPT Action: [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md)
-- Use with MCP: [docs/MCP.md](docs/MCP.md)
-- Credential model: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md)
-- Agent projects: [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md)
-- Build/install reference: [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md)
-- Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
-- Full documentation index: [docs/INDEX.md](docs/INDEX.md)
-- sg4 smoke test: [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md)
+- Install and deploy: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) / [简体中文](docs/DEPLOYMENT.zh-CN.md)
+- Create a GPT Action: [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) / [简体中文](docs/GPT_ACTIONS.zh-CN.md)
+- Quick start: [docs/QUICK_START.md](docs/QUICK_START.md) / [简体中文](docs/QUICK_START.zh-CN.md)
+- Use with MCP: [docs/MCP.md](docs/MCP.md) / [简体中文](docs/MCP.zh-CN.md)
+- Credential model: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) / [简体中文](docs/AUTH_MODEL.zh-CN.md)
+- Agent projects: [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md) / [简体中文](docs/AGENT_PROJECTS.zh-CN.md)
+- Agent transports: [docs/AGENT_TRANSPORTS.md](docs/AGENT_TRANSPORTS.md) / [简体中文](docs/AGENT_TRANSPORTS.zh-CN.md)
+- Shell profiles: [docs/SHELL_PROFILES.md](docs/SHELL_PROFILES.md) / [简体中文](docs/SHELL_PROFILES.zh-CN.md)
+- Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) / [简体中文](docs/TROUBLESHOOTING.zh-CN.md)
+- Full documentation index: [docs/INDEX.md](docs/INDEX.md) / [简体中文](docs/INDEX.zh-CN.md)
 
 ## Security notes
 

@@ -22,7 +22,7 @@ base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "rustls-tls"] }
 url = "2"
 sha2 = "0.10"
-# Phase 5A: experimental custom QUIC agent transport. Quinn reuses the
+# Custom QUIC agent transport. Quinn reuses the
 # rustls 0.23 + aws-lc-rs provider already present transitively (via
 # tokio-tungstenite / salvo). `rustls-pemfile` loads PEM cert/key on the
 # server. Versions are pinned to the 0.11 / 0.23 / 2.x lines already

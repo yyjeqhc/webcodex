@@ -1386,7 +1386,7 @@ fn load_config(path: &Path) -> Result<AgentConfig, String> {
             return Err("transport must be websocket, polling, quic, or auto".to_string());
         }
     }
-    // Phase 5A: when allowed_roots is missing/empty, default to [$HOME] so a
+    // When allowed_roots is missing/empty, default to [$HOME] so a
     // minimal agent.toml without an explicit policy.allowed_roots still works
     // predictably. If HOME is unavailable and allow_cwd_anywhere is false,
     // surface a clear configuration error. Explicit allowed_roots is preserved

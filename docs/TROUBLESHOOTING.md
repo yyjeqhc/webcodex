@@ -1,5 +1,7 @@
 # Troubleshooting
 
+[English](TROUBLESHOOTING.md) | [简体中文](TROUBLESHOOTING.zh-CN.md)
+
 Practical checks for common WebCodex deployment issues. Do not paste or share real tokens, env files, `Authorization` headers, or complete `agent.toml` files while debugging.
 
 ## Operational checklist

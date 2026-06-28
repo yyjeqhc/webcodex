@@ -1,5 +1,7 @@
 # Authentication and credential model
 
+[English](AUTH_MODEL.md) | [简体中文](AUTH_MODEL.zh-CN.md)
+
 WebCodex separates bootstrap administration, account onboarding, runtime API access, and agent connectivity. Do not reuse one credential across all surfaces.
 
 ## Credential summary

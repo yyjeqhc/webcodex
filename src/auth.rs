@@ -204,8 +204,8 @@ pub(crate) fn hash_token(token: &str) -> String {
 }
 
 /// Authenticate a bearer token *outside* the HTTP request path, reusing the
-/// exact same validation as [`AuthMiddleware`]. Used by the experimental QUIC
-/// agent transport, which has no HTTP middleware to inject an `AuthContext`.
+/// exact same validation as [`AuthMiddleware`]. Used by the QUIC agent
+/// transport, which has no HTTP middleware to inject an `AuthContext`.
 ///
 /// Mirrors `AuthMiddleware::handle`:
 /// - When auth is disabled (`!config.is_auth_enabled()`), returns a bootstrap

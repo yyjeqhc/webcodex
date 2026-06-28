@@ -12,14 +12,14 @@ pub struct Config {
     pub codex: CodexConfig,
 }
 
-/// Server-side QUIC agent transport configuration (Phase 5A). Sourced from
+/// Server-side QUIC agent transport configuration. Sourced from
 /// `WEBCODEX_QUIC_*` env vars, mirroring the project's env-var config pattern.
 /// Kept as a standalone struct (not embedded in [`Config`]) so existing
 /// `Config { ... }` test literals and constructors are untouched. The listener
 /// is **off by default**; operators must explicitly set
 /// `WEBCODEX_QUIC_ENABLED=true` and provide a cert/key.
 ///
-/// This is an experimental custom QUIC stream transport, NOT HTTP/3. Nginx is
+/// This is a custom WebCodex QUIC stream transport, NOT HTTP/3. Nginx is
 /// not involved; the server listens on UDP directly. The cert/key paths are
 /// NOT hardcoded to production Let's Encrypt paths — they are read from env so
 /// dev/staging/prod can differ. Paths are validated at listener startup so a

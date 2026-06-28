@@ -75,7 +75,7 @@ Environment:\n\
   WEBCODEX_DATA          Data directory, default ./data\n\
   WEBCODEX_PUBLIC_URL    Public URL reported to clients\n\
   WEBCODEX_ENABLE_SSH    Enable SSH-related runtime features\n\
-  WEBCODEX_QUIC_ENABLED  Enable experimental QUIC agent transport (default off)\n\
+  WEBCODEX_QUIC_ENABLED  Enable QUIC agent transport (default off)\n\
   WEBCODEX_QUIC_LISTEN   QUIC UDP listen addr, default 0.0.0.0:8443\n\
   WEBCODEX_QUIC_CERT     PEM cert path for the QUIC listener\n\
   WEBCODEX_QUIC_KEY      PEM key path for the QUIC listener\n\
@@ -243,7 +243,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         runtime_info.clone(),
     ));
 
-    // Experimental custom QUIC agent transport (Phase 5A). Default disabled;
+    // Custom QUIC agent transport. Default disabled;
     // only starts when WEBCODEX_QUIC_ENABLED=true. Runs a separate quinn UDP
     // listener in parallel with the HTTP server. HTTP/WebSocket/polling and
     // the GPT Actions / Nginx path are completely unaffected. This is NOT
@@ -283,7 +283,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             });
             tracing::info!(
-                "Agent QUIC (experimental) configured on UDP {} ALPN {}",
+                "Agent QUIC configured on UDP {} ALPN {}",
                 quic_cfg.listen,
                 quic_cfg.alpn
             );

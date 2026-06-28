@@ -1,5 +1,7 @@
 # MCP
 
+[English](MCP.md) | [简体中文](MCP.zh-CN.md)
+
 WebCodex exposes the same runtime tools used by GPT Actions through an MCP endpoint.
 
 ## Endpoint
@@ -15,6 +17,27 @@ WebCodex currently exposes a remote MCP endpoint backed by WebCodex runtime tool
 In MCP terminology, the AI host creates the MCP client connection, WebCodex server acts as the MCP server, and the WebCodex agent executes project work behind that server. Local stdio MCP-server registration and external MCP-server brokering are separate future extensions, not required for the current endpoint.
 
 Use your own WebCodex HTTPS domain in place of `your-domain.example`.
+
+## Create a ChatGPT MCP app / connector
+
+The screenshots in `docs/assets/mcp-*.png` show the ChatGPT app/connector flow:
+
+![Open ChatGPT apps](assets/mcp-1.png)
+![Choose webcodex](assets/mcp-2.png)
+![Configure MCP URL and auth](assets/mcp-3.png)
+![Connect webcodex](assets/mcp-4.png)
+
+1. Open ChatGPT's apps/connectors area and choose to create or configure an MCP app.
+2. Set the app name to something recognizable, for example `webcodex`.
+3. Set the MCP server URL to:
+
+   ```text
+   https://your-domain.example/mcp
+   ```
+
+4. Configure authentication as HTTP/API key Bearer auth and use a `wc_pat_xxx` personal API token.
+5. Save the app, then connect it in ChatGPT when prompted.
+6. Test with low-risk discovery tools first: list tools, check runtime status, list projects, then call a read-only project tool.
 
 ## Authentication
 
@@ -51,6 +74,7 @@ agent:<client_id>:<project_id>
 ```
 
 For example, the sg4 smoke test used `agent:ubuntu-client:webcodex`.
+
 ## Example client configuration
 
 The exact shape depends on your MCP client. Use placeholders and environment variables for secrets; do not paste real tokens into committed config files.

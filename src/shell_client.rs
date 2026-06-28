@@ -34,7 +34,7 @@ const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
-const QUIC_PHASE_5A_DISPATCH_ERROR: &str = "QUIC transport is connected in phase 5A, but request dispatch is not implemented yet; use websocket/polling or upgrade to a QUIC dispatch-capable agent.";
+const QUIC_REGISTER_ONLY_DISPATCH_ERROR: &str = "QUIC transport is connected with a register-only protocol version; request dispatch is not implemented for this agent; use websocket/polling or upgrade to a QUIC dispatch-capable agent.";
 
 /// Maximum number of pending requests queued for a single agent client.
 /// Bounds memory when an agent is slow or disconnected: once a client's
@@ -51,10 +51,10 @@ const MAX_QUEUED_REQUESTS_PER_CLIENT: usize = 256;
 pub const TRANSPORT_POLLING: &str = "polling";
 /// Transport label for agents connected over the WebSocket endpoint.
 pub const TRANSPORT_WEBSOCKET: &str = "websocket";
-/// Transport label for agents connected over the experimental custom QUIC
-/// stream transport. Reported in `ShellClientView.transport` and
-/// surfaced by `runtime_status` / `listAgents`. Default transport stays
-/// `websocket`; QUIC is opt-in via `transport = "quic"` in `agent.toml`.
+/// Transport label for agents connected over the custom QUIC stream transport.
+/// Reported in `ShellClientView.transport` and surfaced by `runtime_status` /
+/// `listAgents`. New deployments should generally use `transport = "auto"`
+/// with `[quic]` configured so QUIC is attempted before fallback transports.
 pub const TRANSPORT_QUIC: &str = "quic";
 
 #[derive(Debug, Clone)]
@@ -779,9 +779,9 @@ fn ensure_queue_capacity_locked(
     Ok(())
 }
 
-/// Phase 5A QUIC agents are online for register/ack/ping/pong only. They do
-/// not have a server->agent request pump yet, so enqueue paths must reject
-/// instead of leaving runtime requests in a queue that no QUIC task consumes.
+/// `quic-v1` agents are online for register/ack/ping/pong only. They do not
+/// have a server->agent request pump, so enqueue paths must reject instead of
+/// leaving runtime requests in a queue that no QUIC task consumes.
 fn ensure_dispatch_supported_locked(
     inner: &ShellClientRegistryInner,
     client_id: &str,
@@ -792,7 +792,7 @@ fn ensure_dispatch_supported_locked(
     if client.transport == TRANSPORT_QUIC
         && client.agent_protocol_version == AGENT_PROTOCOL_VERSION_QUIC_V1
     {
-        return Err(QUIC_PHASE_5A_DISPATCH_ERROR.to_string());
+        return Err(QUIC_REGISTER_ONLY_DISPATCH_ERROR.to_string());
     }
     Ok(())
 }
@@ -3761,7 +3761,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(err, QUIC_PHASE_5A_DISPATCH_ERROR);
+        assert_eq!(err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
         let view = registry.get_client_view("quic-run").await.unwrap();
         assert_eq!(view.pending_requests, 0);
     }
@@ -3819,7 +3819,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(file_err, QUIC_PHASE_5A_DISPATCH_ERROR);
+        assert_eq!(file_err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
 
         let project_err = registry
             .enqueue_project_op(
@@ -3830,7 +3830,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(project_err, QUIC_PHASE_5A_DISPATCH_ERROR);
+        assert_eq!(project_err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
 
         let view = registry.get_client_view("quic-ops").await.unwrap();
         assert_eq!(view.pending_requests, 0);
@@ -3860,7 +3860,7 @@ mod tests {
             )
             .await
             .unwrap_err();
-        assert_eq!(err, QUIC_PHASE_5A_DISPATCH_ERROR);
+        assert_eq!(err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
 
         let view = registry.get_client_view("quic-job").await.unwrap();
         assert_eq!(view.pending_requests, 0);
@@ -3921,7 +3921,7 @@ mod tests {
             .stop_job(&job.job_id, "tester".to_string())
             .await
             .unwrap_err();
-        assert_eq!(err, QUIC_PHASE_5A_DISPATCH_ERROR);
+        assert_eq!(err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
         let view = registry.get_client_view("quic-stop").await.unwrap();
         assert_eq!(view.pending_requests, 0);
         let still_agent_queued = registry.get_job(&job.job_id).await.unwrap();

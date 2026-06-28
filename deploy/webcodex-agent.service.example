@@ -9,13 +9,12 @@
 # config relay and does NOT need a server-side projects.toml for runtime project
 # discovery; project ids are exposed as agent:<client_id>:<project_id>.
 #
-# The default agent.toml below sets transport = "websocket" (preferred). Polling
-# is the fallback for restricted networks; set transport = "polling" there to
-# use it. Both transports reuse the same execution path and server-side
-# registry/queue/job state.
+# New deployments should prefer transport = "auto" in agent.toml with [quic]
+# configured. The agent tries QUIC first, then WebSocket, then polling. Use a
+# strict transport only when you intentionally want exactly one transport.
 
 [Unit]
-Description=WebCodex agent (WebSocket preferred, polling fallback)
+Description=WebCodex agent (auto transport: QUIC, WebSocket, polling)
 After=network-online.target
 Wants=network-online.target
 

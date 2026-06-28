@@ -8,8 +8,8 @@
 //! help text; the large generation/writing code lives here to avoid
 //! duplication.
 //!
-//! Phase 5A default policy: when `allowed_roots` is not explicitly configured,
-//! it defaults to `$HOME` (see `effective_allowed_roots`).
+//! Default policy: when `allowed_roots` is not explicitly configured, it
+//! defaults to `$HOME` (see `effective_allowed_roots`).
 
 use serde::Serialize;
 use std::fs::OpenOptions;
@@ -25,14 +25,13 @@ pub const DEFAULT_MAX_TIMEOUT_SECS: u64 = 3600;
 pub const DEFAULT_MAX_OUTPUT_BYTES: usize = 256 * 1024;
 /// Config value selecting the polling transport (HTTP `/api/shell/agent/poll`).
 pub const TRANSPORT_POLLING: &str = "polling";
-/// Config value selecting the WebSocket transport (preferred long-lived).
+/// Config value selecting the WebSocket transport.
 pub const TRANSPORT_WEBSOCKET: &str = "websocket";
-/// Config value selecting the experimental custom QUIC stream transport
-/// (Phase 5A). Opt-in; requires a `[quic]` section in `agent.toml` with
-/// `server_addr` / `server_name`. Default transport remains `websocket`.
+/// Config value selecting the supported custom QUIC stream transport.
+/// Requires a `[quic]` section in `agent.toml` with `server_addr` / `server_name`.
 pub const TRANSPORT_QUIC: &str = "quic";
-/// Explicit opt-in fallback mode: try QUIC when `[quic]` is configured, then
-/// WebSocket, then polling. This is never the default.
+/// Recommended fallback mode for new deployments: try QUIC when `[quic]` is
+/// configured, then WebSocket, then polling.
 pub const TRANSPORT_AUTO: &str = "auto";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,7 +119,7 @@ pub fn validate_agent_init_options(opts: &AgentInitOptions) -> Result<(), String
     if opts.output.as_os_str().is_empty() {
         return Err("--output is required".to_string());
     }
-    // Phase 5A: an empty allowed_roots no longer errors here; the HOME default
+    // Empty allowed_roots no longer errors here; the HOME default
     // is resolved at generation time via `effective_allowed_roots`. We still
     // reject empty path entries so an explicit `--allowed-root ""` is caught.
     if opts

@@ -49,8 +49,8 @@ pub const AGENT_PROTOCOL_VERSION_POLLING_V1: &str = "polling-v1";
 pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
 
 /// Protocol version announced by `webcodex-agent` builds that connect over the
-/// experimental custom QUIC stream transport. Kept in the shared protocol
-/// module so the server and the agent binary reference the same literal.
+/// custom QUIC stream transport. Kept in the shared protocol module so the
+/// server and the agent binary reference the same literal.
 /// Note: this is a *protocol* version label (reported in
 /// `agent_protocol_version`); the transport label is `"quic"` (see
 /// `TRANSPORT_QUIC`).
@@ -824,8 +824,7 @@ impl AgentEnvelope {
 // QUIC length-prefixed frame codec
 // ============================================================================
 //
-// The experimental custom QUIC agent transport frames each
-// [`AgentEnvelope`] as:
+// The custom QUIC agent transport frames each [`AgentEnvelope`] as:
 //
 //   u32_be length (big-endian)
 //   JSON bytes

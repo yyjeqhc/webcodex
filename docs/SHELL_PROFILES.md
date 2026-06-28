@@ -1,5 +1,7 @@
 # Shell Profiles (Prepared Environment Snapshots)
 
+[English](SHELL_PROFILES.md) | [简体中文](SHELL_PROFILES.zh-CN.md)
+
 WebCodex does **not** keep a persistent shell session. It prepares an
 environment snapshot **once per project/profile** and then runs each command as
 an independent process with that snapshot. This page describes how shell

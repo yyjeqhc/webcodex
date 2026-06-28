@@ -1,11 +1,13 @@
 # Deployment
 
+[English](DEPLOYMENT.md) | [简体中文](DEPLOYMENT.zh-CN.md)
+
 This guide covers the current WebCodex production shape: server bootstrap, service installation, agent configuration, GPT Actions, MCP, and smoke checks.
 
 ## Components
 
 - `webcodex`: server exposing REST, GPT Actions OpenAPI, MCP, and agent endpoints.
-- `webcodex-agent`: long-lived worker connected by WebSocket or polling.
+- `webcodex-agent`: long-lived worker connected by `auto` transport (QUIC first, then WebSocket, then polling) or by an explicitly selected transport.
 - `webcodex-cli`: recommended management CLI for server bootstrap, pairing/enrollment, status, and doctor checks.
 
 ## Server configuration
@@ -97,7 +99,7 @@ Client:
 For deployments that do not use pairing, use the account credential flow. The sg4 smoke-test commands are in [smoke-test-sg4.md](smoke-test-sg4.md); replace `https://sg4.yyjeqhc.cn` with your own public URL.
 
 1. Start the server with `WEBCODEX_TOKEN` in the server env file. This is the bootstrap/root/admin credential only.
-2. Create a user with `webcodex-cli user create --issue-credential` and give the returned `wc_acct_xxx` to that user once.
+2. Create a user with `webcodex-cli users create --issue-credential` and give the returned `wc_acct_xxx` to that user once. The binary help for this path uses `users create` plus `--server-url`, while `token create-local` and `agent-token create-local` use `--server`.
 3. The user runs `webcodex-cli token create-local` with `wc_acct_xxx` to locally generate a `wc_pat_xxx` and register only its hash. Use this PAT for GPT Actions, MCP, and runtime API calls.
 4. The user runs `webcodex-cli agent-token create-local` with `wc_acct_xxx` and `--client-id <client_id>` to locally generate a `wc_agent_xxx` and register only its hash. Use this token only for `webcodex-agent`.
 5. Initialize `webcodex-agent`, add top-level agent `projects.d/*.toml` files, start the agent, then verify `runtime_status`, `projects/list`, and a read-only `tools/call` such as `git_status`.
@@ -199,7 +201,7 @@ Important agent settings:
 | `token` | Agent token. Do not commit or print it. |
 | `client_id` | Stable id used in `agent:<client_id>:<project_id>`. |
 | `owner` | Owner principal for this agent. |
-| `transport` | Prefer `websocket`; polling is fallback. |
+| `transport` | Prefer `auto` with `[quic]` configured: QUIC first, then WebSocket, then polling. Use strict `quic`, `websocket`, or `polling` only when you want exactly one transport. |
 | `projects_dir` | Directory of project registry files. |
 | `[policy]` | Local execution boundary. |
 | `[shell]` | Optional shell profile definitions for project development environments. |
@@ -237,7 +239,7 @@ Authorization: Bearer <token>
 
 `?token=` is allowed only for `/api/agents/ws` WebSocket handshake compatibility. Do not use query-string tokens for polling, REST, MCP, or GPT Actions.
 
-WebSocket is preferred for agents. Polling remains available for constrained networks.
+For agents, prefer `transport = "auto"` with QUIC configured. WebSocket and polling remain supported fallbacks for constrained networks.
 
 ## GPT Actions and MCP
 

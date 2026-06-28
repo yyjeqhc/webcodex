@@ -1,5 +1,7 @@
 # Agent Project Registry
 
+[English](AGENT_PROJECTS.md) | [简体中文](AGENT_PROJECTS.zh-CN.md)
+
 An agent reports project registry entries to the server. GPT Actions and MCP then use ids like:
 
 ```text

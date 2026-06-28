@@ -1,11 +1,11 @@
-//! Server-side experimental custom QUIC agent transport.
+//! Server-side custom QUIC agent transport.
 //!
 //! This is a **custom QUIC stream transport** for agent connections, NOT
 //! HTTP/3. It runs a separate `quinn` UDP listener in parallel with the HTTP
 //! server (which keeps serving GPT Actions over TCP 443 via Nginx unchanged).
 //! Nginx is not involved in QUIC.
 //!
-//! `quic-v1` is the Phase 5A register/ack/ping/pong protocol. `quic-v2`
+//! `quic-v1` is the register/ack/ping/pong protocol. `quic-v2`
 //! extends the same single bidirectional stream with request dispatch:
 //! server -> agent `Request`, agent -> server `Result` / `JobUpdate`, plus
 //! `Ping` / `Pong`. This is still a serialized frame model, not HTTP/3 and
@@ -50,7 +50,7 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
 /// pong/error). Provides backpressure if the agent reads slowly.
 const OUTGOING_CHANNEL_CAPACITY: usize = 64;
 
-fn quic_phase_5a_capabilities() -> ShellClientCapabilities {
+fn quic_register_only_capabilities() -> ShellClientCapabilities {
     ShellClientCapabilities {
         shell: false,
         file_read: false,
@@ -177,7 +177,7 @@ pub(crate) async fn run_quic_agent_listener(
             .mark_started();
     }
     tracing::info!(
-        "Agent QUIC listener (experimental) on UDP {} with ALPN {}",
+        "Agent QUIC listener on UDP {} with ALPN {}",
         listen,
         quic_cfg.alpn
     );
@@ -336,9 +336,9 @@ async fn handle_quic_connection(
         effective_register_owner(Some(&auth), register_payload.owner.as_deref());
 
     // 4. Register into the shared registry (same path as polling/ws), then
-    //    flip the transport label to "quic". `quic-v1` remains Phase 5A
-    //    register-only and therefore has execution capabilities downgraded to
-    //    false. `quic-v2` is dispatch-capable and keeps the agent's real
+    //    flip the transport label to "quic". `quic-v1` remains register-only
+    //    and therefore has execution capabilities downgraded to false.
+    //    `quic-v2` is dispatch-capable and keeps the agent's real capabilities.
     //    capabilities.
     let agent_protocol_version = register_payload
         .agent_protocol_version
@@ -347,7 +347,7 @@ async fn handle_quic_connection(
         .unwrap_or("");
     let dispatch_capable = agent_protocol_version == AGENT_PROTOCOL_VERSION_QUIC_V2;
     if !dispatch_capable {
-        register_payload.capabilities = Some(quic_phase_5a_capabilities());
+        register_payload.capabilities = Some(quic_register_only_capabilities());
     }
     if let Err(e) = registry.register(register_payload).await {
         tracing::warn!(
@@ -860,7 +860,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(
-            err.contains("phase 5A"),
+            err.contains("register-only"),
             "quic-v1 dispatch error should stay explicit: {err}"
         );
         assert_eq!(

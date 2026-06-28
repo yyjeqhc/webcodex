@@ -1,5 +1,7 @@
 # E2E Validation
 
+[English](E2E_VALIDATION.md) | [简体中文](E2E_VALIDATION.zh-CN.md)
+
 The E2E validation script is for local validation of a WebCodex server, agent, GPT Actions schema, and MCP endpoint without depending on ChatGPT UI.
 
 ## What it checks
@@ -44,6 +46,26 @@ webcodex-cli doctor --strict --server-url URL --user-token-file PATH --agent-tok
 ```
 
 `pairing create` is server/admin-side. `client enroll`, `agent install-service`, and `agent status` are client-side for the machine running `webcodex-agent`. Do not copy server tokens to the client; copy only the short-lived pairing code.
+## Binary help validation
+
+Before release or large documentation changes, verify the command examples against the binaries:
+
+```bash
+webcodex-cli -h
+webcodex-cli server init -h
+webcodex-cli server install-service -h
+webcodex-cli server status -h
+webcodex-cli pairing create -h
+webcodex-cli client enroll -h
+webcodex-cli agent install-service -h
+webcodex-cli agent status -h
+webcodex-cli doctor -h
+webcodex-agent -h
+webcodex -h
+```
+
+Pay special attention to `users create --server-url ...` for admin-created account credentials versus `token create-local --server ...` and `agent-token create-local --server ...` for local token creation.
+
 
 The compatibility entry points still exist, but new validation docs should use `webcodex-cli`.
 

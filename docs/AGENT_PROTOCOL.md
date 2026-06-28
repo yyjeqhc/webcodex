@@ -1,6 +1,8 @@
 # Agent Protocol
 
-WebCodex agents connect to the server and execute registered project tools. WebSocket is preferred; polling remains available as a fallback.
+[English](AGENT_PROTOCOL.md) | [简体中文](AGENT_PROTOCOL.zh-CN.md)
+
+WebCodex agents connect to the server and execute registered project tools. New deployments should prefer `transport = "auto"` with QUIC configured; WebSocket and polling remain fallback transports.
 
 ## Authentication
 
@@ -14,6 +16,7 @@ The server/admin side creates the temporary code with `webcodex-cli pairing crea
 
 Transport auth rules:
 
+- QUIC: the agent token stays in the top-level agent config and is sent inside the agent registration envelope over the QUIC stream.
 - WebSocket: `Authorization: Bearer <agent-token>` in the handshake headers is preferred.
 - WebSocket compatibility: `/api/agents/ws?token=...` is accepted for handshake compatibility only.
 - Polling: every request must use `Authorization: Bearer <agent-token>`.

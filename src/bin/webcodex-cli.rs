@@ -1,6 +1,6 @@
 //! `webcodex-cli` — standalone management/setup binary for WebCodex.
 //!
-//! Phase 5A. Provides users / tokens / agent-tokens management (reusing the
+//! Provides users / tokens / agent-tokens management (reusing the
 //! shared `admin_cli` module), `agent init` (reusing the shared `agent_init`
 //! module), and a first-pass `setup single-user` command that creates a user,
 //! a personal API token, and an agent token, then writes the plaintext tokens

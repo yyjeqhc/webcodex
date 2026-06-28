@@ -1,5 +1,7 @@
 # GPT Actions
 
+[English](GPT_ACTIONS.md) | [简体中文](GPT_ACTIONS.zh-CN.md)
+
 WebCodex exposes a focused OpenAPI schema for ChatGPT GPT Actions at:
 
 ```text
@@ -7,6 +9,29 @@ GET /openapi.json
 ```
 
 GPT Actions and MCP share the same `ToolRuntime`; GPT Actions provides typed REST operations while MCP provides MCP framing.
+
+## Create a GPT Action in ChatGPT
+
+The screenshots in `docs/assets/gpt-action-*.png` show the current ChatGPT UI flow:
+
+![Open GPT editor](assets/gpt-action-1.png)
+![Configure GPT](assets/gpt-action-2.png)
+![Add an Action](assets/gpt-action-3.png)
+![Set Action authentication](assets/gpt-action-4.png)
+![Import OpenAPI schema](assets/gpt-action-5.png)
+
+1. Open ChatGPT, create or edit a GPT, then go to the GPT configuration screen.
+2. Open the **Actions** section and choose to create a new Action.
+3. In **Authentication**, choose API key / HTTP auth, set the auth type to **Bearer**, and paste a `wc_pat_xxx` personal API token. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
+4. In the schema/OpenAPI field, import or paste:
+
+   ```text
+   https://your-domain.example/openapi.json
+   ```
+
+5. Set the GPT privacy policy URL if the ChatGPT UI requires it. Use your own product or deployment privacy URL; do not put secrets in that URL.
+6. Save the Action, then test a harmless discovery call such as `getRuntimeStatus`, followed by `listProjects` and a read-only project call such as `getProjectGitStatus`.
+7. Use mutation tools only against a known disposable project until the GPT has been validated.
 
 ## Authentication
 
@@ -59,8 +84,9 @@ It does not expose user, API-token, agent-token, pairing/enrollment, setup, doct
 Use `webcodex-cli` for those management tasks.
 
 ## Recommended flow
+
 1. `getRuntimeStatus` — verify runtime health and redacted agent policy summaries.
-2. `listAgents` — confirm an online agent and its `agent_instance_id`.
+2. `getRuntimeStatus`, or `callRuntimeTool` with `list_agents` — confirm an online agent and its redacted policy summary or `agent_instance_id`.
 3. `listProjects` — choose an `agent:<client_id>:<project_id>`.
 4. `getProjectGitStatus`, `listProjectFiles`, `readProjectFile`, and `searchProjectText` — inspect before editing.
 5. For scoped source edits with known line numbers, use `callRuntimeTool` with the structured line edit tools: `replace_line_range`, `insert_at_line`, and `delete_line_range`.
@@ -73,7 +99,7 @@ Use `webcodex-cli` for those management tasks.
 
 ## Observability
 
-`getRuntimeStatus` and `listAgents` may show a redacted policy summary:
+`getRuntimeStatus` and `callRuntimeTool` with `list_agents` may show a redacted policy summary:
 
 - `allow_raw_shell`
 - `allow_cwd_anywhere`

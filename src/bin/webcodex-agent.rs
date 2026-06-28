@@ -23,7 +23,7 @@ use shell_protocol::{
     ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
     ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
     ShellClientRegisterRequest, ShellClientRegisterResponse, ShellProfileSummaryEntry,
-    ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_QUIC_V1,
+    ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_QUIC_V2,
     AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 
@@ -81,7 +81,7 @@ struct AgentConfig {
     /// `"websocket"` (preferred long-lived connection).
     #[serde(default)]
     transport: Option<String>,
-    /// Experimental custom QUIC agent transport config (Phase 5A). Only used
+    /// Experimental custom QUIC agent transport config. Only used
     /// when `transport = "quic"`. `None` keeps the default websocket/polling
     /// behavior unchanged.
     #[serde(default)]
@@ -286,6 +286,13 @@ enum AgentSink {
         client_id: String,
         agent_instance_id: String,
     },
+    /// QUIC transport: push envelopes through an mpsc that a single writer
+    /// task drains onto the bidirectional stream.
+    Quic {
+        tx: tokio::sync::mpsc::Sender<AgentEnvelope>,
+        client_id: String,
+        agent_instance_id: String,
+    },
 }
 
 impl AgentSink {
@@ -293,6 +300,7 @@ impl AgentSink {
         match self {
             AgentSink::Http(h) => &h.client_id,
             AgentSink::WebSocket { client_id, .. } => client_id,
+            AgentSink::Quic { client_id, .. } => client_id,
         }
     }
 
@@ -302,6 +310,9 @@ impl AgentSink {
         match self {
             AgentSink::Http(h) => &h.agent_instance_id,
             AgentSink::WebSocket {
+                agent_instance_id, ..
+            } => agent_instance_id,
+            AgentSink::Quic {
                 agent_instance_id, ..
             } => agent_instance_id,
         }
@@ -337,10 +348,10 @@ impl AgentSink {
                         .unwrap_or_else(|| "result submission failed without error".to_string()))
                 }
             }
-            AgentSink::WebSocket { tx, .. } => {
+            AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. } => {
                 let env = AgentEnvelope::Result { payload: body };
                 tx.blocking_send(env)
-                    .map_err(|_| "websocket send failed".to_string())?;
+                    .map_err(|_| "agent transport send failed".to_string())?;
                 Ok(true)
             }
         }
@@ -366,12 +377,12 @@ impl AgentSink {
                         .unwrap_or_else(|| "job_update failed without error".to_string()))
                 }
             }
-            AgentSink::WebSocket { tx, .. } => {
+            AgentSink::WebSocket { tx, .. } | AgentSink::Quic { tx, .. } => {
                 let env = AgentEnvelope::JobUpdate {
                     payload: body.clone(),
                 };
                 tx.blocking_send(env)
-                    .map_err(|_| "websocket send failed".to_string())
+                    .map_err(|_| "agent transport send failed".to_string())
             }
         }
     }
@@ -3544,16 +3555,15 @@ fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> R
 }
 
 // ============================================================================
-// Experimental custom QUIC agent transport (Phase 5A)
+// Experimental custom QUIC agent transport
 // ============================================================================
 //
 // A custom QUIC *stream* transport (NOT HTTP/3). The agent opens a single QUIC
 // bidirectional stream to the server, sends a `Register` envelope carrying the
 // agent token in `auth_token` (there is no HTTP middleware to set an
-// `Authorization` header), reads a `Registered` ack, then keeps the connection
-// alive with `Ping`/`Pong`. Phase 5A does NOT implement request dispatch /
-// `job_update` over QUIC — the agent registers and shows online, but does not
-// receive `Request` envelopes. WebSocket/polling behavior is unchanged.
+// `Authorization` header), reads a `Registered` ack, then handles `Request`,
+// `Result`, `JobUpdate`, `Ping`, and `Pong` envelopes on that same serialized
+// stream. WebSocket/polling behavior is unchanged.
 
 /// Reconnect backoff after a QUIC session ends.
 const QUIC_RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
@@ -3648,10 +3658,9 @@ fn build_quic_client_crypto(
         .map_err(|e| format!("failed to build quinn client crypto: {}", e))
 }
 
-/// One QUIC connection lifecycle: connect, register, keepalive until the stream
-/// closes or a fatal server error arrives. Phase 5A: register + ack + ping/pong
-/// only; no `Request` dispatch. In `--once` mode, completes one ping/pong after
-/// the ack then returns.
+/// One QUIC connection lifecycle: connect, register, dispatch requests until
+/// the stream closes or a fatal server error arrives. In `--once` mode,
+/// completes one ping/pong after the ack then returns.
 async fn quic_session(
     cfg: &AgentConfig,
     projects: Vec<ShellAgentProjectSummary>,
@@ -3690,7 +3699,7 @@ async fn quic_session(
     let register_payload = build_register_request(
         cfg,
         projects,
-        AGENT_PROTOCOL_VERSION_QUIC_V1,
+        AGENT_PROTOCOL_VERSION_QUIC_V2,
         agent_instance_id,
         0,
     );
@@ -3741,51 +3750,93 @@ async fn quic_session(
         return Ok(());
     }
 
-    // Keepalive loop: wait up to QUIC_PING_INTERVAL for a frame; if the server
-    // is silent, emit a Ping. A Pong (reply) or Ping (server-initiated) keeps
-    // the connection live. A server Error or a clean stream EOF ends the
-    // session. The server does not push Request envelopes in 5A.
+    // Split into a single writer task and a reader/dispatch loop. Outgoing
+    // Result/JobUpdate/Pong/Ping envelopes all pass through the channel so no
+    // two tasks write the QUIC SendStream at the same time.
+    let (out_tx, mut out_rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+    let writer_task = tokio::spawn(async move {
+        while let Some(env) = out_rx.recv().await {
+            if write_quic_frame(&mut send, &env).await.is_err() {
+                break;
+            }
+        }
+        let _ = send.finish();
+    });
+
+    let sink_handle = AgentSink::Quic {
+        tx: out_tx.clone(),
+        client_id: cfg.client_id.clone(),
+        agent_instance_id: agent_instance_id.to_string(),
+    };
+    let jobs = JobManager::new(max_concurrent_jobs(cfg));
+    let mut ping_interval = tokio::time::interval(QUIC_PING_INTERVAL);
+    ping_interval.tick().await; // skip immediate first tick
+
     loop {
-        match tokio::time::timeout(QUIC_PING_INTERVAL, read_quic_frame(&mut recv)).await {
-            Ok(Ok(AgentEnvelope::Pong { .. })) => {
-                // Keepalive reply; connection is live.
-            }
-            Ok(Ok(AgentEnvelope::Ping { ts })) => {
-                let pong = AgentEnvelope::Pong { ts };
-                write_quic_frame(&mut send, &pong)
-                    .await
-                    .map_err(|e| format!("quic pong send failed: {}", e))?;
-            }
-            Ok(Ok(AgentEnvelope::Registered { .. })) => {
-                // Ignore a redundant ack.
-            }
-            Ok(Ok(AgentEnvelope::Error { message, .. })) => {
-                return Err(format!("server error: {}", message));
-            }
-            Ok(Ok(other)) => {
-                eprintln!(
-                    "webcodex-agent quic received unexpected envelope {}; ignoring",
-                    other.kind()
-                );
-            }
-            Ok(Err(QuicFrameError::EmptyStream)) => {
-                // Server closed the stream cleanly.
-                return Ok(());
-            }
-            Ok(Err(e)) => {
-                return Err(format!("quic stream read error: {}", e));
-            }
-            Err(_) => {
-                // Timeout with no frame: emit a keepalive Ping.
-                let ping = AgentEnvelope::Ping {
-                    ts: chrono::Utc::now().timestamp(),
+        tokio::select! {
+            frame = read_quic_frame(&mut recv) => {
+                let env = match frame {
+                    Ok(env) => env,
+                    Err(QuicFrameError::EmptyStream) => break,
+                    Err(e) => return Err(format!("quic stream read error: {}", e)),
                 };
-                write_quic_frame(&mut send, &ping)
-                    .await
-                    .map_err(|e| format!("quic ping send failed: {}", e))?;
+                match env {
+                    AgentEnvelope::Request { request } => {
+                        let sink_handle = sink_handle.clone();
+                        let policy = cfg.policy.clone();
+                        let shell = cfg.shell.clone();
+                        let jobs = jobs.clone();
+                        let projects_dir = projects_dir(cfg);
+                        tokio::task::spawn_blocking(move || {
+                            let _ = dispatch_request(
+                                &sink_handle,
+                                &policy,
+                                &shell,
+                                &jobs,
+                                &projects_dir,
+                                request,
+                            );
+                        });
+                    }
+                    AgentEnvelope::Ping { ts } => {
+                        let _ = out_tx.send(AgentEnvelope::Pong { ts }).await;
+                    }
+                    AgentEnvelope::Pong { .. } => {
+                        // Normal keepalive response.
+                    }
+                    AgentEnvelope::Registered { .. } => {
+                        // Ignore a redundant ack.
+                    }
+                    AgentEnvelope::Error { code, message } => {
+                        return Err(format!("server error {}: {}", code, message));
+                    }
+                    other => {
+                        eprintln!(
+                            "webcodex-agent quic ignoring unexpected envelope: {}",
+                            other.kind()
+                        );
+                    }
+                }
+            }
+            _ = ping_interval.tick() => {
+                let _ = out_tx
+                    .send(AgentEnvelope::Ping {
+                        ts: chrono::Utc::now().timestamp(),
+                    })
+                    .await;
             }
         }
     }
+
+    drop(out_tx);
+    let mut writer_task = writer_task;
+    if tokio::time::timeout(WS_WRITER_CLOSE_TIMEOUT, &mut writer_task)
+        .await
+        .is_err()
+    {
+        writer_task.abort();
+    }
+    Ok(())
 }
 
 // ============================================================================
@@ -5585,6 +5636,18 @@ shell_profile = "../rust"
         )
     }
 
+    fn quic_sink(client_id: &str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>) {
+        let (tx, rx) = tokio::sync::mpsc::channel::<AgentEnvelope>(WS_OUTGOING_CAPACITY);
+        (
+            AgentSink::Quic {
+                tx,
+                client_id: client_id.to_string(),
+                agent_instance_id: "quic-inst".to_string(),
+            },
+            rx,
+        )
+    }
+
     #[test]
     fn websocket_sink_submit_result_sends_result_envelope() {
         let (sink, mut rx) = ws_sink("ws-client");
@@ -5635,6 +5698,126 @@ shell_profile = "../rust"
                 assert_eq!(payload.status, "running");
             }
             other => panic!("expected job_update, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn build_register_request_announces_quic_v2_when_requested() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let body = build_register_request(
+            &cfg,
+            Vec::new(),
+            AGENT_PROTOCOL_VERSION_QUIC_V2,
+            "inst-quic",
+            0,
+        );
+        assert_eq!(body.agent_instance_id, "inst-quic");
+        assert_eq!(
+            body.agent_protocol_version.as_deref(),
+            Some(AGENT_PROTOCOL_VERSION_QUIC_V2)
+        );
+        assert_eq!(body.agent_protocol_version.as_deref(), Some("quic-v2"));
+    }
+
+    #[test]
+    fn quic_sink_submit_result_sends_result_envelope() {
+        let (sink, mut rx) = quic_sink("quic-client");
+        let result = CommandResult {
+            exit_code: Some(0),
+            stdout: Some("hi".to_string()),
+            stderr: Some(String::new()),
+            duration_ms: Some(3),
+            error: None,
+        };
+        assert!(sink.submit_result("req-9".to_string(), result).unwrap());
+        let env = rx.try_recv().expect("envelope was sent");
+        match env {
+            AgentEnvelope::Result { payload } => {
+                assert_eq!(payload.client_id, "quic-client");
+                assert_eq!(payload.agent_instance_id, "quic-inst");
+                assert_eq!(payload.request_id, "req-9");
+                assert_eq!(payload.exit_code, Some(0));
+                assert_eq!(payload.stdout.as_deref(), Some("hi"));
+            }
+            other => panic!("expected result, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn quic_sink_send_job_update_sends_job_update_envelope() {
+        let (sink, mut rx) = quic_sink("quic-client");
+        let body = ShellAgentJobUpdateRequest {
+            client_id: "quic-client".to_string(),
+            agent_instance_id: sink.agent_instance_id().to_string(),
+            job_id: "job-1".to_string(),
+            request_id: Some("req-1".to_string()),
+            status: "running".to_string(),
+            stdout_chunk: Some("chunk".to_string()),
+            stderr_chunk: None,
+            stdout_tail: None,
+            stderr_tail: None,
+            exit_code: None,
+            duration_ms: None,
+            error: None,
+            finished: false,
+        };
+        sink.send_job_update(&body).unwrap();
+        let env = rx.try_recv().expect("envelope was sent");
+        match env {
+            AgentEnvelope::JobUpdate { payload } => {
+                assert_eq!(payload.client_id, "quic-client");
+                assert_eq!(payload.agent_instance_id, "quic-inst");
+                assert_eq!(payload.job_id, "job-1");
+                assert_eq!(payload.stdout_chunk.as_deref(), Some("chunk"));
+            }
+            other => panic!("expected job_update, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn quic_dispatch_request_sends_result_over_sink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let (sink, mut rx) = quic_sink("quic-client");
+        let jobs = JobManager::new(1);
+        let request = ShellAgentShellRequest {
+            request_id: "req-dispatch".to_string(),
+            client_id: "quic-client".to_string(),
+            kind: "run_shell".to_string(),
+            job_id: None,
+            cwd: None,
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            command: "printf quic-ok".to_string(),
+            stdin: None,
+            timeout_secs: 5,
+            requested_by: "tester".to_string(),
+            created_at: 1,
+        };
+
+        assert!(dispatch_request(
+            &sink,
+            &cfg.policy,
+            &cfg.shell,
+            &jobs,
+            &projects_dir(&cfg),
+            request,
+        )
+        .unwrap());
+        let env = rx.try_recv().expect("result envelope was sent");
+        match env {
+            AgentEnvelope::Result { payload } => {
+                assert_eq!(payload.client_id, "quic-client");
+                assert_eq!(payload.agent_instance_id, "quic-inst");
+                assert_eq!(payload.request_id, "req-dispatch");
+                assert_eq!(payload.exit_code, Some(0));
+                assert_eq!(payload.stdout.as_deref(), Some("quic-ok"));
+            }
+            other => panic!("expected result, got {:?}", other.kind()),
         }
     }
 

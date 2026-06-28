@@ -1,19 +1,15 @@
-//! Server-side experimental custom QUIC agent transport (Phase 5A).
+//! Server-side experimental custom QUIC agent transport.
 //!
 //! This is a **custom QUIC stream transport** for agent connections, NOT
 //! HTTP/3. It runs a separate `quinn` UDP listener in parallel with the HTTP
 //! server (which keeps serving GPT Actions over TCP 443 via Nginx unchanged).
 //! Nginx is not involved in QUIC.
 //!
-//! Phase 5A scope is deliberately minimal: a QUIC connection is established,
-//! the agent sends a `Register` envelope (carrying the agent token inline via
-//! `auth_token`, since there is no HTTP middleware here), the server
-//! authenticates it exactly like the WebSocket/polling paths, registers the
-//! client into the shared [`ShellClientRegistry`] with `transport = "quic"`,
-//! downgrades execution capabilities to false, and replies with a `Registered`
-//! ack. After that, `Ping`/`Pong` keepalives keep the client online. Request
-//! dispatch / `job_update` / stream multiplexing are explicitly out of scope
-//! for 5A.
+//! `quic-v1` is the Phase 5A register/ack/ping/pong protocol. `quic-v2`
+//! extends the same single bidirectional stream with request dispatch:
+//! server -> agent `Request`, agent -> server `Result` / `JobUpdate`, plus
+//! `Ping` / `Pong`. This is still a serialized frame model, not HTTP/3 and
+//! not stream multiplexing.
 //!
 //! Authentication reuses [`crate::auth::authenticate_bearer`], which mirrors
 //! `AuthMiddleware`: bootstrap when auth is disabled, the server-wide token,
@@ -27,7 +23,8 @@ use crate::shell_client::{
     ShellClientRegistry, TRANSPORT_QUIC,
 };
 use crate::shell_protocol::{
-    read_quic_frame, write_quic_frame, AgentEnvelope, ShellClientCapabilities,
+    read_quic_frame, write_quic_frame, AgentEnvelope, ShellAgentPollRequest,
+    ShellClientCapabilities, AGENT_PROTOCOL_VERSION_QUIC_V2,
 };
 use crate::Database;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -35,6 +32,7 @@ use std::fs::File;
 use std::io::BufReader;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::sync::{mpsc, Notify};
 
 /// The rustls crypto provider used for the QUIC transport. The dependency tree
 /// pulls *both* `aws-lc-rs` and `ring`, so rustls cannot auto-select a
@@ -48,6 +46,9 @@ fn rustls_provider() -> Arc<rustls::crypto::CryptoProvider> {
 /// Deadline for the agent to send its first `Register` frame after the QUIC
 /// handshake. Mirrors the WebSocket `REGISTER_TIMEOUT`.
 const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
+/// Channel capacity for QUIC outgoing envelopes (registered ack, request,
+/// pong/error). Provides backpressure if the agent reads slowly.
+const OUTGOING_CHANNEL_CAPACITY: usize = 64;
 
 fn quic_phase_5a_capabilities() -> ShellClientCapabilities {
     ShellClientCapabilities {
@@ -166,7 +167,8 @@ async fn serve_quic_endpoint(
     }
 }
 
-/// Drive one QUIC agent connection to completion: register, ack, keepalive.
+/// Drive one QUIC agent connection to completion: register, ack, optional
+/// request dispatch, keepalive, and inbound result/job_update handling.
 async fn handle_quic_connection(
     conn: quinn::Connection,
     alpn: &str,
@@ -180,8 +182,8 @@ async fn handle_quic_connection(
     // is needed; a mismatch fails the handshake (logged in the accept loop).
     let _ = alpn;
 
-    // The agent opens a bidirectional stream for the register/ack/keepalive
-    // exchange. Phase 5A uses a single bi stream; multiplexing is 5B.
+    // The agent opens one bidirectional stream for all frames. Multiplexing
+    // is intentionally left to a later phase.
     let (mut send, mut recv) = match conn.accept_bi().await {
         Ok(pair) => pair,
         Err(e) => {
@@ -263,11 +265,19 @@ async fn handle_quic_connection(
         effective_register_owner(Some(&auth), register_payload.owner.as_deref());
 
     // 4. Register into the shared registry (same path as polling/ws), then
-    //    flip the transport label to "quic". Phase 5A deliberately supports
-    //    only register/ack/ping/pong, so do not advertise execution
-    //    capabilities and do not install a push notifier. The registry enqueue
-    //    paths also reject quic-v1 dispatch explicitly.
-    register_payload.capabilities = Some(quic_phase_5a_capabilities());
+    //    flip the transport label to "quic". `quic-v1` remains Phase 5A
+    //    register-only and therefore has execution capabilities downgraded to
+    //    false. `quic-v2` is dispatch-capable and keeps the agent's real
+    //    capabilities.
+    let agent_protocol_version = register_payload
+        .agent_protocol_version
+        .as_deref()
+        .map(str::trim)
+        .unwrap_or("");
+    let dispatch_capable = agent_protocol_version == AGENT_PROTOCOL_VERSION_QUIC_V2;
+    if !dispatch_capable {
+        register_payload.capabilities = Some(quic_phase_5a_capabilities());
+    }
     if let Err(e) = registry.register(register_payload).await {
         send_error(&mut send, &mut recv, "register_failed", &e).await;
         return;
@@ -279,6 +289,22 @@ async fn handle_quic_connection(
             .await;
         return;
     }
+    let notify = if dispatch_capable {
+        let notify = Arc::new(Notify::new());
+        if let Err(e) = registry
+            .register_notifier(&client_id, &agent_instance_id, notify.clone())
+            .await
+        {
+            send_error(&mut send, &mut recv, "register_failed", &e).await;
+            registry
+                .reconcile_disconnect(&client_id, &agent_instance_id)
+                .await;
+            return;
+        }
+        Some(notify)
+    } else {
+        None
+    };
     let Some(view) = registry.get_client_view(&client_id).await else {
         send_error(
             &mut send,
@@ -290,27 +316,93 @@ async fn handle_quic_connection(
         return;
     };
 
-    // 5. Acknowledge the register.
+    // 5. From this point on, all writes go through one writer task so the
+    //    request pump and keepalive replies never concurrently hold SendStream.
+    let (out_tx, mut out_rx) = mpsc::channel::<AgentEnvelope>(OUTGOING_CHANNEL_CAPACITY);
+    let writer_client_id = client_id.clone();
+    let writer_task = tokio::spawn(async move {
+        while let Some(env) = out_rx.recv().await {
+            if let Err(e) = write_quic_frame(&mut send, &env).await {
+                tracing::debug!(
+                    client_id = %writer_client_id,
+                    error = %e,
+                    "quic writer send failed; stopping writer"
+                );
+                break;
+            }
+        }
+        let _ = send.finish();
+    });
+
+    // 6. Acknowledge the register.
     let ack = AgentEnvelope::Registered {
         success: true,
         client: Some(view),
         error: None,
     };
-    if let Err(e) = write_quic_frame(&mut send, &ack).await {
+    if out_tx.send(ack).await.is_err() {
         tracing::debug!(
             client_id = %client_id,
-            error = %e,
-            "quic agent register ack send failed"
+            "quic agent register ack channel closed"
         );
         registry
             .reconcile_disconnect(&client_id, &agent_instance_id)
             .await;
+        let _ = writer_task.await;
         return;
     }
     tracing::info!(client_id = %client_id, "agent quic connected");
 
-    // 6. Keepalive loop: Ping -> touch + Pong; Pong -> touch. Result/JobUpdate
-    //    are not expected in 5A (no dispatch) and are logged+ignored.
+    // 7. `quic-v2` request pump: drain the shared registry queue and send
+    //    Request envelopes over the QUIC writer channel. `quic-v1` does not
+    //    install a notifier, preserving register-only semantics and the
+    //    registry enqueue guard.
+    let pump_task = if let Some(notify) = notify {
+        let pump_tx = out_tx.clone();
+        let pump_registry = registry.clone();
+        let pump_client_id = client_id.clone();
+        let pump_instance_id = agent_instance_id.clone();
+        Some(tokio::spawn(async move {
+            loop {
+                let notified = notify.notified();
+                let poll_req = ShellAgentPollRequest {
+                    client_id: pump_client_id.clone(),
+                    agent_instance_id: pump_instance_id.clone(),
+                    projects: None,
+                };
+                match pump_registry.poll(poll_req).await {
+                    Ok(Some(request)) => {
+                        if pump_tx
+                            .send(AgentEnvelope::Request { request })
+                            .await
+                            .is_err()
+                        {
+                            tracing::debug!(
+                                client_id = %pump_client_id,
+                                "quic request pump send channel closed; stopping pump"
+                            );
+                            break;
+                        }
+                    }
+                    Ok(None) => {
+                        notified.await;
+                    }
+                    Err(e) => {
+                        tracing::warn!(
+                            client_id = %pump_client_id,
+                            error = %e,
+                            "quic request pump poll failed; stopping pump"
+                        );
+                        break;
+                    }
+                }
+            }
+        }))
+    } else {
+        None
+    };
+
+    // 8. Reader loop: handle Result/JobUpdate/Ping/Pong from the agent.
     loop {
         let env = match read_quic_frame(&mut recv).await {
             Ok(env) => env,
@@ -334,13 +426,16 @@ async fn handle_quic_connection(
                     );
                 }
                 let pong = AgentEnvelope::Pong { ts };
-                if let Err(e) = write_quic_frame(&mut send, &pong).await {
+                if let Err(e) = out_tx.try_send(pong) {
+                    let reason = match e {
+                        tokio::sync::mpsc::error::TrySendError::Full(_) => "full",
+                        tokio::sync::mpsc::error::TrySendError::Closed(_) => "closed",
+                    };
                     tracing::debug!(
                         client_id = %client_id,
-                        error = %e,
-                        "quic pong send failed; closing"
+                        reason,
+                        "quic pong send dropped"
                     );
-                    break;
                 }
             }
             AgentEnvelope::Pong { .. } => {
@@ -352,6 +447,16 @@ async fn handle_quic_connection(
                     );
                 }
             }
+            AgentEnvelope::Result { payload } => {
+                if let Err(e) = registry.complete(payload).await {
+                    tracing::warn!(client_id = %client_id, error = %e, "quic result rejected");
+                }
+            }
+            AgentEnvelope::JobUpdate { payload } => {
+                if let Err(e) = registry.update_job(payload).await {
+                    tracing::warn!(client_id = %client_id, error = %e, "quic job_update rejected");
+                }
+            }
             AgentEnvelope::Register { .. } => {
                 // Ignore a redundant register mid-session.
             }
@@ -359,16 +464,22 @@ async fn handle_quic_connection(
                 tracing::debug!(
                     client_id = %client_id,
                     kind = other.kind(),
-                    "quic agent received unexpected envelope in 5A; ignoring"
+                    "quic agent received unexpected envelope; ignoring"
                 );
             }
         }
     }
 
-    // 7. Cleanup: reconcile disconnect so running jobs are marked lost and the
+    // 9. Cleanup: stop pump/writer and reconcile disconnect so running jobs are marked lost and the
     //    client decays to stale/offline via the normal online window. Mirrors
     //    the WebSocket disconnect path.
-    let _ = send.finish();
+    if let Some(pump_task) = pump_task {
+        pump_task.abort();
+    }
+    drop(out_tx);
+    if let Err(e) = writer_task.await {
+        tracing::debug!(client_id = %client_id, error = ?e, "quic writer task join failed");
+    }
     registry
         .reconcile_disconnect(&client_id, &agent_instance_id)
         .await;
@@ -411,8 +522,9 @@ async fn send_error(
 mod tests {
     use super::*;
     use crate::shell_protocol::{
-        ShellClientRegisterRequest, AGENT_PROTOCOL_VERSION_QUIC_V1,
-        AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+        ShellAgentJobUpdateRequest, ShellAgentResultRequest, ShellClientRegisterRequest,
+        ShellJobOpRequest, ShellRunRequest, AGENT_PROTOCOL_VERSION_QUIC_V1,
+        AGENT_PROTOCOL_VERSION_QUIC_V2, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
     };
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -461,6 +573,15 @@ mod tests {
     }
 
     fn register_envelope(client_id: &str, instance: &str) -> AgentEnvelope {
+        register_envelope_with_protocol(client_id, instance, AGENT_PROTOCOL_VERSION_QUIC_V1, None)
+    }
+
+    fn register_envelope_with_protocol(
+        client_id: &str,
+        instance: &str,
+        protocol: &str,
+        auth_token: Option<String>,
+    ) -> AgentEnvelope {
         AgentEnvelope::Register {
             payload: ShellClientRegisterRequest {
                 client_id: client_id.to_string(),
@@ -478,12 +599,23 @@ mod tests {
                     async_shell_jobs: true,
                 }),
                 projects: None,
-                agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V1.to_string()),
+                agent_protocol_version: Some(protocol.to_string()),
                 policy: None,
             },
-            // Auth disabled in the test Config below -> bootstrap, token unused.
-            auth_token: None,
+            auth_token,
         }
+    }
+
+    fn test_config(token: Option<&str>) -> Arc<Config> {
+        Arc::new(Config {
+            addr: "0.0.0.0:8080".to_string(),
+            data_dir: std::path::PathBuf::from("./data"),
+            token: token.map(str::to_string),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        })
     }
 
     /// Bind a QUIC server endpoint on 127.0.0.1:0 and return (endpoint, addr).
@@ -495,6 +627,43 @@ mod tests {
             .expect("bind quic server");
         let addr = endpoint.local_addr().expect("local_addr");
         (endpoint, addr)
+    }
+
+    async fn start_quic_server(
+        registry: Arc<ShellClientRegistry>,
+        config: Arc<Config>,
+        cert_der: CertificateDer<'static>,
+        key_der: PrivateKeyDer<'static>,
+    ) -> std::net::SocketAddr {
+        let server_crypto = server_crypto(cert_der, key_der);
+        let (endpoint, addr) = bind_server(server_crypto);
+        tokio::spawn(async move {
+            serve_quic_endpoint(endpoint, TEST_ALPN, config, None, registry).await;
+        });
+        addr
+    }
+
+    async fn connect_quic_client(
+        cert_der: &CertificateDer<'static>,
+        addr: std::net::SocketAddr,
+    ) -> (
+        quinn::Endpoint,
+        quinn::Connection,
+        quinn::SendStream,
+        quinn::RecvStream,
+    ) {
+        let client_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+        let conn = client_endpoint
+            .connect_with(
+                quinn::ClientConfig::new(Arc::new(client_crypto(cert_der))),
+                addr,
+                "localhost",
+            )
+            .unwrap()
+            .await
+            .expect("quic connect");
+        let (send, recv) = conn.open_bi().await.expect("open_bi");
+        (client_endpoint, conn, send, recv)
     }
 
     #[tokio::test]
@@ -585,6 +754,33 @@ mod tests {
         assert!(!view.capabilities.async_jobs);
         assert!(!view.capabilities.async_shell_jobs);
 
+        let err = registry
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: "quic-rt".to_string(),
+                    cwd: None,
+                    command: "echo hi".to_string(),
+                    stdin: None,
+                    timeout_secs: 5,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap_err();
+        assert!(
+            err.contains("phase 5A"),
+            "quic-v1 dispatch error should stay explicit: {err}"
+        );
+        assert_eq!(
+            registry
+                .get_client_view("quic-rt")
+                .await
+                .expect("client view")
+                .pending_requests,
+            0
+        );
+
         // Ping -> Pong, and liveness is refreshed.
         let before = view.last_seen;
         tokio::time::sleep(Duration::from_millis(1100)).await;
@@ -614,6 +810,396 @@ mod tests {
         }
         client_endpoint.close(quinn::VarInt::from_u32(0), b"");
         conn.close(quinn::VarInt::from_u32(0), b"done");
+    }
+
+    #[tokio::test]
+    async fn quic_v2_request_result_roundtrip() {
+        let (cert_der, key_der) = self_signed_cert();
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_quic_server(
+            registry.clone(),
+            test_config(None),
+            cert_der.clone(),
+            key_der,
+        )
+        .await;
+        let (client_endpoint, conn, mut send, mut recv) =
+            connect_quic_client(&cert_der, addr).await;
+
+        write_quic_frame(
+            &mut send,
+            &register_envelope_with_protocol(
+                "quic-v2-rt",
+                "inst-v2",
+                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                None,
+            ),
+        )
+        .await
+        .expect("write register");
+
+        let ack = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .expect("ack timeout")
+            .expect("read ack");
+        match ack {
+            AgentEnvelope::Registered {
+                success, client, ..
+            } => {
+                assert!(success);
+                let client = client.expect("client view");
+                assert_eq!(client.client_id, "quic-v2-rt");
+                assert_eq!(client.transport, "quic");
+                assert_eq!(
+                    client.agent_protocol_version,
+                    AGENT_PROTOCOL_VERSION_QUIC_V2
+                );
+                assert!(client.capabilities.shell);
+                assert!(client.capabilities.file_read);
+                assert!(client.capabilities.file_write);
+                assert!(client.capabilities.jobs);
+                assert!(client.capabilities.async_jobs);
+                assert!(client.capabilities.async_shell_jobs);
+            }
+            other => panic!("expected registered ack, got {:?}", other.kind()),
+        }
+
+        let (request_id, rx) = registry
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: "quic-v2-rt".to_string(),
+                    cwd: None,
+                    command: "echo hi".to_string(),
+                    stdin: None,
+                    timeout_secs: 5,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let req_env = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .expect("request timeout")
+            .expect("read request");
+        match req_env {
+            AgentEnvelope::Request { request } => {
+                assert_eq!(request.request_id, request_id);
+                assert_eq!(request.kind, "run_shell");
+                assert_eq!(request.command, "echo hi");
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        }
+
+        write_quic_frame(
+            &mut send,
+            &AgentEnvelope::Result {
+                payload: ShellAgentResultRequest {
+                    client_id: "quic-v2-rt".to_string(),
+                    agent_instance_id: "inst-v2".to_string(),
+                    request_id: request_id.clone(),
+                    exit_code: Some(0),
+                    stdout: Some("hi\n".to_string()),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(2),
+                    error: None,
+                },
+            },
+        )
+        .await
+        .expect("write result");
+
+        let response = tokio::time::timeout(Duration::from_secs(5), rx)
+            .await
+            .expect("result timeout")
+            .expect("result response");
+        assert!(response.success);
+        assert_eq!(response.stdout.as_deref(), Some("hi\n"));
+        assert_eq!(response.exit_code, Some(0));
+        assert_eq!(
+            registry
+                .get_client_view("quic-v2-rt")
+                .await
+                .expect("client view")
+                .pending_requests,
+            0
+        );
+
+        let _ = send.finish();
+        client_endpoint.close(quinn::VarInt::from_u32(0), b"");
+        conn.close(quinn::VarInt::from_u32(0), b"done");
+    }
+
+    #[tokio::test]
+    async fn quic_v2_job_update_updates_registry() {
+        let (cert_der, key_der) = self_signed_cert();
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_quic_server(
+            registry.clone(),
+            test_config(None),
+            cert_der.clone(),
+            key_der,
+        )
+        .await;
+        let (client_endpoint, conn, mut send, mut recv) =
+            connect_quic_client(&cert_der, addr).await;
+
+        write_quic_frame(
+            &mut send,
+            &register_envelope_with_protocol(
+                "quic-job",
+                "inst-job",
+                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("quic-job".to_string()),
+                    cwd: None,
+                    command: Some("printf hi".to_string()),
+                    timeout_secs: Some(5),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+
+        let req_env = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .expect("request timeout")
+            .expect("read request");
+        let request_id = match req_env {
+            AgentEnvelope::Request { request } => {
+                assert_eq!(request.kind, "start_job");
+                request.request_id
+            }
+            other => panic!("expected request, got {:?}", other.kind()),
+        };
+
+        write_quic_frame(
+            &mut send,
+            &AgentEnvelope::JobUpdate {
+                payload: ShellAgentJobUpdateRequest {
+                    client_id: "quic-job".to_string(),
+                    agent_instance_id: "inst-job".to_string(),
+                    job_id: job.job_id.clone(),
+                    request_id: Some(request_id),
+                    status: "running".to_string(),
+                    stdout_chunk: Some("hi".to_string()),
+                    stderr_chunk: None,
+                    stdout_tail: None,
+                    stderr_tail: None,
+                    exit_code: None,
+                    duration_ms: None,
+                    error: None,
+                    finished: false,
+                },
+            },
+        )
+        .await
+        .unwrap();
+
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            let updated = registry.get_job(&job.job_id).await.unwrap();
+            if updated.status == "running" {
+                break;
+            }
+        }
+        let updated = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(updated.status, "running");
+        let (_job, stdout, _stderr, _next_stdout, _next_stderr) = registry
+            .job_log(&job.job_id, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(stdout.as_deref(), Some("hi\n"));
+
+        let _ = send.finish();
+        client_endpoint.close(quinn::VarInt::from_u32(0), b"");
+        conn.close(quinn::VarInt::from_u32(0), b"done");
+    }
+
+    #[tokio::test]
+    async fn quic_v2_disconnect_reconciles_jobs_and_notifier() {
+        let (cert_der, key_der) = self_signed_cert();
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_quic_server(
+            registry.clone(),
+            test_config(None),
+            cert_der.clone(),
+            key_der,
+        )
+        .await;
+        let (client_endpoint, conn, mut send, mut recv) =
+            connect_quic_client(&cert_der, addr).await;
+
+        write_quic_frame(
+            &mut send,
+            &register_envelope_with_protocol(
+                "quic-disc",
+                "inst-disc",
+                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                None,
+            ),
+        )
+        .await
+        .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .unwrap()
+            .unwrap();
+
+        let job = registry
+            .start_job(
+                ShellJobOpRequest {
+                    op: "start".to_string(),
+                    client_id: Some("quic-disc".to_string()),
+                    cwd: None,
+                    command: Some("sleep 10".to_string()),
+                    timeout_secs: Some(10),
+                    job_id: None,
+                    since_stdout_line: None,
+                    since_stderr_line: None,
+                    tail_lines: None,
+                    limit: None,
+                    codex: None,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+        let _ = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .expect("request timeout")
+            .expect("read request");
+
+        let _ = send.finish();
+        client_endpoint.close(quinn::VarInt::from_u32(0), b"");
+        conn.close(quinn::VarInt::from_u32(0), b"done");
+
+        for _ in 0..40 {
+            tokio::time::sleep(Duration::from_millis(25)).await;
+            if registry.get_job(&job.job_id).await.unwrap().status == "lost" {
+                break;
+            }
+        }
+        let lost = registry.get_job(&job.job_id).await.unwrap();
+        assert_eq!(lost.status, "lost");
+        assert!(lost.error.unwrap().contains("disconnected"));
+        assert_eq!(
+            registry
+                .get_client_view("quic-disc")
+                .await
+                .unwrap()
+                .pending_requests,
+            0
+        );
+
+        let (_request_id, _rx) = registry
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: "quic-disc".to_string(),
+                    cwd: None,
+                    command: "echo after".to_string(),
+                    stdin: None,
+                    timeout_secs: 5,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert_eq!(
+            registry
+                .get_client_view("quic-disc")
+                .await
+                .unwrap()
+                .pending_requests,
+            1,
+            "disconnected notifier must not keep pumping queued requests"
+        );
+    }
+
+    #[tokio::test]
+    async fn quic_bootstrap_token_registers_and_wrong_token_is_rejected() {
+        let (cert_der, key_der) = self_signed_cert();
+        let registry = Arc::new(ShellClientRegistry::default());
+        let addr = start_quic_server(
+            registry.clone(),
+            test_config(Some("bootstrap-secret")),
+            cert_der.clone(),
+            key_der,
+        )
+        .await;
+
+        let (client_endpoint, conn, mut send, mut recv) =
+            connect_quic_client(&cert_der, addr).await;
+        write_quic_frame(
+            &mut send,
+            &register_envelope_with_protocol(
+                "quic-auth-ok",
+                "inst-auth-ok",
+                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                Some("bootstrap-secret".to_string()),
+            ),
+        )
+        .await
+        .unwrap();
+        let ack = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(matches!(
+            ack,
+            AgentEnvelope::Registered { success: true, .. }
+        ));
+        let _ = send.finish();
+        client_endpoint.close(quinn::VarInt::from_u32(0), b"");
+        conn.close(quinn::VarInt::from_u32(0), b"done");
+
+        let (bad_endpoint, bad_conn, mut bad_send, mut bad_recv) =
+            connect_quic_client(&cert_der, addr).await;
+        write_quic_frame(
+            &mut bad_send,
+            &register_envelope_with_protocol(
+                "quic-auth-bad",
+                "inst-auth-bad",
+                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                Some("wrong-secret".to_string()),
+            ),
+        )
+        .await
+        .unwrap();
+        let err = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut bad_recv))
+            .await
+            .unwrap()
+            .unwrap();
+        match err {
+            AgentEnvelope::Error { code, .. } => assert_eq!(code, "unauthorized"),
+            other => panic!("expected unauthorized error, got {:?}", other.kind()),
+        }
+        assert!(registry.get_client_view("quic-auth-bad").await.is_none());
+        let _ = bad_send.finish();
+        bad_endpoint.close(quinn::VarInt::from_u32(0), b"");
+        bad_conn.close(quinn::VarInt::from_u32(0), b"done");
     }
 
     #[tokio::test]

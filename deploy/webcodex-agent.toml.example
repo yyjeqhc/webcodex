@@ -12,11 +12,13 @@ transport = "websocket"
 poll_interval_ms = 1000
 projects_dir = "/etc/webcodex/projects.d"
 
-# Experimental custom QUIC agent transport (Phase 5A). Default transport stays
+# Experimental custom QUIC agent transport (Phase 5B). Default transport stays
 # "websocket"; set transport = "quic" and fill in [quic] to opt in. This is a
-# custom QUIC stream transport, NOT HTTP/3. Phase 5A only supports
-# register/ack/ping/pong and cannot execute runtime requests; use websocket or
-# polling for command/file/job execution until Phase 5B. See
+# custom QUIC stream transport, NOT HTTP/3; the server listens directly on UDP
+# 8443 when enabled, and Nginx does not need QUIC/HTTP/3 support. Current
+# agents announce quic-v2 and can execute request/result/job_update basics over
+# one serialized bidirectional stream. Auto fallback is not implemented, so keep
+# a manual websocket/polling fallback plan for production. See
 # docs/AGENT_TRANSPORTS.md.
 # transport = "quic"
 # [quic]

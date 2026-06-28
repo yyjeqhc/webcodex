@@ -57,6 +57,12 @@ pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
 #[allow(dead_code)]
 pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
 
+/// Dispatch-capable version of the custom QUIC stream transport. `quic-v1`
+/// is intentionally register/ack/ping/pong only; `quic-v2` may receive
+/// `Request` envelopes and return `Result` / `JobUpdate` envelopes.
+#[allow(dead_code)]
+pub const AGENT_PROTOCOL_VERSION_QUIC_V2: &str = "quic-v2";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {
     #[serde(default = "default_shell_true")]
@@ -794,7 +800,7 @@ impl AgentEnvelope {
 // QUIC length-prefixed frame codec
 // ============================================================================
 //
-// The experimental custom QUIC agent transport (Phase 5A) frames each
+// The experimental custom QUIC agent transport frames each
 // [`AgentEnvelope`] as:
 //
 //   u32_be length (big-endian)

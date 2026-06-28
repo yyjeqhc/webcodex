@@ -7,7 +7,7 @@ Current user and deployment docs:
 3. [DEPLOYMENT.md](DEPLOYMENT.md) — production server bootstrap, agent service installation, enrollment, and operations guide.
 4. [GPT_ACTIONS.md](GPT_ACTIONS.md) — GPT Actions import, auth, tool flow, and exposed surface.
 5. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — agent transports, auth, identity, and redacted policy summaries.
-6. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) — experimental QUIC agent transport (not HTTP/3), Phase 5A limits, server/agent config, and fallback.
+6. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) — experimental QUIC agent transport (not HTTP/3), quic-v1/quic-v2 behavior, server/agent config, and fallback.
 7. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) — agent project registry and project management tools.
 8. [SHELL_PROFILES.md](SHELL_PROFILES.md) — prepared shell env snapshots, profile config, resolution rules, and safety boundaries.
 9. [AUDIT_API.md](AUDIT_API.md) — audit API scope and security expectations.

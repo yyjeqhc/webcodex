@@ -52,7 +52,7 @@ pub const TRANSPORT_POLLING: &str = "polling";
 /// Transport label for agents connected over the WebSocket endpoint.
 pub const TRANSPORT_WEBSOCKET: &str = "websocket";
 /// Transport label for agents connected over the experimental custom QUIC
-/// stream transport (Phase 5A). Reported in `ShellClientView.transport` and
+/// stream transport. Reported in `ShellClientView.transport` and
 /// surfaced by `runtime_status` / `listAgents`. Default transport stays
 /// `websocket`; QUIC is opt-in via `transport = "quic"` in `agent.toml`.
 pub const TRANSPORT_QUIC: &str = "quic";
@@ -3112,6 +3112,7 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V2;
 
     fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
         let (role, scopes) = if is_bootstrap {
@@ -3613,6 +3614,27 @@ mod tests {
             .unwrap();
     }
 
+    async fn register_quic_v2_client(registry: &ShellClientRegistry, client_id: &str) {
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: Some(vec![project_summary("webcodex", "/tmp/webcodex")]),
+                agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V2.to_string()),
+                policy: None,
+            })
+            .await
+            .unwrap();
+        registry
+            .set_transport(client_id, TRANSPORT_QUIC)
+            .await
+            .unwrap();
+    }
+
     #[tokio::test]
     async fn registry_rejects_quic_v1_run_without_queueing() {
         let registry = ShellClientRegistry::default();
@@ -3635,6 +3657,33 @@ mod tests {
         assert_eq!(err, QUIC_PHASE_5A_DISPATCH_ERROR);
         let view = registry.get_client_view("quic-run").await.unwrap();
         assert_eq!(view.pending_requests, 0);
+    }
+
+    #[tokio::test]
+    async fn registry_allows_quic_v2_run_queueing() {
+        let registry = ShellClientRegistry::default();
+        register_quic_v2_client(&registry, "quic-v2-run").await;
+
+        let (_request_id, _rx) = registry
+            .enqueue_run(
+                ShellRunRequest {
+                    client_id: "quic-v2-run".to_string(),
+                    cwd: None,
+                    command: "echo hi".to_string(),
+                    stdin: None,
+                    timeout_secs: 5,
+                    wait_timeout_secs: 0,
+                },
+                "tester".to_string(),
+            )
+            .await
+            .unwrap();
+        let view = registry.get_client_view("quic-v2-run").await.unwrap();
+        assert_eq!(view.transport, TRANSPORT_QUIC);
+        assert_eq!(view.agent_protocol_version, AGENT_PROTOCOL_VERSION_QUIC_V2);
+        assert_eq!(view.pending_requests, 1);
+        assert!(view.capabilities.shell);
+        assert!(view.capabilities.async_shell_jobs);
     }
 
     #[tokio::test]

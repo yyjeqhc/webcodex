@@ -6,7 +6,7 @@
 | ----------- | ---------------- | ------- | ------------- |
 | WebSocket   | `websocket`      | yes     | stable        |
 | Polling     | `polling`        | no      | stable (fallback) |
-| QUIC        | `quic`           | no      | **experimental** (Phase 5A) |
+| QUIC        | `quic`           | no      | **experimental** (Phase 5B) |
 
 ## QUIC (experimental custom transport)
 
@@ -85,7 +85,7 @@ keepalive_interval_secs = 20
   transport security only — the agent token still authenticates the agent, exactly
   like the WebSocket/polling paths.
 
-### Wire protocol (Phase 5A scope)
+### Wire protocol
 
 A single QUIC bidirectional stream carries length-prefixed JSON frames
 (`u32_be length || JSON bytes`) reusing the existing `AgentEnvelope`:
@@ -93,35 +93,39 @@ A single QUIC bidirectional stream carries length-prefixed JSON frames
 ```
 agent -> server:  Register   { payload, auth_token }
 server -> agent:  Registered { success, client, error }
-agent -> server:  Ping       { ts }
-server -> agent:  Pong       { ts }
+server -> agent:  Request    { ...ShellAgentShellRequest }
+agent -> server:  Result     { ...ShellAgentResultRequest }
+agent -> server:  JobUpdate  { ...ShellAgentJobUpdateRequest }
+either direction: Ping       { ts }
+either direction: Pong       { ts }
 ```
 
 - ALPN: `webcodex-agent/1`
 - Transport label reported in `runtime_status` / `listAgents`: `quic`
-- Agent protocol version: `quic-v1`
+- Agent protocol versions:
+  - `quic-v1`: Phase 5A register/ack/ping/pong only. Server downgrades
+    capabilities to false and rejects runtime enqueue with the explicit 5A
+    dispatch error so work never silently sits in a dead queue.
+  - `quic-v2`: Phase 5B dispatch-capable QUIC. Server keeps the agent's real
+    capabilities and can deliver requests over the QUIC stream.
 
-### Phase 5A limitations (intentional)
+The current model is **one bidirectional stream** per agent connection with
+serialized frames. Stream multiplexing is not implemented yet.
 
-Phase 5A only proves **register / ack / heartbeat** over QUIC. It does **not**:
+### Phase 5B capabilities
 
-- deliver `ShellAgentShellRequest` (`run_shell`) over QUIC,
-- accept `Result` / `job_update` over QUIC,
-- multiplex multiple streams,
-- auto-fallback to WebSocket/polling.
+With a `quic-v2` agent, QUIC can execute the basic agent transport loop:
 
-A QUIC agent shows **online** in `runtime_status` / `listAgents` (transport
-`quic`, protocol `quic-v1`), but cannot yet execute runtime requests. In Phase
-5A the server intentionally reports execution capabilities as disabled for
-QUIC agents and rejects `run_shell`, file, project, and job dispatch with a
-clear error instead of queuing work that no QUIC task can consume:
+- `run_shell`
+- file read/write/list requests
+- agent-side project register/create operations
+- async shell job start/status/log/update basics
+- stop job delivery through the same queue, when the active agent connection is
+  still present
 
-```
-QUIC transport is connected in phase 5A, but request dispatch is not implemented yet; use websocket/polling or upgrade to a QUIC dispatch-capable agent.
-```
-
-Use WebSocket or polling for command/file/job execution until QUIC dispatch is
-implemented in Phase 5B.
+`quic-v1` agents remain visible as online QUIC agents, but are intentionally
+register-only and must be upgraded to `quic-v2` before they can execute runtime
+requests.
 
 ### Fallback
 
@@ -130,13 +134,16 @@ Fallback is **manual** for now. To revert an agent to a working transport, set
 agent. WebSocket and polling remain fully supported and are unaffected by the
 QUIC listener.
 
-### Future phases (5B+)
+Production guidance: keep WebSocket as the default transport and retain a
+manual WebSocket/polling fallback path for agents. Do not switch fleets to QUIC
+by default until later phases add more operational validation.
 
-Planned for later phases:
+### Still not implemented
 
-- server -> agent `Request` dispatch over QUIC,
-- agent -> server `Result` / `job_update` over QUIC,
-- stream multiplexing,
 - auto fallback: `quic -> websocket -> polling`,
+- HTTP/3 polling,
+- Nginx QUIC / HTTP/3 integration,
+- UDP 443 defaulting,
+- stream multiplexing,
 - `doctor` QUIC connectivity check,
 - deployment validation on UDP 8443.

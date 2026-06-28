@@ -609,7 +609,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "run_codex".to_string(),
-                description: "Start Codex CLI as an async project job in the project cwd. Requires Codex CLI installed and configured on the owning agent; does NOT start a new WebCodex agent. If Codex CLI is unavailable there, use WebCodex file/shell tools instead.".to_string(),
+                description: "Optional Codex CLI delegation as an async project job. Requires Codex CLI installed and configured on the owning agent. Use only when the user explicitly asks to delegate to Codex; otherwise use WebCodex file/git/shell/line-edit tools directly.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Configured project id.", true),
                     (
@@ -1097,7 +1097,7 @@ impl ToolRuntime {
             "Rust validation: use cargo_fmt, cargo_check, cargo_test before run_shell for common checks.",
             "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",
             "Cleanup: use delete_project_files / git_restore_paths / discard_untracked instead of ad hoc rm.",
-            "Jobs: start run_codex, then poll job_status and read job_log/job_tail.",
+            "Codex: run_codex is optional delegation only when explicitly requested and Codex CLI is configured; otherwise use direct WebCodex tools.",
         ]
     }
 }

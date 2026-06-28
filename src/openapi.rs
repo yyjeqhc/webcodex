@@ -148,7 +148,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         "info": {
             "title": "WebCodex Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Self-hosted tool runtime for ChatGPT. Recommended flow: call listProjects (or listRuntimeTools) to discover available projects, then runCodexTask to start a Codex CLI task, then getRuntimeJobStatus / getRuntimeJobLog to poll the returned job_id. Use readProjectFile and getProjectGitStatus for safe project inspection. callRuntimeTool is an advanced generic entry point for any runtime tool; prefer the dedicated actions when available. All endpoints require Bearer auth; GPT Actions and MCP should use a Phase 2 personal API token, while WEBCODEX_TOKEN remains a bootstrap/admin credential. MCP and GPT Actions share the same ToolRuntime."
+            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. runCodexTask is optional delegation only when Codex CLI is installed and the user explicitly wants a Codex subtask. All endpoints require Bearer auth; GPT Actions and MCP should use a personal API token. MCP and GPT Actions share the same ToolRuntime."
         },
         "servers": [
             {
@@ -246,7 +246,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "runCodexTask",
                     "Run Codex CLI task",
-                    "Recommended primary code action. Mutation with side effects; requires Bearer auth. Starts Codex CLI asynchronously in an agent-registered project and returns a job_id. Do not assemble raw shell to run Codex; poll with getRuntimeJobStatus and read output with getRuntimeJobLog.",
+                    "Optional Codex delegation. Mutation with side effects; requires Bearer auth. Starts Codex CLI asynchronously in an agent-registered project and returns a job_id. Use only when the user explicitly asks to delegate to Codex and the agent has Codex CLI configured; otherwise use runtime tools directly.",
                     "CodexRunRequest",
                     "ToolResult",
                     json!({
@@ -380,7 +380,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getProjectGitStatus",
                     "Get project git status",
-                    "Runs `git status --porcelain` in an agent-registered project and returns stdout, stderr, and exit_code. Safe read-only project inspection. Use this before proposing changes via runCodexTask.",
+                    "Runs `git status --porcelain` in an agent-registered project and returns stdout, stderr, and exit_code. Safe read-only project inspection; use before proposing changes or invoking mutation tools.",
                     "ProjectIdRequest",
                     "ToolResult",
                     json!({
@@ -482,7 +482,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "applyProjectPatch",
                     "Apply a patch to a project",
-                    "Applies a unified diff patch to an agent-registered project through the owning agent. Mutation with side effects; requires Bearer auth and the agent shell capability. Prefer runCodexTask for exploratory edits.",
+                    "Applies a unified diff patch to an agent-registered project through the owning agent. Mutation with side effects; requires Bearer auth and the agent shell capability. Use after inspecting files and validating the patch; for targeted edits prefer structured line edit tools via callRuntimeTool.",
                     "ApplyPatchRequest",
                     "ToolResult",
                     json!({
@@ -1865,15 +1865,20 @@ mod tests {
     }
 
     #[test]
-    fn openapi_recommended_actions_have_run_codex_first_guidance() {
+    fn openapi_guides_codex_as_optional_delegation() {
         let spec = build_openapi_spec();
-        // runCodexTask description should recommend it as the primary action.
+        // runCodexTask is available, but should not be advertised as the default
+        // first step for normal project inspection/editing.
         let run_codex = &spec["paths"]["/api/codex/run"]["post"]["description"]
             .as_str()
             .unwrap();
         assert!(
-            run_codex.contains("Recommended"),
-            "runCodexTask description should mark it as recommended"
+            run_codex.contains("Optional Codex delegation"),
+            "runCodexTask description should mark Codex as optional"
+        );
+        assert!(
+            run_codex.contains("explicitly asks"),
+            "runCodexTask should not be the default action for every code task"
         );
         // callRuntimeTool should be marked advanced/generic.
         let call_tool = &spec["paths"]["/api/tools/call"]["post"]["description"]

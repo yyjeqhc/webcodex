@@ -689,7 +689,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced generic entry point for calling any runtime tool by name with params. Prefer dedicated actions when available. Use listRuntimeTools to discover accepted tool names.",
+                    "Advanced generic entry point for any runtime tool. Prefer dedicated actions when available. Use listRuntimeTools to discover tool names. Arguments may be sent in params, arguments, or flattened top-level fields when GPT Actions rejects params/arguments.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
@@ -834,7 +834,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. Omit both (or send null) for argument-less tools like list_tools.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. GPT Actions may pass tool-specific arguments as top-level fields when params/arguments are not accepted by the Action schema; those flattened fields are used only when `params` and `arguments` are absent. Omit all arguments for argument-less tools like list_tools.",
             "properties": {
                 "tool": {
                     "type": "string",
@@ -851,6 +851,177 @@ fn schemas() -> Value {
                     "description": "Compatibility alias for `params`. Used only when `params` is absent; ignored otherwise. Useful for MCP-style callers that send `arguments`.",
                     "nullable": true,
                     "additionalProperties": true
+                },
+                "project": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "path": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "command": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "cwd": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "timeout_secs": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "pattern": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "limit": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "end_line": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "line": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "text": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "new_text": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "expected_old_sha256": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "expected_old_prefix": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "expected_anchor_sha256": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "expected_anchor_prefix": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "content": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "overwrite": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "expected_sha256": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "expected_content_prefix": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "old": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "new": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "expected_replacements": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "allow_multiple": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "paths": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "patch": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "deny_sensitive_paths": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "job_id": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "tail_lines": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "offset": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "approval_mode": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "extra_args": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "client_id": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "id": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "description": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "allow_patch": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "template": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "git_init": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "allow_existing_empty": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 }
             }
         },
@@ -2035,6 +2206,43 @@ mod tests {
         assert!(
             desc_blob.contains("params") && desc_blob.contains("precedence"),
             "ToolCallRequest description must document params precedence over arguments"
+        );
+    }
+
+    #[test]
+    fn openapi_call_runtime_tool_declares_flattened_action_fields() {
+        let spec = build_openapi_spec();
+        let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
+        let properties = tool_call["properties"].as_object().unwrap();
+
+        for field in [
+            "project",
+            "path",
+            "start_line",
+            "end_line",
+            "line",
+            "text",
+            "new_text",
+            "expected_old_prefix",
+            "expected_anchor_prefix",
+        ] {
+            assert!(
+                properties.contains_key(field),
+                "ToolCallRequest.properties.{} must exist for flattened GPT Action calls",
+                field
+            );
+        }
+
+        assert!(properties.contains_key("params"));
+        assert!(properties.contains_key("arguments"));
+        let required = tool_call["required"].as_array().unwrap();
+        assert_eq!(required, &vec![json!("tool")]);
+        assert_eq!(tool_call["additionalProperties"], false);
+
+        let desc_blob = serde_json::to_string(tool_call).unwrap();
+        assert!(
+            desc_blob.contains("top-level fields") && desc_blob.contains("params/arguments"),
+            "ToolCallRequest must document flattened GPT Action compatibility"
         );
     }
 

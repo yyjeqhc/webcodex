@@ -8,10 +8,12 @@ use std::sync::Arc;
 
 /// Generic runtime tool call body. `tool` is required; `params` carries the
 /// tool-specific arguments. `arguments` is accepted as a compatibility alias
-/// for `params` — when both are present, `params` wins. Parsing is done
-/// manually in `tools_call` (via `extract_tool_call`) so the
-/// params-over-arguments precedence and the rich error messages stay explicit.
-/// The OpenAPI `ToolCallRequest` schema documents the same wire shape.
+/// for `params` — when both are present, `params` wins. GPT Actions may also
+/// pass tool-specific arguments as top-level fields, so parsing is done
+/// manually in `tools_call` (via `extract_tool_call`) to preserve the
+/// params-over-arguments-over-flattened precedence and the rich error messages
+/// stay explicit. The OpenAPI `ToolCallRequest` schema documents the same wire
+/// shape.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct ToolCallRequest {
@@ -351,11 +353,14 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
 /// - `{"tool":"list_tools","params":null}`
 /// - `{"tool":"git_diff_summary","params":{"project":"agent:c:p"}}`
 /// - `{"tool":"git_diff_summary","arguments":{"project":"agent:c:p"}}`
+/// - `{"tool":"git_diff_summary","project":"agent:c:p"}`
 ///
 /// When both `params` and `arguments` are present, `params` wins; `arguments`
-/// is only a compatibility alias. Returns a human-readable error string (never
-/// including the raw body) when the body is not a JSON object or `tool` is
-/// missing/not a non-empty string.
+/// is only a compatibility alias. When neither is present, every top-level
+/// field except `tool` is collected into the params object for GPT Action
+/// compatibility. Returns a human-readable error string (never including the
+/// raw body) when the body is not a JSON object or `tool` is missing/not a
+/// non-empty string.
 fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     let obj = body
         .as_object()
@@ -371,13 +376,24 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
             return Err("missing required field 'tool'".to_string());
         }
     };
-    // params takes precedence over the `arguments` alias.
+    // params takes precedence over the `arguments` alias; flattened GPT Action
+    // fields are collected only when neither object wrapper is present.
     let params = if obj.contains_key("params") {
         obj.get("params").cloned().unwrap_or(Value::Null)
     } else if obj.contains_key("arguments") {
         obj.get("arguments").cloned().unwrap_or(Value::Null)
     } else {
-        Value::Null
+        let mut flattened = serde_json::Map::new();
+        for (key, value) in obj {
+            if key != "tool" {
+                flattened.insert(key.clone(), value.clone());
+            }
+        }
+        if flattened.is_empty() {
+            Value::Null
+        } else {
+            Value::Object(flattened)
+        }
     };
     Ok((tool, params))
 }
@@ -2099,6 +2115,74 @@ mod tests {
         let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
         let service = Service::new(build_projects_router(config, db, runtime));
         (_tmp, service)
+    }
+
+    #[test]
+    fn extract_tool_call_params_precede_flattened_fields() {
+        let (tool, params) = extract_tool_call(&json!({
+            "tool": "git_status",
+            "project": "wrong",
+            "params": {"project": "right"},
+        }))
+        .unwrap();
+
+        assert_eq!(tool, "git_status");
+        assert_eq!(params, json!({"project": "right"}));
+    }
+
+    #[test]
+    fn extract_tool_call_arguments_precede_flattened_fields_without_params() {
+        let (tool, params) = extract_tool_call(&json!({
+            "tool": "git_status",
+            "project": "wrong",
+            "arguments": {"project": "right"},
+        }))
+        .unwrap();
+
+        assert_eq!(tool, "git_status");
+        assert_eq!(params, json!({"project": "right"}));
+    }
+
+    #[test]
+    fn extract_tool_call_collects_flattened_top_level_fields() {
+        let (tool, params) = extract_tool_call(&json!({
+            "tool": "git_status",
+            "project": "agent:oe:webcodex",
+        }))
+        .unwrap();
+
+        assert_eq!(tool, "git_status");
+        assert_eq!(params, json!({"project": "agent:oe:webcodex"}));
+    }
+
+    #[test]
+    fn extract_tool_call_collects_flattened_line_edit_fields() {
+        let (tool, params) = extract_tool_call(&json!({
+            "tool": "replace_line_range",
+            "project": "agent:oe:webcodex",
+            "path": "x.tmp",
+            "start_line": 2,
+            "end_line": 3,
+            "new_text": "BETA\nGAMMA\n",
+            "expected_old_prefix": "beta\n",
+        }))
+        .unwrap();
+
+        assert_eq!(tool, "replace_line_range");
+        assert_eq!(params["project"], "agent:oe:webcodex");
+        assert_eq!(params["path"], "x.tmp");
+        assert_eq!(params["start_line"], 2);
+        assert_eq!(params["end_line"], 3);
+        assert_eq!(params["new_text"], "BETA\nGAMMA\n");
+        assert_eq!(params["expected_old_prefix"], "beta\n");
+    }
+
+    #[test]
+    fn extract_tool_call_no_argument_tool_keeps_null_params() {
+        let (tool, params) = extract_tool_call(&json!({"tool": "list_tools"})).unwrap();
+
+        assert_eq!(tool, "list_tools");
+        assert!(params.is_null() || params.as_object().is_some_and(|m| m.is_empty()));
     }
 
     #[tokio::test]

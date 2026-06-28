@@ -37,6 +37,7 @@ use agent_init::{
 const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 const PROJECT_SCAN_CACHE_MS: u64 = 5000;
+const SHELL_PROFILE_PREPARE_TIMEOUT_SECS: u64 = 30;
 const DEFAULT_MAX_CONCURRENT_JOBS: usize = 2;
 /// WebSocket outgoing envelope channel capacity.
 const WS_OUTGOING_CAPACITY: usize = 64;
@@ -193,6 +194,29 @@ struct CommandResult {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct PreparedShellProfileKey {
+    project_key: String,
+    profile_name: String,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedShellProfile {
+    profile_name: String,
+    program: String,
+    args: Vec<String>,
+    env_snapshot: HashMap<String, String>,
+}
+
+/// Lazily prepared shell environment snapshots. Snapshots are keyed by
+/// project/cwd plus profile name because inline init scripts such as
+/// `. .venv/bin/activate` are intentionally resolved from the project cwd.
+/// Profile config changes require restarting the agent in this phase.
+#[derive(Debug, Clone, Default)]
+struct PreparedShellProfileCache {
+    profiles: Arc<Mutex<HashMap<PreparedShellProfileKey, Arc<PreparedShellProfile>>>>,
+}
+
 /// Minimal HTTP send configuration used by the polling `AgentSink`. We do not
 /// store the whole `AgentConfig` here: policy and concurrency limits stay
 /// with the agent config and are passed alongside the sink.
@@ -347,7 +371,18 @@ where
 struct JobManager {
     max_concurrent: usize,
     jobs: Arc<Mutex<HashMap<String, RunningJob>>>,
-    queued: Arc<Mutex<VecDeque<(AgentSink, AgentPolicy, ShellConfig, ShellAgentShellRequest)>>>,
+    queued: Arc<
+        Mutex<
+            VecDeque<(
+                AgentSink,
+                AgentPolicy,
+                ShellConfig,
+                PathBuf,
+                ShellAgentShellRequest,
+            )>,
+        >,
+    >,
+    prepared_profiles: PreparedShellProfileCache,
 }
 
 impl JobManager {
@@ -356,6 +391,7 @@ impl JobManager {
             max_concurrent: max_concurrent.max(1),
             jobs: Arc::new(Mutex::new(HashMap::new())),
             queued: Arc::new(Mutex::new(VecDeque::new())),
+            prepared_profiles: PreparedShellProfileCache::default(),
         }
     }
 }
@@ -391,6 +427,13 @@ struct AgentProjectFile {
 struct AgentProjectCache {
     projects: Vec<ShellAgentProjectSummary>,
     refreshed_at: Option<Instant>,
+}
+
+#[derive(Debug, Clone)]
+struct AgentProjectShellContext {
+    id: String,
+    path: String,
+    shell_profile: Option<String>,
 }
 
 #[derive(Debug)]
@@ -723,6 +766,13 @@ fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+fn should_inherit_env_key(key: &str) -> bool {
+    !matches!(
+        key,
+        "WEBCODEX_TOKEN" | "WEBCODEX_AGENT_TOKEN" | "WEBCODEX_USER_TOKEN" | "AUTHORIZATION"
+    )
+}
+
 fn shell_command_text(shell: &ShellConfig, command: &str) -> String {
     match shell.init_script.as_ref() {
         Some(path) => format!(
@@ -735,6 +785,14 @@ fn shell_command_text(shell: &ShellConfig, command: &str) -> String {
 }
 
 fn apply_shell_environment(cmd: &mut Command, shell: &ShellConfig) -> Result<(), String> {
+    for key in [
+        "WEBCODEX_TOKEN",
+        "WEBCODEX_AGENT_TOKEN",
+        "WEBCODEX_USER_TOKEN",
+        "AUTHORIZATION",
+    ] {
+        cmd.env_remove(key);
+    }
     if !shell.path_prepend.is_empty() {
         let mut paths = shell.path_prepend.clone();
         if let Some(current) = std::env::var_os("PATH") {
@@ -750,6 +808,13 @@ fn apply_shell_environment(cmd: &mut Command, shell: &ShellConfig) -> Result<(),
     Ok(())
 }
 
+fn apply_env_snapshot(cmd: &mut Command, env_snapshot: &HashMap<String, String>) {
+    cmd.env_clear();
+    for (key, value) in env_snapshot {
+        cmd.env(key, value);
+    }
+}
+
 fn configured_shell_command(shell: &ShellConfig, command: &str) -> Result<Command, String> {
     validate_shell_config(shell)?;
     let mut cmd = Command::new(&shell.program);
@@ -758,6 +823,19 @@ fn configured_shell_command(shell: &ShellConfig, command: &str) -> Result<Comman
     }
     cmd.arg(shell_command_text(shell, command));
     apply_shell_environment(&mut cmd, shell)?;
+    Ok(cmd)
+}
+
+fn configured_prepared_shell_command(
+    profile: &PreparedShellProfile,
+    command: &str,
+) -> Result<Command, String> {
+    let mut cmd = Command::new(&profile.program);
+    for arg in &profile.args {
+        cmd.arg(arg);
+    }
+    cmd.arg(command);
+    apply_env_snapshot(&mut cmd, &profile.env_snapshot);
     Ok(cmd)
 }
 
@@ -770,6 +848,20 @@ fn configured_shell_job_command(shell: &ShellConfig, command: &str) -> Result<Co
     }
     cmd.arg(shell_command_text(shell, command));
     apply_shell_environment(&mut cmd, shell)?;
+    Ok(cmd)
+}
+
+fn configured_prepared_shell_job_command(
+    profile: &PreparedShellProfile,
+    command: &str,
+) -> Result<Command, String> {
+    let mut cmd = Command::new("setsid");
+    cmd.arg(&profile.program);
+    for arg in &profile.args {
+        cmd.arg(arg);
+    }
+    cmd.arg(command);
+    apply_env_snapshot(&mut cmd, &profile.env_snapshot);
     Ok(cmd)
 }
 
@@ -852,6 +944,339 @@ fn validate_shell_profile_toml_shape(content: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+fn base_shell_env(
+    shell: &ShellConfig,
+    profile: &ShellProfileConfig,
+) -> Result<HashMap<String, String>, String> {
+    let mut env: HashMap<String, String> = std::env::vars()
+        .filter(|(key, _)| should_inherit_env_key(key))
+        .collect();
+    if !shell.path_prepend.is_empty() {
+        let mut paths = shell.path_prepend.clone();
+        if let Some(current) = env.get("PATH") {
+            paths.extend(std::env::split_paths(current));
+        }
+        let joined = std::env::join_paths(paths)
+            .map_err(|e| format!("failed to build shell PATH from shell.path_prepend: {}", e))?;
+        env.insert("PATH".to_string(), joined.to_string_lossy().to_string());
+    }
+    for (key, value) in &shell.env {
+        env.insert(key.clone(), value.clone());
+    }
+    for (key, value) in &profile.env {
+        env.insert(key.clone(), value.clone());
+    }
+    for key in [
+        "WEBCODEX_TOKEN",
+        "WEBCODEX_AGENT_TOKEN",
+        "WEBCODEX_USER_TOKEN",
+        "AUTHORIZATION",
+    ] {
+        env.remove(key);
+    }
+    Ok(env)
+}
+
+fn stderr_tail(bytes: &[u8]) -> String {
+    let text = String::from_utf8_lossy(bytes).to_string();
+    const MAX_ERR: usize = 4096;
+    if text.len() <= MAX_ERR {
+        return text;
+    }
+    let mut start = text.len() - MAX_ERR;
+    while start < text.len() && !text.is_char_boundary(start) {
+        start += 1;
+    }
+    format!("[stderr truncated]\n{}", &text[start..])
+}
+
+fn run_prepare_command(
+    mut cmd: Command,
+    timeout: Duration,
+) -> Result<(std::process::ExitStatus, Vec<u8>, Vec<u8>), String> {
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("failed to spawn profile prepare command: {}", e))?;
+    let mut stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "profile prepare stdout pipe missing".to_string())?;
+    let mut stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "profile prepare stderr pipe missing".to_string())?;
+    let stdout_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stdout
+            .read_to_end(&mut buf)
+            .map(|_| buf)
+            .map_err(|e| format!("failed to read profile prepare stdout: {}", e))
+    });
+    let stderr_handle = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stderr
+            .read_to_end(&mut buf)
+            .map(|_| buf)
+            .map_err(|e| format!("failed to read profile prepare stderr: {}", e))
+    });
+    let start = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) => {
+                if start.elapsed() >= timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    let _stdout = stdout_handle
+                        .join()
+                        .map_err(|_| "profile prepare stdout reader panicked".to_string())??;
+                    let stderr = stderr_handle
+                        .join()
+                        .map_err(|_| "profile prepare stderr reader panicked".to_string())??;
+                    return Err(format!(
+                        "profile prepare timed out after {} seconds; stderr tail: {}",
+                        timeout.as_secs(),
+                        stderr_tail(&stderr)
+                    ));
+                }
+                std::thread::sleep(Duration::from_millis(20));
+            }
+            Err(e) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("failed to wait profile prepare command: {}", e));
+            }
+        }
+    };
+    let stdout = stdout_handle
+        .join()
+        .map_err(|_| "profile prepare stdout reader panicked".to_string())??;
+    let stderr = stderr_handle
+        .join()
+        .map_err(|_| "profile prepare stderr reader panicked".to_string())??;
+    Ok((status, stdout, stderr))
+}
+
+fn find_bytes(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    haystack
+        .windows(needle.len())
+        .position(|window| window == needle)
+}
+
+fn parse_env_payload(
+    payload: &[u8],
+    profile_name: &str,
+) -> Result<HashMap<String, String>, String> {
+    let mut env = HashMap::new();
+    for entry in payload.split(|byte| *byte == 0) {
+        if entry.is_empty() {
+            continue;
+        }
+        let Some(eq) = entry.iter().position(|byte| *byte == b'=') else {
+            return Err(format!(
+                "failed to parse env snapshot for profile '{}': entry missing '='",
+                profile_name
+            ));
+        };
+        let key = std::str::from_utf8(&entry[..eq]).map_err(|_| {
+            format!(
+                "failed to parse env snapshot for profile '{}': key is not UTF-8",
+                profile_name
+            )
+        })?;
+        if key.is_empty() {
+            return Err(format!(
+                "failed to parse env snapshot for profile '{}': empty env key",
+                profile_name
+            ));
+        }
+        let value = std::str::from_utf8(&entry[eq + 1..]).map_err(|_| {
+            format!(
+                "failed to parse env snapshot for profile '{}': value is not UTF-8",
+                profile_name
+            )
+        })?;
+        if should_inherit_env_key(key) {
+            env.insert(key.to_string(), value.to_string());
+        }
+    }
+    Ok(env)
+}
+
+fn capture_profile_env_snapshot(
+    profile_name: &str,
+    profile: &ShellProfileConfig,
+    program: &str,
+    args: &[String],
+    prepare_cwd: &Path,
+    initial_env: HashMap<String, String>,
+) -> Result<HashMap<String, String>, String> {
+    let Some(init_script) = profile.init_script.as_deref() else {
+        return Ok(initial_env);
+    };
+    let marker = format!("__WEBCODEX_ENV_START_{}__", uuid::Uuid::new_v4().simple());
+    let prepare_script = format!(
+        "set -e\n{}\nprintf '\\n{}\\n'\nenv -0\n",
+        init_script, marker
+    );
+    let mut cmd = Command::new(program);
+    for arg in args {
+        cmd.arg(arg);
+    }
+    cmd.arg(prepare_script).current_dir(prepare_cwd).env_clear();
+    for (key, value) in initial_env {
+        cmd.env(key, value);
+    }
+    let (status, stdout, stderr) =
+        run_prepare_command(cmd, Duration::from_secs(SHELL_PROFILE_PREPARE_TIMEOUT_SECS)).map_err(
+            |e| {
+                format!(
+                    "failed to prepare shell profile '{}' at {}: {}",
+                    profile_name,
+                    prepare_cwd.display(),
+                    e
+                )
+            },
+        )?;
+    if !status.success() {
+        return Err(format!(
+            "failed to prepare shell profile '{}' at {}: exit code {}; stderr tail: {}",
+            profile_name,
+            prepare_cwd.display(),
+            status.code().unwrap_or(-1),
+            stderr_tail(&stderr)
+        ));
+    }
+    let marker_pos = find_bytes(&stdout, marker.as_bytes()).ok_or_else(|| {
+        format!(
+            "failed to prepare shell profile '{}' at {}: env marker not found",
+            profile_name,
+            prepare_cwd.display()
+        )
+    })?;
+    let mut payload_start = marker_pos + marker.len();
+    while stdout
+        .get(payload_start)
+        .is_some_and(|byte| *byte == b'\n' || *byte == b'\r')
+    {
+        payload_start += 1;
+    }
+    let mut snapshot = parse_env_payload(&stdout[payload_start..], profile_name)?;
+    for key in [
+        "WEBCODEX_TOKEN",
+        "WEBCODEX_AGENT_TOKEN",
+        "WEBCODEX_USER_TOKEN",
+        "AUTHORIZATION",
+    ] {
+        snapshot.remove(key);
+    }
+    Ok(snapshot)
+}
+
+impl PreparedShellProfileCache {
+    fn get_or_prepare(
+        &self,
+        shell: &ShellConfig,
+        profile_name: &str,
+        project_key: String,
+        prepare_cwd: &Path,
+    ) -> Result<Arc<PreparedShellProfile>, String> {
+        let key = PreparedShellProfileKey {
+            project_key,
+            profile_name: profile_name.to_string(),
+        };
+        if let Some(prepared) = self.profiles.lock().unwrap().get(&key).cloned() {
+            return Ok(prepared);
+        }
+        let profile = shell.profiles.get(profile_name).ok_or_else(|| {
+            format!(
+                "shell profile '{}' is not configured for project/cwd {}",
+                profile_name,
+                prepare_cwd.display()
+            )
+        })?;
+        let program = profile
+            .program
+            .clone()
+            .unwrap_or_else(|| shell.program.clone());
+        let args = profile.args.clone().unwrap_or_else(|| shell.args.clone());
+        let initial_env = base_shell_env(shell, profile)?;
+        let env_snapshot = capture_profile_env_snapshot(
+            profile_name,
+            profile,
+            &program,
+            &args,
+            prepare_cwd,
+            initial_env,
+        )?;
+        let prepared = Arc::new(PreparedShellProfile {
+            profile_name: profile_name.to_string(),
+            program,
+            args,
+            env_snapshot,
+        });
+        self.profiles.lock().unwrap().insert(key, prepared.clone());
+        Ok(prepared)
+    }
+}
+
+fn shell_profile_project_key(project_id: Option<&str>, path: &Path) -> String {
+    let path = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    match project_id {
+        Some(id) => format!("project:{}:{}", id, path),
+        None => format!("cwd:{}", path),
+    }
+}
+
+fn resolve_prepared_shell_profile(
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cwd_path: &Path,
+    request_has_cwd: bool,
+    cache: &PreparedShellProfileCache,
+) -> Result<Option<Arc<PreparedShellProfile>>, String> {
+    let project = request_has_cwd
+        .then(|| find_project_shell_context(projects_dir, cwd_path))
+        .flatten();
+    let profile_name = project
+        .as_ref()
+        .and_then(|project| project.shell_profile.as_deref())
+        .or(shell.default_profile.as_deref());
+    let Some(profile_name) = profile_name else {
+        return Ok(None);
+    };
+    let prepare_cwd = project
+        .as_ref()
+        .map(|project| PathBuf::from(&project.path))
+        .unwrap_or_else(|| cwd_path.to_path_buf());
+    if let Some(project) = &project {
+        if project.shell_profile.as_deref() == Some(profile_name)
+            && !shell.profiles.contains_key(profile_name)
+        {
+            return Err(format!(
+                "project '{}' shell_profile '{}' does not match any shell.profiles entry",
+                project.id, profile_name
+            ));
+        }
+    }
+    let project_key = shell_profile_project_key(
+        project.as_ref().map(|project| project.id.as_str()),
+        &prepare_cwd,
+    );
+    cache
+        .get_or_prepare(shell, profile_name, project_key, &prepare_cwd)
+        .map(Some)
 }
 
 fn load_config(path: &Path) -> Result<AgentConfig, String> {
@@ -957,6 +1382,59 @@ fn parse_agent_project_toml(content: &str) -> Result<AgentProjectFile, String> {
     }
     project.hooks = hooks;
     Ok(project)
+}
+
+fn load_agent_project_shell_contexts_from_dir(dir: &Path) -> Vec<AgentProjectShellContext> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+    let mut files = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|ext| ext.to_str()) == Some("toml") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    let mut seen = HashSet::new();
+    let mut projects = Vec::new();
+    for file in files {
+        let Ok(content) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let Ok(project) = parse_agent_project_toml(&content) else {
+            continue;
+        };
+        if project.disabled || !seen.insert(project.id.clone()) {
+            continue;
+        }
+        projects.push(AgentProjectShellContext {
+            id: project.id,
+            path: project.path,
+            shell_profile: project.shell_profile,
+        });
+    }
+    projects
+}
+
+fn find_project_shell_context(
+    projects_dir: &Path,
+    cwd_path: &Path,
+) -> Option<AgentProjectShellContext> {
+    let cwd = cwd_path.canonicalize().ok()?;
+    load_agent_project_shell_contexts_from_dir(projects_dir)
+        .into_iter()
+        .filter_map(|project| {
+            let project_path = PathBuf::from(&project.path).canonicalize().ok()?;
+            if cwd == project_path || cwd.starts_with(&project_path) {
+                Some((project_path.components().count(), project))
+            } else {
+                None
+            }
+        })
+        .max_by_key(|(depth, _)| *depth)
+        .map(|(_, project)| project)
 }
 
 fn run_git_capture(path: &str, args: &[&str]) -> Option<String> {
@@ -1285,6 +1763,51 @@ fn run_shell(
     timeout_secs: u64,
     stop_requested: Option<&AtomicBool>,
 ) -> CommandResult {
+    run_shell_impl(
+        policy,
+        shell,
+        None,
+        cwd,
+        command,
+        stdin,
+        timeout_secs,
+        stop_requested,
+    )
+}
+
+fn run_shell_with_profiles(
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    projects_dir: &Path,
+    cache: &PreparedShellProfileCache,
+    cwd: Option<&str>,
+    command: &str,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+) -> CommandResult {
+    run_shell_impl(
+        policy,
+        shell,
+        Some((projects_dir, cache)),
+        cwd,
+        command,
+        stdin,
+        timeout_secs,
+        stop_requested,
+    )
+}
+
+fn run_shell_impl(
+    policy: &AgentPolicy,
+    shell: &ShellConfig,
+    profiles: Option<(&Path, &PreparedShellProfileCache)>,
+    cwd: Option<&str>,
+    command: &str,
+    stdin: Option<&str>,
+    timeout_secs: u64,
+    stop_requested: Option<&AtomicBool>,
+) -> CommandResult {
     if !policy.allow_raw_shell {
         return CommandResult {
             exit_code: None,
@@ -1308,17 +1831,69 @@ fn run_shell(
     }
     let timeout_secs = timeout_secs.min(policy.max_timeout_secs).max(1);
     let start = Instant::now();
-    let mut cmd = match configured_shell_command(shell, command) {
-        Ok(cmd) => cmd,
-        Err(e) => {
-            return CommandResult {
-                exit_code: None,
-                stdout: None,
-                stderr: None,
-                duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(e),
-            };
+    let mut prepared_profile_name = None;
+    let mut cmd = match profiles {
+        Some((projects_dir, cache)) => {
+            match resolve_prepared_shell_profile(
+                shell,
+                projects_dir,
+                &cwd_path,
+                cwd.is_some(),
+                cache,
+            ) {
+                Ok(Some(profile)) => match configured_prepared_shell_command(&profile, command) {
+                    Ok(cmd) => {
+                        prepared_profile_name = Some(profile.profile_name.clone());
+                        cmd
+                    }
+                    Err(e) => {
+                        return CommandResult {
+                            exit_code: None,
+                            stdout: None,
+                            stderr: None,
+                            duration_ms: Some(start.elapsed().as_millis() as u64),
+                            error: Some(format!(
+                                "failed to configure shell profile '{}': {}",
+                                profile.profile_name, e
+                            )),
+                        };
+                    }
+                },
+                Ok(None) => match configured_shell_command(shell, command) {
+                    Ok(cmd) => cmd,
+                    Err(e) => {
+                        return CommandResult {
+                            exit_code: None,
+                            stdout: None,
+                            stderr: None,
+                            duration_ms: Some(start.elapsed().as_millis() as u64),
+                            error: Some(e),
+                        };
+                    }
+                },
+                Err(e) => {
+                    return CommandResult {
+                        exit_code: None,
+                        stdout: None,
+                        stderr: None,
+                        duration_ms: Some(start.elapsed().as_millis() as u64),
+                        error: Some(e),
+                    };
+                }
+            }
         }
+        None => match configured_shell_command(shell, command) {
+            Ok(cmd) => cmd,
+            Err(e) => {
+                return CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(e),
+                };
+            }
+        },
     };
     cmd.current_dir(&cwd_path)
         .stdout(Stdio::piped())
@@ -1330,12 +1905,18 @@ fn run_shell(
     let mut child = match spawn {
         Ok(child) => child,
         Err(e) => {
+            let error = prepared_profile_name
+                .as_deref()
+                .map(|profile_name| {
+                    format!("failed to spawn shell profile '{}': {}", profile_name, e)
+                })
+                .unwrap_or_else(|| format!("failed to spawn command: {}", e));
             return CommandResult {
                 exit_code: None,
                 stdout: None,
                 stderr: None,
                 duration_ms: Some(start.elapsed().as_millis() as u64),
-                error: Some(format!("failed to spawn command: {}", e)),
+                error: Some(error),
             };
         }
     };
@@ -2340,6 +2921,7 @@ impl JobManager {
         sink: AgentSink,
         policy: AgentPolicy,
         shell: ShellConfig,
+        projects_dir: PathBuf,
         request: ShellAgentShellRequest,
     ) {
         let Some(job_id) = request.job_id.clone() else {
@@ -2366,10 +2948,10 @@ impl JobManager {
             self.queued
                 .lock()
                 .unwrap()
-                .push_back((sink, policy, shell, request));
+                .push_back((sink, policy, shell, projects_dir, request));
             return;
         }
-        self.start_now(sink, policy, shell, request);
+        self.start_now(sink, policy, shell, projects_dir, request);
     }
 
     fn start_now(
@@ -2377,9 +2959,10 @@ impl JobManager {
         sink: AgentSink,
         policy: AgentPolicy,
         shell: ShellConfig,
+        projects_dir: PathBuf,
         request: ShellAgentShellRequest,
     ) {
-        self.start_shell_job(sink, policy, shell, request);
+        self.start_shell_job(sink, policy, shell, projects_dir, request);
     }
 
     fn start_available_queued(&self) {
@@ -2388,7 +2971,8 @@ impl JobManager {
                 let jobs = self.jobs.lock().unwrap();
                 let mut queued = self.queued.lock().unwrap();
                 let mut selected = None;
-                for (idx, (_, _policy, _shell, request)) in queued.iter().enumerate() {
+                for (idx, (_, _policy, _shell, _projects_dir, request)) in queued.iter().enumerate()
+                {
                     let active = jobs
                         .values()
                         .filter(|job| job.client_id == request.client_id)
@@ -2400,10 +2984,10 @@ impl JobManager {
                 }
                 selected.and_then(|idx| queued.remove(idx))
             };
-            let Some((sink, policy, shell, request)) = next else {
+            let Some((sink, policy, shell, projects_dir, request)) = next else {
                 return;
             };
-            self.start_now(sink, policy, shell, request);
+            self.start_now(sink, policy, shell, projects_dir, request);
         }
     }
 
@@ -2412,6 +2996,7 @@ impl JobManager {
         sink: AgentSink,
         policy: AgentPolicy,
         shell: ShellConfig,
+        projects_dir: PathBuf,
         request: ShellAgentShellRequest,
     ) {
         let Some(job_id) = request.job_id.clone() else {
@@ -2435,8 +3020,40 @@ impl JobManager {
             return;
         }
         let start = Instant::now();
-        let mut cmd = match configured_shell_job_command(&shell, &request.command) {
-            Ok(cmd) => cmd,
+        let mut prepared_profile_name = None;
+        let mut cmd = match resolve_prepared_shell_profile(
+            &shell,
+            &projects_dir,
+            &cwd_path,
+            request.cwd.is_some(),
+            &self.prepared_profiles,
+        ) {
+            Ok(Some(profile)) => {
+                match configured_prepared_shell_job_command(&profile, &request.command) {
+                    Ok(cmd) => {
+                        prepared_profile_name = Some(profile.profile_name.clone());
+                        cmd
+                    }
+                    Err(e) => {
+                        send_start_failure(
+                            &sink,
+                            request,
+                            format!(
+                                "failed to configure shell profile '{}': {}",
+                                profile.profile_name, e
+                            ),
+                        );
+                        return;
+                    }
+                }
+            }
+            Ok(None) => match configured_shell_job_command(&shell, &request.command) {
+                Ok(cmd) => cmd,
+                Err(e) => {
+                    send_start_failure(&sink, request, e);
+                    return;
+                }
+            },
             Err(e) => {
                 send_start_failure(&sink, request, e);
                 return;
@@ -2450,7 +3067,13 @@ impl JobManager {
         let mut child = match spawn {
             Ok(c) => c,
             Err(e) => {
-                send_start_failure(&sink, request, format!("failed to spawn command: {}", e));
+                let error = prepared_profile_name
+                    .as_deref()
+                    .map(|profile_name| {
+                        format!("failed to spawn shell profile '{}': {}", profile_name, e)
+                    })
+                    .unwrap_or_else(|| format!("failed to spawn command: {}", e));
+                send_start_failure(&sink, request, error);
                 return;
             }
         };
@@ -2484,6 +3107,7 @@ impl JobManager {
         });
         let jobs = self.jobs.clone();
         let queued = self.queued.clone();
+        let prepared_profiles = self.prepared_profiles.clone();
         let max_concurrent = self.max_concurrent;
         std::thread::spawn(move || {
             let (tx, rx) = mpsc::channel::<OutputChunk>();
@@ -2598,6 +3222,7 @@ impl JobManager {
                 max_concurrent,
                 jobs: jobs.clone(),
                 queued: queued.clone(),
+                prepared_profiles,
             };
             manager.start_available_queued();
         });
@@ -2608,14 +3233,14 @@ impl JobManager {
             let mut queued = self.queued.lock().unwrap();
             if let Some(pos) = queued
                 .iter()
-                .position(|(_, _, _, request)| request.job_id.as_deref() == Some(job_id))
+                .position(|(_, _, _, _, request)| request.job_id.as_deref() == Some(job_id))
             {
                 queued.remove(pos)
             } else {
                 None
             }
         };
-        if let Some((sink, _policy, _shell, request)) = queued_job {
+        if let Some((sink, _policy, _shell, _projects_dir, request)) = queued_job {
             let request_id = request.request_id.clone();
             let job_id = request.job_id.clone().unwrap_or_default();
             let _ = sink.send_job_update(&ShellAgentJobUpdateRequest {
@@ -2664,7 +3289,13 @@ fn dispatch_request(
 ) -> Result<bool, String> {
     match request.kind.as_str() {
         "start_job" => {
-            jobs.enqueue(sink.clone(), policy.clone(), shell.clone(), request);
+            jobs.enqueue(
+                sink.clone(),
+                policy.clone(),
+                shell.clone(),
+                projects_dir.to_path_buf(),
+                request,
+            );
             Ok(true)
         }
         "stop_job" => {
@@ -2687,9 +3318,11 @@ fn dispatch_request(
         }
         _ => {
             let request_id = request.request_id.clone();
-            let result = run_shell(
+            let result = run_shell_with_profiles(
                 policy,
                 shell,
+                projects_dir,
+                &jobs.prepared_profiles,
                 request.cwd.as_deref(),
                 &request.command,
                 request.stdin.as_deref(),
@@ -3712,6 +4345,519 @@ shell_profile = "../rust"
         );
         assert_eq!(result.exit_code, Some(0));
         assert_eq!(result.stdout.as_deref(), Some("bash-ok"));
+    }
+
+    fn shell_with_profiles(
+        default_profile: Option<&str>,
+        profiles: Vec<(&str, ShellProfileConfig)>,
+    ) -> ShellConfig {
+        ShellConfig {
+            default_profile: default_profile.map(str::to_string),
+            profiles: profiles
+                .into_iter()
+                .map(|(name, profile)| (name.to_string(), profile))
+                .collect(),
+            ..ShellConfig::default()
+        }
+    }
+
+    fn profile_env(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
+        entries
+            .iter()
+            .map(|(key, value)| (key.to_string(), value.to_string()))
+            .collect()
+    }
+
+    fn write_agent_project(
+        projects_dir: &Path,
+        id: &str,
+        path: &Path,
+        shell_profile: Option<&str>,
+    ) {
+        std::fs::create_dir_all(projects_dir).unwrap();
+        let shell_profile = shell_profile
+            .map(|profile| format!("shell_profile = {:?}\n", profile))
+            .unwrap_or_default();
+        std::fs::write(
+            projects_dir.join(format!("{}.toml", id)),
+            format!(
+                "id = {:?}\npath = {:?}\nname = {:?}\n{}",
+                id,
+                path.to_string_lossy(),
+                id,
+                shell_profile
+            ),
+        )
+        .unwrap();
+    }
+
+    fn run_profile_shell(
+        policy: &AgentPolicy,
+        shell: &ShellConfig,
+        projects_dir: &Path,
+        cache: &PreparedShellProfileCache,
+        cwd: &Path,
+        command: &str,
+    ) -> CommandResult {
+        let cwd = cwd.to_string_lossy().to_string();
+        run_shell_with_profiles(
+            policy,
+            shell,
+            projects_dir,
+            cache,
+            Some(&cwd),
+            command,
+            None,
+            10,
+            None,
+        )
+    }
+
+    #[test]
+    fn prepared_profile_env_is_available_to_run_shell() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shell = shell_with_profiles(
+            Some("test"),
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    env: profile_env(&[("WEBCODEX_TEST_PROFILE", "from_env")]),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            tmp.path(),
+            &PreparedShellProfileCache::default(),
+            tmp.path(),
+            "printf %s \"$WEBCODEX_TEST_PROFILE\"",
+        );
+        assert_eq!(result.exit_code, Some(0), "{result:?}");
+        assert_eq!(result.stdout.as_deref(), Some("from_env"));
+    }
+
+    #[test]
+    fn prepared_profile_init_script_export_is_available_to_run_shell() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shell = shell_with_profiles(
+            Some("test"),
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    program: Some("/bin/sh".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    init_script: Some("export WEBCODEX_TEST_PROFILE=from_snapshot".to_string()),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            tmp.path(),
+            &PreparedShellProfileCache::default(),
+            tmp.path(),
+            "printf %s \"$WEBCODEX_TEST_PROFILE\"",
+        );
+        assert_eq!(result.exit_code, Some(0), "{result:?}");
+        assert_eq!(result.stdout.as_deref(), Some("from_snapshot"));
+    }
+
+    #[test]
+    fn prepared_profile_init_script_is_project_relative() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("project");
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir_all(project_dir.join(".venv/bin")).unwrap();
+        std::fs::write(
+            project_dir.join(".venv/bin/activate"),
+            "export WEBCODEX_PROJECT_VENV=project_local\n",
+        )
+        .unwrap();
+        write_agent_project(&projects_dir, "demo", &project_dir, Some("py-venv"));
+        let shell = shell_with_profiles(
+            None,
+            vec![(
+                "py-venv",
+                ShellProfileConfig {
+                    program: Some("/bin/sh".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    init_script: Some(". .venv/bin/activate".to_string()),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            &projects_dir,
+            &PreparedShellProfileCache::default(),
+            &project_dir,
+            "printf %s \"$WEBCODEX_PROJECT_VENV\"",
+        );
+        assert_eq!(result.exit_code, Some(0), "{result:?}");
+        assert_eq!(result.stdout.as_deref(), Some("project_local"));
+    }
+
+    #[test]
+    fn project_shell_profile_overrides_default_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("project");
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        write_agent_project(&projects_dir, "demo", &project_dir, Some("project"));
+        let shell = shell_with_profiles(
+            Some("default"),
+            vec![
+                (
+                    "default",
+                    ShellProfileConfig {
+                        env: profile_env(&[("WEBCODEX_TEST_PROFILE", "default")]),
+                        ..ShellProfileConfig::default()
+                    },
+                ),
+                (
+                    "project",
+                    ShellProfileConfig {
+                        env: profile_env(&[("WEBCODEX_TEST_PROFILE", "project")]),
+                        ..ShellProfileConfig::default()
+                    },
+                ),
+            ],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            &projects_dir,
+            &PreparedShellProfileCache::default(),
+            &project_dir,
+            "printf %s \"$WEBCODEX_TEST_PROFILE\"",
+        );
+        assert_eq!(result.exit_code, Some(0), "{result:?}");
+        assert_eq!(result.stdout.as_deref(), Some("project"));
+    }
+
+    fn shell_job_request(cwd: &Path, command: &str) -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: "req-job".to_string(),
+            client_id: "ws-client".to_string(),
+            kind: "start_job".to_string(),
+            job_id: Some("job-profile".to_string()),
+            cwd: Some(cwd.to_string_lossy().to_string()),
+            path: None,
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            create_dirs: false,
+            command: command.to_string(),
+            stdin: None,
+            timeout_secs: 10,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        }
+    }
+
+    fn wait_for_job_stdout(rx: &mut tokio::sync::mpsc::Receiver<AgentEnvelope>) -> String {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut stdout = String::new();
+        while Instant::now() < deadline {
+            match rx.try_recv() {
+                Ok(AgentEnvelope::JobUpdate { payload }) => {
+                    if let Some(chunk) = payload.stdout_chunk {
+                        stdout.push_str(&chunk);
+                    }
+                    if payload.finished {
+                        return stdout;
+                    }
+                }
+                Ok(_) => {}
+                Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+                Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => break,
+            }
+        }
+        panic!("timed out waiting for job completion; stdout so far: {stdout:?}");
+    }
+
+    #[test]
+    fn prepared_profile_run_shell_and_run_job_see_same_env() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("project");
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        write_agent_project(&projects_dir, "demo", &project_dir, Some("test"));
+        let shell = shell_with_profiles(
+            None,
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    env: profile_env(&[("WEBCODEX_TEST_PROFILE", "same")]),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let jobs = JobManager::new(1);
+        let shell_result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            &projects_dir,
+            &jobs.prepared_profiles,
+            &project_dir,
+            "printf %s \"$WEBCODEX_TEST_PROFILE\"",
+        );
+        assert_eq!(shell_result.stdout.as_deref(), Some("same"));
+
+        let (sink, mut rx) = ws_sink("ws-client");
+        dispatch_request(
+            &sink,
+            &AgentPolicy::default(),
+            &shell,
+            &jobs,
+            &projects_dir,
+            shell_job_request(&project_dir, "printf %s \"$WEBCODEX_TEST_PROFILE\""),
+        )
+        .unwrap();
+        assert_eq!(wait_for_job_stdout(&mut rx), "same");
+    }
+
+    #[test]
+    fn prepared_profile_init_script_runs_once_per_project_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let counter = tmp.path().join("prepare-count");
+        let init_script = format!(
+            "count=$(cat {:?} 2>/dev/null || echo 0)\ncount=$((count + 1))\nprintf '%s\\n' \"$count\" > {:?}\nexport WEBCODEX_TEST_PROFILE=counted",
+            counter.to_string_lossy(),
+            counter.to_string_lossy()
+        );
+        let shell = shell_with_profiles(
+            Some("test"),
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    program: Some("sh".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    init_script: Some(init_script),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let cache = PreparedShellProfileCache::default();
+        for _ in 0..2 {
+            let result = run_profile_shell(
+                &AgentPolicy::default(),
+                &shell,
+                tmp.path(),
+                &cache,
+                tmp.path(),
+                "printf %s \"$WEBCODEX_TEST_PROFILE\"",
+            );
+            assert_eq!(result.exit_code, Some(0), "{result:?}");
+            assert_eq!(result.stdout.as_deref(), Some("counted"));
+        }
+        assert_eq!(std::fs::read_to_string(counter).unwrap().trim(), "1");
+    }
+
+    #[test]
+    fn prepared_profile_init_script_stdout_noise_does_not_break_env_capture() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shell = shell_with_profiles(
+            Some("test"),
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    program: Some("sh".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    init_script: Some(
+                        "echo noise before env\nexport WEBCODEX_TEST_PROFILE=ok".to_string(),
+                    ),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            tmp.path(),
+            &PreparedShellProfileCache::default(),
+            tmp.path(),
+            "printf %s \"$WEBCODEX_TEST_PROFILE\"",
+        );
+        assert_eq!(result.exit_code, Some(0), "{result:?}");
+        assert_eq!(result.stdout.as_deref(), Some("ok"));
+    }
+
+    #[test]
+    fn prepared_profile_errors_do_not_leak_init_script_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let secret = "DO_NOT_LEAK_THIS_INLINE_SCRIPT_BODY";
+        let shell = shell_with_profiles(
+            Some("test"),
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    program: Some("sh".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    init_script: Some(format!("export SECRET={secret}\nfalse")),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            tmp.path(),
+            &PreparedShellProfileCache::default(),
+            tmp.path(),
+            "true",
+        );
+        let err = result.error.expect("prepare should fail");
+        assert!(err.contains("failed to prepare shell profile"), "{err}");
+        assert!(!err.contains(secret), "{err}");
+    }
+
+    #[test]
+    fn prepared_profile_filters_webcodex_token_env() {
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        let saved = std::env::var_os("WEBCODEX_TOKEN");
+        std::env::set_var("WEBCODEX_TOKEN", "secret-token");
+        let tmp = tempfile::tempdir().unwrap();
+        let shell =
+            shell_with_profiles(Some("test"), vec![("test", ShellProfileConfig::default())]);
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            tmp.path(),
+            &PreparedShellProfileCache::default(),
+            tmp.path(),
+            "if [ -z \"${WEBCODEX_TOKEN+x}\" ]; then printf absent; else printf present; fi",
+        );
+        match saved {
+            Some(value) => std::env::set_var("WEBCODEX_TOKEN", value),
+            None => std::env::remove_var("WEBCODEX_TOKEN"),
+        }
+        assert_eq!(result.exit_code, Some(0), "{result:?}");
+        assert_eq!(result.stdout.as_deref(), Some("absent"));
+    }
+
+    #[test]
+    fn prepared_profile_missing_marker_is_reported_without_script_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let secret = "DO_NOT_LEAK_THIS_INLINE_SCRIPT_BODY";
+        let shell = shell_with_profiles(
+            Some("test"),
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    program: Some("sh".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    init_script: Some(format!("export SECRET={secret}\nexec >/dev/null")),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            tmp.path(),
+            &PreparedShellProfileCache::default(),
+            tmp.path(),
+            "true",
+        );
+        let err = result.error.expect("prepare should fail");
+        assert!(err.contains("env marker not found"), "{err}");
+        assert!(!err.contains(secret), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prepared_profile_env_payload_parse_failure_is_reported() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let bin = tmp.path().join("bin");
+        std::fs::create_dir(&bin).unwrap();
+        let fake_env = bin.join("env");
+        std::fs::write(&fake_env, "#!/bin/sh\nprintf 'bad\\000'\n").unwrap();
+        let mut perms = std::fs::metadata(&fake_env).unwrap().permissions();
+        perms.set_mode(0o755);
+        std::fs::set_permissions(&fake_env, perms).unwrap();
+        let shell = shell_with_profiles(
+            Some("test"),
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    program: Some("/bin/sh".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    env: profile_env(&[("PATH", bin.to_string_lossy().as_ref())]),
+                    init_script: Some("export WEBCODEX_TEST_PROFILE=ok".to_string()),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            tmp.path(),
+            &PreparedShellProfileCache::default(),
+            tmp.path(),
+            "true",
+        );
+        let err = result.error.expect("prepare should fail");
+        assert!(err.contains("entry missing '='"), "{err}");
+    }
+
+    #[test]
+    fn prepared_profile_program_spawn_failure_mentions_profile() {
+        let tmp = tempfile::tempdir().unwrap();
+        let shell = shell_with_profiles(
+            Some("test"),
+            vec![(
+                "test",
+                ShellProfileConfig {
+                    program: Some("/definitely/missing/webcodex-shell".to_string()),
+                    args: Some(vec!["-c".to_string()]),
+                    ..ShellProfileConfig::default()
+                },
+            )],
+        );
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &shell,
+            tmp.path(),
+            &PreparedShellProfileCache::default(),
+            tmp.path(),
+            "true",
+        );
+        let err = result.error.expect("spawn should fail");
+        assert!(
+            err.contains("failed to spawn shell profile 'test'"),
+            "{err}"
+        );
+    }
+
+    #[test]
+    fn project_shell_profile_missing_profile_returns_clear_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let project_dir = tmp.path().join("project");
+        let projects_dir = tmp.path().join("projects.d");
+        std::fs::create_dir_all(&project_dir).unwrap();
+        write_agent_project(&projects_dir, "demo", &project_dir, Some("missing"));
+        let result = run_profile_shell(
+            &AgentPolicy::default(),
+            &ShellConfig::default(),
+            &projects_dir,
+            &PreparedShellProfileCache::default(),
+            &project_dir,
+            "true",
+        );
+        let err = result.error.expect("profile should be missing");
+        assert!(
+            err.contains("project 'demo' shell_profile 'missing'"),
+            "{err}"
+        );
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -110,6 +110,10 @@ impl Default for AgentPolicy {
 
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
 struct ShellConfig {
+    #[serde(default)]
+    default_profile: Option<String>,
+    #[serde(default)]
+    profiles: BTreeMap<String, ShellProfileConfig>,
     #[serde(default = "default_shell_program")]
     program: String,
     #[serde(default = "default_shell_args")]
@@ -125,6 +129,8 @@ struct ShellConfig {
 impl Default for ShellConfig {
     fn default() -> Self {
         Self {
+            default_profile: None,
+            profiles: BTreeMap::new(),
             program: default_shell_program(),
             args: default_shell_args(),
             path_prepend: Vec::new(),
@@ -132,6 +138,20 @@ impl Default for ShellConfig {
             init_script: None,
         }
     }
+}
+
+#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
+struct ShellProfileConfig {
+    #[serde(default)]
+    description: Option<String>,
+    #[serde(default)]
+    program: Option<String>,
+    #[serde(default)]
+    args: Option<Vec<String>>,
+    #[serde(default)]
+    env: BTreeMap<String, String>,
+    #[serde(default)]
+    init_script: Option<String>,
 }
 
 fn default_shell_program() -> String {
@@ -351,6 +371,8 @@ struct RunningJob {
 struct AgentProjectFile {
     id: String,
     path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    shell_profile: Option<String>,
     #[serde(default = "default_true")]
     allow_patch: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -587,7 +609,85 @@ fn validate_env_key(key: &str) -> bool {
             .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
+fn validate_shell_profile_name(context: &str, name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err(format!("{} cannot be empty", context));
+    }
+    if name.contains("..") {
+        return Err(format!("{} cannot contain '..'", context));
+    }
+    if name.contains('/') || name.contains('\\') {
+        return Err(format!("{} cannot contain slash or backslash", context));
+    }
+    if !name
+        .chars()
+        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
+    {
+        return Err(format!(
+            "{} may only contain ASCII letters, digits, '_', '-', and '.'",
+            context
+        ));
+    }
+    Ok(())
+}
+
+fn validate_shell_profile_config(name: &str, profile: &ShellProfileConfig) -> Result<(), String> {
+    if profile
+        .program
+        .as_ref()
+        .is_some_and(|program| program.trim().is_empty())
+    {
+        return Err(format!("shell.profiles.{}.program cannot be empty", name));
+    }
+    if let Some(args) = &profile.args {
+        if args.is_empty() {
+            return Err(format!(
+                "shell.profiles.{}.args must include the command flag, for example [\"-c\"]",
+                name
+            ));
+        }
+        if args.iter().any(|arg| arg.trim().is_empty()) {
+            return Err(format!(
+                "shell.profiles.{}.args cannot contain empty values",
+                name
+            ));
+        }
+    }
+    for key in profile.env.keys() {
+        if !validate_env_key(key) {
+            return Err(format!(
+                "shell.profiles.{}.env contains invalid key '{}'",
+                name, key
+            ));
+        }
+    }
+    if profile
+        .init_script
+        .as_ref()
+        .is_some_and(|script| script.trim().is_empty())
+    {
+        return Err(format!(
+            "shell.profiles.{}.init_script cannot be empty",
+            name
+        ));
+    }
+    Ok(())
+}
+
 fn validate_shell_config(shell: &ShellConfig) -> Result<(), String> {
+    if let Some(default_profile) = &shell.default_profile {
+        validate_shell_profile_name("shell.default_profile", default_profile)?;
+        if !shell.profiles.contains_key(default_profile) {
+            return Err(format!(
+                "shell.default_profile '{}' does not match any shell.profiles entry",
+                default_profile
+            ));
+        }
+    }
+    for (name, profile) in &shell.profiles {
+        validate_shell_profile_name("shell profile name", name)?;
+        validate_shell_profile_config(name, profile)?;
+    }
     if shell.program.trim().is_empty() {
         return Err("shell.program cannot be empty".to_string());
     }
@@ -673,9 +773,92 @@ fn configured_shell_job_command(shell: &ShellConfig, command: &str) -> Result<Co
     Ok(cmd)
 }
 
+fn validate_optional_toml_string(
+    table: &toml::map::Map<String, toml::Value>,
+    field: &str,
+    path: &str,
+) -> Result<(), String> {
+    if table
+        .get(field)
+        .is_some_and(|value| !matches!(value, toml::Value::String(_)))
+    {
+        return Err(format!("{} must be a string", path));
+    }
+    Ok(())
+}
+
+fn validate_shell_profile_toml_shape(content: &str) -> Result<(), String> {
+    let value: toml::Value = toml::from_str(content)
+        .map_err(|e| format!("failed to parse config TOML syntax: {}", e))?;
+    let Some(shell) = value.get("shell") else {
+        return Ok(());
+    };
+    let Some(shell) = shell.as_table() else {
+        return Err("shell must be a table".to_string());
+    };
+    validate_optional_toml_string(shell, "default_profile", "shell.default_profile")?;
+    let Some(profiles) = shell.get("profiles") else {
+        return Ok(());
+    };
+    let Some(profiles) = profiles.as_table() else {
+        return Err("shell.profiles must be a table".to_string());
+    };
+    for (name, profile) in profiles {
+        let Some(profile) = profile.as_table() else {
+            return Err(format!("shell.profiles.{} must be a table", name));
+        };
+        validate_optional_toml_string(
+            profile,
+            "description",
+            &format!("shell.profiles.{}.description", name),
+        )?;
+        validate_optional_toml_string(
+            profile,
+            "program",
+            &format!("shell.profiles.{}.program", name),
+        )?;
+        validate_optional_toml_string(
+            profile,
+            "init_script",
+            &format!("shell.profiles.{}.init_script", name),
+        )?;
+        if let Some(args) = profile.get("args") {
+            let Some(args) = args.as_array() else {
+                return Err(format!(
+                    "shell.profiles.{}.args must be a string array",
+                    name
+                ));
+            };
+            if args
+                .iter()
+                .any(|arg| !matches!(arg, toml::Value::String(_)))
+            {
+                return Err(format!(
+                    "shell.profiles.{}.args must be a string array",
+                    name
+                ));
+            }
+        }
+        if let Some(env) = profile.get("env") {
+            let Some(env) = env.as_table() else {
+                return Err(format!("shell.profiles.{}.env must be a string map", name));
+            };
+            if env
+                .values()
+                .any(|value| !matches!(value, toml::Value::String(_)))
+            {
+                return Err(format!("shell.profiles.{}.env must be a string map", name));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn load_config(path: &Path) -> Result<AgentConfig, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read config {}: {}", path.display(), e))?;
+    validate_shell_profile_toml_shape(&content)
+        .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
     let mut cfg: AgentConfig = toml::from_str(&content)
         .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
     if cfg.server_url.trim().is_empty() {
@@ -761,6 +944,9 @@ fn parse_agent_project_toml(content: &str) -> Result<AgentProjectFile, String> {
     project.name = trim_optional(project.name);
     project.kind = trim_optional(project.kind);
     project.description = trim_optional(project.description);
+    if let Some(shell_profile) = &project.shell_profile {
+        validate_shell_profile_name("project.shell_profile", shell_profile)?;
+    }
     let mut hooks = HashMap::new();
     for (name, commands) in project.hooks {
         let name = name.trim().to_string();
@@ -3064,6 +3250,223 @@ mod tests {
     }
 
     #[test]
+    fn agent_config_without_shell_section_parses() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        std::fs::write(
+            &path,
+            r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+
+[policy]
+allow_cwd_anywhere = true
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(cfg.shell, ShellConfig::default());
+    }
+
+    #[test]
+    fn agent_config_shell_profiles_parse() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        std::fs::write(
+            &path,
+            r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+
+[policy]
+allow_cwd_anywhere = true
+
+[shell]
+default_profile = "rust"
+
+[shell.profiles.rust]
+description = "Rust development tools"
+program = "sh"
+args = ["-c"]
+init_script = '''
+export RUST_BACKTRACE=1
+'''
+
+[shell.profiles.rust.env]
+PATH = "/root/.cargo/bin:/usr/bin:/bin"
+CARGO_HOME = "/root/.cargo"
+RUSTUP_HOME = "/root/.rustup"
+
+[shell.profiles.py-venv]
+description = "Project-local Python virtual environment"
+program = "bash"
+args = ["-lc"]
+init_script = '''
+source .venv/bin/activate
+'''
+"#,
+        )
+        .unwrap();
+
+        let cfg = load_config(&path).unwrap();
+        assert_eq!(cfg.shell.default_profile.as_deref(), Some("rust"));
+        let rust = cfg.shell.profiles.get("rust").unwrap();
+        assert_eq!(rust.description.as_deref(), Some("Rust development tools"));
+        assert_eq!(rust.program.as_deref(), Some("sh"));
+        assert_eq!(rust.args.as_ref().unwrap(), &vec!["-c".to_string()]);
+        assert_eq!(
+            rust.env.get("CARGO_HOME").map(String::as_str),
+            Some("/root/.cargo")
+        );
+        assert!(rust
+            .init_script
+            .as_deref()
+            .unwrap()
+            .contains("RUST_BACKTRACE=1"));
+        assert!(cfg.shell.profiles.contains_key("py-venv"));
+    }
+
+    #[test]
+    fn agent_config_shell_default_profile_must_exist() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        std::fs::write(
+            &path,
+            r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+
+[policy]
+allow_cwd_anywhere = true
+
+[shell]
+default_profile = "missing"
+
+[shell.profiles.rust]
+program = "sh"
+"#,
+        )
+        .unwrap();
+
+        let err = load_config(&path).unwrap_err();
+        assert!(err.contains("default_profile"), "{err}");
+        assert!(err.contains("missing"), "{err}");
+    }
+
+    #[test]
+    fn agent_config_shell_profile_name_must_be_safe() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        std::fs::write(
+            &path,
+            r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+
+[policy]
+allow_cwd_anywhere = true
+
+[shell.profiles."bad/name"]
+program = "sh"
+"#,
+        )
+        .unwrap();
+
+        let err = load_config(&path).unwrap_err();
+        assert!(err.contains("shell profile name"), "{err}");
+        assert!(err.contains("slash"), "{err}");
+    }
+
+    #[test]
+    fn agent_config_shell_profile_type_errors_are_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        std::fs::write(
+            &path,
+            r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+
+[policy]
+allow_cwd_anywhere = true
+
+[shell.profiles.rust]
+args = "-c"
+"#,
+        )
+        .unwrap();
+
+        let err = load_config(&path).unwrap_err();
+        assert!(err.contains("failed to parse config"), "{err}");
+        assert!(err.contains("args"), "{err}");
+    }
+
+    #[test]
+    fn agent_config_shell_profile_env_type_errors_are_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        std::fs::write(
+            &path,
+            r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+
+[policy]
+allow_cwd_anywhere = true
+
+[shell.profiles.rust.env]
+PATH = ["/root/.cargo/bin"]
+"#,
+        )
+        .unwrap();
+
+        let err = load_config(&path).unwrap_err();
+        assert!(err.contains("failed to parse config"), "{err}");
+        assert!(err.contains("env"), "{err}");
+    }
+
+    #[test]
+    fn agent_config_shell_errors_do_not_include_init_script_body() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("agent.toml");
+        let secret = "DO_NOT_LEAK_THIS_INLINE_SCRIPT_BODY";
+        std::fs::write(
+            &path,
+            format!(
+                r#"
+server_url = "http://127.0.0.1:8000"
+token = "test-token"
+client_id = "agent-1"
+
+[policy]
+allow_cwd_anywhere = true
+
+[shell]
+default_profile = "missing"
+
+[shell.profiles.rust]
+init_script = '''
+export SECRET={}
+'''
+"#,
+                secret
+            ),
+        )
+        .unwrap();
+
+        let err = load_config(&path).unwrap_err();
+        assert!(err.contains("default_profile"), "{err}");
+        assert!(!err.contains(secret), "{err}");
+    }
+
+    #[test]
     fn agent_init_refuses_overwrite_unless_requested() {
         let tmp = tempfile::tempdir().unwrap();
         let output = tmp.path().join("agent.toml");
@@ -3125,6 +3528,7 @@ mod tests {
 id = "webcodex"
 path = "/root/git/webcodex"
 kind = "rust"
+shell_profile = "rust"
 
 [hooks]
 precommit = ["cargo test"]
@@ -3140,6 +3544,7 @@ doctor = ["git status --short"]
         assert_eq!(summary.hooks, vec!["doctor", "precommit"]);
         assert_eq!(summary.updated_at, 123456);
         assert_eq!(summary.git_branch, None);
+        assert_eq!(project.shell_profile.as_deref(), Some("rust"));
     }
 
     #[test]
@@ -3152,6 +3557,19 @@ path = "/tmp/webcodex"
         )
         .unwrap_err();
         assert!(err.contains("ASCII letters"));
+    }
+
+    #[test]
+    fn agent_project_toml_rejects_invalid_shell_profile() {
+        let err = parse_agent_project_toml(
+            r#"
+id = "demo"
+path = "/tmp/webcodex"
+shell_profile = "../rust"
+"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("project.shell_profile"), "{err}");
     }
 
     #[test]

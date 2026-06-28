@@ -190,7 +190,7 @@ Important agent settings:
 | `transport` | Prefer `websocket`; polling is fallback. |
 | `projects_dir` | Directory of project registry files. |
 | `[policy]` | Local execution boundary. |
-| `[shell]` | Optional shell program/PATH/env customization for commands. |
+| `[shell]` | Optional shell profile definitions for project development environments. |
 
 Policy behavior:
 
@@ -209,7 +209,9 @@ max_timeout_secs = 3600
 max_output_bytes = 262144
 ```
 
-`runtime_status` and `listAgents` expose only a redacted policy summary: `allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`, and `max_output_bytes`. They do not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell `init_script` values.
+Agent project files in `projects_dir` may set `shell_profile = "rust"` to bind a project to a configured profile.
+
+`runtime_status` and `listAgents` expose only a redacted policy summary: `allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`, and `max_output_bytes`. They do not expose tokens, env values, `Authorization` headers, full `agent.toml`, or shell profile `init_script` values.
 
 ## Authentication and transport
 

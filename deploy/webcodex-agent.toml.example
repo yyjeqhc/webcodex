@@ -12,17 +12,38 @@ transport = "websocket"
 poll_interval_ms = 1000
 projects_dir = "/etc/webcodex/projects.d"
 
-# Shell execution defaults to program = "sh" and args = ["-c"]. systemd does
-# not read ~/.bashrc, so expose tools such as Rust/Cargo explicitly here or via
-# systemd Environment=PATH. init_script is opt-in only and is sourced before the
-# requested command when configured. runtime_status/listAgents do not expose
-# init_script.
-#[shell]
-#program = "/bin/bash"
-#args = ["-lc"]
-#path_prepend = ["/home/webcodex/.cargo/bin"]
-#env = { CARGO_HOME = "/home/webcodex/.cargo", RUSTUP_HOME = "/home/webcodex/.rustup" }
-#init_script = "/home/webcodex/.config/webcodex/shell-env.sh"
+# Shell profiles describe prepared development environments for projects.
+# init_script is inline shell text, not a file path. runtime_status/listAgents
+# do not expose profile env values or init_script text.
+[shell]
+default_profile = "rust"
+
+[shell.profiles.rust]
+description = "Rust development tools"
+program = "sh"
+args = ["-c"]
+
+[shell.profiles.rust.env]
+PATH = "/home/webcodex/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+CARGO_HOME = "/home/webcodex/.cargo"
+RUSTUP_HOME = "/home/webcodex/.rustup"
+
+[shell.profiles.py-venv]
+description = "Project-local Python virtual environment"
+program = "bash"
+args = ["-lc"]
+init_script = '''
+source .venv/bin/activate
+'''
+
+[shell.profiles.conda-ml]
+description = "Conda ML environment"
+program = "bash"
+args = ["-lc"]
+init_script = '''
+source /opt/miniconda3/etc/profile.d/conda.sh
+conda activate ml
+'''
 
 [capabilities]
 file_read = true

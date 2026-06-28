@@ -189,6 +189,12 @@ agent:<client_id>:<project_id>
 
 Agent policy controls execution boundaries. When `allowed_roots` is omitted or empty, the agent defaults to `$HOME`. If `allowed_roots` is configured explicitly, that list replaces the `$HOME` default.
 
+Agent project files can bind a project to a prepared shell profile for future environment snapshot support:
+
+```toml
+shell_profile = "rust"
+```
+
 Example: to deliberately narrow an agent to one workspace tree, configure an explicit root:
 
 ```toml
@@ -198,7 +204,7 @@ allow_cwd_anywhere = false
 allowed_roots = ["/root/git"]
 ```
 
-`runtime_status` and `listAgents` expose a redacted policy summary for observability: `allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`, and `max_output_bytes`. They do not expose tokens, env values, `Authorization` headers, the full `agent.toml`, or shell `init_script` values.
+`runtime_status` and `listAgents` expose a redacted policy summary for observability: `allow_raw_shell`, `allow_cwd_anywhere`, `allowed_roots`, `max_timeout_secs`, and `max_output_bytes`. They do not expose tokens, env values, `Authorization` headers, the full `agent.toml`, or shell profile `init_script` values.
 
 ## Optional Codex CLI jobs
 

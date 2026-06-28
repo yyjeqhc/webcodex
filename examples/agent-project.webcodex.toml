@@ -2,6 +2,7 @@ id = "webcodex"
 path = "/root/git/webcodex"
 name = "webcodex"
 kind = "rust"
+shell_profile = "rust"
 description = "WebCodex server and agent"
 disabled = false
 

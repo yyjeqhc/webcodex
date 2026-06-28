@@ -183,6 +183,6 @@ for REST, polling, MCP, and GPT Actions.
 
 ## systemd PATH reminder
 
-systemd services do not read interactive shell startup files such as `~/.bashrc`. If commands need Rust/Cargo, Node, or Codex CLI, expose them through the agent `[shell].path_prepend` / `[shell].env` config or through the service manager's environment.
+systemd services do not read interactive shell startup files such as `~/.bashrc`. If commands need Rust/Cargo, Node, or Codex CLI, expose them through configured agent shell profiles or through the service manager's environment.
 
 `runCodexTask` is optional and requires Codex CLI on the agent machine. It does not start a new `webcodex-agent`.

@@ -14,4 +14,5 @@ path = "/root/git/webcodex"
 name = "WebCodex"
 allow_patch = true
 kind = "rust"
+shell_profile = "rust"
 description = "WebCodex Runtime repository"

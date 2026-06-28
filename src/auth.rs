@@ -11,12 +11,15 @@ use std::sync::Arc;
 /// - `AgentToken`: a Phase 3 agent token (kind=`agent`) bound to an owner
 ///   username and an `allowed_client_id`, usable only on agent transport
 ///   endpoints.
+/// - `AccountCredential`: a high-entropy account credential backed by the
+///   `account_credentials` table, usable only on account control endpoints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(dead_code)]
 pub enum AuthKind {
     Bootstrap,
     ApiToken,
     AgentToken,
+    AccountCredential,
 }
 
 /// The set of scopes a Phase 2 personal API token may carry. Bootstrap auth is
@@ -35,6 +38,7 @@ pub const SCOPE_ADMIN: &str = "admin";
 pub const SCOPE_AGENT_POLL: &str = "agent:poll";
 pub const SCOPE_AGENT_RESULT: &str = "agent:result";
 pub const SCOPE_AGENT_JOB_UPDATE: &str = "agent:job_update";
+pub const SCOPE_ACCOUNT_MANAGE: &str = "account:manage";
 
 /// The complete set of agent transport scopes, in canonical order.
 pub const AGENT_SCOPES: &[&str] = &[
@@ -115,6 +119,11 @@ impl AuthContext {
     #[allow(dead_code)]
     pub fn is_agent_token(&self) -> bool {
         matches!(self.kind, AuthKind::AgentToken)
+    }
+
+    #[allow(dead_code)]
+    pub fn is_account_credential(&self) -> bool {
+        matches!(self.kind, AuthKind::AccountCredential)
     }
 
     /// True when the caller may use an agent transport endpoint for the given
@@ -310,6 +319,15 @@ pub(crate) fn generate_agent_token() -> String {
     format!("wc_agent_{}", random)
 }
 
+pub(crate) fn generate_account_credential() -> String {
+    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
+    while random.len() < TOKEN_RANDOM_HEX_LEN {
+        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
+    }
+    random.truncate(TOKEN_RANDOM_HEX_LEN);
+    format!("wc_acct_{}", random)
+}
+
 /// Return a short, display-safe prefix of a token (the first 16 characters,
 /// including the `wc_pat_` / `wc_agent_` kind marker). Used for listing tokens
 /// without revealing the secret.
@@ -452,6 +470,17 @@ pub(crate) fn is_agent_transport_path(path: &str) -> bool {
     AGENT_TRANSPORT_PATHS.contains(&path)
 }
 
+pub(crate) const ACCOUNT_CONTROL_PATHS: &[&str] = &[
+    "/api/users/me",
+    "/api/tokens/list",
+    "/api/tokens/register_hash",
+    "/api/tokens/revoke",
+];
+
+pub(crate) fn is_account_control_path(path: &str) -> bool {
+    ACCOUNT_CONTROL_PATHS.contains(&path)
+}
+
 #[async_trait]
 impl Handler for AuthMiddleware {
     async fn handle(
@@ -521,85 +550,120 @@ impl Handler for AuthMiddleware {
             return;
         };
 
-        let key_hash = hash_token(&token);
+        let token_hash = hash_token(&token);
 
         // Lookup is centralized in the DB layer; the same "Unauthorized"
         // message is used whether the token prefix exists or not, to avoid
         // leaking which prefixes are present.
-        let Ok(Some(api_key)) = db.get_api_key_by_hash(&key_hash) else {
+        if let Ok(Some(api_key)) = db.get_api_key_by_hash(&token_hash) {
+            let Ok(Some(user)) = db.get_user_by_id(&api_key.user_id) else {
+                res.status_code(StatusCode::UNAUTHORIZED);
+                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
+                ctrl.skip_rest();
+                return;
+            };
+
+            if user.is_disabled() {
+                res.status_code(StatusCode::UNAUTHORIZED);
+                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
+                ctrl.skip_rest();
+                return;
+            }
+
+            let now = chrono::Utc::now().timestamp();
+            if api_key.is_expired(now) {
+                res.status_code(StatusCode::UNAUTHORIZED);
+                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
+                ctrl.skip_rest();
+                return;
+            }
+
+            if let Err(e) = db.update_api_key_last_used(&api_key.id, now) {
+                tracing::warn!("failed to update api key last_used_at: {}", e);
+            }
+
+            // Phase 3: distinguish agent tokens (kind="agent") from personal API
+            // tokens (kind="user"). Agent tokens authenticate but carry a
+            // different AuthKind so handlers can reject them from normal runtime
+            // endpoints and accept them only on agent transport endpoints.
+            let auth_kind = if api_key.is_agent_token() {
+                AuthKind::AgentToken
+            } else {
+                AuthKind::ApiToken
+            };
+
+            let ctx = AuthContext {
+                kind: auth_kind,
+                user_id: Some(user.id.clone()),
+                username: Some(user.username.clone()),
+                api_key_id: Some(api_key.id.clone()),
+                api_key_name: Some(api_key.name.clone()),
+                role: Some(user.role.clone()),
+                scopes: api_key.scopes_vec(),
+                is_bootstrap: false,
+                token_kind: Some(api_key.kind().to_string()),
+                allowed_client_id: api_key.allowed_client_id.clone(),
+            };
+
+            if ctx.is_agent_token() {
+                let path = req.uri().path();
+                if !is_agent_transport_path(path) {
+                    res.status_code(StatusCode::FORBIDDEN);
+                    res.render(Json(serde_json::json!({
+                        "error": "agent tokens are only allowed on agent transport endpoints",
+                    })));
+                    ctrl.skip_rest();
+                    return;
+                }
+            }
+
+            depot.inject(ctx);
+            ctrl.call_next(req, depot, res).await;
+            return;
+        }
+
+        let Ok(Some(account_credential)) = db.get_account_credential_by_hash(&token_hash) else {
             res.status_code(StatusCode::UNAUTHORIZED);
             res.render(Json(serde_json::json!({"error": "Unauthorized"})));
             ctrl.skip_rest();
             return;
         };
 
-        let Ok(Some(user)) = db.get_user_by_id(&api_key.user_id) else {
+        let Ok(Some(user)) = db.get_user_by_id(&account_credential.user_id) else {
             res.status_code(StatusCode::UNAUTHORIZED);
             res.render(Json(serde_json::json!({"error": "Unauthorized"})));
             ctrl.skip_rest();
             return;
         };
-
         if user.is_disabled() {
             res.status_code(StatusCode::UNAUTHORIZED);
             res.render(Json(serde_json::json!({"error": "Unauthorized"})));
             ctrl.skip_rest();
             return;
         }
-
         let now = chrono::Utc::now().timestamp();
-        if api_key.is_expired(now) {
-            res.status_code(StatusCode::UNAUTHORIZED);
-            res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-            ctrl.skip_rest();
-            return;
+        if let Err(e) = db.update_account_credential_last_used(&account_credential.id, now) {
+            tracing::warn!("failed to update account credential last_used_at: {}", e);
         }
-
-        if let Err(e) = db.update_api_key_last_used(&api_key.id, now) {
-            tracing::warn!("failed to update api key last_used_at: {}", e);
-        }
-
-        // Phase 3: distinguish agent tokens (kind="agent") from personal API
-        // tokens (kind="user"). Agent tokens authenticate but carry a
-        // different AuthKind so handlers can reject them from normal runtime
-        // endpoints and accept them only on agent transport endpoints.
-        let auth_kind = if api_key.is_agent_token() {
-            AuthKind::AgentToken
-        } else {
-            AuthKind::ApiToken
-        };
-
         let ctx = AuthContext {
-            kind: auth_kind,
+            kind: AuthKind::AccountCredential,
             user_id: Some(user.id.clone()),
             username: Some(user.username.clone()),
-            api_key_id: Some(api_key.id.clone()),
-            api_key_name: Some(api_key.name.clone()),
+            api_key_id: None,
+            api_key_name: None,
             role: Some(user.role.clone()),
-            scopes: api_key.scopes_vec(),
+            scopes: vec![SCOPE_ACCOUNT_MANAGE.to_string()],
             is_bootstrap: false,
-            token_kind: Some(api_key.kind().to_string()),
-            allowed_client_id: api_key.allowed_client_id.clone(),
+            token_kind: Some("account".to_string()),
+            allowed_client_id: None,
         };
-
-        // Phase 3 central security gate: an agent token (kind="agent") may
-        // only reach the exact agent transport endpoints. Everything else —
-        // runtime, tools, projects, jobs, mcp, audit, users, tokens,
-        // agent-tokens management — is forbidden. This prevents a leaked agent
-        // token from accessing normal project/runtime APIs even when its
-        // username matches an agent owner (per-handler owner-boundary checks
-        // are not sufficient on their own). Bootstrap and user tokens are
-        // unaffected.
-        if ctx.is_agent_token() {
-            let path = req.uri().path();
-            if !is_agent_transport_path(path) {
-                res.status_code(StatusCode::FORBIDDEN);
-                res.render(Json(serde_json::json!({
-                    "error": "agent tokens are only allowed on agent transport endpoints",
-                })));
-                ctrl.skip_rest();
-                return;
-            }
+        if !is_account_control_path(req.uri().path()) {
+            res.status_code(StatusCode::FORBIDDEN);
+            res.render(Json(serde_json::json!({
+                "error": "account credentials may only access account control endpoints",
+            })));
+            ctrl.skip_rest();
+            return;
         }
 
         depot.inject(ctx);
@@ -918,6 +982,26 @@ mod tests {
         plaintext
     }
 
+    fn gate_mint_account_credential(
+        db: &crate::Database,
+        user: &crate::models::UserRecord,
+    ) -> String {
+        let plaintext = generate_account_credential();
+        let prefix = token_prefix(&plaintext);
+        let hash = hash_token(&plaintext);
+        let now = chrono::Utc::now().timestamp();
+        let record = crate::models::AccountCredentialRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: user.id.clone(),
+            credential_prefix: prefix,
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+        };
+        db.insert_account_credential(&record, &hash).unwrap();
+        plaintext
+    }
+
     /// Trivial handler that returns 200 OK JSON. Reaching it proves the central
     /// gate did not reject the request.
     #[salvo::handler]
@@ -951,8 +1035,11 @@ mod tests {
                     .push(Router::with_path("projects/list").post(echo_ok))
                     .push(Router::with_path("jobs/list").post(echo_ok))
                     .push(Router::with_path("audit/sessions").post(echo_ok))
+                    .push(Router::with_path("users/me").post(echo_ok))
                     .push(Router::with_path("users/list").post(echo_ok))
                     .push(Router::with_path("tokens/list").post(echo_ok))
+                    .push(Router::with_path("tokens/register_hash").post(echo_ok))
+                    .push(Router::with_path("tokens/revoke").post(echo_ok))
                     .push(Router::with_path("agent-tokens/list").post(echo_ok))
                     .push(Router::with_path("shell/agent/register").post(echo_ok))
                     .push(Router::with_path("shell/agent/poll").post(echo_ok))
@@ -1104,6 +1191,101 @@ mod tests {
         // Phase 3, but here the central gate lets them through; the per-handler
         // agent transport check rejects them). For this gate test we only
         // assert the central gate does not block user tokens on normal APIs.
+    }
+
+    #[test]
+    fn generate_account_credential_uses_expected_format() {
+        let token = generate_account_credential();
+        assert!(token.starts_with("wc_acct_"));
+        assert_eq!(token.len(), "wc_acct_".len() + 64);
+        assert!(token["wc_acct_".len()..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn account_control_path_allowlist_is_exact() {
+        assert!(is_account_control_path("/api/users/me"));
+        assert!(is_account_control_path("/api/tokens/list"));
+        assert!(is_account_control_path("/api/tokens/register_hash"));
+        assert!(is_account_control_path("/api/tokens/revoke"));
+        assert!(!is_account_control_path("/api/runtime/status"));
+        assert!(!is_account_control_path("/api/projects/list"));
+        assert!(!is_account_control_path("/api/tools/list"));
+        assert!(!is_account_control_path("/mcp"));
+        assert!(!is_account_control_path("/api/users/me/extra"));
+    }
+
+    #[tokio::test]
+    async fn gate_account_credential_can_call_account_control_endpoints_and_updates_last_used() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let credential = gate_mint_account_credential(&db, &user);
+        let credential_hash = hash_token(&credential);
+        let before = db
+            .get_account_credential_by_hash(&credential_hash)
+            .unwrap()
+            .unwrap();
+        assert!(before.last_used_at.is_none());
+        let service = Service::new(gate_router(config, db.clone()));
+        for path in [
+            "/api/users/me",
+            "/api/tokens/list",
+            "/api/tokens/register_hash",
+            "/api/tokens/revoke",
+        ] {
+            let (status, body) = gate_send(&service, path, Some(&credential)).await;
+            assert_eq!(
+                status,
+                salvo::http::StatusCode::OK,
+                "{} body: {:?}",
+                path,
+                body
+            );
+        }
+        let after = db
+            .get_account_credential_by_hash(&credential_hash)
+            .unwrap()
+            .unwrap();
+        assert!(after.last_used_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn gate_account_credential_cannot_call_runtime_project_tool_or_mcp_paths() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let credential = gate_mint_account_credential(&db, &user);
+        let service = Service::new(gate_router(config, db));
+        for path in [
+            "/api/runtime/status",
+            "/api/projects/list",
+            "/api/tools/list",
+            "/api/shell/agent/register",
+            "/mcp",
+        ] {
+            let (status, body) = gate_send(&service, path, Some(&credential)).await;
+            assert_eq!(status, salvo::http::StatusCode::FORBIDDEN, "{}", path);
+            assert_eq!(
+                body["error"],
+                "account credentials may only access account control endpoints"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn gate_disabled_user_account_credential_is_rejected() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let credential = gate_mint_account_credential(&db, &user);
+        db.set_user_disabled(&user.id, true, chrono::Utc::now().timestamp())
+            .unwrap();
+        let service = Service::new(gate_router(config, db));
+        let (status, body) = gate_send(&service, "/api/users/me", Some(&credential)).await;
+        assert_eq!(status, salvo::http::StatusCode::UNAUTHORIZED);
+        assert_eq!(body["error"], "Unauthorized");
     }
 
     #[tokio::test]

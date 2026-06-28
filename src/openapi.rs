@@ -111,7 +111,9 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     // these paths are deliberately excluded from /openapi.json.
     "/api/users/create",
     "/api/users/list",
+    "/api/users/me",
     "/api/tokens/create",
+    "/api/tokens/register_hash",
     "/api/tokens/list",
     "/api/tokens/revoke",
     // Phase 3 agent token management: same REST-only admin/self surface, also

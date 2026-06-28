@@ -22,6 +22,7 @@ pub(crate) enum AdminCliCommand {
     UsersCreate(AdminOptions, CreateUserArgs),
     UsersList(AdminOptions),
     TokensCreate(AdminOptions, TokenCreateArgs),
+    TokensRegisterHash(AdminOptions, TokenRegisterHashArgs),
     TokensList(AdminOptions, UsernameArgs),
     TokensRevoke(AdminOptions, RevokeTokenArgs),
     AgentTokensCreate(AdminOptions, AgentTokenCreateArgs),
@@ -33,6 +34,9 @@ pub(crate) enum AdminCliCommand {
 pub(crate) struct AdminOptions {
     pub(crate) server_url: String,
     pub(crate) token: Option<String>,
+    pub(crate) token_env: Option<String>,
+    pub(crate) credential: Option<String>,
+    pub(crate) credential_env: Option<String>,
     pub(crate) token_file: Option<PathBuf>,
     pub(crate) json: bool,
 }
@@ -42,12 +46,22 @@ pub(crate) struct CreateUserArgs {
     pub(crate) username: String,
     pub(crate) display_name: Option<String>,
     pub(crate) role: Option<String>,
+    pub(crate) issue_credential: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub(crate) struct TokenCreateArgs {
     pub(crate) username: String,
     pub(crate) name: Option<String>,
+    pub(crate) scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct TokenRegisterHashArgs {
+    pub(crate) username: String,
+    pub(crate) name: Option<String>,
+    pub(crate) token_hash: String,
+    pub(crate) token_prefix: String,
     pub(crate) scopes: Vec<String>,
 }
 
@@ -115,14 +129,15 @@ impl FlagParser {
 }
 
 pub(crate) fn is_admin_group(arg: &str) -> bool {
-    matches!(arg, "users" | "tokens" | "agent-tokens")
+    matches!(arg, "user" | "users" | "token" | "tokens" | "agent-tokens")
 }
 
 pub(crate) fn usage() -> &'static str {
     "Admin commands:\n\
-      webcodex users create --server-url URL [--token TOKEN|--token-file PATH] --username USER [--display-name NAME] [--role ROLE]\n\
+      webcodex users create --server-url URL [--token TOKEN|--token-file PATH] --username USER [--display-name NAME] [--role ROLE] [--issue-credential]\n\
       webcodex users list --server-url URL [--token TOKEN|--token-file PATH]\n\
       webcodex tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER [--name NAME] [--scope SCOPE...]\n\
+      webcodex tokens register-hash --server-url URL --username USER --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\
       webcodex agent-tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER --client-id ID [--name NAME] [--scope SCOPE...]\n\
@@ -140,11 +155,12 @@ pub(crate) fn parse_admin_cli(args: &[String]) -> Result<AdminCliCommand, String
     let action = args[1].as_str();
     let rest = &args[2..];
     match (group, action) {
-        ("users", "create") => parse_users_create(rest),
-        ("users", "list") => parse_users_list(rest),
-        ("tokens", "create") => parse_tokens_create(rest),
-        ("tokens", "list") => parse_tokens_list(rest),
-        ("tokens", "revoke") => parse_tokens_revoke(rest),
+        ("users" | "user", "create") => parse_users_create(rest),
+        ("users" | "user", "list") => parse_users_list(rest),
+        ("tokens" | "token", "create") => parse_tokens_create(rest),
+        ("tokens" | "token", "register-hash") => parse_tokens_register_hash(rest),
+        ("tokens" | "token", "list") => parse_tokens_list(rest),
+        ("tokens" | "token", "revoke") => parse_tokens_revoke(rest),
         ("agent-tokens", "create") => parse_agent_tokens_create(rest),
         ("agent-tokens", "list") => parse_agent_tokens_list(rest),
         ("agent-tokens", "revoke") => parse_agent_tokens_revoke(rest),
@@ -163,12 +179,24 @@ fn parse_common_flag(
     flag: &str,
 ) -> Result<bool, String> {
     match flag {
-        "--server-url" => {
+        "--server-url" | "--server" => {
             opts.server_url = p.value(flag)?;
             Ok(true)
         }
-        "--token" => {
+        "--token" | "--admin-token" => {
             opts.token = Some(p.value(flag)?);
+            Ok(true)
+        }
+        "--token-env" | "--admin-token-env" => {
+            opts.token_env = Some(p.value(flag)?);
+            Ok(true)
+        }
+        "--credential" => {
+            opts.credential = Some(p.value(flag)?);
+            Ok(true)
+        }
+        "--credential-env" => {
+            opts.credential_env = Some(p.value(flag)?);
             Ok(true)
         }
         "--token-file" => {
@@ -188,7 +216,7 @@ fn require_common(opts: &AdminOptions) -> Result<(), String> {
         return Err("--server-url is required".to_string());
     }
     if opts.token.is_some() && opts.token_file.is_some() {
-        return Err("use only one of --token or --token-file".to_string());
+        return Err("use only one of --token/--admin-token or --token-file".to_string());
     }
     Ok(())
 }
@@ -205,6 +233,7 @@ fn parse_users_create(args: &[String]) -> Result<AdminCliCommand, String> {
             "--username" => user.username = p.value(&flag)?,
             "--display-name" => user.display_name = Some(p.value(&flag)?),
             "--role" => user.role = Some(p.value(&flag)?),
+            "--issue-credential" => user.issue_credential = true,
             _ => return Err(format!("unknown users create flag: {}", flag)),
         }
     }
@@ -212,6 +241,40 @@ fn parse_users_create(args: &[String]) -> Result<AdminCliCommand, String> {
     require_common(&opts)?;
     require_non_empty("--username", &user.username)?;
     Ok(AdminCliCommand::UsersCreate(opts, user))
+}
+
+fn parse_tokens_register_hash(args: &[String]) -> Result<AdminCliCommand, String> {
+    let mut opts = AdminOptions::default();
+    let mut t = TokenRegisterHashArgs::default();
+    let mut p = FlagParser::new(args);
+    while let Some(flag) = p.next() {
+        if parse_common_flag(&mut opts, &mut p, &flag)? {
+            continue;
+        }
+        match flag.as_str() {
+            "--username" | "--user" => t.username = p.value(&flag)?,
+            "--name" => t.name = Some(p.value(&flag)?),
+            "--hash" | "--token-hash" => t.token_hash = p.value(&flag)?,
+            "--prefix" | "--token-prefix" => t.token_prefix = p.value(&flag)?,
+            "--scope" => t.scopes.push(p.value(&flag)?),
+            "--scopes" => {
+                t.scopes.extend(
+                    p.value(&flag)?
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|s| !s.is_empty())
+                        .map(str::to_string),
+                );
+            }
+            _ => return Err(format!("unknown tokens register-hash flag: {}", flag)),
+        }
+    }
+    p.finish()?;
+    require_common(&opts)?;
+    require_non_empty("--username", &t.username)?;
+    require_non_empty("--hash", &t.token_hash)?;
+    require_non_empty("--prefix", &t.token_prefix)?;
+    Ok(AdminCliCommand::TokensRegisterHash(opts, t))
 }
 
 fn parse_users_list(args: &[String]) -> Result<AdminCliCommand, String> {
@@ -358,6 +421,9 @@ pub(crate) fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliReque
             if let Some(display_name) = &user.display_name {
                 body["display_name"] = json!(display_name);
             }
+            if user.issue_credential {
+                body["issue_credential"] = json!(true);
+            }
             (opts, "/api/users/create", body)
         }
         AdminCliCommand::UsersList(opts) => (opts, "/api/users/list", json!({})),
@@ -370,6 +436,18 @@ pub(crate) fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliReque
                 body["name"] = json!(name);
             }
             (opts, "/api/tokens/create", body)
+        }
+        AdminCliCommand::TokensRegisterHash(opts, t) => {
+            let mut body = json!({
+                "username": t.username,
+                "token_hash": t.token_hash,
+                "token_prefix": t.token_prefix,
+                "scopes": t.scopes,
+            });
+            if let Some(name) = &t.name {
+                body["name"] = json!(name);
+            }
+            (opts, "/api/tokens/register_hash", body)
         }
         AdminCliCommand::TokensList(opts, t) => {
             (opts, "/api/tokens/list", json!({ "username": t.username }))
@@ -403,10 +481,49 @@ pub(crate) fn build_admin_request(cmd: &AdminCliCommand) -> Result<AdminCliReque
     };
     Ok(AdminCliRequest {
         server_url: opts.server_url.trim_end_matches('/').to_string(),
-        token: resolve_token(opts, "WEBCODEX_TOKEN")?,
+        token: resolve_bearer_token(
+            opts,
+            matches!(
+                cmd,
+                AdminCliCommand::TokensRegisterHash(_, _)
+                    | AdminCliCommand::TokensList(_, _)
+                    | AdminCliCommand::TokensRevoke(_, _)
+            ),
+        )?,
         path,
         body,
     })
+}
+
+fn resolve_bearer_token(opts: &AdminOptions, prefer_credential: bool) -> Result<String, String> {
+    if prefer_credential {
+        if let Some(token) = resolve_credential_token(opts)? {
+            return Ok(token);
+        }
+    }
+    resolve_token(opts, "WEBCODEX_TOKEN")
+}
+
+fn resolve_credential_token(opts: &AdminOptions) -> Result<Option<String>, String> {
+    if let Some(token) = &opts.credential {
+        let token = token.trim().to_string();
+        require_non_empty("--credential", &token)?;
+        return Ok(Some(token));
+    }
+    if let Some(env_name) = &opts.credential_env {
+        let env_name = env_name.trim();
+        require_non_empty("--credential-env", env_name)?;
+        let token = std::env::var(env_name)
+            .map_err(|_| format!("credential env var {} is not set", env_name))?
+            .trim()
+            .to_string();
+        require_non_empty(env_name, &token)?;
+        return Ok(Some(token));
+    }
+    match std::env::var("WEBCODEX_ACCOUNT_CREDENTIAL") {
+        Ok(token) if !token.trim().is_empty() => Ok(Some(token.trim().to_string())),
+        _ => Ok(None),
+    }
 }
 
 fn resolve_token(opts: &AdminOptions, env_key: &str) -> Result<String, String> {
@@ -423,11 +540,17 @@ fn resolve_token(opts: &AdminOptions, env_key: &str) -> Result<String, String> {
         require_non_empty("--token-file", &token)?;
         return Ok(token);
     }
-    let token = std::env::var(env_key)
-        .map_err(|_| format!("--token, --token-file, or {} is required", env_key))?
+    let env_name = opts.token_env.as_deref().unwrap_or(env_key);
+    let token = std::env::var(env_name)
+        .map_err(|_| {
+            format!(
+                "--token, --token-file, --credential, or {} is required",
+                env_name
+            )
+        })?
         .trim()
         .to_string();
-    require_non_empty(env_key, &token)?;
+    require_non_empty(env_name, &token)?;
     Ok(token)
 }
 

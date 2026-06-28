@@ -1,4 +1,4 @@
-use crate::models::{ApiKeyRecord, PairingCodeRecord, UserRecord};
+use crate::models::{AccountCredentialRecord, ApiKeyRecord, PairingCodeRecord, UserRecord};
 use crate::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
     CodexGoalRecord, CommandAuditRecord, Message, MessageKind,
@@ -261,6 +261,19 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_api_keys_hash ON api_keys(key_hash);
             CREATE INDEX IF NOT EXISTS idx_api_keys_user_id ON api_keys(user_id);
 
+            CREATE TABLE IF NOT EXISTS account_credentials (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                credential_hash TEXT NOT NULL UNIQUE,
+                credential_prefix TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                last_used_at INTEGER,
+                revoked_at INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_account_credentials_hash ON account_credentials(credential_hash);
+            CREATE INDEX IF NOT EXISTS idx_account_credentials_user_id ON account_credentials(user_id);
+
             CREATE TABLE IF NOT EXISTS pairing_codes (
                 id TEXT PRIMARY KEY,
                 code_hash TEXT NOT NULL UNIQUE,
@@ -355,6 +368,22 @@ impl Database {
         // above; this block migrates pre-existing DBs forward without dropping
         // data or breaking audit/jobs/project tables.
         Self::migrate_users_and_api_keys(&conn)?;
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS account_credentials (
+                id TEXT PRIMARY KEY,
+                user_id TEXT NOT NULL,
+                credential_hash TEXT NOT NULL UNIQUE,
+                credential_prefix TEXT NOT NULL,
+                created_at INTEGER NOT NULL,
+                last_used_at INTEGER,
+                revoked_at INTEGER,
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_account_credentials_hash ON account_credentials(credential_hash);
+            CREATE INDEX IF NOT EXISTS idx_account_credentials_user_id ON account_credentials(user_id);
+            ",
+        )?;
         Ok(())
     }
 
@@ -1270,6 +1299,91 @@ impl Database {
         Ok(())
     }
 
+    pub fn insert_account_credential(
+        &self,
+        record: &AccountCredentialRecord,
+        credential_hash: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO account_credentials (
+                id, user_id, credential_hash, credential_prefix, created_at, last_used_at, revoked_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                record.id,
+                record.user_id,
+                credential_hash,
+                record.credential_prefix,
+                record.created_at,
+                record.last_used_at,
+                record.revoked_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_account_credential_by_hash(
+        &self,
+        hash: &str,
+    ) -> anyhow::Result<Option<AccountCredentialRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, credential_prefix, created_at, last_used_at, revoked_at
+             FROM account_credentials
+             WHERE credential_hash = ?1 AND revoked_at IS NULL",
+        )?;
+        let mut rows = stmt.query_map(params![hash], row_to_account_credential)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_account_credential_last_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE account_credentials SET last_used_at = ?2 WHERE id = ?1",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+
+    pub fn revoke_account_credential(
+        &self,
+        id: &str,
+        ts: i64,
+    ) -> anyhow::Result<Option<AccountCredentialRecord>> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE account_credentials SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1",
+            params![id, ts],
+        )?;
+        drop(conn);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, credential_prefix, created_at, last_used_at, revoked_at
+             FROM account_credentials WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], row_to_account_credential)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn list_account_credentials_by_user(
+        &self,
+        user_id: &str,
+    ) -> anyhow::Result<Vec<AccountCredentialRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, user_id, credential_prefix, created_at, last_used_at, revoked_at
+             FROM account_credentials WHERE user_id = ?1 ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map(params![user_id], row_to_account_credential)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
     pub fn insert_pairing_code(&self, record: &PairingCodeRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
@@ -1503,6 +1617,17 @@ fn row_to_api_key(row: &rusqlite::Row) -> rusqlite::Result<ApiKeyRecord> {
             .get::<_, Option<String>>(9)?
             .unwrap_or_else(|| "user".to_string()),
         allowed_client_id: row.get(10)?,
+    })
+}
+
+fn row_to_account_credential(row: &rusqlite::Row) -> rusqlite::Result<AccountCredentialRecord> {
+    Ok(AccountCredentialRecord {
+        id: row.get(0)?,
+        user_id: row.get(1)?,
+        credential_prefix: row.get(2)?,
+        created_at: row.get(3)?,
+        last_used_at: row.get(4)?,
+        revoked_at: row.get(5)?,
     })
 }
 

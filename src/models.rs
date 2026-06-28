@@ -201,6 +201,16 @@ pub struct ApiKeyRecord {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AccountCredentialRecord {
+    pub id: String,
+    pub user_id: String,
+    pub credential_prefix: String,
+    pub created_at: i64,
+    pub last_used_at: Option<i64>,
+    pub revoked_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PairingCodeRecord {
     pub id: String,
     pub code_hash: String,

@@ -344,7 +344,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // sensitive. All behind the shared AuthMiddleware Bearer auth.
         .push(Router::with_path("users/create").post(users_http::users_create))
         .push(Router::with_path("users/list").post(users_http::users_list))
+        .push(Router::with_path("users/me").post(users_http::users_me))
         .push(Router::with_path("tokens/create").post(users_http::tokens_create))
+        .push(Router::with_path("tokens/register_hash").post(users_http::tokens_register_hash))
         .push(Router::with_path("tokens/list").post(users_http::tokens_list))
         .push(Router::with_path("tokens/revoke").post(users_http::tokens_revoke))
         // Phase 3 agent token management: REST-only admin/self-management

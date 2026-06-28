@@ -17,11 +17,11 @@
 //!   not leak whether a token prefix or username exists.
 
 use crate::auth::{
-    generate_api_token, hash_token, scopes_to_string, token_prefix, validate_role, validate_scopes,
-    validate_username, AuthContext, SCOPE_ADMIN,
+    generate_account_credential, generate_api_token, hash_token, scopes_to_string, token_prefix,
+    validate_role, validate_scopes, validate_username, AuthContext, AuthKind, SCOPE_ADMIN,
 };
 use crate::json_error;
-use crate::models::{ApiKeyRecord, UserRecord};
+use crate::models::{AccountCredentialRecord, ApiKeyRecord, UserRecord};
 use crate::Database;
 use salvo::prelude::*;
 use serde::Deserialize;
@@ -43,6 +43,8 @@ pub(crate) struct CreateUserRequest {
     pub display_name: Option<String>,
     #[serde(default)]
     pub role: Option<String>,
+    #[serde(default)]
+    pub issue_credential: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -52,6 +54,20 @@ pub(crate) struct CreateApiTokenRequest {
     pub name: Option<String>,
     #[serde(default)]
     pub scopes: Option<Vec<String>>,
+    #[serde(default)]
+    pub expires_at: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct RegisterApiTokenHashRequest {
+    pub username: String,
+    #[serde(default)]
+    pub name: Option<String>,
+    pub token_hash: String,
+    pub token_prefix: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
     #[serde(default)]
     pub expires_at: Option<i64>,
 }
@@ -162,6 +178,46 @@ fn token_summary(key: &ApiKeyRecord) -> Value {
         "expires_at": key.expires_at,
         "revoked_at": key.revoked_at,
     })
+}
+
+fn auth_kind_name(kind: AuthKind) -> &'static str {
+    match kind {
+        AuthKind::Bootstrap => "bootstrap",
+        AuthKind::ApiToken => "api",
+        AuthKind::AgentToken => "agent",
+        AuthKind::AccountCredential => "account",
+    }
+}
+
+fn normalize_token_hash(value: &str) -> Result<String, String> {
+    let raw = value
+        .trim()
+        .strip_prefix("sha256:")
+        .unwrap_or_else(|| value.trim());
+    if raw.len() != 64 || !raw.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("token_hash must be sha256:<64 hex> or bare 64 hex".to_string());
+    }
+    Ok(raw.to_ascii_lowercase())
+}
+
+fn validate_pat_prefix(value: &str) -> Result<String, String> {
+    let value = value.trim();
+    if !value.starts_with("wc_pat_") {
+        return Err("token_prefix must start with wc_pat_".to_string());
+    }
+    if value.len() <= "wc_pat_".len() || value.len() > 32 {
+        return Err("token_prefix length is invalid".to_string());
+    }
+    if !value.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+        return Err("token_prefix contains invalid characters".to_string());
+    }
+    Ok(value.to_string())
+}
+
+fn is_unique_constraint_error(e: &anyhow::Error) -> bool {
+    e.to_string()
+        .to_ascii_lowercase()
+        .contains("unique constraint failed")
 }
 
 // ---------------------------------------------------------------------------
@@ -279,9 +335,85 @@ pub(crate) async fn users_create(req: &mut Request, depot: &mut Depot, res: &mut
         return;
     }
 
-    res.render(Json(json!({
+    let mut response = json!({
         "success": true,
         "user": user_summary(&user),
+    });
+    if body.issue_credential {
+        let plaintext = generate_account_credential();
+        let credential_hash = hash_token(&plaintext);
+        let record = AccountCredentialRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: user.id.clone(),
+            credential_prefix: token_prefix(&plaintext),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+        };
+        if let Err(e) = db.insert_account_credential(&record, &credential_hash) {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+            return;
+        }
+        response["account_credential"] = json!(plaintext);
+        response["account_credential_prefix"] = json!(record.credential_prefix);
+    }
+
+    res.render(Json(response));
+}
+
+#[handler]
+pub(crate) async fn users_me(depot: &mut Depot, res: &mut Response) {
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "no auth context",
+        ));
+        return;
+    };
+    if let Err((code, msg)) = reject_agent_token(auth) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
+
+    let Some(db) = crate::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB not available",
+        ));
+        return;
+    };
+    let user = match auth.user_id.as_deref() {
+        Some(id) => match db.get_user_by_id(id) {
+            Ok(Some(user)) => Some(user),
+            Ok(None) => {
+                res.status_code(StatusCode::UNAUTHORIZED);
+                res.render(json_error(StatusCode::UNAUTHORIZED, "Unauthorized"));
+                return;
+            }
+            Err(e) => {
+                res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+                res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+                return;
+            }
+        },
+        None => None,
+    };
+
+    res.render(Json(json!({
+        "success": true,
+        "auth": {
+            "kind": auth_kind_name(auth.kind),
+            "username": auth.username,
+            "role": auth.role,
+            "scopes": auth.scopes,
+            "is_bootstrap": auth.is_bootstrap,
+            "token_kind": auth.token_kind,
+        },
+        "user": user.as_ref().map(user_summary),
     })));
 }
 
@@ -483,6 +615,159 @@ pub(crate) async fn tokens_create(req: &mut Request, depot: &mut Depot, res: &mu
         "scopes": scopes,
         "created_at": record.created_at,
         "expires_at": record.expires_at,
+    })));
+}
+
+#[handler]
+pub(crate) async fn tokens_register_hash(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let body: RegisterApiTokenHashRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("invalid request body: {}", e),
+            ));
+            return;
+        }
+    };
+
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "no auth context",
+        ));
+        return;
+    };
+    if let Err((code, msg)) = reject_agent_token(auth) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
+    let username = match validate_username(&body.username) {
+        Ok(u) => u,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    if let Err((code, msg)) = require_admin_or_self(auth, &username) {
+        res.status_code(code);
+        res.render(json_error(code, msg));
+        return;
+    }
+
+    let token_name = body
+        .name
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "default".to_string());
+    if token_name.chars().count() > MAX_TOKEN_NAME_LEN {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(json_error(
+            StatusCode::BAD_REQUEST,
+            "token name is too long",
+        ));
+        return;
+    }
+    let token_hash = match normalize_token_hash(&body.token_hash) {
+        Ok(h) => h,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    let token_prefix = match validate_pat_prefix(&body.token_prefix) {
+        Ok(p) => p,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    let scopes = match validate_scopes(&body.scopes) {
+        Ok(s) => s,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, e));
+            return;
+        }
+    };
+    if scopes.iter().any(|s| s == SCOPE_ADMIN) && !is_admin_caller(auth) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(json_error(
+            StatusCode::FORBIDDEN,
+            "only admin/bootstrap callers may grant the admin scope",
+        ));
+        return;
+    }
+    if let Some(exp) = body.expires_at {
+        if exp <= chrono::Utc::now().timestamp() {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                "expires_at must be in the future",
+            ));
+            return;
+        }
+    }
+
+    let Some(db) = crate::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(json_error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "DB not available",
+        ));
+        return;
+    };
+    let user = match require_user_by_username(&db, &username) {
+        Ok(u) => u,
+        Err((code, msg)) => {
+            res.status_code(code);
+            res.render(json_error(code, msg));
+            return;
+        }
+    };
+    if user.is_disabled() {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(json_error(StatusCode::FORBIDDEN, "user is disabled"));
+        return;
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    let record = ApiKeyRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        user_id: user.id.clone(),
+        name: token_name,
+        key_prefix: token_prefix,
+        created_at: now,
+        last_used_at: None,
+        revoked_at: None,
+        scopes: scopes_to_string(&scopes),
+        expires_at: body.expires_at,
+        kind: crate::models::TOKEN_KIND_USER.to_string(),
+        allowed_client_id: None,
+    };
+    if let Err(e) = db.insert_api_key(&record, &token_hash) {
+        if is_unique_constraint_error(&e) {
+            res.status_code(StatusCode::CONFLICT);
+            res.render(json_error(
+                StatusCode::CONFLICT,
+                "token hash already exists",
+            ));
+        } else {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(json_error(StatusCode::INTERNAL_SERVER_ERROR, e.to_string()));
+        }
+        return;
+    }
+
+    res.render(Json(json!({
+        "success": true,
+        "token": token_summary(&record),
     })));
 }
 
@@ -710,6 +995,11 @@ mod tests {
 
     /// Build a router mirroring the production Phase 2 user/token management
     /// wiring: Config + Database injected, AuthMiddleware enforced.
+    #[salvo::handler]
+    async fn echo_runtime_ok(res: &mut Response) {
+        res.render(Json(json!({"ok": true})));
+    }
+
     fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
         Router::new()
             .hoop(affix_state::inject(config))
@@ -719,9 +1009,12 @@ mod tests {
                     .hoop(crate::AuthMiddleware)
                     .push(Router::with_path("users/create").post(users_create))
                     .push(Router::with_path("users/list").post(users_list))
+                    .push(Router::with_path("users/me").post(users_me))
                     .push(Router::with_path("tokens/create").post(tokens_create))
+                    .push(Router::with_path("tokens/register_hash").post(tokens_register_hash))
                     .push(Router::with_path("tokens/list").post(tokens_list))
-                    .push(Router::with_path("tokens/revoke").post(tokens_revoke)),
+                    .push(Router::with_path("tokens/revoke").post(tokens_revoke))
+                    .push(Router::with_path("runtime/status").post(echo_runtime_ok)),
             )
     }
 
@@ -755,7 +1048,7 @@ mod tests {
     async fn http_users_create_requires_auth() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
-        let service = Service::new(build_router(config, db));
+        let service = Service::new(build_router(config, db.clone()));
 
         let resp = TestClient::post("http://localhost/api/users/create")
             .json(&json!({"username": "alice"}))
@@ -803,7 +1096,7 @@ mod tests {
     async fn http_users_create_with_bootstrap_creates_user() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
-        let service = Service::new(build_router(config, db));
+        let service = Service::new(build_router(config, db.clone()));
 
         let mut resp = TestClient::post("http://localhost/api/users/create")
             .bearer_auth("secret")
@@ -817,6 +1110,59 @@ mod tests {
         assert_eq!(body["user"]["display_name"], "Alice");
         assert_eq!(body["user"]["role"], "user");
         assert_eq!(body["user"]["disabled"], false);
+    }
+
+    #[tokio::test]
+    async fn http_users_create_issue_credential_returns_plaintext_once_and_stores_hash_only() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db.clone()));
+
+        let mut resp = TestClient::post("http://localhost/api/users/create")
+            .bearer_auth("secret")
+            .json(&json!({
+                "username": "alice",
+                "display_name": "Alice",
+                "role": "user",
+                "issue_credential": true,
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        let credential = body["account_credential"].as_str().unwrap();
+        assert!(credential.starts_with("wc_acct_"));
+        assert_eq!(credential.len(), "wc_acct_".len() + 64);
+        assert_eq!(body["account_credential_prefix"], &credential[..16]);
+
+        let hash = hash_token(credential);
+        let stored = db.get_account_credential_by_hash(&hash).unwrap().unwrap();
+        assert_eq!(stored.credential_prefix, &credential[..16]);
+        {
+            let conn = db.conn_for_tests();
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM account_credentials WHERE credential_hash = ?1",
+                    rusqlite::params![credential],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(
+                count, 0,
+                "plaintext account credential must never be stored"
+            );
+        }
+
+        let mut resp = TestClient::post("http://localhost/api/users/me")
+            .bearer_auth(credential)
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["auth"]["kind"], "account");
+        assert_eq!(body["auth"]["username"], "alice");
+        assert_eq!(body["user"]["username"], "alice");
     }
 
     #[tokio::test]
@@ -1051,6 +1397,173 @@ mod tests {
             .send(&service)
             .await;
         assert_eq!(effective_status(&resp), StatusCode::FORBIDDEN);
+    }
+
+    #[tokio::test]
+    async fn http_tokens_register_hash_bootstrap_and_account_credential_self_management() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        seed_user(&db, "alice", "user");
+        seed_user(&db, "bob", "user");
+        let service = Service::new(build_router(config, db.clone()));
+
+        let mut resp = TestClient::post("http://localhost/api/users/create")
+            .bearer_auth("secret")
+            .json(&json!({"username": "carol", "issue_credential": true}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let carol_credential = resp.take_json::<Value>().await.unwrap()["account_credential"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let local_token = crate::auth::generate_api_token();
+        let local_hash = hash_token(&local_token);
+        let local_prefix = crate::auth::token_prefix(&local_token);
+        let mut resp = TestClient::post("http://localhost/api/tokens/register_hash")
+            .bearer_auth(&carol_credential)
+            .json(&json!({
+                "username": "carol",
+                "name": "gpt-action",
+                "token_hash": format!("sha256:{}", local_hash),
+                "token_prefix": local_prefix,
+                "scopes": ["runtime:read", "project:read", "project:write", "job:run"],
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["token"]["name"], "gpt-action");
+        assert_eq!(
+            body["token"]["token_prefix"],
+            crate::auth::token_prefix(&local_token)
+        );
+        let serialized = serde_json::to_string(&body).unwrap();
+        assert!(!serialized.contains(&local_token));
+        assert!(!serialized.contains(&local_hash));
+
+        let resp = TestClient::post("http://localhost/api/runtime/status")
+            .bearer_auth(&local_token)
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+
+        let other_token = crate::auth::generate_api_token();
+        let resp = TestClient::post("http://localhost/api/tokens/register_hash")
+            .bearer_auth(&carol_credential)
+            .json(&json!({
+                "username": "bob",
+                "token_hash": hash_token(&other_token),
+                "token_prefix": crate::auth::token_prefix(&other_token),
+                "scopes": ["runtime:read"],
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::FORBIDDEN);
+
+        let admin_token = crate::auth::generate_api_token();
+        let resp = TestClient::post("http://localhost/api/tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&json!({
+                "username": "alice",
+                "token_hash": hash_token(&admin_token),
+                "token_prefix": crate::auth::token_prefix(&admin_token),
+                "scopes": ["runtime:read"],
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn http_tokens_register_hash_validates_hash_prefix_scope_and_duplicate() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        seed_user(&db, "alice", "user");
+        let service = Service::new(build_router(config, db.clone()));
+
+        let token = crate::auth::generate_api_token();
+        let hash = hash_token(&token);
+        let prefix = crate::auth::token_prefix(&token);
+        for (field, mut body) in [
+            (
+                "bad hash",
+                json!({"username":"alice","token_hash":"not-a-hash","token_prefix":prefix,"scopes":["runtime:read"]}),
+            ),
+            (
+                "plaintext token field",
+                json!({"username":"alice","token":"wc_pat_plaintext","token_hash":hash,"token_prefix":prefix,"scopes":["runtime:read"]}),
+            ),
+            (
+                "bad prefix",
+                json!({"username":"alice","token_hash":hash,"token_prefix":"wc_agent_bad","scopes":["runtime:read"]}),
+            ),
+            (
+                "admin scope",
+                json!({"username":"alice","token_hash":hash,"token_prefix":prefix,"scopes":["admin"]}),
+            ),
+        ] {
+            let bearer = if field == "admin scope" {
+                let user_token = crate::auth::generate_api_token();
+                let record = ApiKeyRecord {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    user_id: db.get_user_by_username("alice").unwrap().unwrap().id,
+                    name: "self".to_string(),
+                    key_prefix: crate::auth::token_prefix(&user_token),
+                    created_at: chrono::Utc::now().timestamp(),
+                    last_used_at: None,
+                    revoked_at: None,
+                    scopes: "runtime:read".to_string(),
+                    expires_at: None,
+                    kind: crate::models::TOKEN_KIND_USER.to_string(),
+                    allowed_client_id: None,
+                };
+                db.insert_api_key(&record, &hash_token(&user_token))
+                    .unwrap();
+                user_token
+            } else {
+                "secret".to_string()
+            };
+            let resp = TestClient::post("http://localhost/api/tokens/register_hash")
+                .bearer_auth(&bearer)
+                .json(&body)
+                .send(&service)
+                .await;
+            assert!(
+                matches!(
+                    effective_status(&resp),
+                    StatusCode::BAD_REQUEST | StatusCode::FORBIDDEN
+                ),
+                "{} should fail",
+                field
+            );
+            body["name"] = json!("unused");
+        }
+
+        let resp = TestClient::post("http://localhost/api/tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&json!({
+                "username": "alice",
+                "token_hash": hash,
+                "token_prefix": prefix,
+                "scopes": ["runtime:read"],
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let dup = TestClient::post("http://localhost/api/tokens/register_hash")
+            .bearer_auth("secret")
+            .json(&json!({
+                "username": "alice",
+                "token_hash": hash,
+                "token_prefix": prefix,
+                "scopes": ["runtime:read"],
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&dup), StatusCode::CONFLICT);
     }
 
     #[tokio::test]

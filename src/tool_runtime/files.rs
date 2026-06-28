@@ -269,8 +269,7 @@ fn line_edit_text_line_count(text: &str) -> usize {
 /// plus the JSON payload shared by the runtime and tests. `new_sha256` is the
 /// sha256 digest of the entire file after the operation. Range tools hash the
 /// original replaced/deleted text; insert hashes the anchor line (or empty EOF
-/// anchor). This pure helper mirrors `LINE_EDIT_HELPER` so unit tests can cover
-/// edit semantics without needing an end-to-end agent.
+/// anchor).
 #[cfg(test)]
 pub(crate) fn apply_line_edit_content(
     content: &str,
@@ -374,102 +373,6 @@ pub(crate) fn apply_line_edit_content(
     let _ = new_text;
     Ok((new_content, output))
 }
-
-/// Fixed python3 helper run on the owning agent for line-structured edits.
-///
-/// The script follows the same fixed-command, JSON-over-stdin pattern as the
-/// other edit helpers. It prints one JSON object and exits 0; logical failures
-/// carry an `error` field. `new_sha256` is the sha256 digest of the entire file
-/// after the operation.
-pub(crate) const LINE_EDIT_HELPER: &str = r#"
-import sys, json, hashlib, os, tempfile
-NUL = "\x00"
-def emit(obj):
-    sys.stdout.write(json.dumps(obj))
-    sys.exit(0)
-def sha(s):
-    return hashlib.sha256(s.encode("utf-8")).hexdigest()
-def normalized(s):
-    if s == "" or s.endswith("\n"):
-        return s
-    return s + "\n"
-def line_count(s):
-    if s == "":
-        return 0
-    return len(s.splitlines())
-try:
-    req = json.load(sys.stdin)
-except Exception as e:
-    emit({"changed": False, "error": "invalid json: " + str(e)})
-path = req.get("path", "")
-op = req.get("op", "")
-if not isinstance(path, str) or not path or path.startswith("/") or NUL in path or ".." in path.split("/"):
-    emit({"changed": False, "path": path if isinstance(path, str) else None, "error": "invalid path"})
-if op not in ["replace", "insert", "delete"]:
-    emit({"changed": False, "path": path, "error": "invalid operation"})
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-except FileNotFoundError:
-    emit({"changed": False, "path": path, "error": "file not found"})
-except UnicodeDecodeError:
-    emit({"changed": False, "path": path, "error": "file is not valid UTF-8"})
-except Exception as e:
-    emit({"changed": False, "path": path, "error": "read failed: " + str(e)})
-lines = [] if content == "" else content.splitlines(True)
-total = len(lines)
-try:
-    if op in ["replace", "delete"]:
-        start = int(req.get("start_line"))
-        end = int(req.get("end_line"))
-        if start < 1 or end < start or end > total:
-            emit({"changed": False, "path": path, "start_line": start, "end_line": end, "error": "invalid line range"})
-        old_text = "".join(lines[start - 1:end])
-        replacement = "" if op == "delete" else normalized(req.get("text", ""))
-        if not isinstance(replacement, str) or NUL in replacement:
-            emit({"changed": False, "path": path, "error": "text cannot contain NUL bytes"})
-        new_content = "".join(lines[:start - 1]) + replacement + "".join(lines[end:])
-        old_count = end - start + 1
-        new_count = line_count(replacement)
-        coords = {"start_line": start, "end_line": end}
-    else:
-        at = int(req.get("line"))
-        if at < 1 or at > total + 1:
-            emit({"changed": False, "path": path, "line": at, "error": "line out of range"})
-        old_text = lines[at - 1] if at <= total else ""
-        insertion = normalized(req.get("text", ""))
-        if not isinstance(insertion, str) or NUL in insertion:
-            emit({"changed": False, "path": path, "error": "text cannot contain NUL bytes"})
-        new_content = "".join(lines[:at - 1]) + insertion + "".join(lines[at - 1:])
-        old_count = 1 if at <= total else 0
-        new_count = line_count(insertion)
-        coords = {"line": at}
-except Exception:
-    emit({"changed": False, "path": path, "error": "invalid line range" if op != "insert" else "line out of range"})
-old_digest = sha(old_text)
-exp_sha = req.get("expected_sha256", None)
-exp_prefix = req.get("expected_prefix", None)
-if exp_sha is not None and old_digest != exp_sha:
-    emit(dict({"changed": False, "path": path, "old_sha256": old_digest, "error": "expected_anchor_sha256 mismatch" if op == "insert" else "expected_old_sha256 mismatch"}, **coords))
-if exp_prefix is not None and (not isinstance(exp_prefix, str) or not old_text.startswith(exp_prefix)):
-    emit(dict({"changed": False, "path": path, "old_sha256": old_digest, "error": "expected_anchor_prefix mismatch" if op == "insert" else "expected_old_prefix mismatch"}, **coords))
-base_dir = os.path.dirname(path) or "."
-tmp = None
-try:
-    fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-line-")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(new_content)
-    os.replace(tmp, path)
-except Exception as e:
-    if tmp is not None:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    emit(dict({"changed": False, "path": path, "old_sha256": old_digest, "error": "write failed: " + str(e)}, **coords))
-out = dict({"path": path, "old_sha256": old_digest, "new_sha256": sha(new_content), "old_line_count": old_count, "new_line_count": new_count, "bytes_written": len(new_content.encode("utf-8")), "changed": new_content != content}, **coords)
-emit(out)
-"#;
 
 /// Fixed python3 helper run on the owning agent for `replace_in_file`.
 ///
@@ -844,7 +747,18 @@ impl ToolRuntime {
         Ok(())
     }
 
-    async fn run_line_edit(&self, project: String, path: String, payload: Value) -> ToolResult {
+    async fn run_line_edit(
+        &self,
+        project: String,
+        path: String,
+        op: &str,
+        content: Option<String>,
+        start_line: Option<usize>,
+        end_line: Option<usize>,
+        line: Option<usize>,
+        expected_sha256: Option<String>,
+        expected_prefix: Option<String>,
+    ) -> ToolResult {
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
@@ -859,13 +773,62 @@ impl ToolRuntime {
             Ok(id) => id.to_string(),
             Err(e) => return ToolResult::err(e),
         };
-        let command = format!("python3 -c '{}'", LINE_EDIT_HELPER);
-        let obj = match self
-            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+        let wait_timeout = 60_u64;
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: op.to_string(),
+                    client_id,
+                    path: path.clone(),
+                    cwd: Some(proj.path.clone()),
+                    content,
+                    max_bytes: None,
+                    expected_sha256,
+                    expected_prefix,
+                    start_line,
+                    end_line,
+                    line,
+                    create_dirs: false,
+                    wait_timeout_secs: wait_timeout,
+                },
+                "tool_runtime".to_string(),
+            )
             .await
         {
-            Ok(v) => v,
+            Ok(r) => r,
             Err(e) => return ToolResult::err(e),
+        };
+        let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return ToolResult::err("agent line edit request was dropped");
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return ToolResult::err("timed out waiting for agent line edit");
+            }
+        };
+        if let Some(e) = resp.error {
+            return ToolResult::err(e);
+        }
+        if resp.exit_code != Some(0) {
+            return ToolResult::err(resp.stderr.unwrap_or_else(|| {
+                format!("agent line edit failed with code {:?}", resp.exit_code)
+            }));
+        }
+        let stdout = resp.stdout.unwrap_or_default();
+        let stdout = stdout.trim();
+        let obj: Value = match serde_json::from_str(stdout) {
+            Ok(v) => v,
+            Err(e) => {
+                return ToolResult::err(format!(
+                    "agent line edit returned invalid JSON: {} (got: {})",
+                    e,
+                    &stdout[..stdout.len().min(200)]
+                ))
+            }
         };
         if let Some(err) = obj
             .get("error")
@@ -907,16 +870,18 @@ impl ToolRuntime {
         ) {
             return ToolResult::err(e);
         }
-        let payload = json!({
-            "op": "replace",
-            "path": path,
-            "start_line": start_line,
-            "end_line": end_line,
-            "text": new_text,
-            "expected_sha256": expected_old_sha256,
-            "expected_prefix": expected_old_prefix,
-        });
-        self.run_line_edit(project, path, payload).await
+        self.run_line_edit(
+            project,
+            path,
+            "replace_line_range",
+            Some(new_text),
+            Some(start_line),
+            Some(end_line),
+            None,
+            expected_old_sha256,
+            expected_old_prefix,
+        )
+        .await
     }
 
     pub(crate) async fn insert_at_line(
@@ -939,15 +904,18 @@ impl ToolRuntime {
         ) {
             return ToolResult::err(e);
         }
-        let payload = json!({
-            "op": "insert",
-            "path": path,
-            "line": line,
-            "text": text,
-            "expected_sha256": expected_anchor_sha256,
-            "expected_prefix": expected_anchor_prefix,
-        });
-        self.run_line_edit(project, path, payload).await
+        self.run_line_edit(
+            project,
+            path,
+            "insert_at_line",
+            Some(text),
+            None,
+            None,
+            Some(line),
+            expected_anchor_sha256,
+            expected_anchor_prefix,
+        )
+        .await
     }
 
     pub(crate) async fn delete_line_range(
@@ -970,16 +938,18 @@ impl ToolRuntime {
         ) {
             return ToolResult::err(e);
         }
-        let payload = json!({
-            "op": "delete",
-            "path": path,
-            "start_line": start_line,
-            "end_line": end_line,
-            "text": "",
-            "expected_sha256": expected_old_sha256,
-            "expected_prefix": expected_old_prefix,
-        });
-        self.run_line_edit(project, path, payload).await
+        self.run_line_edit(
+            project,
+            path,
+            "delete_line_range",
+            None,
+            Some(start_line),
+            Some(end_line),
+            None,
+            expected_old_sha256,
+            expected_old_prefix,
+        )
+        .await
     }
 
     /// Run a fixed agent-side helper `command` with a JSON `payload` on stdin
@@ -1081,6 +1051,10 @@ impl ToolRuntime {
                         content: None,
                         max_bytes: Some(512 * 1024),
                         expected_sha256: None,
+                        expected_prefix: None,
+                        start_line: None,
+                        end_line: None,
+                        line: None,
                         create_dirs: false,
                         wait_timeout_secs: wait_timeout,
                     },
@@ -1175,6 +1149,10 @@ impl ToolRuntime {
                         content: None,
                         max_bytes: None,
                         expected_sha256: None,
+                        expected_prefix: None,
+                        start_line: None,
+                        end_line: None,
+                        line: None,
                         create_dirs: false,
                         wait_timeout_secs: wait_timeout,
                     },

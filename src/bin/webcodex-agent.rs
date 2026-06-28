@@ -2225,6 +2225,348 @@ fn resolve_requested_path(
     Ok(resolved)
 }
 
+fn is_line_edit_request_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "file_replace_line_range" | "file_insert_at_line" | "file_delete_line_range"
+    )
+}
+
+fn is_sensitive_line_edit_path(path: &str) -> bool {
+    let mut components = path.split('/');
+    components.any(|component| {
+        matches!(
+            component,
+            ".git" | ".env" | "agent.toml" | "projects.d" | "secrets" | "target" | "node_modules"
+        ) || component.starts_with(".env.")
+            || component.ends_with(".env")
+            || component.ends_with(".toml.bak")
+            || component == "webcodex.env"
+    })
+}
+
+fn validate_line_edit_agent_path(path: &str) -> Result<(), String> {
+    if path.trim().is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    if path.contains('\0') {
+        return Err("path cannot contain NUL bytes".to_string());
+    }
+    let raw = Path::new(path);
+    if raw.is_absolute() {
+        return Err("line edit path must be project-relative".to_string());
+    }
+    for component in raw.components() {
+        match component {
+            std::path::Component::Normal(_) => {}
+            _ => return Err("line edit path must not escape the project".to_string()),
+        }
+    }
+    if is_sensitive_line_edit_path(path) {
+        return Err("refusing to edit sensitive path".to_string());
+    }
+    Ok(())
+}
+
+fn normalize_line_edit_text(text: &str) -> String {
+    if text.is_empty() || text.ends_with('\n') {
+        text.to_string()
+    } else {
+        format!("{}\n", text)
+    }
+}
+
+fn line_edit_text_line_count(text: &str) -> usize {
+    if text.is_empty() {
+        0
+    } else {
+        text.lines().count()
+    }
+}
+
+fn line_edit_stdout(value: serde_json::Value, start: Instant) -> CommandResult {
+    CommandResult {
+        exit_code: Some(0),
+        stdout: Some(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())),
+        stderr: Some(String::new()),
+        duration_ms: Some(start.elapsed().as_millis() as u64),
+        error: None,
+    }
+}
+
+fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| "target path has no parent directory".to_string())?;
+    let mut last_error = None;
+    for attempt in 0..16 {
+        let tmp = parent.join(format!(".pd-line-{}-{}", std::process::id(), attempt));
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+        {
+            Ok(mut file) => {
+                if let Err(e) = file.write_all(content.as_bytes()) {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e.to_string());
+                }
+                if let Err(e) = file.sync_all() {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e.to_string());
+                }
+                if let Err(e) = std::fs::rename(&tmp, path) {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e.to_string());
+                }
+                return Ok(());
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_error = Some(e.to_string());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    Err(last_error.unwrap_or_else(|| "could not create temporary file".to_string()))
+}
+
+fn handle_line_edit_file_request(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let content = match std::fs::read(resolved) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(_) => {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "error": "file is not valid UTF-8",
+                    }),
+                    start,
+                )
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "error": "file not found",
+                }),
+                start,
+            )
+        }
+        Err(e) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "error": format!("read failed: {}", e),
+                }),
+                start,
+            )
+        }
+    };
+    if content.contains('\0') {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": "file contains NUL bytes",
+            }),
+            start,
+        );
+    }
+    if request
+        .content
+        .as_deref()
+        .map(|text| text.contains('\0'))
+        .unwrap_or(false)
+    {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": "text cannot contain NUL bytes",
+            }),
+            start,
+        );
+    }
+    if request
+        .expected_prefix
+        .as_deref()
+        .map(|prefix| prefix.contains('\0'))
+        .unwrap_or(false)
+    {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": "expected prefix cannot contain NUL bytes",
+            }),
+            start,
+        );
+    }
+
+    let lines: Vec<&str> = if content.is_empty() {
+        Vec::new()
+    } else {
+        content.split_inclusive('\n').collect()
+    };
+    let total_lines = lines.len();
+    let edit = match request.kind.as_str() {
+        "file_replace_line_range" | "file_delete_line_range" => {
+            let start_line = request.start_line.unwrap_or(0);
+            let end_line = request.end_line.unwrap_or(0);
+            if start_line == 0 || end_line < start_line || end_line > total_lines {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "start_line": start_line,
+                        "end_line": end_line,
+                        "error": "invalid line range",
+                    }),
+                    start,
+                );
+            }
+            let old_text = lines[start_line - 1..end_line].concat();
+            let replacement = if request.kind == "file_delete_line_range" {
+                String::new()
+            } else {
+                normalize_line_edit_text(request.content.as_deref().unwrap_or_default())
+            };
+            let new_content = format!(
+                "{}{}{}",
+                lines[..start_line - 1].concat(),
+                replacement,
+                lines[end_line..].concat()
+            );
+            (
+                old_text,
+                new_content,
+                end_line - start_line + 1,
+                line_edit_text_line_count(&replacement),
+                serde_json::json!({"start_line": start_line, "end_line": end_line}),
+            )
+        }
+        "file_insert_at_line" => {
+            let line = request.line.unwrap_or(0);
+            if line == 0 || line > total_lines + 1 {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "line": line,
+                        "error": "line out of range",
+                    }),
+                    start,
+                );
+            }
+            let old_text = if line <= total_lines {
+                lines[line - 1].to_string()
+            } else {
+                String::new()
+            };
+            let insertion =
+                normalize_line_edit_text(request.content.as_deref().unwrap_or_default());
+            let new_content = format!(
+                "{}{}{}",
+                lines[..line - 1].concat(),
+                insertion,
+                lines[line - 1..].concat()
+            );
+            (
+                old_text,
+                new_content,
+                if line <= total_lines { 1 } else { 0 },
+                line_edit_text_line_count(&insertion),
+                serde_json::json!({"line": line}),
+            )
+        }
+        _ => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "error": "invalid operation",
+                }),
+                start,
+            )
+        }
+    };
+
+    let (old_text, new_content, old_line_count, new_line_count, coords) = edit;
+    let old_sha256 = sha256_hex_bytes(old_text.as_bytes());
+    if let Some(expected) = request.expected_sha256.as_deref() {
+        if old_sha256 != expected {
+            let err = if request.kind == "file_insert_at_line" {
+                "expected_anchor_sha256 mismatch"
+            } else {
+                "expected_old_sha256 mismatch"
+            };
+            let mut out = serde_json::json!({
+                "changed": false,
+                "path": path,
+                "old_sha256": old_sha256,
+                "error": err,
+            });
+            merge_json_object(&mut out, coords.clone());
+            return line_edit_stdout(out, start);
+        }
+    }
+    if let Some(prefix) = request.expected_prefix.as_deref() {
+        if !old_text.starts_with(prefix) {
+            let err = if request.kind == "file_insert_at_line" {
+                "expected_anchor_prefix mismatch"
+            } else {
+                "expected_old_prefix mismatch"
+            };
+            let mut out = serde_json::json!({
+                "changed": false,
+                "path": path,
+                "old_sha256": old_sha256,
+                "error": err,
+            });
+            merge_json_object(&mut out, coords.clone());
+            return line_edit_stdout(out, start);
+        }
+    }
+    if let Err(e) = write_file_atomic(resolved, &new_content) {
+        let mut out = serde_json::json!({
+            "changed": false,
+            "path": path,
+            "old_sha256": old_sha256,
+            "error": format!("write failed: {}", e),
+        });
+        merge_json_object(&mut out, coords.clone());
+        return line_edit_stdout(out, start);
+    }
+    let mut out = serde_json::json!({
+        "path": path,
+        "old_sha256": old_sha256,
+        "new_sha256": sha256_hex_bytes(new_content.as_bytes()),
+        "old_line_count": old_line_count,
+        "new_line_count": new_line_count,
+        "bytes_written": new_content.len(),
+        "changed": new_content != content,
+    });
+    merge_json_object(&mut out, coords);
+    line_edit_stdout(out, start)
+}
+
+fn merge_json_object(target: &mut serde_json::Value, source: serde_json::Value) {
+    if let (Some(target), Some(source)) = (target.as_object_mut(), source.as_object()) {
+        for (key, value) in source {
+            target.insert(key.clone(), value.clone());
+        }
+    }
+}
+
 fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -> CommandResult {
     let Some(path) = request.path.as_deref() else {
         return CommandResult {
@@ -2236,6 +2578,17 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         };
     };
     let start = Instant::now();
+    if is_line_edit_request_kind(&request.kind) {
+        if let Err(e) = validate_line_edit_agent_path(path) {
+            return CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(0),
+                error: Some(e),
+            };
+        }
+    }
     let resolved = match resolve_requested_path(policy, request.cwd.as_deref(), path) {
         Ok(path) => path,
         Err(e) => {
@@ -2249,6 +2602,9 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         }
     };
     match request.kind.as_str() {
+        "file_replace_line_range" | "file_insert_at_line" | "file_delete_line_range" => {
+            handle_line_edit_file_request(request, &resolved, start)
+        }
         "file_read" => {
             let max = request
                 .max_bytes
@@ -3460,7 +3816,12 @@ fn dispatch_request(
             }
             Ok(true)
         }
-        "file_read" | "file_write" | "file_list" => {
+        "file_read"
+        | "file_write"
+        | "file_list"
+        | "file_replace_line_range"
+        | "file_insert_at_line"
+        | "file_delete_line_range" => {
             let request_id = request.request_id.clone();
             let result = handle_file_request(policy, &request);
             sink.submit_result(request_id, result)
@@ -5380,6 +5741,10 @@ shell_profile = "../rust"
             content: None,
             max_bytes: None,
             expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command: command.to_string(),
             stdin: None,
@@ -5410,6 +5775,274 @@ shell_profile = "../rust"
             }
         }
         panic!("timed out waiting for job completion; stdout so far: {stdout:?}");
+    }
+
+    fn line_edit_request(
+        cwd: &Path,
+        kind: &str,
+        path: &str,
+        content: Option<&str>,
+        start_line: Option<usize>,
+        end_line: Option<usize>,
+        line: Option<usize>,
+        expected_sha256: Option<String>,
+        expected_prefix: Option<&str>,
+    ) -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: format!("req-{kind}"),
+            client_id: "agent-1".to_string(),
+            kind: kind.to_string(),
+            job_id: None,
+            cwd: Some(cwd.to_string_lossy().to_string()),
+            path: Some(path.to_string()),
+            content: content.map(str::to_string),
+            max_bytes: None,
+            expected_sha256,
+            expected_prefix: expected_prefix.map(str::to_string),
+            start_line,
+            end_line,
+            line,
+            create_dirs: false,
+            command: String::new(),
+            stdin: None,
+            timeout_secs: 30,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        }
+    }
+
+    fn line_edit_json(result: CommandResult) -> serde_json::Value {
+        assert_eq!(result.exit_code, Some(0), "unexpected result: {:?}", result);
+        assert!(
+            result.error.is_none(),
+            "unexpected error: {:?}",
+            result.error
+        );
+        serde_json::from_str(result.stdout.as_deref().expect("stdout json")).unwrap()
+    }
+
+    #[test]
+    fn agent_native_line_edit_replace_insert_delete_happy_paths() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+        let file = tmp.path().join("src/example.rs");
+        std::fs::write(&file, "one\ntwo\nthree\nfour\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_replace_line_range",
+                "src/example.rs",
+                Some("TWO\nTHREE"),
+                Some(2),
+                Some(3),
+                None,
+                None,
+                None,
+            ),
+        ));
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["start_line"], 2);
+        assert_eq!(out["end_line"], 3);
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "one\nTWO\nTHREE\nfour\n"
+        );
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_insert_at_line",
+                "src/example.rs",
+                Some("middle"),
+                None,
+                None,
+                Some(2),
+                None,
+                None,
+            ),
+        ));
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["line"], 2);
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "one\nmiddle\nTWO\nTHREE\nfour\n"
+        );
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_delete_line_range",
+                "src/example.rs",
+                None,
+                Some(2),
+                Some(3),
+                None,
+                None,
+                None,
+            ),
+        ));
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["old_line_count"], 2);
+        assert_eq!(out["new_line_count"], 0);
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "one\nTHREE\nfour\n"
+        );
+    }
+
+    #[test]
+    fn agent_native_line_edit_guards_reject_without_writing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("example.rs");
+        std::fs::write(&file, "one\ntwo\nthree\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_replace_line_range",
+                "example.rs",
+                Some("TWO"),
+                Some(2),
+                Some(2),
+                None,
+                Some(
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+                ),
+                None,
+            ),
+        ));
+        assert_eq!(out["changed"], false);
+        assert_eq!(out["error"], "expected_old_sha256 mismatch");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "one\ntwo\nthree\n");
+
+        let anchor = sha256_hex_bytes("two\n".as_bytes());
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_insert_at_line",
+                "example.rs",
+                Some("middle"),
+                None,
+                None,
+                Some(2),
+                Some(anchor),
+                Some("three"),
+            ),
+        ));
+        assert_eq!(out["changed"], false);
+        assert_eq!(out["error"], "expected_anchor_prefix mismatch");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "one\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn agent_native_line_edit_rejects_ranges_utf8_sensitive_and_escape() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("example.rs"), "one\ntwo\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_delete_line_range",
+                "example.rs",
+                None,
+                Some(2),
+                Some(3),
+                None,
+                None,
+                None,
+            ),
+        ));
+        assert_eq!(out["changed"], false);
+        assert_eq!(out["error"], "invalid line range");
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_insert_at_line",
+                "example.rs",
+                Some("three"),
+                None,
+                None,
+                Some(3),
+                None,
+                None,
+            ),
+        ));
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["old_line_count"], 0);
+        assert_eq!(
+            std::fs::read_to_string(tmp.path().join("example.rs")).unwrap(),
+            "one\ntwo\nthree\n"
+        );
+
+        std::fs::write(tmp.path().join("bad.bin"), [0xff, 0xfe]).unwrap();
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_replace_line_range",
+                "bad.bin",
+                Some("ok"),
+                Some(1),
+                Some(1),
+                None,
+                None,
+                None,
+            ),
+        ));
+        assert_eq!(out["changed"], false);
+        assert_eq!(out["error"], "file is not valid UTF-8");
+
+        let sensitive = handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_replace_line_range",
+                ".env",
+                Some("SECRET=2"),
+                Some(1),
+                Some(1),
+                None,
+                None,
+                None,
+            ),
+        );
+        assert!(sensitive
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("sensitive"));
+
+        let escaped = handle_file_request(
+            &policy,
+            &line_edit_request(
+                tmp.path(),
+                "file_replace_line_range",
+                "../outside.txt",
+                Some("x"),
+                Some(1),
+                Some(1),
+                None,
+                None,
+                None,
+            ),
+        );
+        assert!(escaped
+            .error
+            .as_deref()
+            .unwrap_or_default()
+            .contains("escape"));
     }
 
     #[test]
@@ -6122,6 +6755,10 @@ shell_profile = "../rust"
             content: None,
             max_bytes: None,
             expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command: "printf quic-ok".to_string(),
             stdin: None,
@@ -6169,6 +6806,10 @@ shell_profile = "../rust"
             content: None,
             max_bytes: None,
             expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command: "printf wsok".to_string(),
             stdin: None,
@@ -6209,6 +6850,10 @@ shell_profile = "../rust"
             content: None,
             max_bytes: None,
             expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command: String::new(),
             stdin: Some(payload.to_string()),

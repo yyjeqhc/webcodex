@@ -381,6 +381,14 @@ pub struct ShellAgentShellRequest {
     pub max_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_sha256: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expected_prefix: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub start_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub end_line: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub line: Option<usize>,
     #[serde(default)]
     pub create_dirs: bool,
     pub command: String,
@@ -476,6 +484,14 @@ pub struct ShellFileOpRequest {
     pub max_bytes: Option<usize>,
     #[serde(default)]
     pub expected_sha256: Option<String>,
+    #[serde(default)]
+    pub expected_prefix: Option<String>,
+    #[serde(default)]
+    pub start_line: Option<usize>,
+    #[serde(default)]
+    pub end_line: Option<usize>,
+    #[serde(default)]
+    pub line: Option<usize>,
     #[serde(default)]
     pub create_dirs: bool,
     #[serde(default = "default_wait_timeout_secs")]
@@ -988,6 +1004,10 @@ mod envelope_tests {
             content: None,
             max_bytes: None,
             expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command: "echo hi".to_string(),
             stdin: Some("input".to_string()),

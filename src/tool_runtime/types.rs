@@ -627,6 +627,8 @@ pub(crate) enum AgentCapability {
     Shell,
     /// `read_file` (agent path uses the file_read request kind).
     FileRead,
+    /// Native file mutation requests handled by the agent.
+    FileWrite,
     /// `git_status` / `git_diff` (agent path runs git via shell; accept either
     /// an explicit `git` capability or `shell`).
     GitOrShell,

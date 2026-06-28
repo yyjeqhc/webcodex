@@ -789,6 +789,7 @@ fn operation_with_examples(
     }
     json!({
         "operationId": operation_id,
+        "x-openai-isConsequential": is_consequential_operation(operation_id),
         "summary": summary,
         "description": description,
         "requestBody": {
@@ -823,6 +824,45 @@ fn operation_with_examples(
             }
         }
     })
+}
+
+fn is_consequential_operation(operation_id: &str) -> bool {
+    match operation_id {
+        "listRuntimeTools"
+        | "listProjects"
+        | "listAgents"
+        | "getRuntimeStatus"
+        | "readProjectFile"
+        | "listProjectFiles"
+        | "searchProjectText"
+        | "getProjectGitStatus"
+        | "getProjectGitDiff"
+        | "getProjectGitDiffSummary"
+        | "getProjectGitDiffHunks"
+        | "getRuntimeJobStatus"
+        | "getRuntimeJobLog"
+        | "getRuntimeJobTail"
+        | "listRuntimeJobs"
+        | "validateProjectPatch" => false,
+
+        "registerProject"
+        | "createProject"
+        | "runCodexTask"
+        | "applyProjectPatch"
+        | "applyProjectPatchChecked"
+        | "writeProjectFile"
+        | "replaceProjectFileText"
+        | "runProjectShellCommand"
+        | "startProjectShellJob"
+        | "stopRuntimeJob"
+        | "deleteProjectFiles"
+        | "gitRestorePaths"
+        | "discardUntracked"
+        | "discardUntrackedFiles"
+        | "callRuntimeTool" => true,
+
+        other => panic!("missing consequential classification for operationId {other}"),
+    }
 }
 
 fn schemas() -> Value {
@@ -1667,6 +1707,83 @@ mod tests {
         for id in &expected {
             assert!(ids.contains(id), "missing operation id: {}", id);
         }
+    }
+
+    #[test]
+    fn openapi_operations_have_consequential_flags() {
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        let mut count = 0;
+        for methods in paths.values() {
+            for op in methods.as_object().unwrap().values() {
+                count += 1;
+                let operation_id = op["operationId"].as_str().unwrap();
+                assert!(
+                    op.get("x-openai-isConsequential")
+                        .and_then(|v| v.as_bool())
+                        .is_some(),
+                    "operation {} must have x-openai-isConsequential",
+                    operation_id
+                );
+            }
+        }
+        assert_eq!(count, 27);
+    }
+
+    #[test]
+    fn openapi_consequential_flags_match_operation_risk() {
+        let spec = build_openapi_spec();
+        let mut flags = std::collections::BTreeMap::new();
+        for methods in spec["paths"].as_object().unwrap().values() {
+            for op in methods.as_object().unwrap().values() {
+                let operation_id = op["operationId"].as_str().unwrap().to_string();
+                let consequential = op["x-openai-isConsequential"].as_bool().unwrap();
+                flags.insert(operation_id, consequential);
+            }
+        }
+        let readonly = [
+            "listRuntimeTools",
+            "listProjects",
+            "getRuntimeStatus",
+            "readProjectFile",
+            "listProjectFiles",
+            "searchProjectText",
+            "getProjectGitStatus",
+            "getProjectGitDiff",
+            "getProjectGitDiffSummary",
+            "getRuntimeJobStatus",
+            "getRuntimeJobLog",
+            "getRuntimeJobTail",
+            "listRuntimeJobs",
+            "validateProjectPatch",
+        ];
+        let consequential = [
+            "registerProject",
+            "createProject",
+            "runCodexTask",
+            "applyProjectPatch",
+            "applyProjectPatchChecked",
+            "writeProjectFile",
+            "replaceProjectFileText",
+            "runProjectShellCommand",
+            "startProjectShellJob",
+            "deleteProjectFiles",
+            "gitRestorePaths",
+            "discardUntrackedFiles",
+            "callRuntimeTool",
+        ];
+        for id in readonly {
+            assert_eq!(
+                flags.get(id),
+                Some(&false),
+                "{} should be non-consequential",
+                id
+            );
+        }
+        for id in consequential {
+            assert_eq!(flags.get(id), Some(&true), "{} should be consequential", id);
+        }
+        assert_eq!(flags.len(), 27);
     }
 
     #[test]

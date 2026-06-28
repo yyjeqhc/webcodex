@@ -379,9 +379,19 @@ fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), St
 fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
     validate_id(&body.client_id, "client_id")?;
     match body.op.as_str() {
-        "read" | "write" | "list" => {}
-        _ => return Err("op must be one of read, write, list".to_string()),
+        "read" | "write" | "list" | "replace_line_range" | "insert_at_line"
+        | "delete_line_range" => {}
+        _ => {
+            return Err(
+                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range"
+                    .to_string(),
+            )
+        }
     }
+    let line_edit = matches!(
+        body.op.as_str(),
+        "replace_line_range" | "insert_at_line" | "delete_line_range"
+    );
     let path = body.path.trim();
     if path.is_empty() {
         return Err("path cannot be empty".to_string());
@@ -404,8 +414,16 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
         }
     }
     validate_sha256(&body.expected_sha256)?;
-    if body.expected_sha256.is_some() && body.op != "write" {
-        return Err("expected_sha256 is only allowed for op=write".to_string());
+    if body.expected_sha256.is_some() && body.op != "write" && !line_edit {
+        return Err("expected_sha256 is only allowed for op=write or line edit ops".to_string());
+    }
+    if let Some(prefix) = &body.expected_prefix {
+        if !line_edit {
+            return Err("expected_prefix is only allowed for line edit ops".to_string());
+        }
+        if prefix.contains('\0') {
+            return Err("expected_prefix cannot contain NUL bytes".to_string());
+        }
     }
     if body.create_dirs && body.op != "write" {
         return Err("create_dirs is only allowed for op=write".to_string());
@@ -417,12 +435,72 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
                 MAX_FILE_CONTENT_BYTES
             ));
         }
-        if body.op != "write" {
-            return Err("content is only allowed for op=write".to_string());
+        if body.op != "write" && body.op != "replace_line_range" && body.op != "insert_at_line" {
+            return Err(
+                "content is only allowed for op=write or line edit insert/replace".to_string(),
+            );
         }
     }
     if body.op == "write" && body.content.is_none() {
         return Err("content is required for op=write".to_string());
+    }
+    match body.op.as_str() {
+        "replace_line_range" => {
+            let start = body
+                .start_line
+                .ok_or_else(|| "start_line is required for op=replace_line_range".to_string())?;
+            let end = body
+                .end_line
+                .ok_or_else(|| "end_line is required for op=replace_line_range".to_string())?;
+            if start == 0 || end < start {
+                return Err("invalid line range".to_string());
+            }
+            if body.line.is_some() {
+                return Err("line is only allowed for op=insert_at_line".to_string());
+            }
+            if body.content.is_none() {
+                return Err("content is required for op=replace_line_range".to_string());
+            }
+        }
+        "delete_line_range" => {
+            let start = body
+                .start_line
+                .ok_or_else(|| "start_line is required for op=delete_line_range".to_string())?;
+            let end = body
+                .end_line
+                .ok_or_else(|| "end_line is required for op=delete_line_range".to_string())?;
+            if start == 0 || end < start {
+                return Err("invalid line range".to_string());
+            }
+            if body.line.is_some() || body.content.is_some() {
+                return Err("delete_line_range only accepts start_line/end_line guards".to_string());
+            }
+        }
+        "insert_at_line" => {
+            let line = body
+                .line
+                .ok_or_else(|| "line is required for op=insert_at_line".to_string())?;
+            if line == 0 {
+                return Err("line out of range".to_string());
+            }
+            if body.start_line.is_some() || body.end_line.is_some() {
+                return Err(
+                    "start_line/end_line are only allowed for range line edit ops".to_string(),
+                );
+            }
+            if body.content.is_none() {
+                return Err("content is required for op=insert_at_line".to_string());
+            }
+        }
+        _ => {
+            if body.expected_prefix.is_some()
+                || body.start_line.is_some()
+                || body.end_line.is_some()
+                || body.line.is_some()
+            {
+                return Err("line edit fields are only allowed for line edit ops".to_string());
+            }
+        }
     }
     if body.wait_timeout_secs > MAX_SYNC_WAIT_SECS {
         return Err(format!(
@@ -1121,6 +1199,10 @@ impl ShellClientRegistry {
             content: body.content.clone(),
             max_bytes: body.max_bytes,
             expected_sha256: body.expected_sha256.clone(),
+            expected_prefix: body.expected_prefix.clone(),
+            start_line: body.start_line,
+            end_line: body.end_line,
+            line: body.line,
             create_dirs: body.create_dirs,
             command: String::new(),
             stdin: None,
@@ -1166,6 +1248,10 @@ impl ShellClientRegistry {
             content: None,
             max_bytes: None,
             expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command: body.command.clone(),
             stdin: body.stdin.clone(),
@@ -1233,6 +1319,10 @@ impl ShellClientRegistry {
             content: None,
             max_bytes: None,
             expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command: String::new(),
             stdin: Some(payload),
@@ -1410,6 +1500,10 @@ impl ShellClientRegistry {
             content: None,
             max_bytes: None,
             expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command,
             stdin: None,
@@ -1587,6 +1681,10 @@ impl ShellClientRegistry {
                     content: None,
                     max_bytes: None,
                     expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
                     create_dirs: false,
                     command: String::new(),
                     stdin: None,
@@ -3710,6 +3808,10 @@ mod tests {
                     content: None,
                     max_bytes: None,
                     expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
                     create_dirs: false,
                     wait_timeout_secs: 0,
                 },

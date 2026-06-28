@@ -145,14 +145,15 @@ impl ToolRuntime {
             // the agent shell path; it requires the same shell capability as
             // apply_patch but never mutates the worktree.
             ToolCall::ValidatePatch { .. } => Some(AgentCapability::Shell),
-            // Structured edit tools run a fixed python3 helper over the agent
-            // shell path (caller text travels via stdin; the command itself is
-            // constant). They require the shell capability.
-            ToolCall::ReplaceInFile { .. }
-            | ToolCall::WriteProjectFile { .. }
-            | ToolCall::ReplaceLineRange { .. }
+            // `replace_in_file` / `write_project_file` still run fixed helper
+            // commands over the shell path. Line edits use native agent file
+            // ops and require file_write instead.
+            ToolCall::ReplaceInFile { .. } | ToolCall::WriteProjectFile { .. } => {
+                Some(AgentCapability::Shell)
+            }
+            ToolCall::ReplaceLineRange { .. }
             | ToolCall::InsertAtLine { .. }
-            | ToolCall::DeleteLineRange { .. } => Some(AgentCapability::Shell),
+            | ToolCall::DeleteLineRange { .. } => Some(AgentCapability::FileWrite),
             ToolCall::ReadFile { .. } | ToolCall::ListProjectFiles { .. } => {
                 Some(AgentCapability::FileRead)
             }
@@ -250,6 +251,11 @@ impl ToolRuntime {
                     .client_supports(&client_id, "file_read")
                     .await?
             }
+            AgentCapability::FileWrite => {
+                self.shell_clients
+                    .client_supports(&client_id, "file_write")
+                    .await?
+            }
             AgentCapability::GitOrShell => {
                 self.shell_clients
                     .client_supports(&client_id, "shell")
@@ -273,6 +279,7 @@ impl ToolRuntime {
             let label = match required {
                 AgentCapability::Shell => "shell",
                 AgentCapability::FileRead => "file_read",
+                AgentCapability::FileWrite => "file_write",
                 AgentCapability::GitOrShell => "shell or git",
                 AgentCapability::AsyncJobs => "async shell jobs",
             };
@@ -5861,7 +5868,7 @@ new file mode 100644\n\
     }
 
     #[test]
-    fn replace_line_range_helper_replaces_middle_multiline() {
+    fn replace_line_range_content_replaces_middle_multiline() {
         let (updated, out) = files::apply_line_edit_content(
             "one\ntwo\nthree\nfour\n",
             "src/example.rs",
@@ -5884,7 +5891,7 @@ new file mode 100644\n\
     }
 
     #[test]
-    fn replace_line_range_helper_rejects_sha_mismatch_without_write() {
+    fn replace_line_range_content_rejects_sha_mismatch_without_write() {
         let original = "one\ntwo\nthree\n";
         let err = files::apply_line_edit_content(
             original,
@@ -5903,7 +5910,7 @@ new file mode 100644\n\
     }
 
     #[test]
-    fn replace_line_range_helper_rejects_out_of_range() {
+    fn replace_line_range_content_rejects_out_of_range() {
         let err = files::apply_line_edit_content(
             "one\ntwo\n",
             "src/example.rs",
@@ -5920,7 +5927,7 @@ new file mode 100644\n\
     }
 
     #[test]
-    fn insert_at_line_helper_inserts_start_middle_and_eof() {
+    fn insert_at_line_content_inserts_start_middle_and_eof() {
         let (start, out) = files::apply_line_edit_content(
             "one\ntwo\n",
             "src/example.rs",
@@ -5968,7 +5975,7 @@ new file mode 100644\n\
     }
 
     #[test]
-    fn insert_at_line_helper_rejects_anchor_prefix_mismatch() {
+    fn insert_at_line_content_rejects_anchor_prefix_mismatch() {
         let err = files::apply_line_edit_content(
             "one\ntwo\n",
             "src/example.rs",
@@ -5985,7 +5992,7 @@ new file mode 100644\n\
     }
 
     #[test]
-    fn delete_line_range_helper_deletes_single_and_multiple_lines() {
+    fn delete_line_range_content_deletes_single_and_multiple_lines() {
         let (single, out) = files::apply_line_edit_content(
             "one\ntwo\nthree\n",
             "src/example.rs",
@@ -6018,7 +6025,7 @@ new file mode 100644\n\
     }
 
     #[test]
-    fn delete_line_range_helper_rejects_out_of_range() {
+    fn delete_line_range_content_rejects_out_of_range() {
         let err = files::apply_line_edit_content(
             "one\n",
             "src/example.rs",
@@ -6032,123 +6039,6 @@ new file mode 100644\n\
         )
         .unwrap_err();
         assert_eq!(err, "invalid line range");
-    }
-
-    #[test]
-    fn line_edit_helper_script_replace_line_range_happy_path() {
-        if !python3_available() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(tmp.path().join("src")).unwrap();
-        std::fs::write(tmp.path().join("src/example.rs"), "one\ntwo\nthree\nfour\n").unwrap();
-        let payload = json!({
-            "op": "replace",
-            "path": "src/example.rs",
-            "start_line": 2,
-            "end_line": 3,
-            "text": "TWO\nTHREE",
-            "expected_sha256": null,
-            "expected_prefix": null
-        });
-        let out = run_helper_locally(LINE_EDIT_HELPER, &payload, tmp.path());
-        assert_eq!(out["changed"], true);
-        assert_eq!(out["path"], "src/example.rs");
-        assert_eq!(out["start_line"], 2);
-        assert_eq!(out["end_line"], 3);
-        assert_eq!(out["old_line_count"], 2);
-        assert_eq!(out["new_line_count"], 2);
-        assert_eq!(out["old_sha256"].as_str().unwrap().len(), 64);
-        assert_eq!(out["new_sha256"].as_str().unwrap().len(), 64);
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join("src/example.rs")).unwrap(),
-            "one\nTWO\nTHREE\nfour\n"
-        );
-    }
-
-    #[test]
-    fn line_edit_helper_script_insert_at_line_happy_path() {
-        if !python3_available() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("example.rs"), "one\ntwo\n").unwrap();
-        let payload = json!({
-            "op": "insert",
-            "path": "example.rs",
-            "line": 2,
-            "text": "middle",
-            "expected_sha256": null,
-            "expected_prefix": null
-        });
-        let out = run_helper_locally(LINE_EDIT_HELPER, &payload, tmp.path());
-        assert_eq!(out["changed"], true);
-        assert_eq!(out["path"], "example.rs");
-        assert_eq!(out["line"], 2);
-        assert_eq!(out["old_line_count"], 1);
-        assert_eq!(out["new_line_count"], 1);
-        assert_eq!(out["old_sha256"].as_str().unwrap().len(), 64);
-        assert_eq!(out["new_sha256"].as_str().unwrap().len(), 64);
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join("example.rs")).unwrap(),
-            "one\nmiddle\ntwo\n"
-        );
-    }
-
-    #[test]
-    fn line_edit_helper_script_delete_line_range_happy_path() {
-        if !python3_available() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("example.rs"), "one\ntwo\nthree\nfour\n").unwrap();
-        let payload = json!({
-            "op": "delete",
-            "path": "example.rs",
-            "start_line": 2,
-            "end_line": 3,
-            "text": "",
-            "expected_sha256": null,
-            "expected_prefix": null
-        });
-        let out = run_helper_locally(LINE_EDIT_HELPER, &payload, tmp.path());
-        assert_eq!(out["changed"], true);
-        assert_eq!(out["path"], "example.rs");
-        assert_eq!(out["start_line"], 2);
-        assert_eq!(out["end_line"], 3);
-        assert_eq!(out["old_line_count"], 2);
-        assert_eq!(out["new_line_count"], 0);
-        assert_eq!(out["old_sha256"].as_str().unwrap().len(), 64);
-        assert_eq!(out["new_sha256"].as_str().unwrap().len(), 64);
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join("example.rs")).unwrap(),
-            "one\nfour\n"
-        );
-    }
-
-    #[test]
-    fn line_edit_helper_script_guard_mismatch_leaves_file_unchanged() {
-        if !python3_available() {
-            return;
-        }
-        let tmp = tempfile::tempdir().unwrap();
-        std::fs::write(tmp.path().join("example.rs"), "one\ntwo\nthree\n").unwrap();
-        let payload = json!({
-            "op": "replace",
-            "path": "example.rs",
-            "start_line": 2,
-            "end_line": 2,
-            "text": "TWO",
-            "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-            "expected_prefix": null
-        });
-        let out = run_helper_locally(LINE_EDIT_HELPER, &payload, tmp.path());
-        assert_eq!(out["changed"], false);
-        assert!(out["error"].as_str().unwrap().contains("mismatch"));
-        assert_eq!(
-            std::fs::read_to_string(tmp.path().join("example.rs")).unwrap(),
-            "one\ntwo\nthree\n"
-        );
     }
 
     #[tokio::test]
@@ -6195,6 +6085,80 @@ new file mode 100644\n\
             .await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("expected prefix too large"));
+    }
+
+    #[tokio::test]
+    async fn line_edit_dispatch_uses_agent_native_file_op_not_python_helper() {
+        let runtime = runtime_with_agent_project("editor");
+        register_agent(&runtime, "editor", None, ShellClientCapabilities::default()).await;
+        let project = agent_test_project_id("editor");
+
+        let runtime_for_task = runtime.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .replace_line_range(
+                    project,
+                    "EDIT_PROBE.txt".to_string(),
+                    2,
+                    2,
+                    "new".to_string(),
+                    None,
+                    Some("old".to_string()),
+                )
+                .await
+        });
+
+        let mut req = None;
+        for _ in 0..20 {
+            req = runtime
+                .shell_clients
+                .poll(ShellAgentPollRequest {
+                    client_id: "editor".to_string(),
+                    agent_instance_id: "inst".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap();
+            if req.is_some() {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        let req = req.expect("replace_line_range should enqueue an agent file op");
+        assert_eq!(req.kind, "file_replace_line_range");
+        assert_eq!(req.command, "");
+        assert!(req.stdin.is_none());
+        assert_eq!(req.path.as_deref(), Some("EDIT_PROBE.txt"));
+        assert_eq!(req.content.as_deref(), Some("new"));
+        assert_eq!(req.start_line, Some(2));
+        assert_eq!(req.end_line, Some(2));
+        assert_eq!(req.expected_prefix.as_deref(), Some("old"));
+
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "editor".to_string(),
+                agent_instance_id: "inst".to_string(),
+                request_id: req.request_id,
+                exit_code: Some(0),
+                stdout: Some(
+                    "{\"changed\":true,\"path\":\"EDIT_PROBE.txt\",\
+                     \"old_sha256\":\"b\",\"new_sha256\":\"a\",\
+                     \"old_line_count\":1,\"new_line_count\":1,\"bytes_written\":4,\
+                     \"start_line\":2,\"end_line\":2}"
+                        .to_string(),
+                ),
+                stderr: Some(String::new()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["changed"], true);
+        assert_eq!(result.output["path"], "EDIT_PROBE.txt");
     }
 
     #[tokio::test]
@@ -6469,6 +6433,28 @@ new file mode 100644\n\
             .await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("shell"));
+    }
+
+    #[tokio::test]
+    async fn line_edit_tools_require_file_write_capability() {
+        let runtime = runtime_with_agent_project("editor");
+        register_agent(&runtime, "editor", None, ShellClientCapabilities::default()).await;
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ReplaceLineRange {
+                    project: agent_test_project_id("editor"),
+                    path: "EDIT_PROBE.txt".to_string(),
+                    start_line: 1,
+                    end_line: 1,
+                    new_text: "new".to_string(),
+                    expected_old_sha256: None,
+                    expected_old_prefix: None,
+                },
+                Some(&auth_context(None, true)),
+            )
+            .await;
+        assert!(!result.success);
+        assert!(result.error.unwrap().contains("file_write"));
     }
 
     // -------------------------------------------------------------------------

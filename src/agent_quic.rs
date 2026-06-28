@@ -17,7 +17,7 @@
 //! are NOT trusted as authentication — the agent token is always validated.
 
 use crate::auth::{authenticate_bearer, SCOPE_AGENT_REGISTER};
-use crate::config::{Config, QuicServerConfig};
+use crate::config::{Config, QuicRuntimeStatus, QuicServerConfig};
 use crate::shell_client::{
     effective_register_owner, enforce_register_owner, require_agent_transport_scope,
     ShellClientRegistry, TRANSPORT_QUIC,
@@ -120,16 +120,62 @@ pub(crate) async fn run_quic_agent_listener(
     db: Option<Arc<Database>>,
     registry: Arc<ShellClientRegistry>,
     quic_cfg: QuicServerConfig,
+    quic_status: Option<Arc<std::sync::Mutex<QuicRuntimeStatus>>>,
 ) -> Result<(), String> {
-    quic_cfg.validate()?;
-    let server_crypto = build_server_crypto(&quic_cfg)?;
-    let listen: std::net::SocketAddr = quic_cfg
-        .listen
-        .parse()
-        .map_err(|e| format!("invalid WEBCODEX_QUIC_LISTEN '{}': {}", quic_cfg.listen, e))?;
+    if let Err(e) = quic_cfg.validate() {
+        if let Some(status) = quic_status.as_ref() {
+            status
+                .lock()
+                .expect("quic runtime status mutex poisoned")
+                .mark_error(&e);
+        }
+        return Err(e);
+    }
+    let server_crypto = match build_server_crypto(&quic_cfg) {
+        Ok(config) => config,
+        Err(e) => {
+            if let Some(status) = quic_status.as_ref() {
+                status
+                    .lock()
+                    .expect("quic runtime status mutex poisoned")
+                    .mark_error(&e);
+            }
+            return Err(e);
+        }
+    };
+    let listen: std::net::SocketAddr = match quic_cfg.listen.parse() {
+        Ok(listen) => listen,
+        Err(e) => {
+            let error = format!("invalid WEBCODEX_QUIC_LISTEN '{}': {}", quic_cfg.listen, e);
+            if let Some(status) = quic_status.as_ref() {
+                status
+                    .lock()
+                    .expect("quic runtime status mutex poisoned")
+                    .mark_error(&error);
+            }
+            return Err(error);
+        }
+    };
     let server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
-    let endpoint = quinn::Endpoint::server(server_config, listen)
-        .map_err(|e| format!("failed to bind QUIC listener on {}: {}", listen, e))?;
+    let endpoint = match quinn::Endpoint::server(server_config, listen) {
+        Ok(endpoint) => endpoint,
+        Err(e) => {
+            let error = format!("failed to bind QUIC listener on {}: {}", listen, e);
+            if let Some(status) = quic_status.as_ref() {
+                status
+                    .lock()
+                    .expect("quic runtime status mutex poisoned")
+                    .mark_error(&error);
+            }
+            return Err(error);
+        }
+    };
+    if let Some(status) = quic_status.as_ref() {
+        status
+            .lock()
+            .expect("quic runtime status mutex poisoned")
+            .mark_started();
+    }
     tracing::info!(
         "Agent QUIC listener (experimental) on UDP {} with ALPN {}",
         listen,

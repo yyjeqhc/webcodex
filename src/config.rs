@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone)]
@@ -30,6 +31,18 @@ pub struct QuicServerConfig {
     pub cert: PathBuf,
     pub key: PathBuf,
     pub alpn: String,
+}
+
+/// Non-sensitive server-side QUIC listener status exposed through
+/// `runtime_status`. This intentionally carries only operator-safe fields:
+/// listen address, ALPN, started flag, and a short sanitized error.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct QuicRuntimeStatus {
+    pub enabled: bool,
+    pub listen: String,
+    pub alpn: String,
+    pub listener_started: bool,
+    pub last_error: Option<String>,
 }
 
 impl QuicServerConfig {
@@ -80,6 +93,75 @@ impl QuicServerConfig {
         }
         Ok(())
     }
+
+    pub fn runtime_status(&self) -> QuicRuntimeStatus {
+        QuicRuntimeStatus {
+            enabled: self.enabled,
+            listen: self.listen.clone(),
+            alpn: self.alpn.clone(),
+            listener_started: false,
+            last_error: None,
+        }
+    }
+}
+
+impl QuicRuntimeStatus {
+    pub fn mark_started(&mut self) {
+        self.listener_started = true;
+        self.last_error = None;
+    }
+
+    pub fn mark_error(&mut self, error: impl AsRef<str>) {
+        self.listener_started = false;
+        self.last_error = Some(sanitize_quic_runtime_error(error.as_ref()));
+    }
+}
+
+pub fn sanitize_quic_runtime_error(error: &str) -> String {
+    let compact = error
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim()
+        .to_string();
+    let lower = compact.to_ascii_lowercase();
+
+    if lower.contains("webcodex_quic_cert is not set") {
+        return "WEBCODEX_QUIC_CERT is not set; QUIC listener requires a cert path".to_string();
+    }
+    if lower.contains("webcodex_quic_key is not set") {
+        return "WEBCODEX_QUIC_KEY is not set; QUIC listener requires a key path".to_string();
+    }
+    if lower.contains("webcodex_quic_cert") && lower.contains("does not exist") {
+        return "WEBCODEX_QUIC_CERT path does not exist".to_string();
+    }
+    if lower.contains("webcodex_quic_key") && lower.contains("does not exist") {
+        return "WEBCODEX_QUIC_KEY path does not exist".to_string();
+    }
+    if lower.contains("quic cert") {
+        if lower.contains("no certificates") {
+            return "QUIC cert contains no certificates".to_string();
+        }
+        if lower.contains("parse") {
+            return "failed to parse QUIC cert".to_string();
+        }
+        if lower.contains("open") {
+            return "failed to open QUIC cert".to_string();
+        }
+    }
+    if lower.contains("quic key") || lower.contains("private key") {
+        if lower.contains("no private key") {
+            return "QUIC key contains no private key".to_string();
+        }
+        if lower.contains("parse") {
+            return "failed to parse QUIC key".to_string();
+        }
+        if lower.contains("open") {
+            return "failed to open QUIC key".to_string();
+        }
+    }
+
+    compact.chars().take(240).collect()
 }
 
 impl Default for QuicServerConfig {
@@ -374,6 +456,21 @@ mod tests {
         assert!(err.contains("does not exist"), "err was: {err}");
         assert!(!err.contains("BEGIN PRIVATE KEY"));
         assert!(!err.contains("BEGIN CERTIFICATE"));
+    }
+
+    #[test]
+    fn quic_runtime_error_sanitizer_removes_cert_and_key_paths() {
+        let cert = sanitize_quic_runtime_error(
+            "WEBCODEX_QUIC_CERT path does not exist: /etc/letsencrypt/live/example/fullchain.pem",
+        );
+        assert_eq!(cert, "WEBCODEX_QUIC_CERT path does not exist");
+        assert!(!cert.contains("/etc/letsencrypt"));
+
+        let key = sanitize_quic_runtime_error(
+            "failed to parse QUIC key /etc/letsencrypt/live/example/privkey.pem: bad pem",
+        );
+        assert_eq!(key, "failed to parse QUIC key");
+        assert!(!key.contains("privkey.pem"));
     }
 
     #[test]

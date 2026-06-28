@@ -32,7 +32,7 @@ use shell_protocol::{
 use agent_init::{
     effective_allowed_roots, parse_bool, required_value, run_agent_init,
     validate_agent_init_options, AgentInitOptions, DEFAULT_INIT_PROJECTS_DIR,
-    DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS, DEFAULT_POLL_INTERVAL_MS,
+    DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS, DEFAULT_POLL_INTERVAL_MS, TRANSPORT_AUTO,
     TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
 };
 
@@ -77,13 +77,12 @@ struct AgentConfig {
     max_concurrent_jobs: Option<usize>,
     #[serde(default)]
     policy: AgentPolicy,
-    /// Transport selection: `"polling"` (default, HTTP fallback) or
-    /// `"websocket"` (preferred long-lived connection).
+    /// Transport selection: `"websocket"` (default), `"polling"`, `"quic"`,
+    /// or explicit `"auto"` fallback mode.
     #[serde(default)]
     transport: Option<String>,
-    /// Experimental custom QUIC agent transport config. Only used
-    /// when `transport = "quic"`. `None` keeps the default websocket/polling
-    /// behavior unchanged.
+    /// Experimental custom QUIC agent transport config. Used by strict
+    /// `transport = "quic"` and by explicit `transport = "auto"`.
     #[serde(default)]
     quic: Option<QuicClientConfig>,
     #[serde(default)]
@@ -523,7 +522,7 @@ fn usage() -> &'static str {
        --client-id ID             Stable agent client id\n\
        --owner USER               Owner username\n\
        --display-name NAME        Human-readable agent name\n\
-       --transport NAME           websocket (default), polling, or quic (experimental)\n\
+       --transport NAME           websocket (default), polling, quic, or auto\n\
        --poll-interval-ms N       Polling interval, default 1000\n\
        --projects-dir PATH        Project config directory, default /etc/webcodex/projects.d\n\
        --allowed-root PATH        Allowed project/root path; repeatable\n\
@@ -1355,6 +1354,16 @@ fn load_config(path: &Path) -> Result<AgentConfig, String> {
     }
     if cfg.poll_interval_ms == 0 {
         return Err("poll_interval_ms must be > 0".to_string());
+    }
+    if let Some(transport) = cfg.transport.as_deref().map(str::trim) {
+        if !transport.is_empty()
+            && !matches!(
+                transport,
+                TRANSPORT_WEBSOCKET | TRANSPORT_POLLING | TRANSPORT_QUIC | TRANSPORT_AUTO
+            )
+        {
+            return Err("transport must be websocket, polling, quic, or auto".to_string());
+        }
     }
     // Phase 5A: when allowed_roots is missing/empty, default to [$HOME] so a
     // minimal agent.toml without an explicit policy.allowed_roots still works
@@ -3496,13 +3505,85 @@ fn run_agent(cfg: AgentConfig, once: bool) -> Result<(), String> {
         .as_deref()
         .map(str::trim)
         .filter(|s| !s.is_empty())
-        .unwrap_or(TRANSPORT_POLLING)
+        .unwrap_or(TRANSPORT_WEBSOCKET)
         .to_string();
     match transport.as_str() {
         TRANSPORT_WEBSOCKET => run_websocket_agent(cfg, once, &agent_instance_id),
         TRANSPORT_QUIC => run_quic_agent(cfg, once, &agent_instance_id),
+        TRANSPORT_AUTO => run_auto_agent(cfg, once, &agent_instance_id),
         _ => run_polling_agent(cfg, once, &agent_instance_id),
     }
+}
+
+fn effective_transport(cfg: &AgentConfig) -> &str {
+    cfg.transport
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .unwrap_or(TRANSPORT_WEBSOCKET)
+}
+
+fn auto_transport_plan(cfg: &AgentConfig) -> Vec<&'static str> {
+    let mut plan = Vec::new();
+    if cfg.quic.is_some() {
+        plan.push(TRANSPORT_QUIC);
+    }
+    plan.push(TRANSPORT_WEBSOCKET);
+    plan.push(TRANSPORT_POLLING);
+    plan
+}
+
+fn run_auto_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Result<(), String> {
+    for transport in auto_transport_plan(&cfg) {
+        match transport {
+            TRANSPORT_QUIC => {
+                eprintln!("webcodex-agent transport auto: trying quic");
+                match run_quic_agent_single_session(&cfg, once, agent_instance_id) {
+                    Ok(()) if once => return Ok(()),
+                    Ok(()) => {
+                        eprintln!(
+                            "webcodex-agent transport auto: quic session ended; trying websocket"
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "webcodex-agent transport auto: quic failed: {}; trying websocket",
+                            e
+                        );
+                    }
+                }
+            }
+            TRANSPORT_WEBSOCKET => {
+                if cfg.quic.is_none() {
+                    eprintln!(
+                        "webcodex-agent transport auto: [quic] not configured; trying websocket"
+                    );
+                } else {
+                    eprintln!("webcodex-agent transport auto: trying websocket");
+                }
+                match run_websocket_agent_single_session(&cfg, agent_instance_id) {
+                    Ok(()) if once => return Ok(()),
+                    Ok(()) => {
+                        eprintln!(
+                            "webcodex-agent transport auto: websocket session ended; falling back to polling"
+                        );
+                    }
+                    Err(e) => {
+                        eprintln!(
+                            "webcodex-agent transport auto: websocket failed: {}; falling back to polling",
+                            e
+                        );
+                    }
+                }
+            }
+            TRANSPORT_POLLING => {
+                eprintln!("webcodex-agent transport auto: trying polling");
+                return run_polling_agent(cfg, once, agent_instance_id);
+            }
+            _ => {}
+        }
+    }
+    unreachable!("auto transport plan always ends with polling")
 }
 
 fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Result<(), String> {
@@ -3520,8 +3601,10 @@ fn run_polling_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> R
         jobs.prepared_profiles.len(),
     )?;
     eprintln!(
-        "webcodex-agent registered client_id={} server={} transport=polling",
-        cfg.client_id, cfg.server_url
+        "webcodex-agent registered client_id={} server={} preferred_transport={} actual_transport=polling transport=polling",
+        cfg.client_id,
+        cfg.server_url,
+        effective_transport(&cfg)
     );
     loop {
         match handle_one_poll(&client, &cfg, &jobs, &mut project_cache, agent_instance_id) {
@@ -3601,6 +3684,22 @@ fn run_quic_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
                 }
             }
         }
+    })
+}
+
+fn run_quic_agent_single_session(
+    cfg: &AgentConfig,
+    once: bool,
+    agent_instance_id: &str,
+) -> Result<(), String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to create tokio runtime: {}", e))?;
+    rt.block_on(async move {
+        let mut project_cache = AgentProjectCache::default();
+        let projects = project_cache.get(cfg);
+        quic_session(cfg, projects, agent_instance_id, once).await
     })
 }
 
@@ -3769,8 +3868,10 @@ async fn quic_session(
         other => return Err(format!("expected registered ack, got {}", other.kind())),
     }
     eprintln!(
-        "webcodex-agent registered client_id={} server={} transport=quic",
-        cfg.client_id, quic.server_addr
+        "webcodex-agent registered client_id={} server={} preferred_transport={} actual_transport=quic transport=quic",
+        cfg.client_id,
+        quic.server_addr,
+        effective_transport(cfg)
     );
 
     if once {
@@ -3968,6 +4069,21 @@ fn run_websocket_agent(
     })
 }
 
+fn run_websocket_agent_single_session(
+    cfg: &AgentConfig,
+    agent_instance_id: &str,
+) -> Result<(), String> {
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| format!("failed to create tokio runtime: {}", e))?;
+    rt.block_on(async move {
+        let mut project_cache = AgentProjectCache::default();
+        let projects = project_cache.get(cfg);
+        websocket_session(cfg, projects, agent_instance_id).await
+    })
+}
+
 /// One WebSocket connection lifecycle: connect, register, then serve requests
 /// until the socket closes or a fatal server error arrives.
 async fn websocket_session(
@@ -4025,8 +4141,10 @@ async fn websocket_session(
         other => return Err(format!("expected registered ack, got {}", other.kind())),
     }
     eprintln!(
-        "webcodex-agent registered client_id={} server={} transport=websocket",
-        cfg.client_id, cfg.server_url
+        "webcodex-agent registered client_id={} server={} preferred_transport={} actual_transport=websocket transport=websocket",
+        cfg.client_id,
+        cfg.server_url,
+        effective_transport(cfg)
     );
 
     // Split socket into writer (drains outgoing envelopes) and reader.
@@ -4266,8 +4384,8 @@ mod tests {
     }
 
     #[test]
-    fn agent_config_defaults_transport_to_polling_without_quic_section() {
-        // No transport field and no [quic] section: defaults stay unchanged.
+    fn agent_config_defaults_transport_to_websocket_without_quic_section() {
+        // No transport field and no [quic] section: default stays websocket.
         let toml = r#"
 server_url = "http://127.0.0.1:8000"
 token = "t"
@@ -4276,6 +4394,11 @@ client_id = "oe"
         let cfg: AgentConfig = toml::from_str(toml).unwrap();
         assert!(cfg.transport.is_none());
         assert!(cfg.quic.is_none());
+        assert_eq!(effective_transport(&cfg), TRANSPORT_WEBSOCKET);
+        assert_eq!(
+            auto_transport_plan(&cfg),
+            vec![TRANSPORT_WEBSOCKET, TRANSPORT_POLLING]
+        );
     }
 
     #[test]
@@ -4299,6 +4422,43 @@ server_name = "v4.example.test"
         assert_eq!(quic.alpn, "webcodex-agent/1");
         assert_eq!(quic.connect_timeout_secs, 10);
         assert_eq!(quic.keepalive_interval_secs, 20);
+    }
+
+    #[test]
+    fn agent_config_accepts_transport_auto() {
+        let toml = r#"
+server_url = "http://127.0.0.1:8000"
+token = "t"
+client_id = "oe"
+transport = "auto"
+"#;
+        let cfg: AgentConfig = toml::from_str(toml).unwrap();
+        assert_eq!(cfg.transport.as_deref(), Some(TRANSPORT_AUTO));
+        assert_eq!(effective_transport(&cfg), TRANSPORT_AUTO);
+        assert_eq!(
+            auto_transport_plan(&cfg),
+            vec![TRANSPORT_WEBSOCKET, TRANSPORT_POLLING]
+        );
+    }
+
+    #[test]
+    fn auto_transport_plan_tries_quic_then_websocket_then_polling() {
+        let mut cfg = test_config(PathBuf::from("/tmp/x"));
+        cfg.transport = Some(TRANSPORT_AUTO.to_string());
+        cfg.quic = Some(quic_client_config());
+        assert_eq!(
+            auto_transport_plan(&cfg),
+            vec![TRANSPORT_QUIC, TRANSPORT_WEBSOCKET, TRANSPORT_POLLING]
+        );
+    }
+
+    #[test]
+    fn strict_quic_transport_still_requires_quic_section() {
+        let mut cfg = test_config(PathBuf::from("/tmp/x"));
+        cfg.transport = Some(TRANSPORT_QUIC.to_string());
+        let err = resolve_quic_config(&cfg).unwrap_err();
+        assert!(err.contains("transport=quic requires a [quic] section"));
+        assert_eq!(effective_transport(&cfg), TRANSPORT_QUIC);
     }
 
     #[test]

@@ -31,6 +31,30 @@ Agent QUIC listener (experimental) on UDP ... with ALPN webcodex-agent/1
 If startup fails, the server continues serving HTTP/WebSocket/polling and logs
 a config or bind error.
 
+Deployment preflight:
+
+```sh
+journalctl -u webcodex -n 100 --no-pager
+ss -lunp | grep 8443
+```
+
+Confirm the systemd unit or EnvironmentFile contains the `WEBCODEX_QUIC_*`
+settings, then restart the WebCodex server. The `runtime_status` tool reports a
+non-secret `quic` object:
+
+```json
+{
+  "enabled": true,
+  "listen": "0.0.0.0:8443",
+  "alpn": "webcodex-agent/1",
+  "listener_started": true,
+  "last_error": null
+}
+```
+
+It does not expose cert/key paths, tokens, Authorization headers, or the full
+environment.
+
 ## Agent Config
 
 Set only the test agent to QUIC:
@@ -76,8 +100,9 @@ webcodex-cli doctor --quic --server-only \
 ```
 
 Expected PASS checks include `runtime status`, `quic resolve`, and
-`quic handshake`. A handshake pass means UDP reached the listener, ALPN matched,
-and rustls verified the certificate chain/SAN for `server_name`.
+`quic runtime config`, `quic resolve`, and `quic handshake`. A handshake pass
+means UDP reached the listener, ALPN matched, and rustls verified the
+certificate chain/SAN for `server_name`.
 
 ## Agent E2E Harness
 
@@ -133,7 +158,8 @@ the disconnected transport should reconcile as lost where applicable.
 
 ## Manual WebSocket Fallback
 
-Fallback is manual in this phase. Edit `agent.toml`:
+The default remains WebSocket. Strict QUIC stays strict: edit `agent.toml` to
+return a strict QUIC agent to WebSocket:
 
 ```toml
 transport = "websocket"
@@ -149,18 +175,39 @@ webcodex-cli doctor --server-url https://v4.example.com \
   --strict
 ```
 
-WebSocket and polling remain unchanged. There is no auto fallback and no HTTP/3
-polling in this phase.
+For explicit automatic fallback, set:
+
+```toml
+transport = "auto"
+
+[quic]
+server_addr = "v4.example.com:8443"
+server_name = "v4.example.com"
+alpn = "webcodex-agent/1"
+```
+
+`auto` tries QUIC first when `[quic]` exists, then WebSocket, then polling. If
+`[quic]` is missing, it skips QUIC and starts at WebSocket. `runtime_status` and
+`listAgents` show the actual connected transport (`quic`, `websocket`, or
+`polling`).
 
 ## Failure Hints
 
+- doctor says QUIC disabled: server env is not set, the service was not
+  restarted, or the running binary is old.
+- `listener_started=false`: cert/key/listen/bind/crypto config is wrong; check
+  `runtime_status.quic.last_error` and `journalctl`.
 - `quic resolve` fails: fix DNS or use an explicit `host:port`.
-- `connect timeout`: check UDP 8443 firewall/security group/NAT and listener
-  startup.
+- `handshake timeout` / `connect timeout`: check UDP 8443 firewall/security
+  group/NAT/cloud network policy and listener startup.
 - `certificate verify failed`: check `server_name`, certificate SAN, and issuer
   trust chain.
-- `handshake failed`: check `WEBCODEX_QUIC_ENABLED`, bind errors, and ALPN.
+- `ALPN/handshake failed`: check server/client ALPN and ensure the address is
+  the WebCodex QUIC UDP service.
 - `register rejected by server`: check the agent token and client_id/owner
   binding.
-- `quic-v2 agent not found`: confirm the running agent uses `transport="quic"`
-  and was built from the dispatch-capable agent.
+- `agent-e2e no quic-v2 agent`: confirm the running agent uses
+  `transport="quic"` or explicit `transport="auto"` with QUIC success, and was
+  built from the dispatch-capable agent.
+- `run_shell` succeeds but `run_job`/`job_log` fails: debug the async
+  job/job_update/log path.

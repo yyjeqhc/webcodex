@@ -310,11 +310,11 @@ pub(crate) async fn pairing_enroll(req: &mut Request, depot: &mut Depot, res: &m
         }
     };
     if let Some(transport) = body.transport.as_deref() {
-        if !matches!(transport, "websocket" | "polling") {
+        if !matches!(transport, "websocket" | "polling" | "quic" | "auto") {
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(json_error(
                 StatusCode::BAD_REQUEST,
-                "transport must be websocket or polling",
+                "transport must be websocket, polling, quic, or auto",
             ));
             return;
         }

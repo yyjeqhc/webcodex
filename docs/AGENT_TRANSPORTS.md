@@ -1,12 +1,14 @@
 # Agent Transports
 
-`webcodex-agent` can connect to the server over three transports:
+`webcodex-agent` can connect to the server over three concrete transports, plus
+an explicit fallback selector:
 
 | Transport   | Config value     | Default | Status        |
 | ----------- | ---------------- | ------- | ------------- |
 | WebSocket   | `websocket`      | yes     | stable        |
 | Polling     | `polling`        | no      | stable (fallback) |
-| QUIC        | `quic`           | no      | **experimental** (Phase 5C) |
+| QUIC        | `quic`           | no      | **experimental** (Phase 5D) |
+| Auto        | `auto`           | no      | explicit fallback selector |
 
 ## QUIC (experimental custom transport)
 
@@ -62,6 +64,19 @@ the cert/key/listen config is invalid, the server logs `QUIC listener disabled
 due to config error` and continues serving HTTP/WebSocket/polling. Check the
 server logs for `Agent QUIC listener (experimental) on UDP ...` before assuming
 QUIC is actually accepting connections.
+
+Deployment preflight:
+
+```sh
+journalctl -u webcodex -n 100 --no-pager
+ss -lunp | grep 8443
+```
+
+Confirm the systemd unit or EnvironmentFile includes the `WEBCODEX_QUIC_*`
+settings, then restart the WebCodex server. `runtime_status` exposes a
+non-secret `quic` object with `enabled`, `listen`, `alpn`, `listener_started`,
+and sanitized `last_error`; it never exposes cert/key paths, tokens,
+Authorization headers, or the full environment.
 
 ### Agent requirements
 
@@ -127,7 +142,7 @@ With a `quic-v2` agent, QUIC can execute the basic agent transport loop:
 register-only and must be upgraded to `quic-v2` before they can execute runtime
 requests.
 
-### Phase 5C validation
+### Phase 5D validation
 
 Use the built-in doctor diagnostics for repeatable QUIC checks:
 
@@ -150,8 +165,9 @@ webcodex-cli doctor --quic --agent-e2e \
   --strict
 ```
 
-The server-only mode separates UDP/listener/cert/ALPN failures from runtime
-dispatch failures. The agent E2E mode checks `runtime_status`, confirms a
+The server-only mode reads `runtime_status.quic` when available and separates
+disabled/listener/cert/ALPN/UDP failures from runtime dispatch failures. The
+agent E2E mode checks `runtime_status`, confirms a
 `transport=quic` / `agent_protocol_version=quic-v2` agent, runs a
 `run_shell` marker command, starts an async `run_job`, polls `job_status`, and
 reads `job_log`.
@@ -161,18 +177,46 @@ flow, disconnect reconciliation check, and WebSocket fallback procedure.
 
 ### Fallback
 
-Fallback is **manual** for now. To revert an agent to a working transport, set
-`transport` back to `websocket` (or `polling`) in `agent.toml` and restart the
-agent. WebSocket and polling remain fully supported and are unaffected by the
-QUIC listener.
+The default remains `transport = "websocket"`. Strict transport values still
+mean exactly one transport:
+
+- `transport = "quic"`: strict QUIC; failures reconnect/error and do not
+  downgrade.
+- `transport = "websocket"`: WebSocket only.
+- `transport = "polling"`: polling only.
+- `transport = "auto"`: explicit opt-in fallback, trying QUIC first only when a
+  `[quic]` section exists, then WebSocket, then polling.
+
+Auto startup logs show the decision path, for example:
+
+```text
+webcodex-agent transport auto: trying quic
+webcodex-agent transport auto: quic failed: <reason>; trying websocket
+webcodex-agent transport auto: websocket failed: <reason>; falling back to polling
+webcodex-agent registered client_id=... server=... preferred_transport=auto actual_transport=websocket transport=websocket
+```
+
+`runtime_status` and `listAgents` show the actual connected transport label
+(`quic`, `websocket`, or `polling`), not merely the preferred setting.
 
 Production guidance: keep WebSocket as the default transport and retain a
-manual WebSocket/polling fallback path for agents. Do not switch fleets to QUIC
-by default until later phases add more operational validation.
+manual WebSocket/polling fallback path for agents. Use `auto` only for agents
+where explicit fallback behavior is desired.
+
+### Failure Table
+
+| Symptom | Likely cause / next step |
+| --- | --- |
+| doctor says QUIC disabled | Server env is not set, the service was not restarted, or the running binary is old. |
+| `listener_started=false` | Cert/key/listen/bind/crypto config is wrong; check `runtime_status.quic.last_error` and `journalctl`. |
+| handshake timeout | UDP 8443 firewall, security group, NAT, or cloud provider network policy is blocking traffic. |
+| certificate verify failed | `server_name` does not match certificate SAN, or the certificate chain is not trusted. |
+| ALPN/handshake failed | Server/client ALPN differs, or the agent connected to the wrong UDP service. |
+| agent-e2e no quic-v2 agent | Agent is still WebSocket/polling, `agent.toml` lacks `transport = "quic"` or `transport = "auto"`, or the agent binary is old. |
+| `run_shell` succeeds but `run_job`/`job_log` fails | Async job/job_update/log path needs debugging. |
 
 ### Still not implemented
 
-- auto fallback: `quic -> websocket -> polling`,
 - HTTP/3 polling,
 - Nginx QUIC / HTTP/3 integration,
 - UDP 443 defaulting,

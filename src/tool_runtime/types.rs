@@ -532,12 +532,17 @@ pub(crate) enum AgentCapability {
 pub struct RuntimeInfo {
     pub auth_enabled: bool,
     pub configured_public_url: Option<String>,
+    pub quic: Option<std::sync::Arc<std::sync::Mutex<crate::config::QuicRuntimeStatus>>>,
 }
 
 impl RuntimeInfo {
     /// Build `RuntimeInfo` from the process environment. Reads
     /// `WEBCODEX_TOKEN` (presence) and `WEBCODEX_PUBLIC_URL`.
     pub fn from_env() -> Self {
+        Self::from_env_with_quic_config(&crate::config::QuicServerConfig::from_env())
+    }
+
+    pub fn from_env_with_quic_config(quic_cfg: &crate::config::QuicServerConfig) -> Self {
         let auth_enabled = std::env::var("WEBCODEX_TOKEN")
             .ok()
             .map(|v| !v.trim().is_empty())
@@ -549,6 +554,9 @@ impl RuntimeInfo {
         Self {
             auth_enabled,
             configured_public_url,
+            quic: Some(std::sync::Arc::new(std::sync::Mutex::new(
+                quic_cfg.runtime_status(),
+            ))),
         }
     }
 }
@@ -558,6 +566,9 @@ impl Default for RuntimeInfo {
         Self {
             auth_enabled: false,
             configured_public_url: None,
+            quic: Some(std::sync::Arc::new(std::sync::Mutex::new(
+                crate::config::QuicServerConfig::default().runtime_status(),
+            ))),
         }
     }
 }

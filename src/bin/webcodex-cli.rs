@@ -276,7 +276,7 @@ fn client_enroll_usage() -> &'static str {
        --pairing-code CODE           Temporary one-time pairing code\n\
        --client-id CLIENT_ID         Client id matching the pairing record\n\
        --display-name NAME           Optional agent display name\n\
-       --transport websocket|polling|quic Agent transport [default: websocket]\n\
+       --transport websocket|polling|quic|auto Agent transport [default: websocket]\n\
        --output-dir DIR              Output dir [root: /etc/webcodex; user: ~/.config/webcodex]\n\
        --agent-config PATH           Agent config path [default: <output-dir>/agent.toml]\n\
        --projects-dir PATH           Projects registry dir [default: <output-dir>/projects.d]\n\
@@ -1015,8 +1015,9 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
         agent_init::TRANSPORT_WEBSOCKET
             | agent_init::TRANSPORT_POLLING
             | agent_init::TRANSPORT_QUIC
+            | agent_init::TRANSPORT_AUTO
     ) {
-        return Err("--transport must be websocket, polling, or quic".to_string());
+        return Err("--transport must be websocket, polling, quic, or auto".to_string());
     }
     let output_dir = output_dir.unwrap_or_else(default_client_output_dir);
     if output_dir.as_os_str().is_empty() {
@@ -2144,6 +2145,101 @@ struct DoctorQuicResolved {
     client_id: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DoctorRuntimeQuicStatus {
+    enabled: bool,
+    listen: String,
+    alpn: String,
+    listener_started: bool,
+    last_error: Option<String>,
+}
+
+fn sanitize_doctor_quic_error(error: &str) -> String {
+    let compact = error.split_whitespace().collect::<Vec<_>>().join(" ");
+    let lower = compact.to_ascii_lowercase();
+    if lower.contains("quic_cert") && lower.contains("does not exist") {
+        return "WEBCODEX_QUIC_CERT path does not exist".to_string();
+    }
+    if lower.contains("quic_key") && lower.contains("does not exist") {
+        return "WEBCODEX_QUIC_KEY path does not exist".to_string();
+    }
+    if (lower.contains("quic cert") || lower.contains("quic key") || lower.contains("private key"))
+        && lower.contains('/')
+    {
+        return "QUIC listener startup error; check runtime_status.last_error and journalctl"
+            .to_string();
+    }
+    compact.chars().take(240).collect()
+}
+
+fn parse_runtime_quic_status(output: &Value) -> Option<DoctorRuntimeQuicStatus> {
+    let quic = output.get("quic")?;
+    Some(DoctorRuntimeQuicStatus {
+        enabled: quic
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        listen: quic
+            .get("listen")
+            .and_then(Value::as_str)
+            .unwrap_or("(unknown)")
+            .to_string(),
+        alpn: quic
+            .get("alpn")
+            .and_then(Value::as_str)
+            .unwrap_or("(unknown)")
+            .to_string(),
+        listener_started: quic
+            .get("listener_started")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        last_error: quic
+            .get("last_error")
+            .and_then(Value::as_str)
+            .map(sanitize_doctor_quic_error),
+    })
+}
+
+fn doctor_runtime_quic_checks(output: &Value) -> (Vec<DoctorCheck>, bool) {
+    let Some(status) = parse_runtime_quic_status(output) else {
+        return (
+            vec![DoctorCheck::warn(
+                "quic runtime config",
+                "not exposed by this server version; check server logs",
+            )],
+            true,
+        );
+    };
+
+    let detail = format!(
+        "enabled={} listen={} alpn={} listener_started={}",
+        status.enabled, status.listen, status.alpn, status.listener_started
+    );
+    let mut checks = vec![DoctorCheck::pass("quic runtime config", detail)];
+    if !status.enabled {
+        checks.push(DoctorCheck::fail(
+            "quic runtime enabled",
+            "server reports QUIC disabled; set WEBCODEX_QUIC_ENABLED=true and restart webcodex",
+        ));
+        return (checks, false);
+    }
+    if !status.listener_started {
+        checks.push(DoctorCheck::fail(
+            "quic listener started",
+            format!(
+                "server reports QUIC enabled but listener not started{}",
+                status
+                    .last_error
+                    .as_deref()
+                    .map(|e| format!(": {}", e))
+                    .unwrap_or_default()
+            ),
+        ));
+        return (checks, false);
+    }
+    (checks, true)
+}
+
 fn read_doctor_agent_config(path: &Path) -> Result<DoctorAgentConfig, String> {
     let content = std::fs::read_to_string(path)
         .map_err(|e| format!("failed to read agent config {}: {}", path.display(), e))?;
@@ -2285,6 +2381,36 @@ async fn run_quic_doctor_checks(
         ),
     ));
 
+    if let (Some(server_url), Some(token)) = (opts.server_url.as_deref(), preferred_token) {
+        match http_post_json_status(server_url, "/api/runtime/status", Some(token), json!({})).await
+        {
+            Ok((status, _, Some(value))) if (200..300).contains(&status) => {
+                let output = value.get("output").unwrap_or(&value);
+                let (mut runtime_checks, should_continue) = doctor_runtime_quic_checks(output);
+                checks.append(&mut runtime_checks);
+                if !should_continue {
+                    return checks;
+                }
+            }
+            Ok((status, content_type, _)) => checks.push(DoctorCheck::warn(
+                "quic runtime config",
+                format!(
+                    "runtime_status unavailable for QUIC preflight: HTTP {} content-type {}",
+                    status, content_type
+                ),
+            )),
+            Err(e) => checks.push(DoctorCheck::warn(
+                "quic runtime config",
+                format!("runtime_status unavailable for QUIC preflight: {}", e),
+            )),
+        }
+    } else {
+        checks.push(DoctorCheck::warn(
+            "quic runtime config",
+            "not checked; pass --server-url with --user-token-file or --token-file to read runtime_status",
+        ));
+    }
+
     let addrs = match resolved.server_addr.to_socket_addrs() {
         Ok(iter) => iter.collect::<Vec<_>>(),
         Err(e) => {
@@ -2343,7 +2469,10 @@ async fn run_quic_doctor_checks(
     if !handshake_ok {
         checks.push(DoctorCheck::fail(
             "quic handshake",
-            handshake_errors.join("; "),
+            format!(
+                "server listener started but UDP handshake failed: {}",
+                handshake_errors.join("; ")
+            ),
         ));
         return checks;
     }
@@ -2406,6 +2535,16 @@ async fn run_quic_agent_e2e_checks(
                     .is_none_or(|id| client.get("client_id").and_then(Value::as_str) == Some(id));
                 client_id_matches && transport == Some("quic") && protocol == Some("quic-v2")
             });
+            let wrong_transport_or_protocol = clients.iter().find(|client| {
+                let client_id_matches = expected_client_id
+                    .is_none_or(|id| client.get("client_id").and_then(Value::as_str) == Some(id));
+                let connected = client.get("connected").and_then(Value::as_bool) == Some(true);
+                let transport = client.get("transport").and_then(Value::as_str);
+                let protocol = client.get("agent_protocol_version").and_then(Value::as_str);
+                client_id_matches
+                    && connected
+                    && (transport != Some("quic") || protocol != Some("quic-v2"))
+            });
             match matching {
                 Some(client) => {
                     let connected = client.get("connected").and_then(Value::as_bool);
@@ -2446,22 +2585,31 @@ async fn run_quic_agent_e2e_checks(
                 }
                 None => checks.push(DoctorCheck::fail(
                     "quic agent online",
-                    match expected_client_id {
-                        Some(id) => format!("no online quic-v2 agent found for client_id={}", id),
-                        None => "no online quic-v2 agent found".to_string(),
+                    if let Some(client) = wrong_transport_or_protocol {
+                        format!(
+                            "agent online but wrong protocol/transport: client_id={} transport={} protocol={}",
+                            client
+                                .get("client_id")
+                                .and_then(Value::as_str)
+                                .unwrap_or("(unknown)"),
+                            client
+                                .get("transport")
+                                .and_then(Value::as_str)
+                                .unwrap_or("(missing)"),
+                            client
+                                .get("agent_protocol_version")
+                                .and_then(Value::as_str)
+                                .unwrap_or("(missing)")
+                        )
+                    } else {
+                        match expected_client_id {
+                            Some(id) => {
+                                format!("no online quic-v2 agent found for client_id={}", id)
+                            }
+                            None => "no online quic-v2 agent found".to_string(),
+                        }
                     },
                 )),
-            }
-            if output.get("quic").is_some() {
-                checks.push(DoctorCheck::pass(
-                    "quic runtime config",
-                    "runtime_status exposes non-secret quic config".to_string(),
-                ));
-            } else {
-                checks.push(DoctorCheck::warn(
-                    "quic runtime config",
-                    "runtime_status does not expose quic listener config; check server logs for listener startup",
-                ));
             }
         }
         Ok((status, content_type, _)) => checks.push(DoctorCheck::fail(
@@ -4665,6 +4813,90 @@ mod tests {
         assert_eq!(opts.quic_alpn, "webcodex-agent/1");
         assert_eq!(opts.quic_timeout_secs, 7);
         assert_eq!(opts.quic_client_id.as_deref(), Some("alice-laptop"));
+    }
+
+    #[test]
+    fn doctor_parse_accepts_quic_and_auto_transport_flags() {
+        let opts = parse_client_enroll(&args(&[
+            "--server-url",
+            "https://v4.example.test",
+            "--pairing-code",
+            "abc123",
+            "--client-id",
+            "alice-laptop",
+            "--transport",
+            agent_init::TRANSPORT_AUTO,
+        ]))
+        .unwrap();
+        assert_eq!(opts.transport, agent_init::TRANSPORT_AUTO);
+    }
+
+    #[test]
+    fn doctor_runtime_quic_checks_fail_when_disabled_or_listener_failed() {
+        let disabled = json!({
+            "quic": {
+                "enabled": false,
+                "listen": "0.0.0.0:8443",
+                "alpn": "webcodex-agent/1",
+                "listener_started": false,
+                "last_error": null
+            }
+        });
+        let (checks, should_continue) = doctor_runtime_quic_checks(&disabled);
+        assert!(!should_continue);
+        assert!(checks
+            .iter()
+            .any(|c| c.status == "FAIL" && c.detail.contains("server reports QUIC disabled")));
+
+        let listener_failed = json!({
+            "quic": {
+                "enabled": true,
+                "listen": "0.0.0.0:8443",
+                "alpn": "webcodex-agent/1",
+                "listener_started": false,
+                "last_error": "WEBCODEX_QUIC_KEY path does not exist: /etc/secret/privkey.pem"
+            }
+        });
+        let (checks, should_continue) = doctor_runtime_quic_checks(&listener_failed);
+        assert!(!should_continue);
+        let detail = checks
+            .iter()
+            .find(|c| c.name == "quic listener started")
+            .unwrap()
+            .detail
+            .clone();
+        assert!(detail.contains("listener not started"));
+        assert!(detail.contains("WEBCODEX_QUIC_KEY path does not exist"));
+        assert!(!detail.contains("/etc/secret"));
+        assert!(!detail.contains("privkey.pem"));
+    }
+
+    #[test]
+    fn doctor_runtime_quic_checks_warn_for_older_server() {
+        let (checks, should_continue) = doctor_runtime_quic_checks(&json!({}));
+        assert!(should_continue);
+        assert_eq!(checks[0].status, "WARN");
+        assert!(checks[0]
+            .detail
+            .contains("not exposed by this server version"));
+    }
+
+    #[test]
+    fn doctor_runtime_quic_checks_pass_when_listener_started() {
+        let value = json!({
+            "quic": {
+                "enabled": true,
+                "listen": "0.0.0.0:8443",
+                "alpn": "webcodex-agent/1",
+                "listener_started": true,
+                "last_error": null
+            }
+        });
+        let (checks, should_continue) = doctor_runtime_quic_checks(&value);
+        assert!(should_continue);
+        assert!(checks.iter().any(|c| c.name == "quic runtime config"
+            && c.detail.contains("enabled=true listen=0.0.0.0:8443")
+            && c.detail.contains("listener_started=true")));
     }
 
     #[test]

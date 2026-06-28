@@ -232,7 +232,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let db = Arc::new(db);
     let projects_state = Arc::new(projects_state);
     let shell_registry = Arc::new(ShellClientRegistry::default());
-    let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_env());
+    let quic_cfg = config::QuicServerConfig::from_env();
+    let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_env_with_quic_config(
+        &quic_cfg,
+    ));
     let tool_runtime = Arc::new(tool_runtime::ToolRuntime::new(
         projects_state.clone(),
         shell_registry.clone(),
@@ -245,9 +248,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // listener in parallel with the HTTP server. HTTP/WebSocket/polling and
     // the GPT Actions / Nginx path are completely unaffected. This is NOT
     // HTTP/3 and Nginx does not terminate QUIC.
-    let quic_cfg = config::QuicServerConfig::from_env();
     if quic_cfg.enabled {
         if let Err(e) = quic_cfg.validate() {
+            if let Some(status) = runtime_info.quic.as_ref() {
+                status
+                    .lock()
+                    .expect("quic runtime status mutex poisoned")
+                    .mark_error(&e);
+            }
             tracing::error!(
                 "QUIC listener disabled due to config error: {}; check WEBCODEX_QUIC_LISTEN/CERT/KEY/ALPN",
                 e
@@ -257,12 +265,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let quic_db = db.clone();
             let quic_registry = shell_registry.clone();
             let quic_cfg_task = quic_cfg.clone();
+            let quic_status = runtime_info.quic.clone();
             tokio::spawn(async move {
                 if let Err(e) = agent_quic::run_quic_agent_listener(
                     quic_config,
                     Some(quic_db),
                     quic_registry,
                     quic_cfg_task,
+                    quic_status,
                 )
                 .await
                 {

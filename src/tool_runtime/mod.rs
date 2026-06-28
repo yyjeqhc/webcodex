@@ -690,7 +690,18 @@ impl ToolRuntime {
             "names": tools_names,
         });
 
-        ToolResult::ok(json!({
+        let quic = self.runtime_info.quic.as_ref().map(|status| {
+            let status = status.lock().expect("quic runtime status mutex poisoned");
+            json!({
+                "enabled": status.enabled,
+                "listen": status.listen,
+                "alpn": status.alpn,
+                "listener_started": status.listener_started,
+                "last_error": status.last_error,
+            })
+        });
+
+        let mut output = json!({
             "service": "webcodex",
             "version": env!("CARGO_PKG_VERSION"),
             "server_time": chrono::Utc::now().timestamp(),
@@ -701,7 +712,11 @@ impl ToolRuntime {
             "agents": agents,
             "jobs": jobs,
             "tools": tools,
-        }))
+        });
+        if let Some(quic) = quic {
+            output["quic"] = quic;
+        }
+        ToolResult::ok(output)
     }
 }
 
@@ -3765,6 +3780,9 @@ new file mode 100644\n\
         let info = RuntimeInfo {
             auth_enabled: true,
             configured_public_url: Some("https://example.com".to_string()),
+            quic: Some(Arc::new(std::sync::Mutex::new(
+                crate::config::QuicServerConfig::default().runtime_status(),
+            ))),
         };
         let runtime = runtime_with_info(info);
         let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
@@ -3795,10 +3813,88 @@ new file mode 100644\n\
     }
 
     #[tokio::test]
+    async fn runtime_status_quic_disabled_is_non_sensitive() {
+        let runtime = runtime_with_info(RuntimeInfo::default());
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        assert_eq!(result.output["quic"]["enabled"], false);
+        assert_eq!(result.output["quic"]["listen"], "0.0.0.0:8443");
+        assert_eq!(result.output["quic"]["alpn"], "webcodex-agent/1");
+        assert_eq!(result.output["quic"]["listener_started"], false);
+        assert!(result.output["quic"]["last_error"].is_null());
+        let serialized = serde_json::to_string(&result.output).unwrap();
+        assert!(!serialized.contains("WEBCODEX_QUIC_CERT"));
+        assert!(!serialized.contains("WEBCODEX_QUIC_KEY"));
+        assert!(!serialized.to_ascii_lowercase().contains("token"));
+    }
+
+    #[tokio::test]
+    async fn runtime_status_quic_enabled_error_is_sanitized() {
+        let quic_cfg = crate::config::QuicServerConfig {
+            enabled: true,
+            listen: "0.0.0.0:8443".to_string(),
+            cert: PathBuf::from("/secret/certs/fullchain.pem"),
+            key: PathBuf::from("/secret/certs/privkey.pem"),
+            alpn: "webcodex-agent/1".to_string(),
+        };
+        let status = Arc::new(std::sync::Mutex::new(quic_cfg.runtime_status()));
+        status
+            .lock()
+            .unwrap()
+            .mark_error("WEBCODEX_QUIC_KEY path does not exist: /secret/certs/privkey.pem");
+        let runtime = runtime_with_info(RuntimeInfo {
+            auth_enabled: false,
+            configured_public_url: None,
+            quic: Some(status),
+        });
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        assert_eq!(result.output["quic"]["enabled"], true);
+        assert_eq!(result.output["quic"]["listener_started"], false);
+        assert_eq!(
+            result.output["quic"]["last_error"],
+            "WEBCODEX_QUIC_KEY path does not exist"
+        );
+        let serialized = serde_json::to_string(&result.output).unwrap();
+        assert!(!serialized.contains("/secret/certs"));
+        assert!(!serialized.contains("privkey.pem"));
+    }
+
+    #[tokio::test]
+    async fn runtime_status_quic_started_reports_listen_and_alpn() {
+        let quic_cfg = crate::config::QuicServerConfig {
+            enabled: true,
+            listen: "127.0.0.1:9443".to_string(),
+            cert: PathBuf::from("/hidden/cert.pem"),
+            key: PathBuf::from("/hidden/key.pem"),
+            alpn: "webcodex-agent/1".to_string(),
+        };
+        let status = Arc::new(std::sync::Mutex::new(quic_cfg.runtime_status()));
+        status.lock().unwrap().mark_started();
+        let runtime = runtime_with_info(RuntimeInfo {
+            auth_enabled: false,
+            configured_public_url: None,
+            quic: Some(status),
+        });
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success);
+        assert_eq!(result.output["quic"]["enabled"], true);
+        assert_eq!(result.output["quic"]["listen"], "127.0.0.1:9443");
+        assert_eq!(result.output["quic"]["alpn"], "webcodex-agent/1");
+        assert_eq!(result.output["quic"]["listener_started"], true);
+        assert!(result.output["quic"]["last_error"].is_null());
+        let serialized = serde_json::to_string(&result.output).unwrap();
+        assert!(!serialized.contains("/hidden"));
+    }
+
+    #[tokio::test]
     async fn runtime_status_auth_enabled_reflects_runtime_info() {
         let runtime = runtime_with_info(RuntimeInfo {
             auth_enabled: false,
             configured_public_url: None,
+            quic: Some(Arc::new(std::sync::Mutex::new(
+                crate::config::QuicServerConfig::default().runtime_status(),
+            ))),
         });
         let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
         assert!(result.success);
@@ -3808,6 +3904,9 @@ new file mode 100644\n\
         let runtime = runtime_with_info(RuntimeInfo {
             auth_enabled: true,
             configured_public_url: Some("https://webcodex.example.com".to_string()),
+            quic: Some(Arc::new(std::sync::Mutex::new(
+                crate::config::QuicServerConfig::default().runtime_status(),
+            ))),
         });
         let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
         assert!(result.success);

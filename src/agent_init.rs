@@ -31,6 +31,9 @@ pub const TRANSPORT_WEBSOCKET: &str = "websocket";
 /// (Phase 5A). Opt-in; requires a `[quic]` section in `agent.toml` with
 /// `server_addr` / `server_name`. Default transport remains `websocket`.
 pub const TRANSPORT_QUIC: &str = "quic";
+/// Explicit opt-in fallback mode: try QUIC when `[quic]` is configured, then
+/// WebSocket, then polling. This is never the default.
+pub const TRANSPORT_AUTO: &str = "auto";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AgentInitOptions {
@@ -107,9 +110,9 @@ pub fn validate_agent_init_options(opts: &AgentInitOptions) -> Result<(), String
     }
     if !matches!(
         opts.transport.as_str(),
-        TRANSPORT_WEBSOCKET | TRANSPORT_POLLING | TRANSPORT_QUIC
+        TRANSPORT_WEBSOCKET | TRANSPORT_POLLING | TRANSPORT_QUIC | TRANSPORT_AUTO
     ) {
-        return Err("--transport must be websocket, polling, or quic".to_string());
+        return Err("--transport must be websocket, polling, quic, or auto".to_string());
     }
     if opts.projects_dir.as_os_str().is_empty() {
         return Err("--projects-dir cannot be empty".to_string());

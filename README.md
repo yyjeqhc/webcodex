@@ -78,13 +78,17 @@ webcodex-cli doctor \
   --strict
 ```
 
-## Security model
+## Credential model
 
-- The server bootstrap token in `/etc/webcodex/webcodex.env` is for server/admin setup only.
-- User API tokens are for human/API clients such as GPT Actions and MCP.
-- Agent tokens are only for `webcodex-agent`.
-- GPT Actions should use the client-side `webcodex-user-token`, not the server bootstrap token.
-- Copy only short-lived `wc_pair_*` pairing codes between machines; do not copy env files, token files, or complete `agent.toml` files.
+WebCodex uses separate credentials for bootstrap administration, account onboarding, runtime API access, and agent connectivity:
+
+- `WEBCODEX_TOKEN` is the server bootstrap/root/admin credential. Use it for the first user creation and emergency management only. Do not use it as the day-to-day GPT Action, MCP, or agent credential.
+- `wc_acct_xxx` is an account credential issued once when an administrator creates a user with `--issue-credential`. The user uses it locally through `webcodex-cli token create-local` and `webcodex-cli agent-token create-local` to register hashed tokens. Do not paste `wc_acct_xxx` into GPT Actions or MCP, and do not give it to `webcodex-agent`.
+- `wc_pat_xxx` is a personal API token generated locally by the user. The server stores only its hash. Use it for GPT Actions, MCP, and runtime API calls such as `/api/tools/list` and `/api/tools/call`.
+- `wc_agent_xxx` is an agent token generated locally by the user. The server stores only its hash and binds it to `allowed_client_id`. Use it only for `webcodex-agent`; it cannot call runtime, project, tool, MCP, or account endpoints.
+- `client_id` identifies one agent client instance, such as `ubuntu-client` or `alice-macbook`. Agent-backed runtime project ids use `agent:<client_id>:<project_id>`.
+
+For the complete sg4 onboarding flow, see [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md).
 
 ## Invite another user
 
@@ -223,6 +227,7 @@ Start here:
 - [docs/INDEX.md](docs/INDEX.md) — documentation map.
 - [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) — installation quick reference.
 - [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — production deployment guide.
+- [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md) — manual sg4 auth + agent onboarding smoke test.
 - [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) — GPT Actions import and tool usage.
 - [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md) — agent auth, transports, and observability.
 - [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md) — project registry and project management tools.

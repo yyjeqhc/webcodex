@@ -92,6 +92,18 @@ Client:
 
 `/etc/webcodex/webcodex.env` is server-side only. `/etc/webcodex/agent.toml`, `webcodex-user-token`, and `webcodex-agent-token` are client-side files when deploying a client agent as a service.
 
+## Account credential onboarding flow
+
+For deployments that do not use pairing, use the account credential flow. The sg4 smoke-test commands are in [smoke-test-sg4.md](smoke-test-sg4.md); replace `https://sg4.yyjeqhc.cn` with your own public URL.
+
+1. Start the server with `WEBCODEX_TOKEN` in the server env file. This is the bootstrap/root/admin credential only.
+2. Create a user with `webcodex-cli user create --issue-credential` and give the returned `wc_acct_xxx` to that user once.
+3. The user runs `webcodex-cli token create-local` with `wc_acct_xxx` to locally generate a `wc_pat_xxx` and register only its hash. Use this PAT for GPT Actions, MCP, and runtime API calls.
+4. The user runs `webcodex-cli agent-token create-local` with `wc_acct_xxx` and `--client-id <client_id>` to locally generate a `wc_agent_xxx` and register only its hash. Use this token only for `webcodex-agent`.
+5. Initialize `webcodex-agent`, add top-level agent `projects.d/*.toml` files, start the agent, then verify `runtime_status`, `projects/list`, and a read-only `tools/call` such as `git_status`.
+
+Do not use `wc_acct_xxx` as a GPT Action/MCP token and do not put it in `agent.toml`.
+
 ## Invite another user
 
 When a server owner invites a friend or another operator, use a short-lived pairing code. Do not copy long-lived credentials between machines.

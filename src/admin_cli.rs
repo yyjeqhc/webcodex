@@ -150,11 +150,17 @@ pub(crate) fn usage() -> &'static str {
     "Admin commands:\n\
       webcodex users create --server-url URL [--token TOKEN|--token-file PATH] --username USER [--display-name NAME] [--role ROLE] [--issue-credential]\n\
       webcodex users list --server-url URL [--token TOKEN|--token-file PATH]\n\
+      webcodex token create-local --server-url URL --username USER --credential CRED [--name NAME] [--scope SCOPE...]\n\
+      webcodex tokens create-local --server-url URL --username USER --credential CRED [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER [--name NAME] [--scope SCOPE...]\n\
+      webcodex token register-hash --server-url URL --username USER --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens register-hash --server-url URL --username USER --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\
+      webcodex agent-token create-local --server-url URL --username USER --credential CRED --client-id ID [--name NAME] [--scope SCOPE...]\n\
+      webcodex agent-tokens create-local --server-url URL --username USER --credential CRED --client-id ID [--name NAME] [--scope SCOPE...]\n\
       webcodex agent-tokens create --server-url URL [--token TOKEN|--token-file PATH] --username USER --client-id ID [--name NAME] [--scope SCOPE...]\n\
+      webcodex agent-token register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex agent-tokens register-hash --server-url URL --username USER --client-id ID --hash HASH --prefix PREFIX [--credential CRED] [--name NAME] [--scope SCOPE...]\n\
       webcodex agent-tokens list --server-url URL [--token TOKEN|--token-file PATH] --username USER\n\
       webcodex agent-tokens revoke --server-url URL [--token TOKEN|--token-file PATH] --username USER --token-id ID\n\n\
@@ -715,6 +721,19 @@ mod tests {
     fn request(values: &[&str]) -> AdminCliRequest {
         let cmd = parse_admin_cli(&args(values)).unwrap();
         build_admin_request(&cmd).unwrap()
+    }
+
+    #[test]
+    fn admin_usage_mentions_account_credential_registration_commands() {
+        let stdout = usage();
+        assert!(stdout.contains("webcodex token create-local"));
+        assert!(stdout.contains("webcodex tokens create-local"));
+        assert!(stdout.contains("webcodex token register-hash"));
+        assert!(stdout.contains("webcodex tokens register-hash"));
+        assert!(stdout.contains("webcodex agent-token create-local"));
+        assert!(stdout.contains("webcodex agent-tokens create-local"));
+        assert!(stdout.contains("webcodex agent-token register-hash"));
+        assert!(stdout.contains("webcodex agent-tokens register-hash"));
     }
 
     #[test]

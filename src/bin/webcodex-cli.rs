@@ -245,9 +245,14 @@ fn usage() -> &'static str {
        client enroll                                    Enroll a client from a pairing code\n\
        doctor                                           Run non-destructive diagnostics\n\
        user/users create/list                             Manage users\n\
-       token generate/create-local/register-hash/list/revoke\n\
-       tokens create/list/revoke                          Manage personal API tokens\n\
-       agent-tokens create/list/revoke                    Manage agent tokens\n\
+       token generate                                   Generate a local wc_pat_* value and hash\n\
+       token create-local                               Locally create and register a wc_pat_* with an account credential\n\
+       token register-hash                              Register a precomputed wc_pat_* hash\n\
+       token list/revoke                                Manage personal API tokens\n\
+       tokens create-local/register-hash/list/revoke    Manage personal API tokens\n\
+       agent-token create-local                         Locally create and register a wc_agent_* with an account credential\n\
+       agent-token register-hash                        Register a precomputed wc_agent_* hash\n\
+       agent-tokens create-local/register-hash/list/revoke Manage agent tokens\n\
        agent init/install-service/status                  Manage client-side agent config/service\n\
        setup single-user                                  Create a user + GPT + agent token set\n\n\
      Options:\n\
@@ -4844,6 +4849,11 @@ mod tests {
                 assert!(stdout.contains("pairing create"));
                 assert!(stdout.contains("client enroll"));
                 assert!(stdout.contains("doctor"));
+                assert!(stdout.contains("token generate"));
+                assert!(stdout.contains("token create-local"));
+                assert!(stdout.contains("token register-hash"));
+                assert!(stdout.contains("agent-token create-local"));
+                assert!(stdout.contains("agent-token register-hash"));
                 assert!(stdout.contains("agent init/install-service/status"));
             }
             other => panic!("expected help exit, got {other:?}"),

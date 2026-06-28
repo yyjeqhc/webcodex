@@ -12,6 +12,37 @@ Each agent has a `projects_dir` containing one project file per registered proje
 
 A project entry contains a human name, an absolute path on the agent host, and policy flags such as `allow_patch`.
 
+## Agent `projects.d/*.toml` format
+
+Agent project files are one-file-per-project TOML files in the agent's configured `projects_dir`. They are **not** the same format as the server-side `projects.toml`.
+
+Correct agent `projects.d/webcodex.toml` format:
+
+```toml
+id = "webcodex"
+path = "/root/git/private-drop"
+name = "WebCodex"
+kind = "repo"
+description = "WebCodex repository"
+allow_patch = true
+
+[hooks]
+status = ["git status --short"]
+fmt = ["cargo fmt"]
+check = ["cargo check --all-targets"]
+test = ["cargo test"]
+```
+
+Incorrect for agent `projects.d/*.toml`:
+
+```toml
+[projects.webcodex]
+path = "/root/git/private-drop"
+```
+
+That nested `[projects.webcodex]` shape belongs to the legacy server-side `projects.toml`. In an agent `projects.d/*.toml` file it leaves the top-level `id` absent and will fail with `missing field id`. Use top-level `id` and `path` fields instead.
+
+
 ## Agent-side project management tools
 
 Current project management tools:

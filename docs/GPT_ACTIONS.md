@@ -16,11 +16,34 @@ Configure the GPT Action with HTTP Bearer authentication:
 Authorization: Bearer <user-api-token>
 ```
 
-Do not paste or store the bootstrap server token as the day-to-day GPT Actions credential. Use pairing/enrollment instead: `webcodex-cli pairing create` creates a short-lived `wc_pair_*` code on the server/admin side, and `webcodex-cli client enroll` exchanges that code on the client side. GPT Actions should use the generated client-side `webcodex-user-token` file. `/etc/webcodex/webcodex.env` is server-side only; do not copy token files or `WEBCODEX_TOKEN`, `wc_pat_*`, or `wc_agent_*` values from the server to the client.
+Use a `wc_pat_xxx` personal API token for GPT Actions and MCP. The recommended explicit flow is: an administrator issues a one-time `wc_acct_xxx` account credential, then the user runs `webcodex-cli token create-local` locally to generate a `wc_pat_xxx` and register only its hash with the server.
+
+Do not paste or store `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx` as a GPT Actions or MCP credential. `WEBCODEX_TOKEN` is only for server bootstrap/root/admin work, `wc_acct_xxx` is only for local token self-registration, and `wc_agent_xxx` is only for `webcodex-agent` WebSocket connectivity. Pairing/enrollment remains available as a shortcut: `webcodex-cli pairing create` creates a short-lived `wc_pair_*` code on the server/admin side, and `webcodex-cli client enroll` exchanges that code on the client side.
 
 `?token=` is not a GPT Actions auth mechanism. It is accepted only by `/api/agents/ws` for WebSocket handshake compatibility.
 
 GPT Actions require a public HTTPS URL for the WebCodex server.
+
+
+## Token selection
+
+Credential purpose summary:
+
+- GPT Actions / MCP / `/api/tools/list` / `/api/tools/call`: use `wc_pat_xxx`.
+- Server bootstrap and emergency admin: use `WEBCODEX_TOKEN`.
+- Local self-registration of PATs and agent tokens: use `wc_acct_xxx` only with `webcodex-cli token create-local` or `webcodex-cli agent-token create-local`.
+- Agent connection: use `wc_agent_xxx` only in `webcodex-agent` config.
+
+A GPT Action configured with `wc_acct_xxx` will not be able to call runtime tools and leaks the wrong secret into the wrong surface. Generate a PAT instead:
+
+```bash
+webcodex-cli token create-local \
+  --server https://sg4.yyjeqhc.cn \
+  --user alice \
+  --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
+  --name gpt-action \
+  --scopes runtime:read,project:read,project:write,job:run
+```
 
 ## Tool surface
 

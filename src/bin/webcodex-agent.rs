@@ -1445,9 +1445,29 @@ fn trim_optional(value: Option<String>) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+fn agent_project_server_format_hint(content: &str, err: &str) -> Option<String> {
+    let normalized = err.replace('`', "");
+    if normalized.contains("missing field id") && content.contains("[projects.") {
+        Some(
+            "looks like a server projects.toml entry. Agent projects.d files must use top-level fields:\n\
+             id = \"smoke\"\n\
+             path = \"/path/to/repo\""
+                .to_string(),
+        )
+    } else {
+        None
+    }
+}
+
 fn parse_agent_project_toml(content: &str) -> Result<AgentProjectFile, String> {
-    let mut project: AgentProjectFile =
-        toml::from_str(content).map_err(|e| format!("failed to parse project toml: {}", e))?;
+    let mut project: AgentProjectFile = toml::from_str(content).map_err(|e| {
+        let err = e.to_string();
+        let base = format!("failed to parse project toml: {}", err);
+        match agent_project_server_format_hint(content, &err) {
+            Some(hint) => format!("{}; {}", base, hint),
+            None => base,
+        }
+    })?;
     project.id = project.id.trim().to_string();
     validate_project_id(&project.id)?;
     project.path = project.path.trim().to_string();
@@ -4981,6 +5001,25 @@ path = "/tmp/webcodex"
         )
         .unwrap_err();
         assert!(err.contains("ASCII letters"));
+    }
+
+    #[test]
+    fn agent_project_toml_hints_when_server_projects_format_is_used() {
+        let err = parse_agent_project_toml(
+            r#"
+[projects.smoke]
+path = "/root/webcodex-smoke"
+"#,
+        )
+        .unwrap_err();
+        assert!(err.contains("missing field"), "{err}");
+        assert!(err.contains("server projects.toml"), "{err}");
+        assert!(
+            err.contains("Agent projects.d files must use top-level fields"),
+            "{err}"
+        );
+        assert!(err.contains("id = \"smoke\""), "{err}");
+        assert!(err.contains("path = \"/path/to/repo\""), "{err}");
     }
 
     #[test]

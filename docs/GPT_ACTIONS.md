@@ -10,11 +10,7 @@ GPT Actions and MCP share the same `ToolRuntime`; GPT Actions provides typed RES
 
 ## Authentication
 
-Configure the GPT Action with HTTP Bearer authentication:
-
-```text
-Authorization: Bearer <user-api-token>
-```
+Configure the GPT Action with Bearer/API-key authentication in the GPT Action settings. The secret value must be a `wc_pat_xxx` personal API token.
 
 Use a `wc_pat_xxx` personal API token for GPT Actions and MCP. The recommended explicit flow is: an administrator issues a one-time `wc_acct_xxx` account credential, then the user runs `webcodex-cli token create-local` locally to generate a `wc_pat_xxx` and register only its hash with the server.
 

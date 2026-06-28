@@ -1,238 +1,221 @@
-# WebCodex Runtime
+# WebCodex
 
-WebCodex is a self-hosted runtime that exposes controlled project tools to ChatGPT GPT Actions and MCP clients. A server hosts the API surface, and one or more agents execute filesystem, git, shell, and optional Codex CLI work inside registered projects.
+Self-hosted runtime for ChatGPT GPT Actions and MCP clients to work with your private projects.
 
-## Install
+![WebCodex architecture](docs/assets/architecture.png)
 
-Install the npm thin installer/wrapper:
+## What is WebCodex?
+
+WebCodex lets ChatGPT GPT Actions and MCP clients safely operate your private repositories through a self-hosted server and connected agent.
+
+It is for developers and teams who want AI assistants to inspect, edit, test, and automate private code without handing project execution to a hosted black box. You run the server, you run the agent, and your repositories stay on your own machine.
+
+## What it can do
+
+- Expose controlled project tools to ChatGPT GPT Actions.
+- Expose the same runtime through MCP.
+- Let a connected agent execute file, git, shell, patch, cargo, and optional Codex CLI workflows.
+- Keep project execution on your own machine.
+- Separate credentials for admins, account onboarding, GPT/MCP tokens, and agents.
+
+## Why WebCodex?
+
+| Without WebCodex | With WebCodex |
+| --- | --- |
+| Custom ad-hoc scripts | Structured runtime tools |
+| Long-lived root token reused everywhere | Separated `wc_acct` / `wc_pat` / `wc_agent` credentials |
+| GPT cannot safely reach private repos | GPT/MCP use a scoped PAT against a controlled runtime |
+| Agents are hard to enroll | `agent-token create-local` + `client_id` binding |
+
+## Architecture
+
+![Architecture](docs/assets/architecture.png)
+
+```text
+ChatGPT GPT Action / MCP client
+        ↓
+WebCodex server
+        ↓
+webcodex-agent
+        ↓
+registered project on your machine
+```
+
+The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back to the server and performs allowed work inside registered project directories. GPT Actions and MCP use a personal API token; the agent uses a separate agent token bound to its `client_id`.
+
+## Quick start
+
+This is the shortest path from zero to a working private project runtime. For production deployment details, service files, reverse proxy setup, and the full sg4 smoke record, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) and [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md).
+
+### 1. Install
 
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
 
-The npm package downloads native binaries from the GitHub Release for the current platform. You can also download release artifacts directly from:
+Or download platform binaries from the project release artifacts.
 
-```text
-https://github.com/yyjeqhc/webcodex/releases/tag/v0.1.0
-```
-
-## Supported platforms
-
-v0.1.0 release artifacts currently include:
-
-- `linux-x64`
-- `linux-arm64`
-- `darwin-arm64`
-
-`darwin-x64`, Windows, and other targets are not included in v0.1.0; treat them as future targets unless a later release adds artifacts.
-
-## Quick start
-
-Server/admin side:
+### 2. Start a server
 
 ```bash
-sudo webcodex-cli server init \
+webcodex-cli server init \
   --listen 127.0.0.1:8080 \
   --data-dir /var/lib/webcodex \
   --env-file /etc/webcodex/webcodex.env
-sudo webcodex-cli server install-service \
-  --env-file /etc/webcodex/webcodex.env \
-  --bin /usr/local/bin/webcodex
-sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex
-webcodex-cli server status --env-file /etc/webcodex/webcodex.env
 
-webcodex-cli pairing create \
-  --server-url https://your-domain.example \
-  --env-file /etc/webcodex/webcodex.env \
-  --username friendname \
-  --client-id friend-laptop \
-  --display-name "Friend Name" \
-  --ttl-secs 600
+WEBCODEX_ENV_FILE=/etc/webcodex/webcodex.env webcodex
 ```
 
-Client/friend side:
+Put the server behind your own HTTPS domain before connecting GPT Actions or remote agents.
+
+### 3. Create a user and account credential
 
 ```bash
-webcodex-cli client enroll \
-  --server-url https://your-domain.example \
-  --pairing-code <wc_pair_...> \
-  --client-id friend-laptop \
-  --display-name "Friend Name" \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml \
-  --projects-dir /etc/webcodex/projects.d \
-  --allowed-root /home/friend/git
+webcodex-cli user create \
+  --server https://your-domain.example \
+  --admin-token "$WEBCODEX_TOKEN" \
+  --username alice \
+  --display-name "Alice" \
+  --role user \
+  --issue-credential
+```
 
-webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
-  --bin /opt/webcodex/bin/webcodex-agent \
+This issues a one-time `wc_acct_xxx` account credential for local token creation. It is not a GPT/MCP token and it is not an agent token.
+
+### 4. User creates a PAT for GPT Actions, MCP, and runtime APIs
+
+```bash
+webcodex-cli token create-local \
+  --server https://your-domain.example \
+  --user alice \
+  --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
+  --name gpt-action \
+  --scopes runtime:read,project:read,project:write,job:run
+```
+
+Use the generated `wc_pat_xxx` as the bearer/API-key value in GPT Actions and MCP clients.
+
+### 5. User creates an agent token
+
+```bash
+webcodex-cli agent-token create-local \
+  --server https://your-domain.example \
+  --user alice \
+  --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
+  --client-id alice-laptop \
+  --name alice-laptop
+```
+
+Use the generated `wc_agent_xxx` only for `webcodex-agent`.
+
+### 6. Initialize the agent
+
+```bash
+webcodex-agent init \
+  --server-url https://your-domain.example \
+  --token "$WEBCODEX_AGENT_TOKEN" \
+  --client-id alice-laptop \
+  --owner alice \
+  --display-name "Alice Laptop" \
+  --transport websocket \
+  --projects-dir ~/.config/webcodex/projects.d \
+  --allowed-root ~/git \
+  --output ~/.config/webcodex/agent.toml \
   --overwrite
-sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
-
-webcodex-cli doctor \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token \
-  --strict
 ```
 
-## Credential model
+### 7. Register a project
 
-WebCodex uses separate credentials for bootstrap administration, account onboarding, runtime API access, and agent connectivity:
+Create `~/.config/webcodex/projects.d/my-repo.toml` on the agent machine:
 
-- `WEBCODEX_TOKEN` is the server bootstrap/root/admin credential. Use it for the first user creation and emergency management only. Do not use it as the day-to-day GPT Action, MCP, or agent credential.
-- `wc_acct_xxx` is an account credential issued once when an administrator creates a user with `--issue-credential`. The user uses it locally through `webcodex-cli token create-local` and `webcodex-cli agent-token create-local` to register hashed tokens. Do not paste `wc_acct_xxx` into GPT Actions or MCP, and do not give it to `webcodex-agent`.
-- `wc_pat_xxx` is a personal API token generated locally by the user. The server stores only its hash. Use it for GPT Actions, MCP, and runtime API calls such as `/api/tools/list` and `/api/tools/call`.
-- `wc_agent_xxx` is an agent token generated locally by the user. The server stores only its hash and binds it to `allowed_client_id`. Use it only for `webcodex-agent`; it cannot call runtime, project, tool, MCP, or account endpoints.
-- `client_id` identifies one agent client instance, such as `ubuntu-client` or `alice-macbook`. Agent-backed runtime project ids use `agent:<client_id>:<project_id>`.
+```toml
+id = "my-repo"
+path = "/home/alice/git/my-repo"
+name = "My Repo"
+kind = "repo"
+allow_patch = true
 
-For the complete sg4 onboarding flow, see [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md).
+[hooks]
+status = ["git status --short"]
+check = ["cargo check --all-targets"]
+```
 
-## Invite another user
-
-Use pairing when the server owner wants to add a friend or another machine without copying long-lived credentials.
-
-Server/admin side:
+Then start the agent:
 
 ```bash
-webcodex-cli pairing create \
-  --server-url https://your-domain.example \
-  --env-file /etc/webcodex/webcodex.env \
-  --username friendname \
-  --client-id friend-laptop \
-  --display-name "Friend Name" \
-  --ttl-secs 600
+webcodex-agent --config ~/.config/webcodex/agent.toml
 ```
 
-`pairing create` is server/admin-side. `/etc/webcodex/webcodex.env` is server-side only. Send only the short-lived `wc_pair_*` code to the friend.
-
-Client/friend side:
-
-```bash
-webcodex-cli client enroll \
-  --server-url https://your-domain.example \
-  --pairing-code <wc_pair_...> \
-  --client-id friend-laptop \
-  --display-name "Friend Name" \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml \
-  --projects-dir /etc/webcodex/projects.d \
-  --allowed-root /home/friend/git
-
-webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
-  --bin /opt/webcodex/bin/webcodex-agent \
-  --overwrite
-
-sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
-
-webcodex-cli doctor \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token \
-  --strict
-```
-
-`client enroll` is client/friend-side. GPT Actions should use the client-side `webcodex-user-token`; `webcodex-agent` should use the client-side agent token through the generated agent config. Do not copy `WEBCODEX_TOKEN`, `wc_pat_*`, `wc_agent_*`, complete env files, or complete `agent.toml` files between machines. Each friend should use a unique `username` and `client_id`.
-
-Run non-destructive diagnostics with:
-
-```bash
-webcodex-cli doctor --server-url https://example.com --user-token-file ~/.config/webcodex/webcodex-user-token
-```
-
-The older `webcodex users`, `webcodex tokens`, `webcodex agent-tokens`, and `webcodex-agent init` commands still work as compatibility entry points. `webcodex-cli setup single-user` remains a recommended shortcut for single-user setup; pairing/enroll is preferred when inviting another user or machine.
-
-## Runtime surfaces
-
-- GPT Actions import: `GET /openapi.json`.
-- MCP endpoint: `POST /mcp`.
-- Runtime health: `POST /api/runtime/status`.
-- Agent WebSocket: `GET /api/agents/ws`.
-
-GPT Actions and MCP share the same `ToolRuntime`. The GPT Actions OpenAPI surface is intentionally limited to project/runtime/job tools and does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints.
-
-GPT Actions need a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup.
-
-## Runtime console
-
-WebCodex serves a read-only browser console at:
-
-```text
-https://your-domain.example/console
-```
-
-The static console bundle contains no secrets. Runtime data is fetched by the browser from protected APIs using the user's credentials, session, or token as applicable. The console is not part of the GPT Actions OpenAPI and is not a full admin UI.
-
-## Authentication
-
-Production APIs use HTTP Bearer authentication:
-
-```bash
-curl -X POST \
-  -H "Authorization: Bearer <token>" \
-  -H "Content-Type: application/json" \
-  -d '{}' \
-  https://example.com/api/runtime/status
-```
-
-`?token=` is accepted only for `/api/agents/ws` WebSocket handshake compatibility. Polling, REST, MCP, and GPT Actions ordinary API calls must use `Authorization: Bearer ...`.
-
-Never commit real tokens, env files, `Authorization` headers, or complete `agent.toml` files.
-
-## Agent projects and policy
-
-Agents report project files from their configured `projects_dir`. Project ids surfaced to GPT Actions use this form:
+Runtime project ids use this form:
 
 ```text
 agent:<client_id>:<project_id>
 ```
 
-Agent policy controls execution boundaries. When `allowed_roots` is omitted or empty, the agent defaults to `$HOME`. If `allowed_roots` is configured explicitly, that list replaces the `$HOME` default.
+For example: `agent:alice-laptop:my-repo`.
 
-Agent project files can bind a project to a prepared shell profile. WebCodex prepares a one-time environment snapshot per project/profile (no persistent shell, no `.bashrc`/`.profile` sourced by default); see [docs/SHELL_PROFILES.md](docs/SHELL_PROFILES.md) for Rust/Cargo, Python venv, and Conda examples. Changing a profile requires restarting `webcodex-agent`.
+### 8. Test the runtime tool list
 
-```toml
-shell_profile = "rust"
+```bash
+curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
+  -H 'Content-Type: application/json' \
+  https://your-domain.example/api/tools/list \
+  -d '{}'
 ```
 
-Example: to deliberately narrow an agent to one workspace tree, configure an explicit root:
+## Create your own GPT
 
-```toml
-[policy]
-allow_raw_shell = true
-allow_cwd_anywhere = false
-allowed_roots = ["/root/git"]
-```
+GPT Actions are one of the main reasons to use WebCodex: your GPT gets a structured, scoped runtime instead of a pile of custom scripts.
 
-`runtime_status`, `listAgents`, and `listProjects` expose a redacted policy summary plus a sanitized `shell_profiles` summary (profile names, `has_init_script`, `env_keys_count`, `program`, `args_count`). `listProjects` also shows each project's `resolved_shell_profile` and `shell_profile_status`. They do not expose tokens, env values, `Authorization` headers, the full `agent.toml`, the full env snapshot, or shell profile `init_script` bodies.
+1. Create a GPT in ChatGPT.
+2. Add an Action.
+3. Import the OpenAPI schema from `https://your-domain.example/openapi.json`.
+4. Configure authentication as Bearer/API key in the GPT Action settings.
+5. Use a `wc_pat_xxx` personal API token. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
+6. Test `listTools` and `callRuntimeTool` against a registered project such as `agent:alice-laptop:my-repo`.
 
-## Optional Codex CLI jobs
+![Import OpenAPI](docs/assets/gpt-action-import-openapi.png)
+![Configure GPT Action auth](docs/assets/gpt-action-auth.png)
 
-`runCodexTask` is an optional advanced feature. It requires the Codex CLI to be installed and configured on the agent machine. Calling `runCodexTask` does not start a new `webcodex-agent`; it asks the already connected agent to run Codex inside a registered project.
+See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the full GPT Action setup guide and supported tool surface.
 
-All non-Codex project tools, including read, git, patch validation, patch application, file write, and shell tools, can work without the Codex CLI.
+## Use with MCP
 
-## Troubleshooting
+- MCP endpoint: `https://your-domain.example/mcp`
+- Auth: Bearer `wc_pat_xxx`
+- Runtime: the same `ToolRuntime` used by GPT Actions
+- Token boundary: do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx` for MCP
 
-For common deployment issues and a short operational checklist, see [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). It covers existing systemd services, local HTTP reachability, client `PATH` setup, server-side pairing vs client-side enrollment, agent-only clients, and `client online: no` checks.
+See [docs/MCP.md](docs/MCP.md) for client configuration examples and troubleshooting.
+
+## Credential model
+
+| Credential | Used by | Purpose | Do not use for |
+| --- | --- | --- | --- |
+| `WEBCODEX_TOKEN` | server admin | bootstrap/root admin | GPT/MCP/agent daily use |
+| `wc_acct_xxx` | user CLI | create local PAT/agent token | GPT/MCP/agent |
+| `wc_pat_xxx` | GPT Action/MCP/API | runtime tools | agent connection |
+| `wc_agent_xxx` | `webcodex-agent` | connect agent to server | GPT/MCP/runtime API |
+
+The server stores only hashes for user-created PATs and agent tokens. See [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) for the full credential model.
+
+## Screenshots
+
+![Runtime tools](docs/assets/runtime-tools.png)
+![GPT Action setup](docs/assets/gpt-action-auth.png)
+![Agent project online](docs/assets/agent-project-online.png)
+
+Screenshot placeholders are tracked in [docs/assets/README.md](docs/assets/README.md); maintainers can add the image files manually.
 
 ## Documentation
 
-Start here:
-
-- [docs/INDEX.md](docs/INDEX.md) — documentation map.
-- [docs/BUILD_INSTALL.md](docs/BUILD_INSTALL.md) — installation quick reference.
-- [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) — production deployment guide.
-- [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md) — manual sg4 auth + agent onboarding smoke test.
-- [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) — GPT Actions import and tool usage.
-- [docs/AGENT_PROTOCOL.md](docs/AGENT_PROTOCOL.md) — agent auth, transports, and observability.
-- [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md) — project registry and project management tools.
-- [docs/E2E_VALIDATION.md](docs/E2E_VALIDATION.md) — local end-to-end validation.
-- [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) — deployment troubleshooting and operational checklist.
+- Install and deploy: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)
+- Create a GPT Action: [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md)
+- Use with MCP: [docs/MCP.md](docs/MCP.md)
+- Credential model: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md)
+- Agent projects: [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md)
+- Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- sg4 smoke test: [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md)
 
 ## License
 

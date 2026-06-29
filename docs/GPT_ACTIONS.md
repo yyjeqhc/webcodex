@@ -117,14 +117,17 @@ The management CLI compatibility commands `webcodex users`, `webcodex tokens`, a
 
 GPT Action OpenAPI operations and MCP/runtime tools are related but not identical. The runtime side exposes more tools, and `callRuntimeTool` is the generic entry point for runtime-only tools. To avoid approaching the GPT Actions operation limit, WebCodex exposes exactly one dedicated conversation-file import Action: `importConversationFilesToProject` at `POST /api/artifacts/import`.
 
-Use this single Action for generated images, user-uploaded files, Code Interpreter outputs, PDFs, zip archives, CSV/JSON/text files, and other supported bounded binary artifacts. Do not create separate dedicated GPT Actions for images, zip files, or PDFs.
+Use this single Action for generated images, user-uploaded files, Code Interpreter outputs, PDFs, zip archives, CSV/JSON/text files, and other supported bounded binary artifacts. The recommended path remains `importConversationFilesToProject` plus `openaiFileIdRefs`. Do not create separate dedicated GPT Actions for images, zip files, or PDFs.
 
 Recommended generated-image flow:
 
 1. The GPT uses built-in image generation in the current ChatGPT conversation.
-2. The GPT calls `importConversationFilesToProject` with `openaiFileIdRefs`, `project`, and optionally `output_dir` such as `docs/assets` or `artifacts/imports`.
+2. The GPT calls `importConversationFilesToProject` with `openaiFileIdRefs`, `project`, and optionally `output_dir` such as `docs/assets` or `artifacts/imports`. If the model already has a generated image, user upload, or Code Interpreter file reference from the current conversation, it must pass that file reference as `openaiFileIdRefs`; do not call the import Action with an empty array.
 3. WebCodex immediately downloads each `download_link`, validates MIME type and project-relative output paths, and saves the file under the selected agent/project directory.
 4. The response returns each saved file's `source_name`, `project`, `path`, `bytes_written`, `mime_type`, and `sha256`.
+
+
+Do not use shell/base64 as a fallback for large files. Calling `save_project_artifact` through `callRuntimeTool` is only appropriate for small binary payloads or cases where a trusted base64 string already exists; the import Action with `openaiFileIdRefs` is the preferred path for ChatGPT conversation files.
 
 This flow does not call the OpenAI Images API from WebCodex and therefore does not consume `gpt-image-2` API image-generation charges. The image generation happens in ChatGPT; WebCodex only imports the resulting conversation file through the GPT Actions file-passing mechanism.
 

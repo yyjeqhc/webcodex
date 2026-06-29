@@ -692,10 +692,12 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 
 ### Phase 2f-0: route scope policy definition
 
-Phase 2f-0 defines the route-level OAuth scope policy but does not enforce it.
-The helper `required_oauth_scope_for_path_method(method, path)` in
-`src/auth/scopes.rs` maps regular HTTP route method/path pairs to one of the
-existing delegable OAuth scopes:
+Phase 2f-0 originally introduced the route-level OAuth scope policy table.
+Phase 2f-1 now enforces that policy for `AuthKind::OAuth2Token` (see the
+Phase 2f-1 section above). The helper
+`required_oauth_scope_for_path_method(method, path)` in `src/auth/scopes.rs`
+maps regular HTTP route method/path pairs to one of the existing delegable
+OAuth scopes:
 
 - `runtime:read` for runtime status, tools list, job status/log/list/tail, and
   read-only MCP info.
@@ -713,9 +715,12 @@ Public OAuth endpoints remain outside delegated scope enforcement:
 `/.well-known/oauth-protected-resource`,
 `/.well-known/oauth-authorization-server`, `/oauth/token`, and `/oauth/revoke`
 return no required scope from the helper. `/oauth/authorize` also returns no
-required OAuth scope because it is a first-party authorization endpoint guarded
-by `AuthMiddleware` and the existing `AuthKind::Bootstrap` / `AuthKind::ApiToken`
-allowlist, not by delegated OAuth scopes.
+required OAuth scope: it is a first-party authorization endpoint that is **not**
+behind `AuthMiddleware`. The handler self-validates a first-party Bearer PAT
+(with a concrete `user_id`) or a short-lived `webcodex_authorize_session`
+cookie, and rejects Bootstrap (no `user_id`), OAuth2 access tokens, agent
+tokens, and account credentials. Delegated OAuth scopes therefore do not apply
+to it.
 
 Route-level enforcement (Phase 2f-1) applies this policy only to
 `AuthKind::OAuth2Token`. Bootstrap auth, personal API tokens, and other
@@ -724,7 +729,6 @@ scopes. Agent token and account credential surfaces continue to use the existing
 surface gates; OAuth2 access tokens remain non-delegable on agent transport
 surfaces.
 
-Unknown routes returned `None` at the Phase 2f-0 boundary. Phase 2f-1 has
-since wired this helper into `AuthMiddleware` and treats unknown routes as
-fail-closed for `AuthKind::OAuth2Token` (HTTP 403). Resource/audience binding
+Unknown routes and tools fail closed for `AuthKind::OAuth2Token` (HTTP 403);
+Phase 2f-1 wired this helper into `AuthMiddleware`. Resource/audience binding
 is still not implemented.

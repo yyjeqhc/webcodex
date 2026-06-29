@@ -9,7 +9,7 @@ use crate::shell_protocol::{
     ShellClientJobsListRequest, ShellClientJobsListResponse, ShellClientRegisterRequest,
     ShellClientRegisterResponse, ShellClientView, ShellFileOpRequest, ShellFileOpResponse,
     ShellJobCodexMetadata, ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest,
-    ShellRunResponse, AGENT_PROTOCOL_VERSION_QUIC_V1,
+    ShellRunResponse,
 };
 use salvo::prelude::*;
 use serde_json::json;
@@ -34,8 +34,6 @@ const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
 const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
-const QUIC_REGISTER_ONLY_DISPATCH_ERROR: &str = "QUIC transport is connected with a register-only protocol version; request dispatch is not implemented for this agent; use websocket/polling or upgrade to a QUIC dispatch-capable agent.";
-
 /// Maximum number of pending requests queued for a single agent client.
 /// Bounds memory when an agent is slow or disconnected: once a client's
 /// queue reaches this depth, new enqueues are rejected with a structured
@@ -802,20 +800,13 @@ fn ensure_queue_capacity_locked(
     Ok(())
 }
 
-/// `quic-v1` agents are online for register/ack/ping/pong only. They do not
-/// have a server->agent request pump, so enqueue paths must reject instead of
-/// leaving runtime requests in a queue that no QUIC task consumes.
+/// Ensure a request target exists before enqueueing work for the agent pump.
 fn ensure_dispatch_supported_locked(
     inner: &ShellClientRegistryInner,
     client_id: &str,
 ) -> Result<(), String> {
-    let Some(client) = inner.clients.get(client_id) else {
+    if !inner.clients.contains_key(client_id) {
         return Err(format!("unknown shell client: {}", client_id));
-    };
-    if client.transport == TRANSPORT_QUIC
-        && client.agent_protocol_version == AGENT_PROTOCOL_VERSION_QUIC_V1
-    {
-        return Err(QUIC_REGISTER_ONLY_DISPATCH_ERROR.to_string());
     }
     Ok(())
 }
@@ -3242,7 +3233,7 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V2;
+    use crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V1;
 
     fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate::auth::AuthContext {
         let (role, scopes) = if is_bootstrap {
@@ -3828,33 +3819,12 @@ mod tests {
             .unwrap();
     }
 
-    async fn register_quic_v2_client(registry: &ShellClientRegistry, client_id: &str) {
-        registry
-            .register(ShellClientRegisterRequest {
-                client_id: client_id.to_string(),
-                agent_instance_id: "inst".to_string(),
-                display_name: None,
-                owner: Some("alice".to_string()),
-                hostname: None,
-                capabilities: Some(async_job_capabilities()),
-                projects: Some(vec![project_summary("webcodex", "/tmp/webcodex")]),
-                agent_protocol_version: Some(AGENT_PROTOCOL_VERSION_QUIC_V2.to_string()),
-                policy: None,
-            })
-            .await
-            .unwrap();
-        registry
-            .set_transport(client_id, TRANSPORT_QUIC)
-            .await
-            .unwrap();
-    }
-
     #[tokio::test]
-    async fn registry_rejects_quic_v1_run_without_queueing() {
+    async fn registry_allows_quic_v1_run_queueing() {
         let registry = ShellClientRegistry::default();
         register_quic_v1_client(&registry, "quic-run").await;
 
-        let err = registry
+        let (_request_id, _rx) = registry
             .enqueue_run(
                 ShellRunRequest {
                     client_id: "quic-run".to_string(),
@@ -3867,34 +3837,10 @@ mod tests {
                 "tester".to_string(),
             )
             .await
-            .unwrap_err();
-        assert_eq!(err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
-        let view = registry.get_client_view("quic-run").await.unwrap();
-        assert_eq!(view.pending_requests, 0);
-    }
-
-    #[tokio::test]
-    async fn registry_allows_quic_v2_run_queueing() {
-        let registry = ShellClientRegistry::default();
-        register_quic_v2_client(&registry, "quic-v2-run").await;
-
-        let (_request_id, _rx) = registry
-            .enqueue_run(
-                ShellRunRequest {
-                    client_id: "quic-v2-run".to_string(),
-                    cwd: None,
-                    command: "echo hi".to_string(),
-                    stdin: None,
-                    timeout_secs: 5,
-                    wait_timeout_secs: 0,
-                },
-                "tester".to_string(),
-            )
-            .await
             .unwrap();
-        let view = registry.get_client_view("quic-v2-run").await.unwrap();
+        let view = registry.get_client_view("quic-run").await.unwrap();
         assert_eq!(view.transport, TRANSPORT_QUIC);
-        assert_eq!(view.agent_protocol_version, AGENT_PROTOCOL_VERSION_QUIC_V2);
+        assert_eq!(view.agent_protocol_version, AGENT_PROTOCOL_VERSION_QUIC_V1);
         assert_eq!(view.pending_requests, 1);
         assert!(view.capabilities.shell);
         assert!(view.capabilities.async_shell_jobs);
@@ -3903,7 +3849,7 @@ mod tests {
     #[tokio::test]
     async fn enqueue_file_op_allows_read_with_line_range() {
         let registry = ShellClientRegistry::default();
-        register_quic_v2_client(&registry, "oe").await;
+        register_quic_v1_client(&registry, "oe").await;
 
         let mut req = file_request("read");
         req.start_line = Some(7);
@@ -3931,11 +3877,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn registry_rejects_quic_v1_file_and_project_ops_without_queueing() {
+    async fn registry_allows_quic_v1_file_and_project_ops_queueing() {
         let registry = ShellClientRegistry::default();
         register_quic_v1_client(&registry, "quic-ops").await;
 
-        let file_err = registry
+        let (_file_request_id, _file_rx) = registry
             .enqueue_file_op(
                 ShellFileOpRequest {
                     op: "read".to_string(),
@@ -3955,10 +3901,9 @@ mod tests {
                 "tester".to_string(),
             )
             .await
-            .unwrap_err();
-        assert_eq!(file_err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
+            .unwrap();
 
-        let project_err = registry
+        let (_project_request_id, _project_rx) = registry
             .enqueue_project_op(
                 "quic-ops".to_string(),
                 "register_project",
@@ -3966,19 +3911,18 @@ mod tests {
                 "tester".to_string(),
             )
             .await
-            .unwrap_err();
-        assert_eq!(project_err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
+            .unwrap();
 
         let view = registry.get_client_view("quic-ops").await.unwrap();
-        assert_eq!(view.pending_requests, 0);
+        assert_eq!(view.pending_requests, 2);
     }
 
     #[tokio::test]
-    async fn registry_rejects_quic_v1_start_job_without_job_or_queue_entry() {
+    async fn registry_allows_quic_v1_start_job_queueing() {
         let registry = ShellClientRegistry::default();
         register_quic_v1_client(&registry, "quic-job").await;
 
-        let err = registry
+        let job = registry
             .start_job(
                 ShellJobOpRequest {
                     op: "start".to_string(),
@@ -3996,16 +3940,16 @@ mod tests {
                 "tester".to_string(),
             )
             .await
-            .unwrap_err();
-        assert_eq!(err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
+            .unwrap();
 
         let view = registry.get_client_view("quic-job").await.unwrap();
-        assert_eq!(view.pending_requests, 0);
-        assert!(registry.list_jobs(Some(10)).await.is_empty());
+        assert_eq!(view.pending_requests, 1);
+        assert_eq!(job.status, "queued");
+        assert_eq!(registry.list_jobs(Some(10)).await.len(), 1);
     }
 
     #[tokio::test]
-    async fn registry_rejects_quic_v1_stop_job_delivery_without_queueing() {
+    async fn registry_allows_quic_v1_stop_job_delivery_queueing() {
         let registry = ShellClientRegistry::default();
         registry
             .register(ShellClientRegisterRequest {
@@ -4054,15 +3998,13 @@ mod tests {
             .await
             .unwrap();
 
-        let err = registry
+        let stopped = registry
             .stop_job(&job.job_id, "tester".to_string())
             .await
-            .unwrap_err();
-        assert_eq!(err, QUIC_REGISTER_ONLY_DISPATCH_ERROR);
+            .unwrap();
         let view = registry.get_client_view("quic-stop").await.unwrap();
-        assert_eq!(view.pending_requests, 0);
-        let still_agent_queued = registry.get_job(&job.job_id).await.unwrap();
-        assert_eq!(still_agent_queued.status, "agent_queued");
+        assert_eq!(view.pending_requests, 1);
+        assert_eq!(stopped.status, "stop_requested");
     }
 
     #[test]

@@ -5,11 +5,10 @@
 //! server (which keeps serving GPT Actions over TCP 443 via Nginx unchanged).
 //! Nginx is not involved in QUIC.
 //!
-//! `quic-v1` is the register/ack/ping/pong protocol. `quic-v2`
-//! extends the same single bidirectional stream with request dispatch:
-//! server -> agent `Request`, agent -> server `Result` / `JobUpdate`, plus
-//! `Ping` / `Pong`. This is still a serialized frame model, not HTTP/3 and
-//! not stream multiplexing.
+//! QUIC is an alternative transport for the existing agent envelope protocol.
+//! It uses a length-prefixed JSON `AgentEnvelope` stream over QUIC and is
+//! intended to mirror the WebSocket agent flow, not introduce a separate
+//! application protocol.
 //!
 //! Authentication reuses [`crate::auth::authenticate_bearer`], which mirrors
 //! `AuthMiddleware`: bootstrap when auth is disabled, the server-wide token,
@@ -24,7 +23,6 @@ use crate::shell_client::{
 };
 use crate::shell_protocol::{
     read_quic_frame, write_quic_frame, AgentEnvelope, ShellAgentPollRequest,
-    ShellClientCapabilities, AGENT_PROTOCOL_VERSION_QUIC_V2,
 };
 use crate::Database;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
@@ -49,18 +47,6 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Channel capacity for QUIC outgoing envelopes (registered ack, request,
 /// pong/error). Provides backpressure if the agent reads slowly.
 const OUTGOING_CHANNEL_CAPACITY: usize = 64;
-
-fn quic_register_only_capabilities() -> ShellClientCapabilities {
-    ShellClientCapabilities {
-        shell: false,
-        file_read: false,
-        file_write: false,
-        git: false,
-        jobs: false,
-        async_jobs: false,
-        async_shell_jobs: false,
-    }
-}
 
 /// Load a PEM cert chain from `path` into DER certificates.
 fn load_certs(path: &std::path::Path) -> Result<Vec<CertificateDer<'static>>, String> {
@@ -336,19 +322,8 @@ async fn handle_quic_connection(
         effective_register_owner(Some(&auth), register_payload.owner.as_deref());
 
     // 4. Register into the shared registry (same path as polling/ws), then
-    //    flip the transport label to "quic". `quic-v1` remains register-only
-    //    and therefore has execution capabilities downgraded to false.
-    //    `quic-v2` is dispatch-capable and keeps the agent's real capabilities.
-    //    capabilities.
-    let agent_protocol_version = register_payload
-        .agent_protocol_version
-        .as_deref()
-        .map(str::trim)
-        .unwrap_or("");
-    let dispatch_capable = agent_protocol_version == AGENT_PROTOCOL_VERSION_QUIC_V2;
-    if !dispatch_capable {
-        register_payload.capabilities = Some(quic_register_only_capabilities());
-    }
+    //    flip the transport label to "quic". QUIC v1 is the full envelope flow
+    //    and keeps the agent's real capabilities.
     if let Err(e) = registry.register(register_payload).await {
         tracing::warn!(
             client_id = %client_id,
@@ -365,22 +340,17 @@ async fn handle_quic_connection(
             .await;
         return;
     }
-    let notify = if dispatch_capable {
-        let notify = Arc::new(Notify::new());
-        if let Err(e) = registry
-            .register_notifier(&client_id, &agent_instance_id, notify.clone())
-            .await
-        {
-            send_error(&mut send, &mut recv, "register_failed", &e).await;
-            registry
-                .reconcile_disconnect(&client_id, &agent_instance_id)
-                .await;
-            return;
-        }
-        Some(notify)
-    } else {
-        None
-    };
+    let notify = Arc::new(Notify::new());
+    if let Err(e) = registry
+        .register_notifier(&client_id, &agent_instance_id, notify.clone())
+        .await
+    {
+        send_error(&mut send, &mut recv, "register_failed", &e).await;
+        registry
+            .reconcile_disconnect(&client_id, &agent_instance_id)
+            .await;
+        return;
+    }
     let Some(view) = registry.get_client_view(&client_id).await else {
         send_error(
             &mut send,
@@ -429,11 +399,9 @@ async fn handle_quic_connection(
     }
     tracing::info!(client_id = %client_id, "agent quic connected");
 
-    // 7. `quic-v2` request pump: drain the shared registry queue and send
-    //    Request envelopes over the QUIC writer channel. `quic-v1` does not
-    //    install a notifier, preserving register-only semantics and the
-    //    registry enqueue guard.
-    let pump_task = if let Some(notify) = notify {
+    // 7. QUIC request pump: drain the shared registry queue and send
+    //    Request envelopes over the QUIC writer channel.
+    let pump_task = {
         let pump_tx = out_tx.clone();
         let pump_registry = registry.clone();
         let pump_client_id = client_id.clone();
@@ -478,8 +446,6 @@ async fn handle_quic_connection(
                 "quic request pump stopped"
             );
         }))
-    } else {
-        None
     };
 
     // 8. Reader loop: handle Result/JobUpdate/Ping/Pong from the agent.
@@ -613,9 +579,9 @@ async fn send_error(
 mod tests {
     use super::*;
     use crate::shell_protocol::{
-        ShellAgentJobUpdateRequest, ShellAgentResultRequest, ShellClientRegisterRequest,
-        ShellJobOpRequest, ShellRunRequest, AGENT_PROTOCOL_VERSION_QUIC_V1,
-        AGENT_PROTOCOL_VERSION_QUIC_V2, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
+        ShellAgentJobUpdateRequest, ShellAgentResultRequest, ShellClientCapabilities,
+        ShellClientRegisterRequest, ShellJobOpRequest, ShellRunRequest,
+        AGENT_PROTOCOL_VERSION_QUIC_V1, AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
     };
     use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -819,13 +785,13 @@ mod tests {
                     client.agent_protocol_version,
                     AGENT_PROTOCOL_VERSION_QUIC_V1
                 );
-                assert!(!client.capabilities.shell);
-                assert!(!client.capabilities.file_read);
-                assert!(!client.capabilities.file_write);
+                assert!(client.capabilities.shell);
+                assert!(client.capabilities.file_read);
+                assert!(client.capabilities.file_write);
                 assert!(!client.capabilities.git);
-                assert!(!client.capabilities.jobs);
-                assert!(!client.capabilities.async_jobs);
-                assert!(!client.capabilities.async_shell_jobs);
+                assert!(client.capabilities.jobs);
+                assert!(client.capabilities.async_jobs);
+                assert!(client.capabilities.async_shell_jobs);
             }
             other => panic!("expected registered ack, got {:?}", other.kind()),
         }
@@ -839,40 +805,13 @@ mod tests {
         assert_eq!(view.status, "online");
         assert_eq!(view.transport, "quic");
         assert_eq!(view.agent_protocol_version, AGENT_PROTOCOL_VERSION_QUIC_V1);
-        assert!(!view.capabilities.shell);
-        assert!(!view.capabilities.file_read);
-        assert!(!view.capabilities.file_write);
+        assert!(view.capabilities.shell);
+        assert!(view.capabilities.file_read);
+        assert!(view.capabilities.file_write);
         assert!(!view.capabilities.git);
-        assert!(!view.capabilities.jobs);
-        assert!(!view.capabilities.async_jobs);
-        assert!(!view.capabilities.async_shell_jobs);
-
-        let err = registry
-            .enqueue_run(
-                ShellRunRequest {
-                    client_id: "quic-rt".to_string(),
-                    cwd: None,
-                    command: "echo hi".to_string(),
-                    stdin: None,
-                    timeout_secs: 5,
-                    wait_timeout_secs: 0,
-                },
-                "tester".to_string(),
-            )
-            .await
-            .unwrap_err();
-        assert!(
-            err.contains("register-only"),
-            "quic-v1 dispatch error should stay explicit: {err}"
-        );
-        assert_eq!(
-            registry
-                .get_client_view("quic-rt")
-                .await
-                .expect("client view")
-                .pending_requests,
-            0
-        );
+        assert!(view.capabilities.jobs);
+        assert!(view.capabilities.async_jobs);
+        assert!(view.capabilities.async_shell_jobs);
 
         // Ping -> Pong, and liveness is refreshed.
         let before = view.last_seen;
@@ -906,7 +845,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quic_v2_request_result_roundtrip() {
+    async fn quic_v1_request_result_roundtrip() {
         let (cert_der, key_der) = self_signed_cert();
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_quic_server(
@@ -922,9 +861,9 @@ mod tests {
         write_quic_frame(
             &mut send,
             &register_envelope_with_protocol(
-                "quic-v2-rt",
+                "quic-v1-rt",
                 "inst-v2",
-                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                AGENT_PROTOCOL_VERSION_QUIC_V1,
                 None,
             ),
         )
@@ -941,11 +880,11 @@ mod tests {
             } => {
                 assert!(success);
                 let client = client.expect("client view");
-                assert_eq!(client.client_id, "quic-v2-rt");
+                assert_eq!(client.client_id, "quic-v1-rt");
                 assert_eq!(client.transport, "quic");
                 assert_eq!(
                     client.agent_protocol_version,
-                    AGENT_PROTOCOL_VERSION_QUIC_V2
+                    AGENT_PROTOCOL_VERSION_QUIC_V1
                 );
                 assert!(client.capabilities.shell);
                 assert!(client.capabilities.file_read);
@@ -960,7 +899,7 @@ mod tests {
         let (request_id, rx) = registry
             .enqueue_run(
                 ShellRunRequest {
-                    client_id: "quic-v2-rt".to_string(),
+                    client_id: "quic-v1-rt".to_string(),
                     cwd: None,
                     command: "echo hi".to_string(),
                     stdin: None,
@@ -989,7 +928,7 @@ mod tests {
             &mut send,
             &AgentEnvelope::Result {
                 payload: ShellAgentResultRequest {
-                    client_id: "quic-v2-rt".to_string(),
+                    client_id: "quic-v1-rt".to_string(),
                     agent_instance_id: "inst-v2".to_string(),
                     request_id: request_id.clone(),
                     exit_code: Some(0),
@@ -1012,7 +951,7 @@ mod tests {
         assert_eq!(response.exit_code, Some(0));
         assert_eq!(
             registry
-                .get_client_view("quic-v2-rt")
+                .get_client_view("quic-v1-rt")
                 .await
                 .expect("client view")
                 .pending_requests,
@@ -1025,7 +964,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quic_v2_job_update_updates_registry() {
+    async fn quic_v1_job_update_updates_registry() {
         let (cert_der, key_der) = self_signed_cert();
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_quic_server(
@@ -1043,7 +982,7 @@ mod tests {
             &register_envelope_with_protocol(
                 "quic-job",
                 "inst-job",
-                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                AGENT_PROTOCOL_VERSION_QUIC_V1,
                 None,
             ),
         )
@@ -1130,7 +1069,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn quic_v2_disconnect_reconciles_jobs_and_notifier() {
+    async fn quic_v1_disconnect_reconciles_jobs_and_notifier() {
         let (cert_der, key_der) = self_signed_cert();
         let registry = Arc::new(ShellClientRegistry::default());
         let addr = start_quic_server(
@@ -1148,7 +1087,7 @@ mod tests {
             &register_envelope_with_protocol(
                 "quic-disc",
                 "inst-disc",
-                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                AGENT_PROTOCOL_VERSION_QUIC_V1,
                 None,
             ),
         )
@@ -1258,7 +1197,7 @@ mod tests {
             &register_envelope_with_protocol(
                 "quic-goodbye",
                 "inst-a",
-                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                AGENT_PROTOCOL_VERSION_QUIC_V1,
                 None,
             ),
         )
@@ -1310,7 +1249,7 @@ mod tests {
             &register_envelope_with_protocol(
                 "quic-goodbye",
                 "inst-b",
-                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                AGENT_PROTOCOL_VERSION_QUIC_V1,
                 None,
             ),
         )
@@ -1355,7 +1294,7 @@ mod tests {
             &register_envelope_with_protocol(
                 "quic-auth-ok",
                 "inst-auth-ok",
-                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                AGENT_PROTOCOL_VERSION_QUIC_V1,
                 Some("bootstrap-secret".to_string()),
             ),
         )
@@ -1380,7 +1319,7 @@ mod tests {
             &register_envelope_with_protocol(
                 "quic-auth-bad",
                 "inst-auth-bad",
-                AGENT_PROTOCOL_VERSION_QUIC_V2,
+                AGENT_PROTOCOL_VERSION_QUIC_V1,
                 Some("wrong-secret".to_string()),
             ),
         )
@@ -1506,13 +1445,13 @@ mod tests {
         assert_eq!(c.transport, "quic");
         assert_eq!(c.agent_protocol_version, AGENT_PROTOCOL_VERSION_QUIC_V1);
         assert!(c.connected);
-        assert!(!c.capabilities.shell);
-        assert!(!c.capabilities.file_read);
-        assert!(!c.capabilities.file_write);
+        assert!(c.capabilities.shell);
+        assert!(c.capabilities.file_read);
+        assert!(c.capabilities.file_write);
         assert!(!c.capabilities.git);
-        assert!(!c.capabilities.jobs);
-        assert!(!c.capabilities.async_jobs);
-        assert!(!c.capabilities.async_shell_jobs);
+        assert!(c.capabilities.jobs);
+        assert!(c.capabilities.async_jobs);
+        assert!(c.capabilities.async_shell_jobs);
 
         // Ensure the websocket protocol label is distinct (sanity for the
         // status sanitization test requirement).

@@ -335,7 +335,7 @@ fn doctor_usage() -> &'static str {
        --project ID              Restrict the remote shell roundtrip to this project id\n\
        --quic                    Run QUIC transport diagnostics\n\
        --server-only             With --quic, only check API + QUIC UDP/TLS/ALPN handshake\n\
-       --agent-e2e               With --quic, require an online quic-v2 agent and run dispatch checks\n\
+       --agent-e2e               With --quic, require an online quic-v1 agent and run dispatch checks\n\
        --quic-server-addr ADDR   QUIC UDP host:port; falls back to [quic].server_addr\n\
        --quic-server-name NAME   QUIC TLS/SNI name; falls back to [quic].server_name\n\
        --quic-alpn ALPN          QUIC ALPN [default: webcodex-agent/1]\n\
@@ -2908,7 +2908,7 @@ async fn run_quic_doctor_checks(
     if opts.quic_server_only || !opts.quic_agent_e2e {
         checks.push(DoctorCheck::warn(
             "quic agent e2e",
-            "skipped; pass --agent-e2e with --server-url, --user-token-file, --project, and an online quic-v2 agent",
+            "skipped; pass --agent-e2e with --server-url, --user-token-file, --project, and an online quic-v1 agent",
         ));
         return checks;
     }
@@ -2961,7 +2961,7 @@ async fn run_quic_agent_e2e_checks(
                 let protocol = client.get("agent_protocol_version").and_then(Value::as_str);
                 let client_id_matches = expected_client_id
                     .is_none_or(|id| client.get("client_id").and_then(Value::as_str) == Some(id));
-                client_id_matches && transport == Some("quic") && protocol == Some("quic-v2")
+                client_id_matches && transport == Some("quic") && protocol == Some("quic-v1")
             });
             let wrong_transport_or_protocol = clients.iter().find(|client| {
                 let client_id_matches = expected_client_id
@@ -2971,7 +2971,7 @@ async fn run_quic_agent_e2e_checks(
                 let protocol = client.get("agent_protocol_version").and_then(Value::as_str);
                 client_id_matches
                     && connected
-                    && (transport != Some("quic") || protocol != Some("quic-v2"))
+                    && (transport != Some("quic") || protocol != Some("quic-v1"))
             });
             match matching {
                 Some(client) => {
@@ -2980,7 +2980,7 @@ async fn run_quic_agent_e2e_checks(
                     checks.push(DoctorCheck::pass(
                         "quic agent online",
                         format!(
-                            "client_id={} transport=quic protocol=quic-v2 connected={:?} pending_requests={} last_seen={}",
+                            "client_id={} transport=quic protocol=quic-v1 connected={:?} pending_requests={} last_seen={}",
                             client
                                 .get("client_id")
                                 .and_then(Value::as_str)
@@ -2998,7 +2998,7 @@ async fn run_quic_agent_e2e_checks(
                     if connected != Some(true) {
                         checks.push(DoctorCheck::fail(
                             "quic agent connected",
-                            "matching quic-v2 agent is not connected",
+                            "matching quic-v1 agent is not connected",
                         ));
                     }
                     if !client
@@ -3032,9 +3032,9 @@ async fn run_quic_agent_e2e_checks(
                     } else {
                         match expected_client_id {
                             Some(id) => {
-                                format!("no online quic-v2 agent found for client_id={}", id)
+                                format!("no online quic-v1 agent found for client_id={}", id)
                             }
-                            None => "no online quic-v2 agent found".to_string(),
+                            None => "no online quic-v1 agent found".to_string(),
                         }
                     },
                 )),

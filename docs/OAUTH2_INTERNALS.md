@@ -583,3 +583,42 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 - MCP OAuth (resource indicator / audience binding)
 - JWT/JWKS/OIDC
 - Handler migration to `Principal`
+
+### Phase 2f-0: route scope policy definition
+
+Phase 2f-0 defines the route-level OAuth scope policy but does not enforce it.
+The helper `required_oauth_scope_for_path_method(method, path)` in
+`src/auth/scopes.rs` maps regular HTTP route method/path pairs to one of the
+existing delegable OAuth scopes:
+
+- `runtime:read` for runtime status, tools list, job status/log/list/tail, and
+  read-only MCP info.
+- `project:read` for project listing, file reads, git status/diff, project file
+  search/listing, patch validation, and read-only Codex context/project routes.
+- `project:write` for project registration/creation, file writes, patch/line
+  edit/delete/restore operations, artifact import into a project, and Codex
+  edit/artifact/git mutation routes.
+- `job:run` for tool execution, shell/job execution, Codex run/job routes, MCP
+  POST, and job stop operations.
+- `account:manage` for user, PAT, agent-token, pairing-create, and audit/admin
+  query surfaces.
+
+Public OAuth endpoints remain outside delegated scope enforcement:
+`/.well-known/oauth-protected-resource`,
+`/.well-known/oauth-authorization-server`, `/oauth/token`, and `/oauth/revoke`
+return no required scope from the helper. `/oauth/authorize` also returns no
+required OAuth scope because it is a first-party authorization endpoint guarded
+by `AuthMiddleware` and the existing `AuthKind::Bootstrap` / `AuthKind::ApiToken`
+allowlist, not by delegated OAuth scopes.
+
+Future route-level enforcement must apply this policy only to
+`AuthKind::OAuth2Token`. Bootstrap auth, personal API tokens, and other
+first-party WebCodex credentials must not be constrained by OAuth delegated
+scopes. Agent token and account credential surfaces continue to use the existing
+surface gates; OAuth2 access tokens remain non-delegable on agent transport
+surfaces.
+
+Unknown routes currently return `None`. Before Phase 2f-1 wires this helper into
+`AuthMiddleware` or route guards, every authenticated route must be audited so
+that unknown `None` is not accidentally treated as an authorization bypass.
+Resource/audience binding is still not implemented.

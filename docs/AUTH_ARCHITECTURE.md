@@ -593,3 +593,34 @@ configuration, and artifact/import/action behavior unchanged.
 6. **Still not implemented**: `/.well-known/openid-configuration`, JWKS,
    JWT/OIDC, route-level OAuth scope enforcement, and MCP resource/audience
    binding remain out of scope.
+
+### Phase 2f-0 — route-level OAuth scope policy definition
+
+Phase 2f-0 adds only a policy helper and tests. It does not change
+`AuthMiddleware`, `OAuth2Verifier`, OAuth token issuance/revocation,
+`/oauth/authorize`, MCP tool execution, GPT Action OpenAPI output, or any HTTP
+request behavior.
+
+The helper `required_oauth_scope_for_path_method(method, path)` lives in
+`src/auth/scopes.rs`. It maps authenticated route categories onto the existing
+OAuth scope constants: runtime reads use `runtime:read`; project reads use
+`project:read`; project mutations and artifact import use `project:write`;
+execution/job-like operations use `job:run`; and user/token/account,
+agent-token management, pairing-create, and audit/admin surfaces use
+`account:manage`.
+
+The policy deliberately returns no required OAuth scope for public OAuth
+metadata and token endpoints, including
+`/.well-known/oauth-protected-resource`,
+`/.well-known/oauth-authorization-server`, `/oauth/token`, and `/oauth/revoke`.
+It also returns no delegated OAuth scope for `/oauth/authorize`; that route is a
+first-party identity boundary controlled by the existing Bootstrap / ApiToken
+allowlist, not by OAuth delegated scopes.
+
+When Phase 2f-1 enables enforcement, the check must run only for
+`AuthKind::OAuth2Token`. Bootstrap and ApiToken authentication are first-party
+WebCodex credentials and must remain unrestricted by delegated OAuth scopes.
+AgentToken and AccountCredential surfaces remain governed by the existing
+surface gates. Unknown routes currently return `None`; Phase 2f-1 must audit all
+authenticated routes before treating `None` as an enforcement bypass. Resource
+or audience binding remains unimplemented.

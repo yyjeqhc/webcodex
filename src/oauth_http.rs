@@ -6,7 +6,10 @@
 //!
 //! Security properties:
 //! - Authorization codes are consumed atomically (single-use).
-//! - Code consumption and token insertion happen in a single DB transaction.
+//! - Code consumption and token insertion happen in a single DB transaction
+//!   **only** when all validations pass.
+//! - Failed validations (client_id / redirect_uri / PKCE mismatch) consume
+//!   the code but do **not** mint or persist access/refresh tokens.
 //! - Client secret is verified with constant-time comparison.
 //! - PKCE S256 is enforced when `config.oauth2.require_pkce` is true.
 //! - Only `application/x-www-form-urlencoded` content type is accepted.
@@ -312,52 +315,11 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
         }
     };
 
-    // --- Transactional exchange: consume code + insert tokens ---
+    // --- Read authorization code metadata (without consuming) ---
     let code_hash = hash_token(plaintext_code);
     let now = chrono::Utc::now().timestamp();
 
-    let access_token = generate_oauth_access_token();
-    let refresh_token = generate_oauth_refresh_token();
-    let at_hash = hash_token(&access_token);
-    let rt_hash = hash_token(&refresh_token);
-    let at_expires_at = now + config.oauth2.access_token_ttl_secs;
-    let rt_expires_at = now + config.oauth2.refresh_token_ttl_secs;
-
-    let at_record = OAuthAccessTokenRecord {
-        id: uuid::Uuid::new_v4().to_string(),
-        token_hash: at_hash,
-        client_id: client.client_id.clone(),
-        user_id: String::new(), // filled after code_record is known
-        scopes: String::new(),
-        resource: None,
-        created_at: now,
-        expires_at: at_expires_at,
-        revoked_at: None,
-        last_used_at: None,
-    };
-
-    let rt_record = OAuthRefreshTokenRecord {
-        id: uuid::Uuid::new_v4().to_string(),
-        token_hash: rt_hash,
-        client_id: client.client_id.clone(),
-        user_id: String::new(),
-        scopes: String::new(),
-        resource: None,
-        created_at: now,
-        expires_at: rt_expires_at,
-        revoked_at: None,
-        last_used_at: None,
-        rotated_from_id: None,
-    };
-
-    // We need to build the records with the code's user_id/scopes/resource
-    // which we don't know yet. Fetch the code first to get those fields,
-    // then do the transactional exchange.
-    //
-    // To avoid a TOCTOU race, we fetch the code's metadata from the
-    // authorization_codes table (which doesn't consume it), build the token
-    // records, then do the atomic exchange.
-    let code_metadata = match db.get_oauth_authorization_code_by_hash(&code_hash) {
+    let code_record = match db.get_oauth_authorization_code_by_hash(&code_hash) {
         Ok(Some(c)) => c,
         Ok(None) => {
             oauth_error(
@@ -379,19 +341,120 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
         }
     };
 
-    // Rebuild token records with the code's user_id, scopes, and resource.
+    // --- Pre-exchange validation (using metadata, code is NOT yet consumed) ---
+
+    if code_record.client_id != client.client_id {
+        // Mismatch — consume the code to prevent replay, but do NOT mint tokens.
+        let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
+        oauth_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            "authorization code was not issued to this client",
+        );
+        return;
+    }
+
+    if code_record.redirect_uri != redirect_uri {
+        // Mismatch — consume the code to prevent replay, but do NOT mint tokens.
+        let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
+        oauth_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            "redirect_uri does not match",
+        );
+        return;
+    }
+
+    // --- PKCE S256 (before code consumption) ---
+    let require_pkce = config.oauth2.require_pkce;
+    if let Some(ref challenge) = code_record.code_challenge {
+        // Code has a challenge — verifier is mandatory.
+        let verifier = match form.code_verifier.as_deref() {
+            Some(v) if !v.is_empty() => v,
+            _ => {
+                let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
+                oauth_error(
+                    res,
+                    StatusCode::BAD_REQUEST,
+                    "invalid_grant",
+                    "missing code_verifier for PKCE",
+                );
+                return;
+            }
+        };
+
+        // Only S256 is supported.
+        match code_record.code_challenge_method.as_deref() {
+            Some("S256") => {}
+            _ => {
+                let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
+                oauth_error(
+                    res,
+                    StatusCode::BAD_REQUEST,
+                    "invalid_grant",
+                    "unsupported code_challenge_method; only S256 is supported",
+                );
+                return;
+            }
+        }
+
+        if !verify_pkce_s256(verifier, challenge) {
+            let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "PKCE verification failed",
+            );
+            return;
+        }
+    } else if require_pkce {
+        // No challenge on the record but PKCE is required.
+        let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
+        oauth_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            "PKCE is required but no code_challenge was provided during authorization",
+        );
+        return;
+    }
+
+    // --- All validations passed — transactional exchange: consume code + insert tokens ---
+    let access_token = generate_oauth_access_token();
+    let refresh_token = generate_oauth_refresh_token();
+    let at_hash = hash_token(&access_token);
+    let rt_hash = hash_token(&refresh_token);
+    let at_expires_at = now + config.oauth2.access_token_ttl_secs;
+    let rt_expires_at = now + config.oauth2.refresh_token_ttl_secs;
+
     let at_record = OAuthAccessTokenRecord {
-        user_id: code_metadata.user_id.clone(),
-        scopes: code_metadata.scopes.clone(),
-        resource: code_metadata.resource.clone(),
-        ..at_record
+        id: uuid::Uuid::new_v4().to_string(),
+        token_hash: at_hash,
+        client_id: client.client_id.clone(),
+        user_id: code_record.user_id.clone(),
+        scopes: code_record.scopes.clone(),
+        resource: code_record.resource.clone(),
+        created_at: now,
+        expires_at: at_expires_at,
+        revoked_at: None,
+        last_used_at: None,
     };
 
     let rt_record = OAuthRefreshTokenRecord {
-        user_id: code_metadata.user_id.clone(),
-        scopes: code_metadata.scopes.clone(),
-        resource: code_metadata.resource.clone(),
-        ..rt_record
+        id: uuid::Uuid::new_v4().to_string(),
+        token_hash: rt_hash,
+        client_id: client.client_id.clone(),
+        user_id: code_record.user_id.clone(),
+        scopes: code_record.scopes.clone(),
+        resource: code_record.resource.clone(),
+        created_at: now,
+        expires_at: rt_expires_at,
+        revoked_at: None,
+        last_used_at: None,
+        rotated_from_id: None,
     };
 
     let code_record = match db
@@ -417,80 +480,6 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
             return;
         }
     };
-
-    // --- Post-consume validation (code is already consumed; failures here
-    //     are intentional — the code cannot be retried). ---
-
-    if code_record.client_id != client.client_id {
-        oauth_error(
-            res,
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
-            "authorization code was not issued to this client",
-        );
-        return;
-    }
-
-    if code_record.redirect_uri != redirect_uri {
-        oauth_error(
-            res,
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
-            "redirect_uri does not match",
-        );
-        return;
-    }
-
-    // --- PKCE S256 ---
-    let require_pkce = config.oauth2.require_pkce;
-    if let Some(ref challenge) = code_record.code_challenge {
-        // Code has a challenge — verifier is mandatory.
-        let verifier = match form.code_verifier.as_deref() {
-            Some(v) if !v.is_empty() => v,
-            _ => {
-                oauth_error(
-                    res,
-                    StatusCode::BAD_REQUEST,
-                    "invalid_grant",
-                    "missing code_verifier for PKCE",
-                );
-                return;
-            }
-        };
-
-        // Only S256 is supported.
-        match code_record.code_challenge_method.as_deref() {
-            Some("S256") => {}
-            _ => {
-                oauth_error(
-                    res,
-                    StatusCode::BAD_REQUEST,
-                    "invalid_grant",
-                    "unsupported code_challenge_method; only S256 is supported",
-                );
-                return;
-            }
-        }
-
-        if !verify_pkce_s256(verifier, challenge) {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
-                "PKCE verification failed",
-            );
-            return;
-        }
-    } else if require_pkce {
-        // No challenge on the record but PKCE is required.
-        oauth_error(
-            res,
-            StatusCode::BAD_REQUEST,
-            "invalid_grant",
-            "PKCE is required but no code_challenge was provided during authorization",
-        );
-        return;
-    }
 
     // --- Success response ---
     let mut body = serde_json::json!({
@@ -662,6 +651,22 @@ mod tests {
             .body(body)
     }
 
+    /// Return `(access_token_count, refresh_token_count)` from the DB.
+    fn oauth_token_counts(db: &crate::Database) -> (i64, i64) {
+        let conn = db.conn_for_tests();
+        let at: i64 = conn
+            .query_row("SELECT COUNT(*) FROM oauth_access_tokens", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        let rt: i64 = conn
+            .query_row("SELECT COUNT(*) FROM oauth_refresh_tokens", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        (at, rt)
+    }
+
     // -----------------------------------------------------------------------
     // Success path
     // -----------------------------------------------------------------------
@@ -682,6 +687,7 @@ mod tests {
             None,
         );
 
+        let (at_before, rt_before) = oauth_token_counts(&db);
         let service = Service::new(build_router(config, db.clone()));
         let body = form_body(&[
             ("grant_type", "authorization_code"),
@@ -707,6 +713,11 @@ mod tests {
         assert_eq!(json["token_type"], "Bearer");
         assert_eq!(json["expires_in"], 3600);
         assert_eq!(json["scope"], "runtime:read");
+
+        // Both tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before + 1, at_after, "one access token inserted");
+        assert_eq!(rt_before + 1, rt_after, "one refresh token inserted");
     }
 
     #[tokio::test]
@@ -1102,6 +1113,62 @@ mod tests {
         assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
         let json: serde_json::Value = resp.take_json().await.unwrap();
         assert_eq!(json["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn client_id_mismatch_consumes_code_but_no_tokens() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, _secret) = seed_client(&db, &user, "Test App");
+        let (code_record, code) = seed_auth_code(
+            &db,
+            &client,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+            None,
+            None,
+        );
+
+        let (client2, secret2) = seed_client(&db, &user, "Other App");
+
+        let (at_before, rt_before) = oauth_token_counts(&db);
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", "https://example.com/callback"),
+            ("client_id", &client2.client_id),
+            ("client_secret", &secret2),
+        ]);
+        let resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+
+        // Code SHOULD be consumed — validation failure.
+        let conn = db.conn_for_tests();
+        let used_at: Option<i64> = conn
+            .query_row(
+                "SELECT used_at FROM oauth_authorization_codes WHERE id = ?1",
+                [&code_record.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            used_at.is_some(),
+            "code should be consumed on client_id mismatch"
+        );
+        drop(conn);
+
+        // No tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before, at_after, "no access token on client_id mismatch");
+        assert_eq!(
+            rt_before, rt_after,
+            "no refresh token on client_id mismatch"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -1526,6 +1593,7 @@ mod tests {
             None,
         );
 
+        let (at_before, rt_before) = oauth_token_counts(&db);
         let service = Service::new(build_router(config, db.clone()));
         let body = form_body(&[
             ("grant_type", "authorization_code"),
@@ -1552,6 +1620,12 @@ mod tests {
             used_at.is_none(),
             "code should not be consumed on wrong secret"
         );
+        drop(conn);
+
+        // No tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before, at_after, "no access token should be inserted");
+        assert_eq!(rt_before, rt_after, "no refresh token should be inserted");
     }
 
     #[tokio::test]
@@ -1570,6 +1644,7 @@ mod tests {
             None,
         );
 
+        let (at_before, rt_before) = oauth_token_counts(&db);
         let service = Service::new(build_router(config, db.clone()));
         let body = form_body(&[
             ("grant_type", "authorization_code"),
@@ -1583,7 +1658,7 @@ mod tests {
             .await;
         assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
 
-        // Code SHOULD be consumed — post-consume validation failure.
+        // Code SHOULD be consumed — validation failure.
         let conn = db.conn_for_tests();
         let used_at: Option<i64> = conn
             .query_row(
@@ -1595,6 +1670,18 @@ mod tests {
         assert!(
             used_at.is_some(),
             "code should be consumed on redirect_uri mismatch"
+        );
+        drop(conn);
+
+        // No tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(
+            at_before, at_after,
+            "no access token on redirect_uri mismatch"
+        );
+        assert_eq!(
+            rt_before, rt_after,
+            "no refresh token on redirect_uri mismatch"
         );
     }
 
@@ -1619,6 +1706,7 @@ mod tests {
             Some("S256"),
         );
 
+        let (at_before, rt_before) = oauth_token_counts(&db);
         let service = Service::new(build_router(config, db.clone()));
         let body = form_body(&[
             ("grant_type", "authorization_code"),
@@ -1633,7 +1721,7 @@ mod tests {
             .await;
         assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
 
-        // Code SHOULD be consumed — post-consume validation failure.
+        // Code SHOULD be consumed — validation failure.
         let conn = db.conn_for_tests();
         let used_at: Option<i64> = conn
             .query_row(
@@ -1646,5 +1734,11 @@ mod tests {
             used_at.is_some(),
             "code should be consumed on PKCE mismatch"
         );
+        drop(conn);
+
+        // No tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before, at_after, "no access token on PKCE mismatch");
+        assert_eq!(rt_before, rt_after, "no refresh token on PKCE mismatch");
     }
 }

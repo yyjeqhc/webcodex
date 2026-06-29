@@ -7,13 +7,8 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2b-1.1** hardens the `POST /oauth/token` endpoint (Phase 2b-1):
-
-- `Cache-Control: no-store` and `Pragma: no-cache` on all OAuth2 responses
-- Strict `Content-Type: application/x-www-form-urlencoded` enforcement
-- Bounded request body size (16 KiB)
-- Transactional authorization code exchange (code consume + token insert in
-  a single SQLite transaction)
+**Phase 2b-1.2** fixes a bug where failed post-consume validation still
+inserted access/refresh tokens into the database.
 
 No OAuth2 tokens are accepted by `AuthMiddleware`. The GPT Actions / MCP /
 REST surface continues to accept only the existing token formats (PAT, agent
@@ -65,6 +60,40 @@ Post-consume validation semantics are preserved:
 - Wrong `client_secret` → code **not** consumed (rejected before exchange)
 - `client_id` / `redirect_uri` / PKCE mismatch → code **consumed**
   (post-consume failures are intentional; the code cannot be retried)
+
+### Phase 2b-1.2: no tokens on failed exchange
+
+Fixes a bug where `POST /oauth/token` inserted access and refresh tokens
+even when post-consume validation (client_id / redirect_uri / PKCE)
+failed. The root cause was that `exchange_oauth_authorization_code_for_tokens()`
+was called before validation, so tokens were persisted regardless of the
+validation outcome.
+
+**New handler flow**:
+
+1. Client authentication (`client_secret` verified before code consumption)
+2. Read authorization code metadata (`get_oauth_authorization_code_by_hash`,
+   no consumption)
+3. Validate `client_id` match → on failure: consume code, return
+   `invalid_grant`, **no tokens**
+4. Validate `redirect_uri` match → on failure: consume code, return
+   `invalid_grant`, **no tokens**
+5. Validate PKCE S256 → on failure: consume code, return `invalid_grant`,
+   **no tokens**
+6. All validations passed →
+   `exchange_oauth_authorization_code_for_tokens()` atomically consumes
+   code + inserts both tokens in a single transaction
+
+**Semantic summary**:
+
+| Scenario | Code consumed? | Tokens inserted? |
+| --- | --- | --- |
+| Wrong `client_secret` | No | No |
+| Unknown / expired / revoked code | No | No |
+| `client_id` mismatch | Yes | **No** |
+| `redirect_uri` mismatch | Yes | **No** |
+| PKCE mismatch | Yes | **No** |
+| Valid exchange | Yes | Yes (transactional) |
 
 ## Design decisions
 

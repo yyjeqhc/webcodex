@@ -328,3 +328,22 @@ See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
 Not implemented: `/oauth/authorize`, `refresh_token` grant,
 `client_credentials` grant, `/oauth/revoke`, `/.well-known/*`,
 `OAuth2Verifier` real validation, MCP OAuth.
+
+### Phase 2b-1.2 — no tokens on failed exchange
+
+See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
+
+1. **Bug fix**: failed post-consume validation (client_id / redirect_uri /
+   PKCE mismatch) no longer inserts access or refresh tokens into the
+   database. Previously, `exchange_oauth_authorization_code_for_tokens()`
+   was called before validation, inserting tokens regardless of outcome.
+2. **New flow**: validation runs against code metadata before code
+   consumption. Only when all checks pass does the transactional exchange
+   (consume code + insert tokens) execute.
+3. **Preserved semantics**: mismatched validation still consumes the
+   authorization code (preventing replay), but no tokens are minted.
+   Wrong `client_secret` is still rejected before code consumption.
+
+Not implemented: `/oauth/authorize`, `refresh_token` grant,
+`client_credentials` grant, `/oauth/revoke`, `/.well-known/*`,
+`OAuth2Verifier` real validation, MCP OAuth.

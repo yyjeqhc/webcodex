@@ -294,6 +294,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .hoop(AuthMiddleware)
         .push(Router::with_path("tools/list").post(runtime_http::tools_list))
         .push(Router::with_path("tools/call").post(runtime_http::tools_call))
+        .push(
+            Router::with_path("artifacts/import")
+                .post(runtime_http::import_conversation_files_to_project),
+        )
         .push(Router::with_path("codex/run").post(runtime_http::codex_run))
         .push(Router::with_path("jobs/status").post(runtime_http::job_status))
         .push(Router::with_path("jobs/log").post(runtime_http::job_log))

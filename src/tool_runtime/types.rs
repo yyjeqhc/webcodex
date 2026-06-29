@@ -266,6 +266,22 @@ pub enum ToolCall {
         expected_content_prefix: Option<String>,
     },
 
+    /// Write a binary artifact in a project via the owning agent. The payload is
+    /// base64-encoded and decoded by a fixed helper on the agent side.
+    SaveProjectArtifact {
+        project: String,
+        path: String,
+        content_base64: String,
+        #[serde(default)]
+        mime_type: Option<String>,
+        #[serde(default)]
+        overwrite: Option<bool>,
+    },
+
+    /// Read bounded metadata for a binary project artifact. Zip files are
+    /// counted but never extracted.
+    ReadProjectArtifactMetadata { project: String, path: String },
+
     /// Replace a 1-based inclusive line range in a UTF-8 file via the owning
     /// agent. The original range may be guarded by sha256 and/or prefix checks.
     ReplaceLineRange {
@@ -386,6 +402,8 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "validate_patch",
     "replace_in_file",
     "write_project_file",
+    "save_project_artifact",
+    "read_project_artifact_metadata",
     "replace_line_range",
     "insert_at_line",
     "delete_line_range",

@@ -988,6 +988,29 @@ impl ToolRuntime {
                 annotations: tool_annotations("write_project_file"),
             },
             ToolSpec {
+                name: "save_project_artifact".to_string(),
+                description: "Write a bounded binary project artifact from base64. Use for imported session files, generated images, PDFs, and zip files; not for UTF-8 source edits.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative output path.", true),
+                    ("content_base64", "string", "Base64-encoded binary content.", true),
+                    ("mime_type", "string", "Optional MIME type.", false),
+                    ("overwrite", "boolean", "Allow overwriting an existing file (default false).", false),
+                ]),
+                output_schema: output_schema_for_tool("save_project_artifact"),
+                annotations: tool_annotations("save_project_artifact"),
+            },
+            ToolSpec {
+                name: "read_project_artifact_metadata".to_string(),
+                description: "Read bounded metadata for a binary artifact; images include dimensions and zip archives are counted but never extracted.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative artifact path.", true),
+                ]),
+                output_schema: output_schema_for_tool("read_project_artifact_metadata"),
+                annotations: tool_annotations("read_project_artifact_metadata"),
+            },
+            ToolSpec {
                 name: "replace_line_range".to_string(),
                 description: "Preferred source-code edit tool for local changes with clear line numbers. Replaces a 1-based inclusive line range; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(vec![
@@ -1068,8 +1091,8 @@ impl ToolRuntime {
             ]),
             "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
             "edit": pick(&[
-                "replace_in_file", "write_project_file",
-                "replace_line_range", "insert_at_line", "delete_line_range",
+                "replace_in_file", "write_project_file", "save_project_artifact",
+                "read_project_artifact_metadata", "replace_line_range", "insert_at_line", "delete_line_range",
                 "apply_patch_checked"
             ]),
             "shell": pick(&["run_shell", "run_job", "cargo_fmt", "cargo_check", "cargo_test"]),

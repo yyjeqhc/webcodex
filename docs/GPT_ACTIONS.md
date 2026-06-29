@@ -12,24 +12,46 @@ GPT Actions and MCP share the same `ToolRuntime`; GPT Actions provides typed RES
 
 ## Create a GPT Action in ChatGPT
 
-The screenshots in `docs/assets/gpt-action-*.png` show the current ChatGPT UI flow:
+The existing `docs/assets/gpt-action-*.png` screenshots are suitable for the current deployment guide because they cover the full ChatGPT GPT builder path: open the editor, configure the GPT, add an Action, set Bearer authentication, and import the WebCodex OpenAPI schema. Treat them as UI landmarks rather than exact button-position requirements; ChatGPT may rename or move controls over time.
 
-![Open GPT editor](assets/gpt-action-1.png)
-![Configure GPT](assets/gpt-action-2.png)
-![Add an Action](assets/gpt-action-3.png)
-![Set Action authentication](assets/gpt-action-4.png)
-![Import OpenAPI schema](assets/gpt-action-5.png)
+Use the screenshots with the checklist below:
 
-1. Open ChatGPT, create or edit a GPT, then go to the GPT configuration screen.
-2. Open the **Actions** section and choose to create a new Action.
-3. In **Authentication**, choose API key / HTTP auth, set the auth type to **Bearer**, and paste a `wc_pat_xxx` personal API token. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
-4. In the schema/OpenAPI field, import or paste:
+1. **Open or create a GPT.**
+
+   ![Open GPT editor](assets/gpt-action-1.png)
+
+   Start from ChatGPT's GPT creation or edit flow.
+
+2. **Enter the GPT configuration screen.**
+
+   ![Configure GPT](assets/gpt-action-2.png)
+
+   Confirm you are editing the GPT's configuration, not an ordinary chat.
+
+3. **Open Actions and add an Action.**
+
+   ![Add an Action](assets/gpt-action-3.png)
+
+   Use the Actions section of the GPT builder; do not paste the OpenAPI schema into the GPT instructions.
+
+4. **Configure Action authentication.**
+
+   ![Set Action authentication](assets/gpt-action-4.png)
+
+   Choose API key / HTTP authentication, set the auth type to **Bearer**, and paste a `wc_pat_xxx` personal API token. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
+
+5. **Import the OpenAPI schema and required metadata.**
+
+   ![Import OpenAPI schema](assets/gpt-action-5.png)
+
+   Import or paste the schema URL:
 
    ```text
    https://your-domain.example/openapi.json
    ```
 
-5. Set the GPT privacy policy URL if the ChatGPT UI requires it. Use your own product or deployment privacy URL; do not put secrets in that URL.
+   Set the GPT privacy policy URL if the ChatGPT UI requires it. Use your own product or deployment privacy URL; do not put secrets in that URL.
+
 6. Save the Action, then test a harmless discovery call such as `getRuntimeStatus`, followed by `listProjects` and a read-only project call such as `getProjectGitStatus`.
 7. Use mutation tools only against a known disposable project until the GPT has been validated.
 

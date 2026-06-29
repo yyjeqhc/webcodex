@@ -106,13 +106,15 @@ either direction: Pong       { ts }
 
 - ALPN：`webcodex-agent/1`
 - `runtime_status` / `listAgents` 报告的 transport label：`quic`、`websocket` 或 `polling`。
-- Dispatch-capable QUIC agents 报告 `agent_protocol_version=quic-v2`。
+- QUIC agents 报告 `agent_protocol_version=quic-v1`。
+
+QUIC 是现有 agent envelope protocol 的另一种 transport。它在 QUIC 上使用 length-prefixed JSON `AgentEnvelope` stream，目标是镜像 WebSocket agent flow，而不是引入单独的 application protocol。
 
 当前模型是每个 agent connection 一个 bidirectional stream，frames 串行化。尚未实现 stream multiplexing。
 
 ## QUIC capabilities
 
-使用 `quic-v2` agent 时，QUIC 支持 WebCodex tools 使用的 runtime request loop，包括：
+使用 `quic-v1` agent 时，QUIC 支持 WebCodex tools 使用的 runtime request loop，包括：
 
 - file read/write/list requests；
 - git status/diff helpers；
@@ -120,8 +122,6 @@ either direction: Pong       { ts }
 - project register/create operations；
 - bounded shell commands；
 - async shell jobs、job status 和 job logs。
-
-旧的 `quic-v1` agents 只能 register，应升级后再使用。
 
 ## Validation
 
@@ -148,7 +148,7 @@ webcodex-cli doctor --quic --agent-e2e \
   --strict
 ```
 
-Server-only mode 会检查 HTTPS reachability、`runtime_status.quic`、UDP resolution、ALPN 和 certificate verification。Agent E2E mode 会确认 `transport=quic` / `agent_protocol_version=quic-v2` agent，运行 marker command，启动 async job，poll `job_status`，并读取 `job_log`。
+Server-only mode 会检查 HTTPS reachability、`runtime_status.quic`、UDP resolution、ALPN 和 certificate verification。Agent E2E mode 会确认 `transport=quic` / `agent_protocol_version=quic-v1` agent，运行 marker command，启动 async job，poll `job_status`，并读取 `job_log`。
 
 ## Fallback behavior
 
@@ -180,7 +180,7 @@ webcodex-agent registered client_id=... server=... preferred_transport=auto actu
 | handshake timeout | UDP firewall、security group、NAT 或 cloud provider network policy 阻断。 |
 | certificate verify failed | `server_name` 不匹配 certificate SAN，或 certificate chain 不受信任。 |
 | ALPN/handshake failed | Server/client ALPN 不一致，或 agent 连到了错误 UDP service。 |
-| no quic-v2 agent | Agent 仍在 fallback transport，`[quic]` 缺失或错误，或 agent binary 太旧。 |
+| no quic-v1 agent | Agent 仍在 fallback transport，`[quic]` 缺失或错误，或 agent binary 太旧。 |
 | `run_shell` succeeds but `run_job`/`job_log` fails | Async job/job_update/log path 需要排查。 |
 
 ## 尚未实现

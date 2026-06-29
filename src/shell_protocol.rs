@@ -51,17 +51,13 @@ pub const AGENT_PROTOCOL_VERSION_WEBSOCKET_V1: &str = "websocket-v1";
 /// Protocol version announced by `webcodex-agent` builds that connect over the
 /// custom QUIC stream transport. Kept in the shared protocol module so the
 /// server and the agent binary reference the same literal.
-/// Note: this is a *protocol* version label (reported in
-/// `agent_protocol_version`); the transport label is `"quic"` (see
+///
+/// `quic-v1` is the custom QUIC stream transport protocol version. It uses the
+/// same `AgentEnvelope` model for registration, keepalive, request dispatch,
+/// results, and job updates. The transport label remains `"quic"` (see
 /// `TRANSPORT_QUIC`).
 #[allow(dead_code)]
 pub const AGENT_PROTOCOL_VERSION_QUIC_V1: &str = "quic-v1";
-
-/// Dispatch-capable version of the custom QUIC stream transport. `quic-v1`
-/// is intentionally register/ack/ping/pong only; `quic-v2` may receive
-/// `Request` envelopes and return `Result` / `JobUpdate` envelopes.
-#[allow(dead_code)]
-pub const AGENT_PROTOCOL_VERSION_QUIC_V2: &str = "quic-v2";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ShellClientCapabilities {

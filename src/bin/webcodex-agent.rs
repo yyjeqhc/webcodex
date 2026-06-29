@@ -23,7 +23,7 @@ use shell_protocol::{
     ShellAgentPollResponse, ShellAgentProjectSummary, ShellAgentResultRequest,
     ShellAgentResultResponse, ShellAgentShellRequest, ShellClientCapabilities,
     ShellClientRegisterRequest, ShellClientRegisterResponse, ShellProfileSummaryEntry,
-    ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_QUIC_V2,
+    ShellProfilesSummary, AGENT_PROTOCOL_VERSION_POLLING_V1, AGENT_PROTOCOL_VERSION_QUIC_V1,
     AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
 };
 
@@ -4359,7 +4359,7 @@ async fn quic_session(
     let register_payload = build_register_request(
         cfg,
         projects,
-        AGENT_PROTOCOL_VERSION_QUIC_V2,
+        AGENT_PROTOCOL_VERSION_QUIC_V1,
         agent_instance_id,
         0,
     );
@@ -6904,22 +6904,22 @@ shell_profile = "../rust"
     }
 
     #[test]
-    fn build_register_request_announces_quic_v2_when_requested() {
+    fn build_register_request_announces_quic_v1_when_requested() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().join("config/projects.d"));
         let body = build_register_request(
             &cfg,
             Vec::new(),
-            AGENT_PROTOCOL_VERSION_QUIC_V2,
+            AGENT_PROTOCOL_VERSION_QUIC_V1,
             "inst-quic",
             0,
         );
         assert_eq!(body.agent_instance_id, "inst-quic");
         assert_eq!(
             body.agent_protocol_version.as_deref(),
-            Some(AGENT_PROTOCOL_VERSION_QUIC_V2)
+            Some(AGENT_PROTOCOL_VERSION_QUIC_V1)
         );
-        assert_eq!(body.agent_protocol_version.as_deref(), Some("quic-v2"));
+        assert_eq!(body.agent_protocol_version.as_deref(), Some("quic-v1"));
     }
 
     #[test]

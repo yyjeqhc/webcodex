@@ -109,13 +109,15 @@ either direction: Pong       { ts }
 
 - ALPN: `webcodex-agent/1`
 - Transport label reported in `runtime_status` / `listAgents`: `quic`, `websocket`, or `polling`.
-- Dispatch-capable QUIC agents report `agent_protocol_version=quic-v2`.
+- QUIC agents report `agent_protocol_version=quic-v1`.
+
+QUIC is an alternative transport for the existing agent envelope protocol. It uses a length-prefixed JSON `AgentEnvelope` stream over QUIC and is intended to mirror the WebSocket agent flow, not introduce a separate application protocol.
 
 The current model is one bidirectional stream per agent connection with serialized frames. Stream multiplexing is not implemented yet.
 
 ## Capabilities over QUIC
 
-With a `quic-v2` agent, QUIC supports the runtime request loop used by WebCodex tools, including:
+With a `quic-v1` agent, QUIC supports the runtime request loop used by WebCodex tools, including:
 
 - file read/write/list requests,
 - git status/diff helpers,
@@ -123,8 +125,6 @@ With a `quic-v2` agent, QUIC supports the runtime request loop used by WebCodex 
 - project register/create operations,
 - bounded shell commands,
 - async shell jobs, job status, and job logs.
-
-Older `quic-v1` agents are register-only and should be upgraded before use.
 
 ## Validation
 
@@ -151,7 +151,7 @@ webcodex-cli doctor --quic --agent-e2e \
   --strict
 ```
 
-The server-only mode checks HTTPS reachability, `runtime_status.quic`, UDP resolution, ALPN, and certificate verification. The agent E2E mode confirms a `transport=quic` / `agent_protocol_version=quic-v2` agent, runs a marker command, starts an async job, polls `job_status`, and reads `job_log`.
+The server-only mode checks HTTPS reachability, `runtime_status.quic`, UDP resolution, ALPN, and certificate verification. The agent E2E mode confirms a `transport=quic` / `agent_protocol_version=quic-v1` agent, runs a marker command, starts an async job, polls `job_status`, and reads `job_log`.
 
 ## Fallback behavior
 
@@ -183,7 +183,7 @@ webcodex-agent registered client_id=... server=... preferred_transport=auto actu
 | handshake timeout | UDP firewall, security group, NAT, or cloud provider network policy is blocking traffic. |
 | certificate verify failed | `server_name` does not match certificate SAN, or the certificate chain is not trusted. |
 | ALPN/handshake failed | Server/client ALPN differs, or the agent connected to the wrong UDP service. |
-| no quic-v2 agent | Agent is still on fallback transport, `[quic]` is missing or wrong, or the agent binary is old. |
+| no quic-v1 agent | Agent is still on fallback transport, `[quic]` is missing or wrong, or the agent binary is old. |
 | `run_shell` succeeds but `run_job`/`job_log` fails | Async job/job_update/log path needs debugging. |
 
 ## Still not implemented

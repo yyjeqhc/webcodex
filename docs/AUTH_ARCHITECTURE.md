@@ -442,8 +442,7 @@ Not implemented: `/oauth/authorize`, `client_credentials` grant,
    `Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource"`
    when OAuth2 is enabled with an issuer. 403 responses do not include it.
 6. **Authorization server metadata** (`/.well-known/oauth-authorization-server`)
-   is intentionally deferred until `/oauth/authorize` issues authorization
-   codes.
+   is intentionally deferred until the next metadata phase.
 
 ### Phase 2e-0 — authorization endpoint design contract
 
@@ -468,11 +467,12 @@ contract.
    `client.allowed_scopes` and the global OAuth scope registry. Empty
    requests default to the normalized intersection. `agent:*` and `admin` are
    not valid OAuth delegation scopes.
-6. **Code storage**: successful authorization will store only a hash of the
+6. **Code storage**: successful authorization stores only a hash of the
    `wc_oac_*` code in `oauth_authorization_codes` with user, client, redirect,
    scope, resource, PKCE, creation, expiry, unused, and unrevoked metadata.
+   The plaintext code appears only in the success redirect.
 7. **Metadata gate**: `/.well-known/oauth-authorization-server` remains
-   unexposed until `/oauth/authorize` issues codes and is tested.
+   unexposed until the next metadata phase.
 
 ### Phase 2e-1a — authorization helper groundwork
 
@@ -529,8 +529,31 @@ schemes, or GPT Action configuration.
 7. **State**: `state` is opaque. WebCodex does not interpret or trust it. The
    decoded value is preserved semantically and URL-encoded again on redirect
    errors.
-8. **Validation success**: a fully valid request returns HTTP 501 with
-   `authorization code issuance is not implemented yet`; it does not redirect
-   and does not create a code.
+8. **Validation success**: Phase 2e-1b returned HTTP 501 without creating a
+   code. Phase 2e-1c replaces that path with authorization code issuance.
 9. **Metadata gate**: `/.well-known/oauth-authorization-server` remains
-   unexposed until the authorize endpoint actually issues codes.
+   unexposed until the next metadata phase.
+
+### Phase 2e-1c — authorization code issuance
+
+Phase 2e-1c keeps the Phase 2e-1b validation boundary and implements the
+success path. It does not add login UI, consent UI, browser sessions,
+authorization server metadata, OpenID metadata, MCP security scheme changes,
+GPT Action configuration changes, or changes to `/oauth/token`,
+`/oauth/revoke`, `OAuth2Verifier`, or `AuthMiddleware` semantics.
+
+1. **Plaintext code**: successful `GET /oauth/authorize` generates a
+   `wc_oac_*` authorization code.
+2. **Hash-only storage**: only `hash_token(plaintext_code)` is stored in
+   `oauth_authorization_codes`, along with client, user, exact redirect URI,
+   normalized scopes, `resource = None`, PKCE S256 metadata, creation/expiry,
+   `used_at = None`, and `revoked_at = None`.
+3. **Success redirect**: the handler redirects to the validated
+   `redirect_uri` with `code` and optional decoded/re-encoded `state`. Existing
+   redirect URI query parameters are preserved and new parameters are appended
+   with URL query-pair encoding.
+4. **No token issuance**: `/oauth/authorize` does not return access or refresh
+   tokens. `/oauth/token` remains responsible for consuming the authorization
+   code and issuing `wc_oat_*` and `wc_ort_*` tokens.
+5. **Metadata gate**: `/.well-known/oauth-authorization-server` remains
+   intentionally unexposed until the next metadata phase.

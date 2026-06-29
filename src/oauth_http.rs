@@ -24,9 +24,12 @@
 //! - Only SHA-256 hashes are stored in the database.
 
 use crate::auth::{
-    generate_oauth_access_token, generate_oauth_refresh_token, hash_token, scopes, AuthContext,
+    generate_oauth_access_token, generate_oauth_authorization_code, generate_oauth_refresh_token,
+    hash_token, scopes, AuthContext,
 };
-use crate::models::{OAuthAccessTokenRecord, OAuthRefreshTokenRecord};
+use crate::models::{
+    OAuthAccessTokenRecord, OAuthAuthorizationCodeRecord, OAuthRefreshTokenRecord,
+};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use salvo::http::header::CONTENT_TYPE;
 use salvo::http::HeaderValue;
@@ -120,6 +123,58 @@ fn append_authorize_error_params(
     {
         let mut query = url.query_pairs_mut();
         query.append_pair("error", error);
+        if let Some(state) = state {
+            query.append_pair("state", state);
+        }
+    }
+    Ok(url.into())
+}
+
+fn redirect_with_authorization_code(
+    res: &mut Response,
+    redirect_uri: &str,
+    code: &str,
+    state: Option<&str>,
+) {
+    let location = match append_authorize_success_params(redirect_uri, code, state) {
+        Ok(location) => location,
+        Err(_) => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "invalid redirect_uri",
+            );
+            return;
+        }
+    };
+
+    let location = match HeaderValue::from_str(&location) {
+        Ok(location) => location,
+        Err(_) => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "invalid redirect_uri",
+            );
+            return;
+        }
+    };
+
+    res.status_code(StatusCode::FOUND);
+    res.headers_mut().insert("location", location);
+}
+
+fn append_authorize_success_params(
+    redirect_uri: &str,
+    code: &str,
+    state: Option<&str>,
+) -> Result<String, url::ParseError> {
+    let mut url = url::Url::parse(redirect_uri)?;
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("code", code);
         if let Some(state) = state {
             query.append_pair("state", state);
         }
@@ -268,11 +323,12 @@ fn redirect_error_for_missing_authorize_param(error: &OAuthAuthorizeError) -> &'
 // GET /oauth/authorize
 // ---------------------------------------------------------------------------
 
-/// Validation-only authorization endpoint for Phase 2e-1b.
+/// Authorization endpoint for Phase 2e-1c.
 ///
 /// The route is protected by `AuthMiddleware` in `main.rs`. This handler
 /// validates the request, client, redirect URI, PKCE, scope, and unsupported
-/// resource semantics, but intentionally does not issue authorization codes.
+/// resource semantics, then issues a hash-stored authorization code and
+/// redirects back to the validated redirect URI.
 #[handler]
 pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(config) = crate::auth::get_config(depot) else {
@@ -289,7 +345,7 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         oauth_authorize_direct_error(
             res,
             StatusCode::NOT_FOUND,
-            "server_error",
+            "invalid_request",
             "OAuth2 is not enabled",
         );
         return;
@@ -507,10 +563,13 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         return;
     }
 
-    if normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes).is_err() {
-        redirect_with_oauth_error(res, &redirect_uri, "invalid_scope", parsed.state.as_deref());
-        return;
-    }
+    let scopes = match normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
+        Ok(scopes) => scopes,
+        Err(_) => {
+            redirect_with_oauth_error(res, &redirect_uri, "invalid_scope", parsed.state.as_deref());
+            return;
+        }
+    };
 
     if parsed.resource.is_some() {
         redirect_with_oauth_error(
@@ -522,10 +581,49 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         return;
     }
 
-    res.status_code(StatusCode::NOT_IMPLEMENTED);
-    res.render(Json(serde_json::json!({
-        "error": "authorization code issuance is not implemented yet",
-    })));
+    let Some(user_id) = auth.user_id.clone() else {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::UNAUTHORIZED,
+            "invalid_request",
+            "authenticated user required",
+        );
+        return;
+    };
+
+    let now = chrono::Utc::now().timestamp();
+    let plaintext_code = generate_oauth_authorization_code();
+    let code_hash = hash_token(&plaintext_code);
+    let record = OAuthAuthorizationCodeRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        code_hash,
+        client_id: client.client_id.clone(),
+        user_id,
+        redirect_uri: redirect_uri.clone(),
+        scopes,
+        resource: None,
+        code_challenge: Some(parsed.code_challenge.clone()),
+        code_challenge_method: Some("S256".to_string()),
+        created_at: now,
+        expires_at: now + config.oauth2.authorization_code_ttl_secs,
+        used_at: None,
+        revoked_at: None,
+    };
+
+    if db
+        .insert_oauth_authorization_code(&record, &record.code_hash)
+        .is_err()
+    {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "internal error",
+        );
+        return;
+    }
+
+    redirect_with_authorization_code(res, &redirect_uri, &plaintext_code, parsed.state.as_deref());
 }
 
 // ---------------------------------------------------------------------------
@@ -1956,6 +2054,44 @@ mod tests {
         location
     }
 
+    async fn authorize_success(
+        service: &Service,
+        db: &crate::Database,
+        url: &str,
+        token: &str,
+    ) -> (Response, String, url::Url, String) {
+        let before = auth_code_count(db);
+        let resp = authorized_get(url, token).send(service).await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        assert_eq!(auth_code_count(db), before + 1);
+        let location = location_header(&resp).expect("success should set Location");
+        let parsed = url::Url::parse(&location).unwrap();
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        let code = params
+            .get("code")
+            .expect("success redirect should include code")
+            .clone();
+        assert!(code.starts_with("wc_oac_"));
+        assert!(!params.contains_key("access_token"));
+        assert!(!params.contains_key("refresh_token"));
+        (resp, location, parsed, code)
+    }
+
+    fn auth_code_by_plaintext(
+        db: &crate::Database,
+        plaintext_code: &str,
+    ) -> OAuthAuthorizationCodeRecord {
+        db.get_oauth_authorization_code_by_hash(&hash_token(plaintext_code))
+            .unwrap()
+            .expect("authorization code row should exist")
+    }
+
+    fn pkce_s256_challenge(code_verifier: &str) -> String {
+        let digest = Sha256::digest(code_verifier.as_bytes());
+        URL_SAFE_NO_PAD.encode(digest)
+    }
+
     fn seed_auth_code(
         db: &crate::Database,
         client: &OAuthClientRecord,
@@ -2089,7 +2225,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Validation-only authorization endpoint
+    // Authorization endpoint
     // -----------------------------------------------------------------------
 
     #[tokio::test]
@@ -2112,6 +2248,32 @@ mod tests {
         assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
         assert_no_location(&resp);
         assert_eq!(auth_code_count(&db), before);
+    }
+
+    #[tokio::test]
+    async fn authorize_oauth2_disabled_returns_404_invalid_request_without_code() {
+        let config = test_config(oauth2_disabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let before = auth_code_count(&db);
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+
+        let mut resp = authorized_get(&url, &token).send(&service).await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::NOT_FOUND));
+        assert_no_location(&resp);
+        assert_eq!(auth_code_count(&db), before);
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["error"], "invalid_request");
+        assert_eq!(body["error_description"], "OAuth2 is not enabled");
     }
 
     #[tokio::test]
@@ -2617,7 +2779,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authorize_validation_success_returns_501_without_issuing_code() {
+    async fn authorize_issues_code_and_redirects_with_state() {
         let config = test_config(oauth2_enabled());
         let (_tmp, db) = test_db();
         let user = seed_user(&db, "alice");
@@ -2632,20 +2794,221 @@ mod tests {
         let service = Service::new(build_router(config, db.clone()));
         let url = valid_authorize_url(&client, "https://example.com/callback");
 
-        let mut resp = authorized_get(&url, &token).send(&service).await;
+        let (_resp, location, parsed, code) = authorize_success(&service, &db, &url, &token).await;
 
-        assert_eq!(resp.status_code, Some(StatusCode::NOT_IMPLEMENTED));
-        assert_no_location(&resp);
-        assert_eq!(auth_code_count(&db), before);
-        let body: serde_json::Value = resp.take_json().await.unwrap();
-        assert_eq!(
-            body["error"],
-            "authorization code issuance is not implemented yet"
+        assert_eq!(auth_code_count(&db), before + 1);
+        assert!(location.starts_with("https://example.com/callback?code=wc_oac_"));
+        assert_eq!(parsed.scheme(), "https");
+        assert_eq!(parsed.host_str(), Some("example.com"));
+        assert_eq!(parsed.path(), "/callback");
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        assert_eq!(params.get("code").map(String::as_str), Some(code.as_str()));
+        assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
+    }
+
+    #[tokio::test]
+    async fn authorize_stores_only_code_hash() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+
+        let (_resp, _location, _parsed, code) =
+            authorize_success(&service, &db, &url, &token).await;
+        let record = auth_code_by_plaintext(&db, &code);
+
+        assert_ne!(record.code_hash, code);
+        assert_eq!(record.code_hash, hash_token(&code));
+        assert!(
+            !record.code_hash.contains(&code),
+            "hash field must not contain plaintext code"
+        );
+    }
+
+    #[tokio::test]
+    async fn authorize_code_contains_user_client_redirect_scope_pkce_metadata() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "project:read runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = authorize_url(&[
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://example.com/callback"),
+            ("scope", "project:read runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+        ]);
+
+        let (_resp, _location, _parsed, code) =
+            authorize_success(&service, &db, &url, &token).await;
+        let record = auth_code_by_plaintext(&db, &code);
+
+        assert_eq!(record.client_id, client.client_id);
+        assert_eq!(record.user_id, user.id);
+        assert_eq!(record.redirect_uri, "https://example.com/callback");
+        assert_eq!(record.scopes, "runtime:read project:read");
+        assert_eq!(record.resource, None);
+        assert_eq!(record.code_challenge.as_deref(), Some("challenge-1"));
+        assert_eq!(record.code_challenge_method.as_deref(), Some("S256"));
+        assert_eq!(record.used_at, None);
+        assert_eq!(record.revoked_at, None);
+        assert!(record.expires_at > record.created_at);
+    }
+
+    #[tokio::test]
+    async fn authorize_success_redirect_appends_with_ampersand_when_redirect_uri_has_query() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let redirect_uri = "https://client.example/callback?existing=1";
+        let client =
+            seed_client_with_redirects_and_scopes(&db, &user, redirect_uri, "runtime:read");
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, redirect_uri);
+
+        let (_resp, location, parsed, _code) = authorize_success(&service, &db, &url, &token).await;
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+
+        assert_eq!(params.get("existing").map(String::as_str), Some("1"));
+        assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
+        assert!(
+            location.contains("?existing=1&code=wc_oac_"),
+            "Location should append with &: {}",
+            location
         );
         assert!(
-            !body.as_object().unwrap().contains_key("code"),
-            "validation-only response must not include a code"
+            !location.contains("?existing=1?code="),
+            "Location must not append a second ?: {}",
+            location
         );
+    }
+
+    #[tokio::test]
+    async fn authorize_success_does_not_return_access_or_refresh_token() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+
+        let (mut resp, location, _parsed, _code) =
+            authorize_success(&service, &db, &url, &token).await;
+        let body = resp.take_string().await.unwrap_or_default();
+
+        assert!(!location.contains("access_token"));
+        assert!(!location.contains("refresh_token"));
+        assert!(!body.contains("access_token"));
+        assert!(!body.contains("refresh_token"));
+    }
+
+    #[tokio::test]
+    async fn authorize_success_preserves_decoded_state_semantics() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let state = "a b+c&d=1/中文";
+        let url = authorize_url(&[
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://example.com/callback"),
+            ("scope", "runtime:read"),
+            ("state", state),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+        ]);
+
+        let (_resp, _location, parsed, _code) =
+            authorize_success(&service, &db, &url, &token).await;
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        assert_eq!(params.get("state").map(String::as_str), Some(state));
+    }
+
+    #[tokio::test]
+    async fn authorize_success_code_can_be_exchanged_for_tokens() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let code_verifier = "dBjftJeZ4CVP-mB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        let code_challenge = pkce_s256_challenge(code_verifier);
+        let service = Service::new(build_router(config, db.clone()));
+        let url = authorize_url(&[
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://example.com/callback"),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", &code_challenge),
+            ("code_challenge_method", "S256"),
+        ]);
+
+        let (_resp, _location, parsed, code) = authorize_success(&service, &db, &url, &token).await;
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
+
+        let body = form_body(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", "https://example.com/callback"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+            ("code_verifier", code_verifier),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert!(json["access_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_oat_"));
+        assert!(json["refresh_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_ort_"));
+
+        let record = auth_code_by_plaintext(&db, &code);
+        assert!(record.used_at.is_some(), "authorization code consumed");
     }
 
     // -----------------------------------------------------------------------
@@ -4898,9 +5261,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_authorization_server_metadata_not_exposed_before_authorize() {
-        // /.well-known/oauth-authorization-server must not exist while
-        // /oauth/authorize is validation-only and does not issue codes.
+    async fn oauth_authorization_server_metadata_not_exposed_before_metadata_phase() {
+        // /.well-known/oauth-authorization-server remains intentionally gated
+        // until the metadata phase.
         let config = test_config(oauth2_enabled());
         let (_tmp, db) = test_db();
         let service = Service::new(build_router(config, db));
@@ -4910,7 +5273,7 @@ mod tests {
         assert_eq!(
             resp.status_code,
             Some(StatusCode::NOT_FOUND),
-            "authorization server metadata must not be exposed before /oauth/authorize issues codes"
+            "authorization server metadata must not be exposed before the metadata phase"
         );
     }
 

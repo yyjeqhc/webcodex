@@ -2,14 +2,13 @@
 
 ## Status
 
-Phase 2e-1b validation-only handler. `/oauth/authorize` is mounted behind
-`AuthMiddleware`, but authorization code issuance is not implemented yet.
+Phase 2e-1c authorization code issuance. `/oauth/authorize` is mounted behind
+`AuthMiddleware`; after successful validation it now issues an authorization
+code and redirects back to the validated client redirect URI.
 
 This document is the implementation contract for Phase 2e-1. It describes the
 request contract, state machine, security invariants, storage shape, and test
-plan for the future authorization endpoint. Phase 2e-1b wires the Phase 2e-1a
-helpers into an authenticated HTTP handler and route, while intentionally
-leaving authorization code issuance for a later phase.
+plan for the authorization endpoint.
 
 Implemented in Phase 2e-1a:
 
@@ -31,13 +30,20 @@ Implemented in Phase 2e-1b:
 - Redirect errors only after client and redirect URI validation.
 - `response_type=code`, PKCE S256, normalized scope, and unsupported
   `resource` validation.
-- Validation success returns `501 Not Implemented` with no redirect and no
-  authorization code issuance.
+- Validation-only success path, replaced by issuance in Phase 2e-1c.
+
+Implemented in Phase 2e-1c:
+
+- Successful validation generates a plaintext `wc_oac_*` authorization code.
+- Only `hash_token(plaintext_code)` and authorization metadata are stored in
+  `oauth_authorization_codes`.
+- Success redirects to the exact validated `redirect_uri` with `code` and
+  optional decoded/re-encoded `state`.
+- `/oauth/authorize` does not return access tokens or refresh tokens.
+- `/oauth/token` remains responsible for code consumption and token issuance.
 
 Still not implemented:
 
-- Authorization code generation or insertion into
-  `oauth_authorization_codes`.
 - Authorization server metadata
   (`/.well-known/oauth-authorization-server` or
   `/.well-known/openid-configuration`).
@@ -58,7 +64,6 @@ Still not implemented:
   validation only.
 - No HTML login page, username/password flow, consent page, or third-party
   cookie session.
-- No authorization code issuance in Phase 2e-0 through Phase 2e-1b.
 - No changes to `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, or
   `AuthMiddleware` behavior.
 - No `/.well-known/oauth-authorization-server` or
@@ -110,7 +115,7 @@ it to redirect responses.
 
 ## State Machine
 
-The future handler should follow this order:
+The handler follows this order:
 
 1. Require OAuth2 enabled. If disabled, return a direct error and create no
    code.
@@ -122,11 +127,10 @@ The future handler should follow this order:
 6. After the redirect target is trusted, validate `response_type`, PKCE,
    `scope`, and unsupported `resource`.
 7. On any validation failure, create no authorization code.
-8. In Phase 2e-1b, return `501 Not Implemented` on validation success and
-   create no code.
-9. In the later issuance phase, generate one plaintext `wc_oac_*` code, store
-   only its SHA-256 hash and metadata, and redirect once to the registered
-   redirect URI.
+8. Generate one plaintext `wc_oac_*` code, store only its SHA-256 hash and
+   metadata, and redirect once to the registered redirect URI.
+9. In a later metadata phase, expose authorization server metadata after the
+   authorize issuance behavior remains stable.
 
 ## Client And Redirect URI Validation
 
@@ -226,25 +230,17 @@ The row inserted into `oauth_authorization_codes` must include:
 
 ## Success Redirect
 
-Phase 2e-1b does not perform a success redirect. After all validation passes,
-it returns `501 Not Implemented` with:
-
-```json
-{
-  "error": "authorization code issuance is not implemented yet"
-}
-```
-
-No authorization code is generated or stored.
-
-In the later issuance phase, after storing the code, redirect to the validated
-registered `redirect_uri` with:
+After storing the code, redirect to the validated registered `redirect_uri`
+with:
 
 - `code=<plaintext wc_oac_*>`
 - `state=<decoded state re-encoded for the redirect>` when `state` was
   provided
 
 The authorize response must never include an access token or refresh token.
+If the registered redirect URI already has a query string, append `code` and
+`state` with `&` by using URL query-pair encoding rather than manual string
+concatenation.
 
 ## Error Handling
 
@@ -309,12 +305,14 @@ The implementation phase must add tests covering at least:
 - `authorize_rejects_resource_parameter`
 - `authorize_redirect_error_appends_with_ampersand_when_redirect_uri_has_query`
 - `authorize_redirect_error_preserves_decoded_state_semantics`
-- `authorize_validation_success_returns_501_without_issuing_code`
 - `authorize_issues_code_and_redirects_with_state`
 - `authorize_stores_only_code_hash`
 - `authorize_code_contains_user_client_redirect_scope_pkce_metadata`
+- `authorize_success_redirect_appends_with_ampersand_when_redirect_uri_has_query`
+- `authorize_success_does_not_return_access_or_refresh_token`
+- `authorize_success_code_can_be_exchanged_for_tokens`
 - `authorize_does_not_issue_code_on_any_error`
-- `authorization_server_metadata_not_exposed_before_authorize`
+- `authorization_server_metadata_not_exposed_before_metadata_phase`
 
 Additional useful tests:
 
@@ -322,12 +320,14 @@ Additional useful tests:
 - Empty default scope intersection returns `invalid_scope`.
 - `agent:*` and `admin` scopes are rejected.
 - `resource` is rejected while unsupported.
-- `state` round-trips as the same decoded opaque value on redirect errors.
+- `state` round-trips as the same decoded opaque value on success and error
+  redirects.
 
 ## Metadata Gating
 
-`/.well-known/oauth-authorization-server` must remain unexposed until
-`/oauth/authorize` issues authorization codes and the issuance tests pass.
+`/.well-known/oauth-authorization-server` remains intentionally unexposed
+until the next metadata phase, even though `/oauth/authorize` now issues
+authorization codes.
 
 After `/oauth/authorize` exists, authorization server metadata must only
 advertise endpoints and capabilities that are real. The minimum metadata
@@ -342,12 +342,11 @@ must include:
 - `token_endpoint_auth_methods_supported`
 - `scopes_supported`
 
-Do not advertise authorization server metadata while the browser authorization
-flow is validation-only.
+Do not advertise authorization server metadata until the next metadata phase.
 
 ## Implementation Sequencing
 
-Recommended Phase 2e-1 order:
+Completed Phase 2e-1 order:
 
 1. Add authorize request parsing and error types.
 2. Add scope normalization helper and tests.
@@ -355,10 +354,9 @@ Recommended Phase 2e-1 order:
 4. Implement client and exact redirect URI validation.
 5. Implement post-redirect-trust validation for `response_type`, PKCE,
    `scope`, and `resource`.
-6. Return `501 Not Implemented` on validation success without issuing a code.
-7. Insert hashed authorization code metadata in the later issuance phase.
-8. Redirect with plaintext `code` and decoded/re-encoded `state`.
-9. Add authorization server metadata only after issuance endpoint tests pass.
+6. Insert hashed authorization code metadata on validation success.
+7. Redirect with plaintext `code` and decoded/re-encoded `state`.
+8. Add authorization server metadata in the next metadata phase.
 
 ## Open Questions
 

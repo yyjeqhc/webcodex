@@ -2325,6 +2325,10 @@ fn is_line_edit_request_kind(kind: &str) -> bool {
     )
 }
 
+fn is_file_request_kind(kind: &str) -> bool {
+    matches!(kind, "file_read" | "file_write" | "file_list") || is_line_edit_request_kind(kind)
+}
+
 fn is_sensitive_line_edit_path(path: &str) -> bool {
     let mut components = path.split('/');
     components.any(|component| {
@@ -4186,12 +4190,7 @@ fn dispatch_request(
             }
             Ok(true)
         }
-        "file_read"
-        | "file_write"
-        | "file_list"
-        | "file_replace_line_range"
-        | "file_insert_at_line"
-        | "file_delete_line_range" => {
+        kind if is_file_request_kind(kind) => {
             let request_id = request.request_id.clone();
             let result = handle_file_request(policy, &request);
             sink.submit_result(request_id, result)
@@ -7792,6 +7791,77 @@ shell_profile = "../rust"
                 assert_eq!(payload.request_id, "req-dispatch");
                 assert_eq!(payload.exit_code, Some(0));
                 assert_eq!(payload.stdout.as_deref(), Some("quic-ok"));
+            }
+            other => panic!("expected result, got {:?}", other.kind()),
+        }
+    }
+
+    #[test]
+    fn file_request_kind_includes_anchor_edit_ops() {
+        for kind in [
+            "file_read",
+            "file_write",
+            "file_list",
+            "file_replace_line_range",
+            "file_insert_at_line",
+            "file_delete_line_range",
+            "file_replace_exact_block",
+            "file_insert_before_pattern",
+            "file_insert_after_pattern",
+        ] {
+            assert!(
+                is_file_request_kind(kind),
+                "{kind} should route to file handler"
+            );
+        }
+        assert!(!is_file_request_kind("run_shell"));
+    }
+
+    #[test]
+    fn dispatch_request_anchor_edit_routes_to_file_handler() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let cwd = tmp.path().to_string_lossy().to_string();
+        std::fs::write(tmp.path().join("anchor.txt"), "old block\n").unwrap();
+        let (sink, mut rx) = ws_sink("ws-client");
+        let jobs = JobManager::new(max_concurrent_jobs(&cfg));
+        let request = ShellAgentShellRequest {
+            request_id: "req-anchor".to_string(),
+            client_id: "ws-client".to_string(),
+            kind: "file_replace_exact_block".to_string(),
+            job_id: None,
+            cwd: Some(cwd),
+            path: Some("anchor.txt".to_string()),
+            content: Some("new block\n".to_string()),
+            max_bytes: None,
+            old_text: Some("old block\n".to_string()),
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            command: String::new(),
+            stdin: None,
+            timeout_secs: 10,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        };
+        let pdir = projects_dir(&cfg);
+        let ran = dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, &pdir, request).unwrap();
+        assert!(ran);
+        let env = rx.try_recv().expect("result envelope was sent");
+        match env {
+            AgentEnvelope::Result { payload } => {
+                assert_eq!(payload.request_id, "req-anchor");
+                assert_eq!(payload.exit_code, Some(0));
+                let stdout = payload.stdout.expect("file handler returns JSON stdout");
+                assert!(stdout.contains("\"changed\":true"), "stdout was {stdout}");
+                assert_eq!(
+                    std::fs::read_to_string(tmp.path().join("anchor.txt")).unwrap(),
+                    "new block\n"
+                );
             }
             other => panic!("expected result, got {:?}", other.kind()),
         }

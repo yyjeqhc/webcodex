@@ -1390,6 +1390,23 @@ impl ToolRuntime {
         Ok(())
     }
 
+    fn parse_anchor_edit_stdout(op: &str, stdout: Option<String>) -> Result<Value, String> {
+        let stdout = stdout.unwrap_or_default();
+        let stdout = stdout.trim();
+        if stdout.is_empty() {
+            return Err(format!(
+                "agent anchor edit returned empty stdout for {op}; connected agent may not support this file op or transport dispatch may have routed it incorrectly"
+            ));
+        }
+        serde_json::from_str(stdout).map_err(|e| {
+            format!(
+                "agent anchor edit returned invalid JSON: {} (got: {})",
+                e,
+                &stdout[..stdout.len().min(200)]
+            )
+        })
+    }
+
     async fn run_anchor_edit(
         &self,
         project: String,
@@ -1461,17 +1478,9 @@ impl ToolRuntime {
                 || format!("agent anchor edit failed with code {:?}", resp.exit_code),
             )));
         }
-        let stdout = resp.stdout.unwrap_or_default();
-        let stdout = stdout.trim();
-        let obj: Value = match serde_json::from_str(stdout) {
+        let obj = match Self::parse_anchor_edit_stdout(op, resp.stdout) {
             Ok(v) => v,
-            Err(e) => {
-                return ToolResult::err(format!(
-                    "agent anchor edit returned invalid JSON: {} (got: {})",
-                    e,
-                    &stdout[..stdout.len().min(200)]
-                ))
-            }
+            Err(e) => return ToolResult::err(e),
         };
         if let Some(err) = obj
             .get("error")
@@ -2236,5 +2245,14 @@ mod tests {
             std::fs::read(root.join("nested/out.txt")).expect("read written artifact"),
             b"hello"
         );
+    }
+
+    #[test]
+    fn parse_anchor_edit_stdout_rejects_empty_stdout_with_dispatch_hint() {
+        let err = ToolRuntime::parse_anchor_edit_stdout("replace_exact_block", Some(String::new()))
+            .expect_err("empty stdout should be rejected before JSON parsing");
+        assert!(err.contains("empty stdout"), "{err}");
+        assert!(err.contains("replace_exact_block"), "{err}");
+        assert!(err.contains("transport dispatch"), "{err}");
     }
 }

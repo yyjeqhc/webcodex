@@ -38,6 +38,7 @@ pub(crate) use config::load_startup_env_files;
 pub(crate) use config::parse_env_file_line;
 pub use config::CodexConfig;
 pub use config::Config;
+pub use config::OAuth2Config;
 pub use db::Database;
 pub use models::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
@@ -656,6 +657,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         assert!(config.is_auth_enabled());
         assert!(config.validate_token("secret123"));
@@ -673,6 +675,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         assert!(!config.is_auth_enabled());
         // When no token is set, validation always returns false

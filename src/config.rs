@@ -10,6 +10,7 @@ pub struct Config {
     pub max_text_size: usize,
     pub max_file_size: usize,
     pub codex: CodexConfig,
+    pub oauth2: OAuth2Config,
 }
 
 /// Server-side QUIC agent transport configuration. Sourced from
@@ -353,6 +354,84 @@ pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
     Ok(loaded)
 }
 
+/// OAuth2 server configuration, sourced from `WEBCODEX_OAUTH2_*` env vars.
+///
+/// This is a standalone config struct (like [`QuicServerConfig`]) so existing
+/// `Config { ... }` literals are untouched. OAuth2 is **disabled by default**;
+/// operators must explicitly set `WEBCODEX_OAUTH2_ENABLED=true`.
+///
+/// The first OAuth2 implementation uses opaque DB-backed tokens. JWT/JWKS/OIDC
+/// can be added later as an extension.
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct OAuth2Config {
+    /// Public issuer URL for `/.well-known/*` metadata. Defaults to
+    /// `WEBCODEX_PUBLIC_URL` if set, otherwise `None`.
+    pub issuer: Option<String>,
+    /// Whether the OAuth2 subsystem is active. Default `false`.
+    pub enabled: bool,
+    /// Access token time-to-live in seconds. Default `3600` (1 hour).
+    pub access_token_ttl_secs: i64,
+    /// Refresh token time-to-live in seconds. Default `2592000` (30 days).
+    pub refresh_token_ttl_secs: i64,
+    /// Authorization code time-to-live in seconds. Default `300` (5 minutes).
+    pub authorization_code_ttl_secs: i64,
+    /// Whether PKCE (S256) is required for authorization code flows. Default
+    /// `true`.
+    pub require_pkce: bool,
+}
+
+impl Default for OAuth2Config {
+    fn default() -> Self {
+        Self {
+            issuer: None,
+            enabled: false,
+            access_token_ttl_secs: 3600,
+            refresh_token_ttl_secs: 2_592_000,
+            authorization_code_ttl_secs: 300,
+            require_pkce: true,
+        }
+    }
+}
+
+impl OAuth2Config {
+    pub fn from_env() -> Self {
+        let enabled = env_flag("WEBCODEX_OAUTH2_ENABLED").unwrap_or(false);
+        let issuer = std::env::var("WEBCODEX_PUBLIC_URL")
+            .ok()
+            .filter(|v| !v.trim().is_empty())
+            .or_else(|| {
+                std::env::var("WEBCODEX_OAUTH2_ISSUER")
+                    .ok()
+                    .filter(|v| !v.trim().is_empty())
+            });
+        let access_token_ttl_secs = std::env::var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(3600);
+        let refresh_token_ttl_secs = std::env::var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(2_592_000);
+        let authorization_code_ttl_secs = std::env::var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS")
+            .ok()
+            .and_then(|v| v.trim().parse::<i64>().ok())
+            .filter(|v| *v > 0)
+            .unwrap_or(300);
+        let require_pkce = env_flag("WEBCODEX_OAUTH2_REQUIRE_PKCE").unwrap_or(true);
+        Self {
+            issuer,
+            enabled,
+            access_token_ttl_secs,
+            refresh_token_ttl_secs,
+            authorization_code_ttl_secs,
+            require_pkce,
+        }
+    }
+}
+
 impl Config {
     pub fn from_env() -> Self {
         Self {
@@ -365,6 +444,7 @@ impl Config {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: CodexConfig::from_env(),
+            oauth2: OAuth2Config::from_env(),
         }
     }
 
@@ -584,6 +664,69 @@ mod tests {
 
         std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
         std::env::remove_var("CODEX_MAX_PROMPT_BYTES");
+    }
+
+    #[test]
+    fn oauth2_config_defaults_to_disabled() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_OAUTH2_ENABLED");
+        std::env::remove_var("WEBCODEX_PUBLIC_URL");
+        std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
+        std::env::remove_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS");
+        std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
+        std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
+        std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
+
+        let cfg = OAuth2Config::from_env();
+        assert!(!cfg.enabled);
+        assert!(cfg.issuer.is_none());
+        assert_eq!(cfg.access_token_ttl_secs, 3600);
+        assert_eq!(cfg.refresh_token_ttl_secs, 2_592_000);
+        assert_eq!(cfg.authorization_code_ttl_secs, 300);
+        assert!(cfg.require_pkce);
+    }
+
+    #[test]
+    fn oauth2_config_from_env_parses_overrides() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_OAUTH2_ENABLED", "true");
+        std::env::set_var("WEBCODEX_PUBLIC_URL", "https://example.com");
+        std::env::set_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS", "1800");
+        std::env::set_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "86400");
+        std::env::set_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "600");
+        std::env::set_var("WEBCODEX_OAUTH2_REQUIRE_PKCE", "false");
+
+        let cfg = OAuth2Config::from_env();
+        assert!(cfg.enabled);
+        assert_eq!(cfg.issuer.as_deref(), Some("https://example.com"));
+        assert_eq!(cfg.access_token_ttl_secs, 1800);
+        assert_eq!(cfg.refresh_token_ttl_secs, 86400);
+        assert_eq!(cfg.authorization_code_ttl_secs, 600);
+        assert!(!cfg.require_pkce);
+
+        std::env::remove_var("WEBCODEX_OAUTH2_ENABLED");
+        std::env::remove_var("WEBCODEX_PUBLIC_URL");
+        std::env::remove_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS");
+        std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
+        std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
+        std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
+    }
+
+    #[test]
+    fn oauth2_config_issuer_prefers_public_url_over_issuer_env() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_PUBLIC_URL", "https://pub.example.com");
+        std::env::set_var("WEBCODEX_OAUTH2_ISSUER", "https://issuer.example.com");
+
+        let cfg = OAuth2Config::from_env();
+        assert_eq!(cfg.issuer.as_deref(), Some("https://pub.example.com"));
+
+        std::env::remove_var("WEBCODEX_PUBLIC_URL");
+        // Falls back to WEBCODEX_OAUTH2_ISSUER when PUBLIC_URL is absent.
+        let cfg = OAuth2Config::from_env();
+        assert_eq!(cfg.issuer.as_deref(), Some("https://issuer.example.com"));
+
+        std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
     }
 
     #[test]

@@ -53,7 +53,7 @@ pub(crate) mod pat;
 // All items that were previously exported from `auth.rs` are re-exported here
 // so that existing `use crate::auth::*` imports continue to work.
 
-pub use principal::{AuthError, Principal};
+pub use principal::{AuthError, AuthMethod, Principal};
 
 pub use scopes::{
     AGENT_SCOPES, SCOPE_ACCOUNT_MANAGE, SCOPE_ADMIN, SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL,
@@ -64,8 +64,10 @@ pub use scopes::{
 pub(crate) use scopes::{is_agent_scope, scopes_to_string, validate_agent_scopes, validate_scopes};
 
 pub(crate) use pat::{
-    generate_account_credential, generate_agent_token, generate_api_token, hash_token,
-    token_prefix, validate_allowed_client_id, validate_role, validate_username,
+    generate_account_credential, generate_agent_token, generate_api_token,
+    generate_oauth_access_token, generate_oauth_authorization_code, generate_oauth_client_id,
+    generate_oauth_client_secret, generate_oauth_refresh_token, hash_token, token_prefix,
+    validate_allowed_client_id, validate_role, validate_username,
 };
 
 // ---------------------------------------------------------------------------
@@ -853,6 +855,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         })
     }
 
@@ -1375,6 +1378,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let verifier = PatVerifier;
         let result = verifier.verify(&config, None, "anything").await.unwrap();
@@ -1393,6 +1397,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let verifier = PatVerifier;
         let result = verifier.verify(&config, None, "secret").await.unwrap();
@@ -1410,6 +1415,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let verifier = PatVerifier;
         let result = verifier
@@ -1432,6 +1438,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let verifier = OAuth2Verifier;
         let result = verifier
@@ -1544,6 +1551,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let result = authenticate(&config, None, "anything").await.unwrap();
         let ctx = result.expect("should return bootstrap context");
@@ -1561,6 +1569,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let result = authenticate(&config, None, "secret").await.unwrap();
         let ctx = result.expect("should return bootstrap context");
@@ -1578,6 +1587,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let result = authenticate(&config, None, "wc_pat_bogus").await.unwrap();
         assert!(
@@ -1596,6 +1606,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let (_tmp, db) = gate_test_db();
         let result = authenticate(&config, Some(&db), "wc_pat_bogus")
@@ -1713,6 +1724,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let result = authenticate_bearer(&config, None, Some("anything")).await;
         let ctx = result.expect("should return bootstrap context");
@@ -1729,6 +1741,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let result = authenticate_bearer(&config, None, Some("secret")).await;
         let ctx = result.expect("should return bootstrap context");
@@ -1745,6 +1758,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         };
         let result = authenticate_bearer(&config, None, None).await;
         assert!(result.is_none(), "no token should return None");

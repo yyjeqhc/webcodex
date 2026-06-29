@@ -706,6 +706,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         })
     }
 
@@ -773,6 +774,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         });
         let registry = Arc::new(ShellClientRegistry::default());
 
@@ -1411,6 +1413,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         });
         let registry = Arc::new(ShellClientRegistry::default());
         let serve_registry = registry.clone();
@@ -1468,6 +1471,7 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
         });
         let registry = Arc::new(ShellClientRegistry::default());
         let serve_registry = registry.clone();

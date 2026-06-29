@@ -1,4 +1,7 @@
-use crate::models::{AccountCredentialRecord, ApiKeyRecord, PairingCodeRecord, UserRecord};
+use crate::models::{
+    AccountCredentialRecord, ApiKeyRecord, OAuthAccessTokenRecord, OAuthAuthorizationCodeRecord,
+    OAuthClientRecord, OAuthRefreshTokenRecord, PairingCodeRecord, UserRecord,
+};
 use crate::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
     CodexGoalRecord, CommandAuditRecord, Message, MessageKind,
@@ -367,6 +370,83 @@ impl Database {
         // place. Fresh DBs already declare the new columns in CREATE TABLE
         // above; this block migrates pre-existing DBs forward without dropping
         // data or breaking audit/jobs/project tables.
+        // Phase 2a: OAuth2 tables for opaque DB-backed tokens.
+        conn.execute_batch(
+            "
+            CREATE TABLE IF NOT EXISTS oauth_clients (
+                id TEXT PRIMARY KEY,
+                client_id TEXT NOT NULL UNIQUE,
+                client_secret_hash TEXT NOT NULL,
+                name TEXT NOT NULL,
+                owner_user_id TEXT NOT NULL,
+                redirect_uris TEXT NOT NULL DEFAULT '',
+                allowed_scopes TEXT NOT NULL DEFAULT '',
+                created_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                FOREIGN KEY(owner_user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_oauth_clients_client_id ON oauth_clients(client_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_clients_owner ON oauth_clients(owner_user_id);
+
+            CREATE TABLE IF NOT EXISTS oauth_authorization_codes (
+                id TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL UNIQUE,
+                client_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                redirect_uri TEXT NOT NULL,
+                scopes TEXT NOT NULL DEFAULT '',
+                code_challenge TEXT,
+                code_challenge_method TEXT,
+                resource TEXT,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                used_at INTEGER,
+                revoked_at INTEGER,
+                FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_hash ON oauth_authorization_codes(code_hash);
+            CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_authorization_codes(client_id);
+
+            CREATE TABLE IF NOT EXISTS oauth_access_tokens (
+                id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                client_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                scopes TEXT NOT NULL DEFAULT '',
+                resource TEXT,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                last_used_at INTEGER,
+                FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_hash ON oauth_access_tokens(token_hash);
+            CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_client ON oauth_access_tokens(client_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_user ON oauth_access_tokens(user_id);
+
+            CREATE TABLE IF NOT EXISTS oauth_refresh_tokens (
+                id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                client_id TEXT NOT NULL,
+                user_id TEXT NOT NULL,
+                scopes TEXT NOT NULL DEFAULT '',
+                resource TEXT,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                last_used_at INTEGER,
+                rotated_from_id TEXT,
+                FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_hash ON oauth_refresh_tokens(token_hash);
+            CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client ON oauth_refresh_tokens(client_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_user ON oauth_refresh_tokens(user_id);
+            ",
+        )?;
+
         Self::migrate_users_and_api_keys(&conn)?;
         conn.execute_batch(
             "
@@ -1569,6 +1649,292 @@ impl Database {
     }
 }
 
+// ---------------------------------------------------------------------------
+// OAuth2 CRUD helpers — Phase 2a
+// ---------------------------------------------------------------------------
+
+impl Database {
+    // --- OAuth clients ---
+
+    pub fn insert_oauth_client(
+        &self,
+        record: &OAuthClientRecord,
+        client_secret_hash: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oauth_clients (
+                id, client_id, client_secret_hash, name, owner_user_id,
+                redirect_uris, allowed_scopes, created_at, revoked_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            params![
+                record.id,
+                record.client_id,
+                client_secret_hash,
+                record.name,
+                record.owner_user_id,
+                record.redirect_uris,
+                record.allowed_scopes,
+                record.created_at,
+                record.revoked_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_oauth_client_by_client_id(
+        &self,
+        client_id: &str,
+    ) -> anyhow::Result<Option<OAuthClientRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, client_id, client_secret_hash, name, owner_user_id,
+                    redirect_uris, allowed_scopes, created_at, revoked_at
+             FROM oauth_clients WHERE client_id = ?1 AND revoked_at IS NULL",
+        )?;
+        let mut rows = stmt.query_map(params![client_id], row_to_oauth_client)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_oauth_client_by_id(&self, id: &str) -> anyhow::Result<Option<OAuthClientRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, client_id, client_secret_hash, name, owner_user_id,
+                    redirect_uris, allowed_scopes, created_at, revoked_at
+             FROM oauth_clients WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![id], row_to_oauth_client)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn revoke_oauth_client(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oauth_clients SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+
+    /// Verify that `plaintext_secret` matches the stored hash for the given
+    /// client. Returns `true` if the hash matches, `false` otherwise. Does not
+    /// leak the hash or plaintext on mismatch.
+    pub fn verify_oauth_client_secret(
+        &self,
+        client_id: &str,
+        plaintext_secret: &str,
+    ) -> anyhow::Result<bool> {
+        let client = self.get_oauth_client_by_client_id(client_id)?;
+        let Some(client) = client else {
+            return Ok(false);
+        };
+        let computed = crate::auth::hash_token(plaintext_secret);
+        Ok(computed == client.client_secret_hash)
+    }
+
+    // --- OAuth authorization codes ---
+
+    pub fn insert_oauth_authorization_code(
+        &self,
+        record: &OAuthAuthorizationCodeRecord,
+        code_hash: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oauth_authorization_codes (
+                id, code_hash, client_id, user_id, redirect_uri, scopes,
+                code_challenge, code_challenge_method, resource,
+                created_at, expires_at, used_at, revoked_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            params![
+                record.id,
+                code_hash,
+                record.client_id,
+                record.user_id,
+                record.redirect_uri,
+                record.scopes,
+                record.code_challenge,
+                record.code_challenge_method,
+                record.resource,
+                record.created_at,
+                record.expires_at,
+                record.used_at,
+                record.revoked_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_oauth_authorization_code_by_hash(
+        &self,
+        code_hash: &str,
+    ) -> anyhow::Result<Option<OAuthAuthorizationCodeRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, code_hash, client_id, user_id, redirect_uri, scopes,
+                    code_challenge, code_challenge_method, resource,
+                    created_at, expires_at, used_at, revoked_at
+             FROM oauth_authorization_codes
+             WHERE code_hash = ?1 AND revoked_at IS NULL",
+        )?;
+        let mut rows = stmt.query_map(params![code_hash], row_to_oauth_authorization_code)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn mark_oauth_authorization_code_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oauth_authorization_codes SET used_at = ?2 WHERE id = ?1 AND used_at IS NULL",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+
+    pub fn revoke_oauth_authorization_code(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oauth_authorization_codes SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+
+    // --- OAuth access tokens ---
+
+    pub fn insert_oauth_access_token(&self, record: &OAuthAccessTokenRecord) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oauth_access_tokens (
+                id, token_hash, client_id, user_id, scopes, resource,
+                created_at, expires_at, revoked_at, last_used_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                record.id,
+                record.token_hash,
+                record.client_id,
+                record.user_id,
+                record.scopes,
+                record.resource,
+                record.created_at,
+                record.expires_at,
+                record.revoked_at,
+                record.last_used_at,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_oauth_access_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> anyhow::Result<Option<OAuthAccessTokenRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at
+             FROM oauth_access_tokens
+             WHERE token_hash = ?1 AND revoked_at IS NULL",
+        )?;
+        let mut rows = stmt.query_map(params![token_hash], row_to_oauth_access_token)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_oauth_access_token_last_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oauth_access_tokens SET last_used_at = ?2 WHERE id = ?1",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+
+    pub fn revoke_oauth_access_token(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oauth_access_tokens SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+
+    // --- OAuth refresh tokens ---
+
+    pub fn insert_oauth_refresh_token(
+        &self,
+        record: &OAuthRefreshTokenRecord,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO oauth_refresh_tokens (
+                id, token_hash, client_id, user_id, scopes, resource,
+                created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            params![
+                record.id,
+                record.token_hash,
+                record.client_id,
+                record.user_id,
+                record.scopes,
+                record.resource,
+                record.created_at,
+                record.expires_at,
+                record.revoked_at,
+                record.last_used_at,
+                record.rotated_from_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_oauth_refresh_token_by_hash(
+        &self,
+        token_hash: &str,
+    ) -> anyhow::Result<Option<OAuthRefreshTokenRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+             FROM oauth_refresh_tokens
+             WHERE token_hash = ?1 AND revoked_at IS NULL",
+        )?;
+        let mut rows = stmt.query_map(params![token_hash], row_to_oauth_refresh_token)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn update_oauth_refresh_token_last_used(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oauth_refresh_tokens SET last_used_at = ?2 WHERE id = ?1",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+
+    pub fn revoke_oauth_refresh_token(&self, id: &str, ts: i64) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE oauth_refresh_tokens SET revoked_at = COALESCE(revoked_at, ?2) WHERE id = ?1",
+            params![id, ts],
+        )?;
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 impl Database {
     /// Test-only access to the underlying connection so tests can assert on
@@ -1628,6 +1994,71 @@ fn row_to_account_credential(row: &rusqlite::Row) -> rusqlite::Result<AccountCre
         created_at: row.get(3)?,
         last_used_at: row.get(4)?,
         revoked_at: row.get(5)?,
+    })
+}
+
+fn row_to_oauth_client(row: &rusqlite::Row) -> rusqlite::Result<OAuthClientRecord> {
+    Ok(OAuthClientRecord {
+        id: row.get(0)?,
+        client_id: row.get(1)?,
+        client_secret_hash: row.get(2)?,
+        name: row.get(3)?,
+        owner_user_id: row.get(4)?,
+        redirect_uris: row.get(5)?,
+        allowed_scopes: row.get(6)?,
+        created_at: row.get(7)?,
+        revoked_at: row.get(8)?,
+    })
+}
+
+fn row_to_oauth_authorization_code(
+    row: &rusqlite::Row,
+) -> rusqlite::Result<OAuthAuthorizationCodeRecord> {
+    Ok(OAuthAuthorizationCodeRecord {
+        id: row.get(0)?,
+        code_hash: row.get(1)?,
+        client_id: row.get(2)?,
+        user_id: row.get(3)?,
+        redirect_uri: row.get(4)?,
+        scopes: row.get(5)?,
+        code_challenge: row.get(6)?,
+        code_challenge_method: row.get(7)?,
+        resource: row.get(8)?,
+        created_at: row.get(9)?,
+        expires_at: row.get(10)?,
+        used_at: row.get(11)?,
+        revoked_at: row.get(12)?,
+    })
+}
+
+fn row_to_oauth_access_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthAccessTokenRecord> {
+    Ok(OAuthAccessTokenRecord {
+        id: row.get(0)?,
+        token_hash: row.get(1)?,
+        client_id: row.get(2)?,
+        user_id: row.get(3)?,
+        scopes: row.get(4)?,
+        resource: row.get(5)?,
+        created_at: row.get(6)?,
+        expires_at: row.get(7)?,
+        revoked_at: row.get(8)?,
+        last_used_at: row.get(9)?,
+    })
+}
+
+fn row_to_oauth_refresh_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthRefreshTokenRecord> {
+    Ok(OAuthRefreshTokenRecord {
+        id: row.get(0)?,
+        token_hash: row.get(1)?,
+        client_id: row.get(2)?,
+        user_id: row.get(3)?,
+        scopes: row.get(4)?,
+        resource: row.get(5)?,
+        created_at: row.get(6)?,
+        expires_at: row.get(7)?,
+        revoked_at: row.get(8)?,
+        last_used_at: row.get(9)?,
+        rotated_from_id: row.get(10)?,
     })
 }
 
@@ -2115,5 +2546,495 @@ mod tests {
             agents.iter().all(|k| k.allowed_client_id.is_some()),
             "agent tokens must have allowed_client_id"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Phase 2a: OAuth2 database tests
+    // -----------------------------------------------------------------------
+
+    fn oauth_seed_user(db: &Database, username: &str) -> UserRecord {
+        let now = chrono::Utc::now().timestamp();
+        let user = UserRecord {
+            id: format!("u-{}", username),
+            username: username.to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        };
+        db.create_user(&user).unwrap();
+        user
+    }
+
+    fn oauth_seed_client(
+        db: &Database,
+        user: &UserRecord,
+        name: &str,
+    ) -> (OAuthClientRecord, String) {
+        let now = chrono::Utc::now().timestamp();
+        let plaintext_secret = crate::auth::generate_oauth_client_secret();
+        let secret_hash = crate::auth::hash_token(&plaintext_secret);
+        let record = OAuthClientRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            client_id: crate::auth::generate_oauth_client_id(),
+            client_secret_hash: secret_hash.clone(),
+            name: name.to_string(),
+            owner_user_id: user.id.clone(),
+            redirect_uris: "https://example.com/callback".to_string(),
+            allowed_scopes: "runtime:read project:read".to_string(),
+            created_at: now,
+            revoked_at: None,
+        };
+        db.insert_oauth_client(&record, &secret_hash).unwrap();
+        (record, plaintext_secret)
+    }
+
+    #[test]
+    fn fresh_database_creates_oauth_tables() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let conn = db.conn_for_tests();
+        // All four OAuth2 tables must exist.
+        for table in [
+            "oauth_clients",
+            "oauth_authorization_codes",
+            "oauth_access_tokens",
+            "oauth_refresh_tokens",
+        ] {
+            let count: i64 = conn
+                .query_row(&format!("SELECT COUNT(*) FROM {}", table), [], |row| {
+                    row.get(0)
+                })
+                .unwrap();
+            assert_eq!(count, 0, "table {} should be empty", table);
+        }
+    }
+
+    #[test]
+    fn can_insert_and_get_oauth_client() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _secret) = oauth_seed_client(&db, &user, "Test App");
+
+        let fetched = db
+            .get_oauth_client_by_client_id(&client.client_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.name, "Test App");
+        assert_eq!(fetched.owner_user_id, user.id);
+        assert!(!fetched.is_revoked());
+        assert_eq!(
+            fetched.redirect_uris_vec(),
+            vec!["https://example.com/callback"]
+        );
+    }
+
+    #[test]
+    fn verify_oauth_client_secret_works() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, plaintext_secret) = oauth_seed_client(&db, &user, "Test App");
+
+        // Correct secret verifies.
+        assert!(db
+            .verify_oauth_client_secret(&client.client_id, &plaintext_secret)
+            .unwrap());
+        // Wrong secret rejects.
+        assert!(!db
+            .verify_oauth_client_secret(&client.client_id, "wrong-secret")
+            .unwrap());
+        // Unknown client_id rejects.
+        assert!(!db
+            .verify_oauth_client_secret("wc_client_nonexistent", &plaintext_secret)
+            .unwrap());
+    }
+
+    #[test]
+    fn revoked_oauth_client_not_returned_by_lookup() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        db.revoke_oauth_client(&client.id, 100).unwrap();
+        // get_oauth_client_by_client_id filters revoked clients.
+        assert!(db
+            .get_oauth_client_by_client_id(&client.client_id)
+            .unwrap()
+            .is_none());
+        // get_oauth_client_by_id still returns it.
+        let revoked = db.get_oauth_client_by_id(&client.id).unwrap().unwrap();
+        assert!(revoked.is_revoked());
+    }
+
+    #[test]
+    fn can_insert_and_get_authorization_code_by_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_code = crate::auth::generate_oauth_authorization_code();
+        let code_hash = crate::auth::hash_token(&plaintext_code);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: code_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_string()),
+            code_challenge_method: Some("S256".to_string()),
+            resource: None,
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&record, &code_hash)
+            .unwrap();
+
+        let fetched = db
+            .get_oauth_authorization_code_by_hash(&code_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.client_id, client.client_id);
+        assert_eq!(fetched.user_id, user.id);
+        assert!(!fetched.is_used());
+        assert!(!fetched.is_expired(now));
+        assert!(fetched.is_expired(now + 301));
+        assert_eq!(
+            fetched.code_challenge.as_deref(),
+            Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
+        );
+        assert_eq!(fetched.code_challenge_method.as_deref(), Some("S256"));
+    }
+
+    #[test]
+    fn can_mark_authorization_code_used() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_code = crate::auth::generate_oauth_authorization_code();
+        let code_hash = crate::auth::hash_token(&plaintext_code);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: code_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            resource: None,
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&record, &code_hash)
+            .unwrap();
+
+        // Mark as used.
+        db.mark_oauth_authorization_code_used(&record.id, now + 10)
+            .unwrap();
+        let fetched = db
+            .get_oauth_authorization_code_by_hash(&code_hash)
+            .unwrap()
+            .unwrap();
+        assert!(fetched.is_used());
+        assert_eq!(fetched.used_at, Some(now + 10));
+    }
+
+    #[test]
+    fn can_insert_and_get_access_token_by_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_token = crate::auth::generate_oauth_access_token();
+        let token_hash = crate::auth::hash_token(&plaintext_token);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: token_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+
+        let fetched = db
+            .get_oauth_access_token_by_hash(&token_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.client_id, client.client_id);
+        assert_eq!(fetched.user_id, user.id);
+        assert!(!fetched.is_revoked());
+        assert!(!fetched.is_expired(now));
+        assert!(fetched.is_expired(now + 3601));
+        assert!(fetched.last_used_at.is_none());
+    }
+
+    #[test]
+    fn can_update_access_token_last_used() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_token = crate::auth::generate_oauth_access_token();
+        let token_hash = crate::auth::hash_token(&plaintext_token);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: token_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+
+        db.update_oauth_access_token_last_used(&record.id, now + 60)
+            .unwrap();
+        let fetched = db
+            .get_oauth_access_token_by_hash(&token_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.last_used_at, Some(now + 60));
+    }
+
+    #[test]
+    fn can_revoke_access_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_token = crate::auth::generate_oauth_access_token();
+        let token_hash = crate::auth::hash_token(&plaintext_token);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: token_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+
+        db.revoke_oauth_access_token(&record.id, now + 100).unwrap();
+        // Revoked token is not returned by hash lookup.
+        assert!(db
+            .get_oauth_access_token_by_hash(&token_hash)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn can_insert_and_get_refresh_token_by_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_token = crate::auth::generate_oauth_refresh_token();
+        let token_hash = crate::auth::hash_token(&plaintext_token);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: token_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&record).unwrap();
+
+        let fetched = db
+            .get_oauth_refresh_token_by_hash(&token_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched.client_id, client.client_id);
+        assert_eq!(fetched.user_id, user.id);
+        assert!(!fetched.is_revoked());
+        assert!(!fetched.is_expired(now));
+        assert!(fetched.rotated_from_id.is_none());
+    }
+
+    #[test]
+    fn can_revoke_refresh_token() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_token = crate::auth::generate_oauth_refresh_token();
+        let token_hash = crate::auth::hash_token(&plaintext_token);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: token_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&record).unwrap();
+
+        db.revoke_oauth_refresh_token(&record.id, now + 100)
+            .unwrap();
+        // Revoked token is not returned by hash lookup.
+        assert!(db
+            .get_oauth_refresh_token_by_hash(&token_hash)
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
+    fn oauth_plaintext_tokens_are_never_stored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+
+        // Client secret: only hash stored.
+        let (client, plaintext_secret) = oauth_seed_client(&db, &user, "Test App");
+        let conn = db.conn_for_tests();
+        let stored_secret_hash: String = conn
+            .query_row(
+                "SELECT client_secret_hash FROM oauth_clients WHERE id = ?1",
+                rusqlite::params![client.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(stored_secret_hash, plaintext_secret);
+        assert_eq!(
+            stored_secret_hash,
+            crate::auth::hash_token(&plaintext_secret)
+        );
+        drop(conn);
+
+        // Access token: only hash stored.
+        let plaintext_at = crate::auth::generate_oauth_access_token();
+        let at_hash = crate::auth::hash_token(&plaintext_at);
+        let now = chrono::Utc::now().timestamp();
+        let at_record = OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: at_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&at_record).unwrap();
+        let conn = db.conn_for_tests();
+        let stored_at_hash: String = conn
+            .query_row(
+                "SELECT token_hash FROM oauth_access_tokens WHERE id = ?1",
+                rusqlite::params![at_record.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(stored_at_hash, plaintext_at);
+        assert_eq!(stored_at_hash, at_hash);
+        drop(conn);
+
+        // Refresh token: only hash stored.
+        let plaintext_rt = crate::auth::generate_oauth_refresh_token();
+        let rt_hash = crate::auth::hash_token(&plaintext_rt);
+        let rt_record = OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: rt_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&rt_record).unwrap();
+        let conn = db.conn_for_tests();
+        let stored_rt_hash: String = conn
+            .query_row(
+                "SELECT token_hash FROM oauth_refresh_tokens WHERE id = ?1",
+                rusqlite::params![rt_record.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(stored_rt_hash, plaintext_rt);
+        assert_eq!(stored_rt_hash, rt_hash);
+        drop(conn);
+
+        // Authorization code: only hash stored.
+        let plaintext_ac = crate::auth::generate_oauth_authorization_code();
+        let ac_hash = crate::auth::hash_token(&plaintext_ac);
+        let ac_record = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: ac_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            resource: None,
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&ac_record, &ac_hash)
+            .unwrap();
+        let conn = db.conn_for_tests();
+        let stored_ac_hash: String = conn
+            .query_row(
+                "SELECT code_hash FROM oauth_authorization_codes WHERE id = ?1",
+                rusqlite::params![ac_record.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(stored_ac_hash, plaintext_ac);
+        assert_eq!(stored_ac_hash, ac_hash);
     }
 }

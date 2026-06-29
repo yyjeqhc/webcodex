@@ -244,3 +244,27 @@ per-endpoint via `can_use_agent_endpoint()`.
 
 All existing behavior is preserved. No handler signatures changed. No
 external API surface changed. No database schema changes.
+
+### Phase 2a — OAuth2 internal infrastructure
+
+See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full data model and
+configuration reference.
+
+1. **`OAuth2Config`**: new config struct loaded from `WEBCODEX_OAUTH2_*` env
+   vars. Disabled by default. Added to `Config` as a nested field.
+2. **Database tables**: `oauth_clients`, `oauth_authorization_codes`,
+   `oauth_access_tokens`, `oauth_refresh_tokens` with appropriate indexes.
+3. **Data models**: `OAuthClientRecord`, `OAuthAuthorizationCodeRecord`,
+   `OAuthAccessTokenRecord`, `OAuthRefreshTokenRecord` in `models.rs`.
+4. **Token generation**: `generate_oauth_client_id`,
+   `generate_oauth_client_secret`, `generate_oauth_authorization_code`,
+   `generate_oauth_access_token`, `generate_oauth_refresh_token` in
+   `auth::pat`. All use 256-bit random hex, matching PAT entropy.
+5. **Database CRUD**: insert, get-by-hash, mark-used, revoke, and
+   verify-client-secret helpers for all four OAuth2 tables.
+6. **`AuthMethod` re-export**: restored `pub use principal::AuthMethod` so
+   downstream modules can match on the method enum.
+
+No OAuth2 endpoints are exposed. No OAuth2 tokens are accepted by
+`AuthMiddleware`. The `OAuth2Verifier` remains a stub. Existing PAT, agent
+token, and account credential behavior is unchanged.

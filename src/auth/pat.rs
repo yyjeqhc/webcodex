@@ -65,6 +65,78 @@ pub(crate) fn generate_account_credential() -> String {
     format!("wc_acct_{}", random)
 }
 
+// ---------------------------------------------------------------------------
+// OAuth2 token generation — Phase 2a
+// ---------------------------------------------------------------------------
+
+/// Generate an OAuth2 client identifier. Format: `wc_client_<random>` where
+/// `<random>` is 256 bits of hex-encoded randomness. This is the public
+/// identifier shown to the client; the secret is separate.
+#[allow(dead_code)]
+pub(crate) fn generate_oauth_client_id() -> String {
+    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
+    while random.len() < TOKEN_RANDOM_HEX_LEN {
+        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
+    }
+    random.truncate(TOKEN_RANDOM_HEX_LEN);
+    format!("wc_client_{}", random)
+}
+
+/// Generate an OAuth2 client secret. Format: `wc_csec_<random>` where
+/// `<random>` is 256 bits of hex-encoded randomness. The plaintext secret is
+/// returned **only** here (at creation time) and is never persisted; only its
+/// SHA-256 hash is stored.
+#[allow(dead_code)]
+pub(crate) fn generate_oauth_client_secret() -> String {
+    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
+    while random.len() < TOKEN_RANDOM_HEX_LEN {
+        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
+    }
+    random.truncate(TOKEN_RANDOM_HEX_LEN);
+    format!("wc_csec_{}", random)
+}
+
+/// Generate an OAuth2 authorization code. Format: `wc_oac_<random>` where
+/// `<random>` is 256 bits of hex-encoded randomness. Short-lived and
+/// single-use; only the SHA-256 hash is stored.
+#[allow(dead_code)]
+pub(crate) fn generate_oauth_authorization_code() -> String {
+    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
+    while random.len() < TOKEN_RANDOM_HEX_LEN {
+        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
+    }
+    random.truncate(TOKEN_RANDOM_HEX_LEN);
+    format!("wc_oac_{}", random)
+}
+
+/// Generate an OAuth2 access token. Format: `wc_oat_<random>` where
+/// `<random>` is 256 bits of hex-encoded randomness. The plaintext token is
+/// returned **only** here (at creation time) and is never persisted; only its
+/// SHA-256 hash is stored.
+#[allow(dead_code)]
+pub(crate) fn generate_oauth_access_token() -> String {
+    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
+    while random.len() < TOKEN_RANDOM_HEX_LEN {
+        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
+    }
+    random.truncate(TOKEN_RANDOM_HEX_LEN);
+    format!("wc_oat_{}", random)
+}
+
+/// Generate an OAuth2 refresh token. Format: `wc_ort_<random>` where
+/// `<random>` is 256 bits of hex-encoded randomness. The plaintext token is
+/// returned **only** here (at creation time) and is never persisted; only its
+/// SHA-256 hash is stored.
+#[allow(dead_code)]
+pub(crate) fn generate_oauth_refresh_token() -> String {
+    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
+    while random.len() < TOKEN_RANDOM_HEX_LEN {
+        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
+    }
+    random.truncate(TOKEN_RANDOM_HEX_LEN);
+    format!("wc_ort_{}", random)
+}
+
 /// Return a short, display-safe prefix of a token (the first 16 characters,
 /// including the `wc_pat_` / `wc_agent_` kind marker). Used for listing tokens
 /// without revealing the secret.
@@ -231,5 +303,78 @@ mod tests {
         let a = hash_token("token-a");
         let b = hash_token("token-b");
         assert_ne!(a, b);
+    }
+
+    // -----------------------------------------------------------------------
+    // OAuth2 token generation tests — Phase 2a
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn generate_oauth_access_token_uses_wc_oat_prefix() {
+        let token = generate_oauth_access_token();
+        assert!(token.starts_with("wc_oat_"));
+        assert_eq!(token.len(), "wc_oat_".len() + 64);
+        assert!(token["wc_oat_".len()..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn generate_oauth_refresh_token_uses_wc_ort_prefix() {
+        let token = generate_oauth_refresh_token();
+        assert!(token.starts_with("wc_ort_"));
+        assert_eq!(token.len(), "wc_ort_".len() + 64);
+        assert!(token["wc_ort_".len()..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn generate_oauth_authorization_code_uses_wc_oac_prefix() {
+        let token = generate_oauth_authorization_code();
+        assert!(token.starts_with("wc_oac_"));
+        assert_eq!(token.len(), "wc_oac_".len() + 64);
+        assert!(token["wc_oac_".len()..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn generate_oauth_client_id_uses_wc_client_prefix() {
+        let id = generate_oauth_client_id();
+        assert!(id.starts_with("wc_client_"));
+        assert_eq!(id.len(), "wc_client_".len() + 64);
+    }
+
+    #[test]
+    fn generate_oauth_client_secret_uses_wc_csec_prefix() {
+        let secret = generate_oauth_client_secret();
+        assert!(secret.starts_with("wc_csec_"));
+        assert_eq!(secret.len(), "wc_csec_".len() + 64);
+    }
+
+    #[test]
+    fn oauth_generated_values_are_unique() {
+        let a = generate_oauth_access_token();
+        let b = generate_oauth_access_token();
+        assert_ne!(a, b);
+
+        let c = generate_oauth_refresh_token();
+        let d = generate_oauth_refresh_token();
+        assert_ne!(c, d);
+
+        let e = generate_oauth_authorization_code();
+        let f = generate_oauth_authorization_code();
+        assert_ne!(e, f);
+    }
+
+    #[test]
+    fn oauth_token_hash_is_deterministic_and_differs_from_plaintext() {
+        let token = generate_oauth_access_token();
+        let h1 = hash_token(&token);
+        let h2 = hash_token(&token);
+        assert_eq!(h1, h2);
+        assert_ne!(h1, token);
+        assert_eq!(h1.len(), 64); // SHA-256 hex
     }
 }

@@ -265,6 +265,160 @@ impl ApiKeyRecord {
     }
 }
 
+// ---------------------------------------------------------------------------
+// OAuth2 models — Phase 2a
+// ---------------------------------------------------------------------------
+
+/// OAuth2 registered client. The `client_secret` plaintext is returned only at
+/// creation time; only `client_secret_hash` is stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthClientRecord {
+    pub id: String,
+    /// Opaque public identifier (e.g. `wc_client_<random>`).
+    pub client_id: String,
+    /// SHA-256 hash of the client secret. The plaintext is never stored.
+    pub client_secret_hash: String,
+    pub name: String,
+    pub owner_user_id: String,
+    /// Newline-separated list of allowed redirect URIs.
+    pub redirect_uris: String,
+    /// Space-separated scope list (same format as PAT scopes).
+    pub allowed_scopes: String,
+    pub created_at: i64,
+    pub revoked_at: Option<i64>,
+}
+
+/// One-time authorization code. Short-lived (default 300s), single-use.
+/// PKCE fields (`code_challenge`, `code_challenge_method`) are stored for S256
+/// validation. `resource` is reserved for MCP audience binding.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthAuthorizationCodeRecord {
+    pub id: String,
+    /// SHA-256 hash of the code. Plaintext never stored.
+    pub code_hash: String,
+    pub client_id: String,
+    pub user_id: String,
+    pub redirect_uri: String,
+    pub scopes: String,
+    /// PKCE code challenge (S256). `None` when PKCE is not used.
+    pub code_challenge: Option<String>,
+    /// PKCE method. Only `"S256"` is supported. `None` when PKCE is not used.
+    pub code_challenge_method: Option<String>,
+    /// Audience / resource indicator for MCP OAuth. `None` when not specified.
+    pub resource: Option<String>,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub used_at: Option<i64>,
+    pub revoked_at: Option<i64>,
+}
+
+/// Short-lived OAuth2 access token (default 3600s). Only the SHA-256 hash is
+/// stored; the plaintext is returned to the client once at creation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthAccessTokenRecord {
+    pub id: String,
+    /// SHA-256 hash of the token. Plaintext never stored.
+    pub token_hash: String,
+    pub client_id: String,
+    pub user_id: String,
+    pub scopes: String,
+    /// Audience / resource indicator for MCP OAuth.
+    pub resource: Option<String>,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub revoked_at: Option<i64>,
+    pub last_used_at: Option<i64>,
+}
+
+/// Long-lived OAuth2 refresh token (default 30 days). Supports rotation via
+/// `rotated_from_id`. Only the SHA-256 hash is stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OAuthRefreshTokenRecord {
+    pub id: String,
+    /// SHA-256 hash of the token. Plaintext never stored.
+    pub token_hash: String,
+    pub client_id: String,
+    pub user_id: String,
+    pub scopes: String,
+    /// Audience / resource indicator for MCP OAuth.
+    pub resource: Option<String>,
+    pub created_at: i64,
+    pub expires_at: i64,
+    pub revoked_at: Option<i64>,
+    pub last_used_at: Option<i64>,
+    /// When this token was created via refresh token rotation, points to the
+    /// previous refresh token. `None` for the initial token.
+    pub rotated_from_id: Option<String>,
+}
+
+impl OAuthAccessTokenRecord {
+    pub fn is_revoked(&self) -> bool {
+        self.revoked_at.is_some()
+    }
+
+    pub fn is_expired(&self, now: i64) -> bool {
+        now >= self.expires_at
+    }
+
+    pub fn scopes_vec(&self) -> Vec<String> {
+        self.scopes.split_whitespace().map(str::to_string).collect()
+    }
+}
+
+impl OAuthRefreshTokenRecord {
+    pub fn is_revoked(&self) -> bool {
+        self.revoked_at.is_some()
+    }
+
+    pub fn is_expired(&self, now: i64) -> bool {
+        now >= self.expires_at
+    }
+
+    pub fn scopes_vec(&self) -> Vec<String> {
+        self.scopes.split_whitespace().map(str::to_string).collect()
+    }
+}
+
+impl OAuthAuthorizationCodeRecord {
+    pub fn is_expired(&self, now: i64) -> bool {
+        now >= self.expires_at
+    }
+
+    pub fn is_used(&self) -> bool {
+        self.used_at.is_some()
+    }
+
+    pub fn is_revoked(&self) -> bool {
+        self.revoked_at.is_some()
+    }
+
+    pub fn scopes_vec(&self) -> Vec<String> {
+        self.scopes.split_whitespace().map(str::to_string).collect()
+    }
+}
+
+impl OAuthClientRecord {
+    pub fn is_revoked(&self) -> bool {
+        self.revoked_at.is_some()
+    }
+
+    pub fn allowed_scopes_vec(&self) -> Vec<String> {
+        self.allowed_scopes
+            .split_whitespace()
+            .map(str::to_string)
+            .collect()
+    }
+
+    pub fn redirect_uris_vec(&self) -> Vec<String> {
+        self.redirect_uris
+            .lines()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
 impl Default for ApiKeyRecord {
     /// Convenience default used by tests that build a record field-by-field;
     /// production code constructs the struct explicitly. Defaults `kind` to

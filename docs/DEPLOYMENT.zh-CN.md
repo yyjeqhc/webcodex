@@ -169,6 +169,13 @@ https://your-domain.example/console
 
 静态 console bundle 不包含 secrets。Runtime data 由浏览器使用用户凭据、session 或 token 从受保护 API 获取。console 不属于 GPT Actions OpenAPI，也不是完整 admin UI。
 
+### Runtime job API 信任模型
+
+WebCodex runtime job API 面向可信单操作者部署。
+`job_status`、`job_log`、`list_jobs` 和 `job_tail` 不是不可信用户之间的租户边界。
+不要在未实现 project-less job API owner isolation 的情况下，把同一个 WebCodex runtime
+暴露给多个互不信任的用户。对不可信用户应使用独立 server/runtime 实例。
+
 ## Public HTTPS URL
 
 GPT Actions 需要 public HTTPS URL。WebCodex CLI 不会自动配置 reverse proxy 或 tunnel，所以在把 `/openapi.json` 导入 ChatGPT 之前需要先配置好对外 HTTPS。

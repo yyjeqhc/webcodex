@@ -169,6 +169,14 @@ https://your-domain.example/console
 
 The static console bundle contains no secrets. Runtime data is fetched by the browser from protected APIs using the user's credentials, session, or token as applicable. The console is not part of the GPT Actions OpenAPI and is not a full admin UI.
 
+### Runtime job API trust model
+
+WebCodex runtime job APIs are intended for trusted single-operator deployments.
+`job_status`, `job_log`, `list_jobs`, and `job_tail` are not a tenant boundary
+between mutually untrusted users. Do not expose one WebCodex runtime to multiple
+untrusted users without adding job owner isolation for project-less job APIs.
+Use separate server/runtime instances for untrusted users.
+
 ## Public HTTPS URL
 
 GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup, so configure one before importing `/openapi.json` into ChatGPT.

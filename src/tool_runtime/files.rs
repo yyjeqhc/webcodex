@@ -653,13 +653,25 @@ if len(data) > max_bytes:
 exists = os.path.lexists(path)
 if exists and not overwrite:
     invalid(path, "file exists and overwrite is false")
+if exists and os.path.islink(path):
+    invalid(path, "refusing to overwrite symlink artifact path")
 base_dir = os.path.dirname(path) or "."
 tmp = None
 try:
     os.makedirs(base_dir, exist_ok=True)
+    root = os.path.realpath(os.getcwd())
+    parent = os.path.realpath(base_dir)
+    if parent != root and not parent.startswith(root + os.sep):
+        invalid(path, "artifact path escapes project root")
     fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-artifact-")
     with os.fdopen(fd, "wb") as f:
         f.write(data)
+    if os.path.islink(path):
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        invalid(path, "refusing to overwrite symlink artifact path")
     os.replace(tmp, path)
 except Exception as e:
     if tmp is not None:
@@ -718,6 +730,10 @@ path = req.get("path", "")
 max_bytes = int(req.get("max_bytes", 10485760))
 if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
     fail(path, "invalid path")
+root = os.path.realpath(os.getcwd())
+target = os.path.realpath(path)
+if target != root and not target.startswith(root + os.sep):
+    fail(path, "artifact path escapes project root")
 try:
     with open(path, "rb") as f:
         data = f.read(max_bytes + 1)
@@ -779,6 +795,10 @@ if max_file_bytes < 1:
     fail(path, "max_file_bytes must be >= 1")
 if not isinstance(path, str) or not path or path.startswith("/") or "\x00" in path or ".." in path.split("/"):
     fail(path, "invalid path")
+root = os.path.realpath(os.getcwd())
+target = os.path.realpath(path)
+if target != root and not target.startswith(root + os.sep):
+    fail(path, "artifact path escapes project root")
 try:
     file_bytes = os.path.getsize(path)
 except Exception as e:
@@ -1843,6 +1863,47 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+
+    fn unique_temp_dir(name: &str) -> std::path::PathBuf {
+        let stamp = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("system time before epoch")
+            .as_nanos();
+        let dir = std::env::temp_dir().join(format!(
+            "webcodex-{}-{}-{}",
+            name,
+            std::process::id(),
+            stamp
+        ));
+        std::fs::create_dir_all(&dir).expect("create temp dir");
+        dir
+    }
+
+    fn run_python_helper(helper: &str, cwd: &std::path::Path, payload: Value) -> Value {
+        let mut child = Command::new("python3")
+            .arg("-c")
+            .arg(helper)
+            .current_dir(cwd)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("spawn python3 helper");
+        child
+            .stdin
+            .as_mut()
+            .expect("helper stdin")
+            .write_all(payload.to_string().as_bytes())
+            .expect("write helper payload");
+        let output = child.wait_with_output().expect("wait for helper");
+        assert!(
+            output.status.success(),
+            "helper process failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        serde_json::from_slice(&output.stdout).expect("helper json stdout")
+    }
 
     #[test]
     fn effective_read_file_range_defaults_and_clamps() {
@@ -1907,5 +1968,78 @@ mod tests {
         assert_eq!(result.output["total_lines"], 3);
         assert_eq!(result.output["start_line"], 2);
         assert_eq!(result.output["limit"], 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helper_read_project_artifact_rejects_symlink_escape() {
+        let root = unique_temp_dir("artifact-read-root");
+        let outside = unique_temp_dir("artifact-read-outside").join("outside.bin");
+        let outside_content = b"outside-secret-content";
+        std::fs::write(&outside, outside_content).expect("write outside file");
+        std::os::unix::fs::symlink(&outside, root.join("leak.bin")).expect("create symlink");
+
+        let out = run_python_helper(
+            READ_PROJECT_ARTIFACT_HELPER,
+            &root,
+            json!({"path":"leak.bin","offset":0,"length":8,"max_file_bytes":MAX_PROJECT_ARTIFACT_BYTES}),
+        );
+        assert_eq!(out["error"], "artifact path escapes project root");
+        assert!(!out.to_string().contains("outside-secret-content"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helper_read_project_artifact_metadata_rejects_symlink_escape() {
+        let root = unique_temp_dir("artifact-meta-root");
+        let outside = unique_temp_dir("artifact-meta-outside").join("outside.bin");
+        std::fs::write(&outside, b"outside-secret-content").expect("write outside file");
+        std::os::unix::fs::symlink(&outside, root.join("leak.bin")).expect("create symlink");
+
+        let out = run_python_helper(
+            READ_PROJECT_ARTIFACT_METADATA_HELPER,
+            &root,
+            json!({"path":"leak.bin","max_bytes":MAX_PROJECT_ARTIFACT_BYTES}),
+        );
+        assert_eq!(out["error"], "artifact path escapes project root");
+        assert!(!out.to_string().contains("outside-secret-content"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn helper_save_project_artifact_rejects_existing_symlink_target_escape() {
+        let root = unique_temp_dir("artifact-save-root");
+        let outside = unique_temp_dir("artifact-save-outside").join("outside.bin");
+        std::fs::write(&outside, b"outside-secret-content").expect("write outside file");
+        std::os::unix::fs::symlink(&outside, root.join("leak.bin")).expect("create symlink");
+
+        let out = run_python_helper(
+            SAVE_PROJECT_ARTIFACT_HELPER,
+            &root,
+            json!({"path":"leak.bin","content_base64":"bmV3","mime_type":"text/plain","overwrite":true,"max_bytes":MAX_PROJECT_ARTIFACT_BYTES}),
+        );
+        assert_eq!(out["error"], "refusing to overwrite symlink artifact path");
+        assert_eq!(
+            std::fs::read(&outside).expect("outside file remains readable"),
+            b"outside-secret-content"
+        );
+        assert!(!out.to_string().contains("outside-secret-content"));
+    }
+
+    #[test]
+    fn helper_save_project_artifact_allows_normal_nested_write() {
+        let root = unique_temp_dir("artifact-save-normal");
+        let out = run_python_helper(
+            SAVE_PROJECT_ARTIFACT_HELPER,
+            &root,
+            json!({"path":"nested/out.txt","content_base64":"aGVsbG8=","mime_type":"text/plain","overwrite":false,"max_bytes":MAX_PROJECT_ARTIFACT_BYTES}),
+        );
+        assert!(out.get("error").is_none(), "unexpected helper error: {out}");
+        assert_eq!(out["path"], "nested/out.txt");
+        assert_eq!(out["bytes_written"], 5);
+        assert_eq!(
+            std::fs::read(root.join("nested/out.txt")).expect("read written artifact"),
+            b"hello"
+        );
     }
 }

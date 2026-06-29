@@ -47,6 +47,11 @@ const REGISTER_TIMEOUT: Duration = Duration::from_secs(15);
 /// Channel capacity for QUIC outgoing envelopes (registered ack, request,
 /// pong/error). Provides backpressure if the agent reads slowly.
 const OUTGOING_CHANNEL_CAPACITY: usize = 64;
+/// Maximum time to keep an error-path QUIC stream open while waiting for the
+/// peer to read the final `Error` envelope.
+const ERROR_DRAIN_TIMEOUT: Duration = Duration::from_secs(1);
+/// Maximum number of peer frames to discard on an error path before closing.
+const ERROR_DRAIN_MAX_FRAMES: usize = 4;
 
 /// Load a PEM cert chain from `path` into DER certificates.
 fn load_certs(path: &std::path::Path) -> Result<Vec<CertificateDer<'static>>, String> {
@@ -543,12 +548,11 @@ async fn handle_quic_connection(
     tracing::info!(client_id = %client_id, "agent quic disconnected");
 }
 
-/// Read and discard frames until the stream ends. Used to keep a QUIC
-/// connection alive long enough for the peer to receive a final `Error` frame:
-/// dropping the `Connection` handle sends an abrupt `CONNECTION_CLOSE` that
-/// could overtake in-flight stream data, so we drain the peer's side first.
-async fn drain_quic_stream(recv: &mut quinn::RecvStream) {
-    loop {
+/// Read and discard a bounded number of frames. Used to keep a QUIC connection
+/// alive long enough for the peer to receive a final `Error` frame without
+/// allowing a bad peer to hold the connection task indefinitely.
+async fn drain_quic_stream_limited(recv: &mut quinn::RecvStream, max_frames: usize) {
+    for _ in 0..max_frames {
         match read_quic_frame(recv).await {
             Ok(_) => continue,
             Err(_) => return,
@@ -556,8 +560,10 @@ async fn drain_quic_stream(recv: &mut quinn::RecvStream) {
     }
 }
 
-/// Send an `Error` envelope over the stream before tearing it down, then drain
-/// the peer's stream so the connection stays alive until the error is received.
+/// Send an `Error` envelope over the stream before tearing it down, then briefly
+/// drain the peer's stream so the connection stays alive until the error is
+/// received. The drain is bounded because unauthenticated or malformed peers may
+/// keep their send stream open forever.
 async fn send_error(
     send: &mut quinn::SendStream,
     recv: &mut quinn::RecvStream,
@@ -570,8 +576,11 @@ async fn send_error(
     };
     if write_quic_frame(send, &env).await.is_ok() {
         let _ = send.finish();
-        // Hold the connection open while the peer reads the error frame.
-        drain_quic_stream(recv).await;
+        let _ = tokio::time::timeout(
+            ERROR_DRAIN_TIMEOUT,
+            drain_quic_stream_limited(recv, ERROR_DRAIN_MAX_FRAMES),
+        )
+        .await;
     }
 }
 
@@ -722,6 +731,46 @@ mod tests {
             .expect("quic connect");
         let (send, recv) = conn.open_bi().await.expect("open_bi");
         (client_endpoint, conn, send, recv)
+    }
+
+    #[tokio::test]
+    async fn quic_bad_register_error_path_exits_without_waiting_for_peer_close() {
+        let (cert_der, key_der) = self_signed_cert();
+        let server_crypto = server_crypto(cert_der.clone(), key_der);
+        let (endpoint, addr) = bind_server(server_crypto);
+        let registry = Arc::new(ShellClientRegistry::default());
+        let config = test_config(None);
+
+        let server_task = tokio::spawn(async move {
+            let incoming = endpoint.accept().await.expect("accept incoming quic");
+            let conn = incoming.await.expect("server quic handshake");
+            handle_quic_connection(conn, TEST_ALPN, config, None, registry).await;
+        });
+
+        let (client_endpoint, conn, mut send, mut recv) =
+            connect_quic_client(&cert_der, addr).await;
+        write_quic_frame(&mut send, &AgentEnvelope::Ping { ts: 1 })
+            .await
+            .expect("write wrong first frame");
+
+        let error = tokio::time::timeout(Duration::from_secs(5), read_quic_frame(&mut recv))
+            .await
+            .expect("error frame timeout")
+            .expect("read error frame");
+        match error {
+            AgentEnvelope::Error { code, message } => {
+                assert_eq!(code, "expected_register");
+                assert!(message.contains("expected register envelope"));
+            }
+            other => panic!("expected error, got {:?}", other.kind()),
+        }
+
+        tokio::time::timeout(ERROR_DRAIN_TIMEOUT + Duration::from_secs(2), server_task)
+            .await
+            .expect("server handler should exit without peer close")
+            .expect("server task should not panic");
+        client_endpoint.close(quinn::VarInt::from_u32(0), b"");
+        conn.close(quinn::VarInt::from_u32(0), b"done");
     }
 
     #[tokio::test]

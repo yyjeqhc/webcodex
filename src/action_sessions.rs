@@ -196,6 +196,17 @@ pub fn secret_like_key(key: &str) -> bool {
     .any(|needle| lower.contains(needle))
 }
 
+const WEBCODEX_SECRET_PREFIXES: &[&str] = &[
+    "wc_pat_",
+    "wc_agent_",
+    "wc_acct_",
+    "wc_oat_",
+    "wc_ort_",
+    "wc_csec_",
+    "wc_pair_",
+    "wc_boot_",
+];
+
 pub fn secret_like_value(value: &str) -> bool {
     let lower = value.to_ascii_lowercase();
     lower.contains("-----begin")
@@ -204,6 +215,9 @@ pub fn secret_like_value(value: &str) -> bool {
         || lower.contains("token=")
         || lower.contains("id_rsa")
         || lower.contains("id_ed25519")
+        || WEBCODEX_SECRET_PREFIXES
+            .iter()
+            .any(|prefix| lower.contains(prefix))
 }
 
 pub fn summarize_command_text(kind: &str, text: &str) -> Value {
@@ -465,5 +479,48 @@ pub fn compute_stats(events: &[ActionEventView]) -> ActionSessionStats {
         shell_count,
         changed_files_distinct_count: changed_files.len(),
         job_ids_distinct_count: job_ids.len(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn audit_sanitize_value_redacts_webcodex_token_prefixes_in_strings() {
+        for prefix in WEBCODEX_SECRET_PREFIXES {
+            let value = format!("failed with token {}EXAMPLE", prefix.to_ascii_uppercase());
+            assert_eq!(sanitize_value(&json!(value)), json!("[redacted]"));
+        }
+    }
+
+    #[test]
+    fn audit_sanitize_value_redacts_webcodex_token_prefixes_nested() {
+        let value = json!({
+            "outer": [
+                "ok",
+                {"message": "pairing failed for wc_pair_SECRET"},
+                ["agent token WC_AGENT_SECRET"]
+            ]
+        });
+
+        assert_eq!(
+            sanitize_value(&value),
+            json!({
+                "outer": [
+                    "ok",
+                    {"message": "[redacted]"},
+                    ["[redacted]"]
+                ]
+            })
+        );
+    }
+
+    #[test]
+    fn audit_sanitize_value_keeps_non_secret_regular_strings() {
+        assert_eq!(
+            sanitize_value(&json!({"message": "normal project status update"})),
+            json!({"message": "normal project status update"})
+        );
     }
 }

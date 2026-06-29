@@ -311,3 +311,20 @@ See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full endpoint reference.
 Not implemented: `/oauth/authorize`, `refresh_token` grant,
 `client_credentials` grant, `/oauth/revoke`, `/.well-known/*`,
 `OAuth2Verifier` real validation, MCP OAuth.
+
+### Phase 2b-1.1 — token endpoint hardening
+
+See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
+
+1. **No-store headers**: all OAuth2 responses include `Cache-Control: no-store`
+   and `Pragma: no-cache` (RFC 6749 §5.1, §5.2).
+2. **Content-Type enforcement**: only `application/x-www-form-urlencoded` is
+   accepted. Missing or wrong Content-Type returns 415.
+3. **Body size limit**: request bodies bounded at 16 KiB (413 on overflow).
+4. **Transactional exchange**: `exchange_oauth_authorization_code_for_tokens()`
+   atomically consumes the authorization code and inserts both tokens in a
+   single SQLite transaction. No partial writes on failure.
+
+Not implemented: `/oauth/authorize`, `refresh_token` grant,
+`client_credentials` grant, `/oauth/revoke`, `/.well-known/*`,
+`OAuth2Verifier` real validation, MCP OAuth.

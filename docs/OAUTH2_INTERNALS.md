@@ -7,11 +7,13 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2b-1** adds the first OAuth2 HTTP endpoint:
+**Phase 2b-1.1** hardens the `POST /oauth/token` endpoint (Phase 2b-1):
 
-- `POST /oauth/token` — authorization code exchange with PKCE S256
-- Opaque access token and refresh token issuance
-- Atomic authorization code consumption
+- `Cache-Control: no-store` and `Pragma: no-cache` on all OAuth2 responses
+- Strict `Content-Type: application/x-www-form-urlencoded` enforcement
+- Bounded request body size (16 KiB)
+- Transactional authorization code exchange (code consume + token insert in
+  a single SQLite transaction)
 
 No OAuth2 tokens are accepted by `AuthMiddleware`. The GPT Actions / MCP /
 REST surface continues to accept only the existing token formats (PAT, agent
@@ -40,6 +42,29 @@ Error responses follow RFC 6749 §5.2 format:
   "error_description": "..."
 }
 ```
+
+### Phase 2b-1.1: hardening
+
+The token endpoint is hardened with the following changes:
+
+1. **No-store headers**: all OAuth2 JSON responses (success and error) include
+   `Cache-Control: no-store` and `Pragma: no-cache` to prevent intermediaries
+   from caching sensitive tokens or error context.
+2. **Content-Type enforcement**: only `application/x-www-form-urlencoded` is
+   accepted (with optional `; charset=...`). Missing or wrong Content-Type
+   returns 415 Unsupported Media Type.
+3. **Body size limit**: request bodies are bounded at 16 KiB. Exceeding the
+   limit returns 413 Payload Too Large (or 400 if Content-Length is absent).
+4. **Transactional exchange**: authorization code consumption and token
+   insertion happen in a single SQLite transaction via
+   `exchange_oauth_authorization_code_for_tokens()`. If the refresh token
+   INSERT fails, the entire exchange is rolled back — no partial writes.
+
+Post-consume validation semantics are preserved:
+
+- Wrong `client_secret` → code **not** consumed (rejected before exchange)
+- `client_id` / `redirect_uri` / PKCE mismatch → code **consumed**
+  (post-consume failures are intentional; the code cannot be retried)
 
 ## Design decisions
 
@@ -184,11 +209,13 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 ## What is NOT implemented yet
 
 - `/oauth/authorize` endpoint
-- `/oauth/token` endpoint
 - `/oauth/revoke` endpoint
 - `/oauth/userinfo` endpoint
 - `/.well-known/oauth-authorization-server` metadata
+- `refresh_token` grant
+- `client_credentials` grant
 - `OAuth2Verifier` real validation (still a stub)
 - OAuth2 tokens accepted by `AuthMiddleware`
+- MCP OAuth (resource indicator / audience binding)
 - JWT/JWKS/OIDC
 - Handler migration to `Principal`

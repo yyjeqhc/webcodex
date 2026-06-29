@@ -1869,6 +1869,100 @@ impl Database {
         Ok(())
     }
 
+    /// Atomically exchange an authorization code for access + refresh tokens.
+    ///
+    /// Within a single SQLite transaction:
+    /// 1. Consume the authorization code (same semantics as
+    ///    `consume_oauth_authorization_code_by_hash`).
+    /// 2. Insert the access token.
+    /// 3. Insert the refresh token.
+    /// 4. Commit.
+    ///
+    /// Returns:
+    /// - `Ok(Some(record))` — exchange succeeded; record is the consumed code.
+    /// - `Ok(None)` — code invalid, expired, used, or revoked.
+    /// - `Err(_)` — DB error; nothing is committed.
+    ///
+    /// Pre-condition: client authentication must be verified before calling
+    /// this method. Post-condition: client_id / redirect_uri / PKCE checks
+    /// are **not** performed here — the caller must validate them after.
+    pub fn exchange_oauth_authorization_code_for_tokens(
+        &self,
+        code_hash: &str,
+        now: i64,
+        access_token_record: &OAuthAccessTokenRecord,
+        refresh_token_record: &OAuthRefreshTokenRecord,
+    ) -> anyhow::Result<Option<OAuthAuthorizationCodeRecord>> {
+        // Scope the transaction so the MutexGuard is dropped after commit,
+        // allowing get_oauth_authorization_code_by_hash_for_consume to
+        // re-acquire the lock.
+        {
+            let mut conn = self.conn.lock().unwrap();
+            let tx = conn.transaction()?;
+
+            // 1. Consume the authorization code atomically.
+            let changed = tx.execute(
+                "UPDATE oauth_authorization_codes
+                 SET used_at = ?2
+                 WHERE code_hash = ?1
+                   AND revoked_at IS NULL
+                   AND used_at IS NULL
+                   AND expires_at > ?2",
+                params![code_hash, now],
+            )?;
+            if changed == 0 {
+                tx.commit()?;
+                return Ok(None);
+            }
+
+            // 2. Insert access token.
+            tx.execute(
+                "INSERT INTO oauth_access_tokens (
+                    id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    access_token_record.id,
+                    access_token_record.token_hash,
+                    access_token_record.client_id,
+                    access_token_record.user_id,
+                    access_token_record.scopes,
+                    access_token_record.resource,
+                    access_token_record.created_at,
+                    access_token_record.expires_at,
+                    access_token_record.revoked_at,
+                    access_token_record.last_used_at,
+                ],
+            )?;
+
+            // 3. Insert refresh token.
+            tx.execute(
+                "INSERT INTO oauth_refresh_tokens (
+                    id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    refresh_token_record.id,
+                    refresh_token_record.token_hash,
+                    refresh_token_record.client_id,
+                    refresh_token_record.user_id,
+                    refresh_token_record.scopes,
+                    refresh_token_record.resource,
+                    refresh_token_record.created_at,
+                    refresh_token_record.expires_at,
+                    refresh_token_record.revoked_at,
+                    refresh_token_record.last_used_at,
+                    refresh_token_record.rotated_from_id,
+                ],
+            )?;
+
+            tx.commit()?;
+        } // MutexGuard dropped here.
+
+        // Fetch the consumed code record (including used rows).
+        self.get_oauth_authorization_code_by_hash_for_consume(code_hash)
+    }
+
     // --- OAuth access tokens ---
 
     pub fn insert_oauth_access_token(&self, record: &OAuthAccessTokenRecord) -> anyhow::Result<()> {

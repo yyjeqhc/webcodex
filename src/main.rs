@@ -408,10 +408,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(api_router)
         .push(openapi_router)
         .push(console_router)
-        // OAuth2 token and revocation endpoints — public, no AuthMiddleware.
-        // Clients authenticate via client_id + client_secret in the form body.
+        // OAuth2 token, revocation, and discovery endpoints — public, no
+        // AuthMiddleware. Token/revoke clients authenticate via
+        // client_id + client_secret in the form body.
         .push(Router::with_path("oauth/token").post(oauth_http::oauth_token))
         .push(Router::with_path("oauth/revoke").post(oauth_http::oauth_revoke))
+        .push(
+            Router::with_path(".well-known/oauth-protected-resource")
+                .get(oauth_http::oauth_metadata),
+        )
         .push(
             Router::with_path("mcp")
                 .hoop(AuthMiddleware)

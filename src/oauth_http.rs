@@ -1,10 +1,12 @@
-//! OAuth2 token and revocation endpoints.
+//! OAuth2 token, revocation, and discovery endpoints.
 //!
 //! - `POST /oauth/token` — token endpoint (authorization_code, refresh_token)
 //! - `POST /oauth/revoke` — token revocation endpoint (RFC 7009)
+//! - `GET /.well-known/oauth-protected-resource` — protected resource metadata
 //!
-//! Both are **public** endpoints (no `AuthMiddleware`); clients authenticate
-//! via `client_id` + `client_secret` in the form body.
+//! Token and revocation are **public** endpoints (no `AuthMiddleware`); clients
+//! authenticate via `client_id` + `client_secret` in the form body. The
+//! metadata endpoint is also public and requires no authentication.
 //!
 //! Security properties:
 //! - Authorization codes are consumed atomically (single-use).
@@ -21,7 +23,7 @@
 //! - Plaintext tokens are returned **only once** in the response.
 //! - Only SHA-256 hashes are stored in the database.
 
-use crate::auth::{generate_oauth_access_token, generate_oauth_refresh_token, hash_token};
+use crate::auth::{generate_oauth_access_token, generate_oauth_refresh_token, hash_token, scopes};
 use crate::models::{OAuthAccessTokenRecord, OAuthRefreshTokenRecord};
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use salvo::http::header::CONTENT_TYPE;
@@ -962,6 +964,58 @@ pub(crate) async fn oauth_revoke(req: &mut Request, depot: &mut Depot, res: &mut
 }
 
 // ---------------------------------------------------------------------------
+// GET /.well-known/oauth-protected-resource
+// ---------------------------------------------------------------------------
+
+/// Non-agent scopes that OAuth2 clients may request. Agent transport scopes
+/// (`agent:*`) are excluded because OAuth2 access tokens are rejected on agent
+/// transport surfaces. `admin` is excluded because it is a bootstrap/superuser
+/// scope not intended for OAuth2 delegation.
+const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
+    scopes::SCOPE_RUNTIME_READ,
+    scopes::SCOPE_PROJECT_READ,
+    scopes::SCOPE_PROJECT_WRITE,
+    scopes::SCOPE_JOB_RUN,
+    scopes::SCOPE_ACCOUNT_MANAGE,
+];
+
+/// Return protected resource metadata (RFC 9728 §3.1).
+///
+/// This is a **public** endpoint — no authentication required. Returns 404
+/// when OAuth2 is disabled so discovery does not advertise capabilities that
+/// are not active.
+#[handler]
+pub(crate) async fn oauth_metadata(depot: &mut Depot, res: &mut Response) {
+    let Some(config) = crate::auth::get_config(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "no config"})));
+        return;
+    };
+
+    if !config.oauth2.enabled {
+        res.status_code(StatusCode::NOT_FOUND);
+        res.render(Json(serde_json::json!({"error": "OAuth2 is not enabled"})));
+        return;
+    }
+
+    let resource = config
+        .oauth2
+        .issuer
+        .as_deref()
+        .unwrap_or("http://localhost");
+
+    let metadata = serde_json::json!({
+        "resource": resource,
+        "authorization_servers": [resource],
+        "bearer_methods_supported": ["header"],
+        "scopes_supported": OAUTH_SCOPES_SUPPORTED,
+        "resource_name": "WebCodex",
+    });
+
+    res.render(Json(metadata));
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -1154,6 +1208,7 @@ mod tests {
             .hoop(salvo::prelude::affix_state::inject(db))
             .push(Router::with_path("oauth/token").post(oauth_token))
             .push(Router::with_path("oauth/revoke").post(oauth_revoke))
+            .push(Router::with_path(".well-known/oauth-protected-resource").get(oauth_metadata))
     }
 
     fn form_body(pairs: &[(&str, &str)]) -> String {
@@ -3336,6 +3391,148 @@ mod tests {
         assert!(
             last_used_at.is_none(),
             "revoke should not update last_used_at"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // GET /.well-known/oauth-protected-resource
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn oauth_protected_resource_metadata_is_public() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let resp = TestClient::get("http://localhost/.well-known/oauth-protected-resource")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let ct = resp
+            .headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            ct.contains("application/json"),
+            "expected application/json, got {}",
+            ct
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_protected_resource_metadata_fields() {
+        let mut oauth2 = oauth2_enabled();
+        oauth2.issuer = Some("https://codex.example.com".to_string());
+        let config = test_config(oauth2);
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let mut resp = TestClient::get("http://localhost/.well-known/oauth-protected-resource")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+
+        // resource is an absolute URL
+        let resource = body["resource"].as_str().unwrap();
+        assert!(
+            resource.starts_with("https://"),
+            "resource should be absolute URL, got {}",
+            resource
+        );
+        assert_eq!(resource, "https://codex.example.com");
+
+        // authorization_servers is an array whose first element matches issuer
+        let auth_servers = body["authorization_servers"].as_array().unwrap();
+        assert_eq!(auth_servers.len(), 1);
+        assert_eq!(auth_servers[0], "https://codex.example.com");
+
+        // bearer_methods_supported == ["header"]
+        let methods = body["bearer_methods_supported"].as_array().unwrap();
+        assert_eq!(methods.len(), 1);
+        assert_eq!(methods[0], "header");
+
+        // scopes_supported is a non-empty array
+        let scopes = body["scopes_supported"].as_array().unwrap();
+        assert!(!scopes.is_empty(), "scopes_supported should be non-empty");
+        // Must contain at least runtime:read
+        assert!(
+            scopes.iter().any(|s| s == "runtime:read"),
+            "scopes_supported should contain runtime:read"
+        );
+
+        // resource_name
+        assert_eq!(body["resource_name"], "WebCodex");
+    }
+
+    #[tokio::test]
+    async fn oauth_protected_resource_metadata_disabled_returns_404() {
+        let config = test_config(oauth2_disabled());
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let resp = TestClient::get("http://localhost/.well-known/oauth-protected-resource")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::NOT_FOUND));
+    }
+
+    #[tokio::test]
+    async fn oauth_protected_resource_metadata_no_issuer_fallback() {
+        // When issuer is None, resource falls back to "http://localhost"
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let mut resp = TestClient::get("http://localhost/.well-known/oauth-protected-resource")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["resource"], "http://localhost");
+        let auth_servers = body["authorization_servers"].as_array().unwrap();
+        assert_eq!(auth_servers[0], "http://localhost");
+    }
+
+    #[tokio::test]
+    async fn oauth_authorization_server_metadata_not_exposed_before_authorize() {
+        // /.well-known/oauth-authorization-server must not exist until
+        // /oauth/authorize is implemented.
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let resp = TestClient::get("http://localhost/.well-known/oauth-authorization-server")
+            .send(&service)
+            .await;
+        assert_eq!(
+            resp.status_code,
+            Some(StatusCode::NOT_FOUND),
+            "authorization server metadata must not be exposed before /oauth/authorize exists"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_protected_resource_metadata_scopes_exclude_agent() {
+        // Agent scopes must not appear in scopes_supported because OAuth2
+        // tokens are rejected on agent transport surfaces.
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let mut resp = TestClient::get("http://localhost/.well-known/oauth-protected-resource")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        let scopes = body["scopes_supported"].as_array().unwrap();
+        for scope in scopes {
+            let s = scope.as_str().unwrap();
+            assert!(
+                !s.starts_with("agent:"),
+                "agent scope '{}' must not appear in scopes_supported",
+                s
+            );
+        }
+        // admin is a bootstrap scope, not for OAuth2 delegation
+        assert!(
+            !scopes.iter().any(|s| s == "admin"),
+            "admin scope must not appear in scopes_supported"
         );
     }
 }

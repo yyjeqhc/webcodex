@@ -7,10 +7,52 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2c-1** enables `OAuth2Verifier` to validate opaque `wc_oat_*` access
-tokens. OAuth2 access tokens are now accepted by `AuthMiddleware` on regular
-HTTP endpoints (API, MCP). They are rejected on agent-transport paths and the
-QUIC surface.
+**Phase 2d-1** publishes `GET /.well-known/oauth-protected-resource`, the
+OAuth Protected Resource Metadata endpoint (RFC 9728). This enables OAuth
+clients and MCP consumers to discover the resource identifier, authorization
+server, supported bearer methods, and available scopes.
+
+### Phase 2d-1: protected resource metadata
+
+The endpoint `GET /.well-known/oauth-protected-resource` returns JSON
+metadata describing the WebCodex OAuth2 resource server:
+
+```json
+{
+  "resource": "https://codex.example.com",
+  "authorization_servers": ["https://codex.example.com"],
+  "bearer_methods_supported": ["header"],
+  "scopes_supported": ["runtime:read", "project:read", "project:write", "job:run", "account:manage"],
+  "resource_name": "WebCodex"
+}
+```
+
+Properties:
+
+- **Public endpoint**: no authentication required, no `AuthMiddleware`.
+- **OAuth2 disabled → 404**: the endpoint returns 404 when `config.oauth2.enabled`
+  is false so discovery does not advertise inactive capabilities.
+- **`resource`**: derived from `config.oauth2.issuer`
+  (`WEBCODEX_OAUTH2_ISSUER` → `WEBCODEX_PUBLIC_URL`); falls back to
+  `http://localhost` when neither is set.
+- **`authorization_servers`**: a single-element array pointing at the same
+  issuer. WebCodex is both the resource server and the authorization server.
+- **`bearer_methods_supported`**: only `["header"]` — query/body tokens are
+  not supported.
+- **`scopes_supported`**: non-agent scopes that OAuth2 clients may request.
+  Agent scopes (`agent:*`) are excluded because OAuth2 tokens are rejected on
+  agent transport surfaces. `admin` is excluded because it is a bootstrap
+  scope not intended for OAuth2 delegation.
+- **`resource_name`**: static `"WebCodex"`.
+
+Additionally, `AuthMiddleware` 401 Unauthorized responses now include a
+`WWW-Authenticate: Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource"`
+header when OAuth2 is enabled and an issuer is configured. 403 responses do
+not include this header.
+
+Authorization server metadata (`/.well-known/oauth-authorization-server`) is
+intentionally deferred until `/oauth/authorize` exists, so discovery does not
+advertise an incomplete browser authorization flow.
 
 ### Phase 2b-1: `POST /oauth/token`
 
@@ -388,7 +430,9 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 
 - `/oauth/authorize` endpoint
 - `/oauth/userinfo` endpoint
-- `/.well-known/oauth-authorization-server` metadata
+- `/.well-known/oauth-authorization-server` metadata — intentionally deferred
+  until `/oauth/authorize` exists so discovery does not advertise an incomplete
+  browser authorization flow
 - `client_credentials` grant
 - Route-level OAuth scope enforcement
 - MCP OAuth (resource indicator / audience binding)

@@ -232,6 +232,20 @@ pub(crate) fn allow_query_token_for_path(path: &str) -> bool {
     path == "/api/agents/ws"
 }
 
+/// Build a `WWW-Authenticate: Bearer` challenge value that includes the
+/// protected resource metadata URL when OAuth2 is enabled. Returns `None`
+/// when OAuth2 is not configured or has no issuer.
+fn oauth2_bearer_challenge(config: &Config) -> Option<String> {
+    if !config.oauth2.enabled {
+        return None;
+    }
+    let issuer = config.oauth2.issuer.as_deref()?;
+    Some(format!(
+        "Bearer resource_metadata=\"{}/.well-known/oauth-protected-resource\"",
+        issuer.trim_end_matches('/')
+    ))
+}
+
 pub(crate) fn bearer_or_allowed_query_token(req: &Request) -> Option<String> {
     bearer_token(req).or_else(|| {
         if allow_query_token_for_path(req.uri().path()) {
@@ -747,6 +761,11 @@ impl Handler for AuthMiddleware {
                     return;
                 }
                 res.status_code(StatusCode::UNAUTHORIZED);
+                if let Some(challenge) = oauth2_bearer_challenge(&config) {
+                    if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
+                        res.headers_mut().insert("www-authenticate", val);
+                    }
+                }
                 res.render(Json(serde_json::json!({"error": "Unauthorized"})));
                 ctrl.skip_rest();
                 return;
@@ -783,6 +802,11 @@ impl Handler for AuthMiddleware {
             Ok(None) => {
                 // Token not recognized by any verifier.
                 res.status_code(StatusCode::UNAUTHORIZED);
+                if let Some(challenge) = oauth2_bearer_challenge(&config) {
+                    if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
+                        res.headers_mut().insert("www-authenticate", val);
+                    }
+                }
                 res.render(Json(serde_json::json!({"error": "Unauthorized"})));
                 ctrl.skip_rest();
             }
@@ -796,6 +820,13 @@ impl Handler for AuthMiddleware {
                     _ => StatusCode::UNAUTHORIZED,
                 };
                 res.status_code(status);
+                if status == StatusCode::UNAUTHORIZED {
+                    if let Some(challenge) = oauth2_bearer_challenge(&config) {
+                        if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
+                            res.headers_mut().insert("www-authenticate", val);
+                        }
+                    }
+                }
                 res.render(Json(serde_json::json!({"error": "Unauthorized"})));
                 ctrl.skip_rest();
             }
@@ -2485,6 +2516,106 @@ mod tests {
         assert!(
             last_used.is_none(),
             "last_used_at must not be updated on forbidden agent transport path"
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // WWW-Authenticate resource_metadata in 401 responses
+    // ------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn auth_middleware_unauthorized_includes_resource_metadata() {
+        let mut config = gate_test_config_oauth2(Some("test-token"));
+        Arc::get_mut(&mut config).unwrap().oauth2.issuer =
+            Some("https://codex.example.com".to_string());
+        let (_tmp, db) = gate_test_db();
+        let service = salvo::Service::new(gate_router(config, db));
+        // No Authorization header → 401
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let challenge = resp
+            .headers
+            .get("www-authenticate")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            challenge.contains("Bearer"),
+            "WWW-Authenticate should contain Bearer, got: {}",
+            challenge
+        );
+        assert!(
+            challenge.contains("resource_metadata="),
+            "WWW-Authenticate should contain resource_metadata, got: {}",
+            challenge
+        );
+        assert!(
+            challenge.contains(".well-known/oauth-protected-resource"),
+            "WWW-Authenticate should reference metadata endpoint, got: {}",
+            challenge
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_unauthorized_includes_resource_metadata_with_issuer() {
+        let mut config_inner = gate_test_config_oauth2(Some("test-token"));
+        // Set a specific issuer
+        Arc::get_mut(&mut config_inner).unwrap().oauth2.issuer =
+            Some("https://codex.example.com".to_string());
+        let (_tmp, db) = gate_test_db();
+        let service = salvo::Service::new(gate_router(config_inner, db));
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let challenge = resp
+            .headers
+            .get("www-authenticate")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            challenge.contains("https://codex.example.com/.well-known/oauth-protected-resource"),
+            "WWW-Authenticate should use issuer URL, got: {}",
+            challenge
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_forbidden_does_not_include_resource_metadata() {
+        let config = gate_test_config_oauth2(Some("test-token"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+
+        let service = salvo::Service::new(gate_router(config, db));
+        // OAuth2 token on agent transport path → 403, not 401
+        let resp = salvo::test::TestClient::post("http://localhost/api/shell/agent/register")
+            .add_header("authorization", &format!("Bearer {}", plaintext), true)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+        // 403 should NOT include WWW-Authenticate challenge
+        assert!(
+            !resp.headers.contains_key("www-authenticate"),
+            "403 should not include WWW-Authenticate"
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_no_challenge_when_oauth2_disabled() {
+        let config = gate_test_config(Some("test-token"));
+        let (_tmp, db) = gate_test_db();
+        let service = salvo::Service::new(gate_router(config, db));
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        // When OAuth2 is disabled, no WWW-Authenticate challenge
+        assert!(
+            !resp.headers.contains_key("www-authenticate"),
+            "should not include WWW-Authenticate when OAuth2 is disabled"
         );
     }
 }

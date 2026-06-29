@@ -425,3 +425,21 @@ Not implemented: `/oauth/authorize`, `client_credentials` grant,
    is_oauth2_access_token(token)` before calling `authenticate()`; returns
    403 immediately.
 4. **`enforce_token_surface()`**: retained as defense-in-depth.
+
+### Phase 2d-1 — protected resource metadata
+
+1. **`GET /.well-known/oauth-protected-resource`**: public endpoint returning
+   OAuth Protected Resource Metadata (RFC 9728). No authentication required.
+   Returns 404 when OAuth2 is disabled.
+2. **Metadata fields**: `resource`, `authorization_servers`,
+   `bearer_methods_supported`, `scopes_supported`, `resource_name`.
+3. **`resource`**: derived from `config.oauth2.issuer`
+   (`WEBCODEX_OAUTH2_ISSUER` → `WEBCODEX_PUBLIC_URL`).
+4. **`scopes_supported`**: non-agent scopes only (`runtime:read`,
+   `project:read`, `project:write`, `job:run`, `account:manage`). Agent
+   scopes and `admin` are excluded.
+5. **`WWW-Authenticate` challenge**: `AuthMiddleware` 401 responses include
+   `Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource"`
+   when OAuth2 is enabled with an issuer. 403 responses do not include it.
+6. **Authorization server metadata** (`/.well-known/oauth-authorization-server`)
+   is intentionally deferred until `/oauth/authorize` exists.

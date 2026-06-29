@@ -442,7 +442,8 @@ Not implemented: `/oauth/authorize`, `client_credentials` grant,
    `Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource"`
    when OAuth2 is enabled with an issuer. 403 responses do not include it.
 6. **Authorization server metadata** (`/.well-known/oauth-authorization-server`)
-   is intentionally deferred until `/oauth/authorize` exists.
+   is intentionally deferred until `/oauth/authorize` issues authorization
+   codes.
 
 ### Phase 2e-0 — authorization endpoint design contract
 
@@ -459,7 +460,7 @@ contract.
 3. **Redirect trust boundary**: unknown clients, revoked clients, missing
    `redirect_uri`, and redirect URI mismatches return direct 400 errors.
    Errors after a registered redirect URI is validated may redirect with
-   `error` and verbatim `state`.
+   `error` and the decoded `state` value URL-encoded again.
 4. **PKCE**: browser authorization code issuance must always require
    `code_challenge_method=S256` and a `code_challenge`, regardless of the
    legacy token-exchange `require_pkce` config.
@@ -471,7 +472,7 @@ contract.
    `wc_oac_*` code in `oauth_authorization_codes` with user, client, redirect,
    scope, resource, PKCE, creation, expiry, unused, and unrevoked metadata.
 7. **Metadata gate**: `/.well-known/oauth-authorization-server` remains
-   unexposed until `/oauth/authorize` is implemented and tested.
+   unexposed until `/oauth/authorize` issues codes and is tested.
 
 ### Phase 2e-1a — authorization helper groundwork
 
@@ -498,3 +499,38 @@ MCP security schemes, or GPT Action configuration.
 5. **Delegation boundary**: `agent:*` and `admin` are not OAuth delegation
    scopes; they are rejected when explicitly requested and filtered out of the
    default intersection.
+
+### Phase 2e-1b — validation-only authorize route
+
+Phase 2e-1b mounts `GET /oauth/authorize` behind `AuthMiddleware`, but the
+handler is still validation-only. It does not generate authorization codes,
+insert `oauth_authorization_codes`, expose authorization server metadata, or
+change `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, MCP security
+schemes, or GPT Action configuration.
+
+1. **Protected route**: `/oauth/authorize` is a root OAuth route, not an
+   `/api/*` route, and is not included in the GPT Action OpenAPI schema.
+2. **Authenticated user**: the handler requires an authenticated
+   `AuthContext.user_id`; bootstrap/no-user contexts are rejected.
+3. **Redirect trust boundary**: missing, empty, unknown, or revoked
+   `client_id`; missing or empty `redirect_uri`; and redirect URI mismatches
+   are direct 400 errors with no redirect.
+4. **Exact redirect match**: `redirect_uri` must match one registered URI
+   exactly after the existing `OAuthClientRecord::redirect_uris_vec()`
+   trimming. There is no prefix, host-only, query-subset, wildcard, or
+   normalization match.
+5. **Redirectable validation**: only after client and redirect URI validation,
+   unsupported or empty `response_type`, missing or invalid PKCE, invalid
+   scope, and unsupported `resource` redirect to the trusted redirect URI with
+   an OAuth `error` parameter.
+6. **PKCE and scope**: PKCE S256 is always required, independent of the token
+   endpoint compatibility flag, and `normalize_oauth_scopes()` is used for
+   authorize-time scope validation.
+7. **State**: `state` is opaque. WebCodex does not interpret or trust it. The
+   decoded value is preserved semantically and URL-encoded again on redirect
+   errors.
+8. **Validation success**: a fully valid request returns HTTP 501 with
+   `authorization code issuance is not implemented yet`; it does not redirect
+   and does not create a code.
+9. **Metadata gate**: `/.well-known/oauth-authorization-server` remains
+   unexposed until the authorize endpoint actually issues codes.

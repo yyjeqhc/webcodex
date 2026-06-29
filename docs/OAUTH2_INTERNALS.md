@@ -7,13 +7,43 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2e-1a** adds pure internal groundwork for the future
-`GET /oauth/authorize` endpoint. The endpoint is still not implemented: no
-route is mounted, no authorization code is issued, and authorization-server
-metadata remains gated. See
+**Phase 2e-1b** mounts a validation-only `GET /oauth/authorize` endpoint
+behind `AuthMiddleware`. It validates the authenticated user, client,
+registered redirect URI, `response_type`, PKCE S256, scope, and unsupported
+`resource`, but it still does not issue authorization codes. Authorization
+server metadata remains gated. See
 [OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md) for the full request
 contract, state machine, security invariants, storage contract, test plan, and
 authorization-server metadata gate.
+
+### Phase 2e-1b: validation-only authorize route
+
+Phase 2e-1b adds the route and handler without enabling code issuance:
+
+- `GET /oauth/authorize` is mounted at the root path, not under `/api`, and is
+  protected by `AuthMiddleware`.
+- OAuth2 disabled returns a direct 404.
+- Requests must carry an authenticated `AuthContext.user_id`; unauthenticated
+  requests are rejected before handler validation and create no code.
+- `client_id` is required and non-empty, and must identify a non-revoked
+  client.
+- `redirect_uri` is required, non-empty, and must exactly match one registered
+  redirect URI from `OAuthClientRecord::redirect_uris_vec()`.
+- Before client and redirect URI validation, errors are direct 400 responses
+  with no `Location` header.
+- After client and redirect URI validation, unsupported `response_type`,
+  missing or invalid PKCE, invalid scope, and unsupported `resource` are
+  redirected to the trusted redirect URI with an OAuth `error` parameter.
+- Redirect error appending uses `&` when the registered redirect URI already
+  has a query string.
+- `state` is opaque. WebCodex does not interpret or trust it. The decoded
+  state value is preserved semantically and URL-encoded again when redirecting.
+- Validation success returns HTTP 501 with
+  `{"error":"authorization code issuance is not implemented yet"}` and inserts
+  no row into `oauth_authorization_codes`.
+
+`/.well-known/oauth-authorization-server` remains unexposed because the
+browser authorization flow is still validation-only.
 
 ### Phase 2e-1a: authorization request helpers
 
@@ -24,8 +54,8 @@ Phase 2e-1a introduces internal helper code only:
 - `parse_authorize_query()` parses the known authorize query parameters,
   rejects duplicate known parameters as `invalid_request`, requires
   `response_type`, `client_id`, `redirect_uri`, `code_challenge`, and
-  `code_challenge_method`, preserves parsed `state`, and keeps `resource` for
-  later rejection by the future handler.
+  `code_challenge_method`, preserves parsed decoded `state`, and keeps
+  `resource` for later rejection by the handler.
 - `oauth_scopes_supported()` exposes the canonical global OAuth scope registry
   reused by protected resource metadata.
 - `normalize_oauth_scopes()` defaults absent or whitespace-only requested
@@ -58,25 +88,26 @@ Planned request contract:
 - Empty `scope` defaults to the normalized client/global OAuth intersection;
   an empty result is `invalid_scope`.
 - `resource` is not yet supported and must be rejected rather than ignored.
-- `state` is opaque and must be returned verbatim on success and redirect
-  errors.
+- `state` is opaque. WebCodex does not interpret or trust it. The decoded
+  state value is preserved semantically and URL-encoded again when redirecting.
 
 Error handling is split by redirect trust. Unknown clients, revoked clients,
 missing `redirect_uri`, and redirect URI mismatches return direct 400 errors
 and must not redirect to a request-controlled URI. After `client_id` and
 `redirect_uri` are validated, request errors such as unsupported
 `response_type`, invalid scope, invalid PKCE, or unsupported `resource` may
-redirect to the registered URI with `error` and verbatim `state`.
+redirect to the registered URI with `error` and decoded/re-encoded `state`.
 
-Successful authorization will generate one plaintext `wc_oac_*` code, store
+The later issuance phase will generate one plaintext `wc_oac_*` code, store
 only its SHA-256 hash in `oauth_authorization_codes`, and redirect once with
-`code` and optional `state`. The stored row must include `client_id`,
-`user_id`, `redirect_uri`, normalized `scopes`, `resource`, PKCE challenge and
-method, `created_at`, `expires_at`, `used_at = None`, and
+`code` and optional decoded/re-encoded `state`. The stored row must include
+`client_id`, `user_id`, `redirect_uri`, normalized `scopes`, `resource`, PKCE
+challenge and method, `created_at`, `expires_at`, `used_at = None`, and
 `revoked_at = None`.
 
 Authorization server metadata (`/.well-known/oauth-authorization-server`)
-remains intentionally deferred until `/oauth/authorize` exists and is tested.
+remains intentionally deferred until `/oauth/authorize` issues codes and is
+tested.
 
 ### Phase 2d-1: protected resource metadata
 
@@ -117,8 +148,8 @@ header when OAuth2 is enabled and an issuer is configured. 403 responses do
 not include this header.
 
 Authorization server metadata (`/.well-known/oauth-authorization-server`) is
-intentionally deferred until `/oauth/authorize` exists, so discovery does not
-advertise an incomplete browser authorization flow.
+intentionally deferred until `/oauth/authorize` issues authorization codes, so
+discovery does not advertise an incomplete browser authorization flow.
 
 ### Phase 2b-1: `POST /oauth/token`
 
@@ -494,11 +525,11 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 
 ## What is NOT implemented yet
 
-- `/oauth/authorize` endpoint
+- Authorization code issuance from `/oauth/authorize`
 - `/oauth/userinfo` endpoint
 - `/.well-known/oauth-authorization-server` metadata — intentionally deferred
-  until `/oauth/authorize` exists so discovery does not advertise an incomplete
-  browser authorization flow
+  until `/oauth/authorize` issues codes so discovery does not advertise an
+  incomplete browser authorization flow
 - `client_credentials` grant
 - Route-level OAuth scope enforcement
 - MCP OAuth (resource indicator / audience binding)

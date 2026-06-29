@@ -413,6 +413,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // client_id + client_secret in the form body.
         .push(Router::with_path("oauth/token").post(oauth_http::oauth_token))
         .push(Router::with_path("oauth/revoke").post(oauth_http::oauth_revoke))
+        // /oauth/authorize is protected by AuthMiddleware.
+        // Phase 2e-1b is validation-only and does not issue authorization
+        // codes yet.
+        .push(
+            Router::with_path("oauth/authorize")
+                .hoop(AuthMiddleware)
+                .get(oauth_http::oauth_authorize),
+        )
         .push(
             Router::with_path(".well-known/oauth-protected-resource")
                 .get(oauth_http::oauth_metadata),

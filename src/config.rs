@@ -366,7 +366,7 @@ pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
 #[allow(dead_code)]
 pub struct OAuth2Config {
     /// Public issuer URL for `/.well-known/*` metadata. Defaults to
-    /// `WEBCODEX_PUBLIC_URL` if set, otherwise `None`.
+    /// `WEBCODEX_OAUTH2_ISSUER`, falling back to `WEBCODEX_PUBLIC_URL`.
     pub issuer: Option<String>,
     /// Whether the OAuth2 subsystem is active. Default `false`.
     pub enabled: bool,

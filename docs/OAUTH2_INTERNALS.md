@@ -81,9 +81,9 @@ may still **create** OAuth clients via the management API; when bootstrap
 creates a client, the client is attributed to the first registered user.
 
 Not implemented in this phase: dynamic client registration, OIDC, JWKS/JWT,
-`userinfo_endpoint`, `client_credentials` grant, device code flow,
-resource/audience binding, full username/password login, and DB-backed session
-storage (the session store is process-local in-memory).
+`userinfo_endpoint`, `client_credentials` grant, device code flow, full
+resource/audience enforcement, full username/password login, and DB-backed
+session storage (the session store is process-local in-memory).
 
 ### Phase 2f-1: delegated OAuth scope enforcement
 
@@ -120,9 +120,10 @@ When a concrete scope is required, the response also includes
 `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scope>"`.
 
 Phase 2f-1 does not change `/oauth/authorize`, `/oauth/token`, or
-`/oauth/revoke` grant/revocation semantics. Resource/audience binding,
-route-level project-resource authorization, `client_credentials`, device code,
-JWKS, JWT, OIDC, and `/.well-known/openid-configuration` remain unimplemented.
+`/oauth/revoke` grant/revocation semantics. Full resource/audience
+enforcement, route-level project-resource authorization, `client_credentials`,
+device code, JWKS, JWT, OIDC, and `/.well-known/openid-configuration` remain
+unimplemented.
 
 ### Phase 2e-2: authorization server metadata and authorize identity boundary
 
@@ -165,7 +166,7 @@ reuses `oauth_scopes_supported()`.
 `/.well-known/openid-configuration` is still not implemented. The server does
 not advertise JWKS, userinfo, registration, device authorization,
 introspection, claims, ID token signing algorithms, route-level OAuth scope
-enforcement, or MCP resource/audience binding.
+enforcement, or full MCP resource/audience enforcement.
 
 ### Phase 2e-1c: authorization code issuance
 
@@ -185,9 +186,9 @@ issuance:
 - Before client and redirect URI validation, errors are direct 400 responses
   with no `Location` header.
 - After client and redirect URI validation, unsupported `response_type`,
-  missing or invalid PKCE, invalid scope, and unsupported `resource` are
-  redirected to the trusted redirect URI with an OAuth `error` parameter and
-  create no authorization code.
+  missing or invalid PKCE, invalid scope, and unsupported or external
+  `resource` values are redirected to the trusted redirect URI with an OAuth
+  `error` parameter and create no authorization code.
 - Redirect error appending uses `&` when the registered redirect URI already
   has a query string.
 - `state` is opaque. WebCodex does not interpret or trust it. The decoded
@@ -245,7 +246,8 @@ Planned request contract:
   `job:run`, `account:manage`). `agent:*` and `admin` are not delegable.
 - Empty `scope` defaults to the normalized client/global OAuth intersection;
   an empty result is `invalid_scope`.
-- `resource` is not yet supported and must be rejected rather than ignored.
+- `resource`, when present, must identify WebCodex itself. Accepted values are
+  the configured issuer/base URL and that same base with `/mcp` appended.
 - `state` is opaque. WebCodex does not interpret or trust it. The decoded
   state value is preserved semantically and URL-encoded again when redirecting.
 
@@ -253,14 +255,15 @@ Error handling is split by redirect trust. Unknown clients, revoked clients,
 missing `redirect_uri`, and redirect URI mismatches return direct 400 errors
 and must not redirect to a request-controlled URI. After `client_id` and
 `redirect_uri` are validated, request errors such as unsupported
-`response_type`, invalid scope, invalid PKCE, or unsupported `resource` may
-redirect to the registered URI with `error` and decoded/re-encoded `state`.
+`response_type`, invalid scope, invalid PKCE, or unsupported/external
+`resource` may redirect to the registered URI with `error` and
+decoded/re-encoded `state`.
 
 Phase 2e-1c generates one plaintext `wc_oac_*` code, stores only its
 SHA-256 hash in `oauth_authorization_codes`, and redirects once with `code`
 and optional decoded/re-encoded `state`. The stored row includes `client_id`,
-`user_id`, `redirect_uri`, normalized `scopes`, `resource = None`, PKCE
-challenge and method, `created_at`, `expires_at`, `used_at = None`, and
+`user_id`, `redirect_uri`, normalized `scopes`, optional accepted `resource`,
+PKCE challenge and method, `created_at`, `expires_at`, `used_at = None`, and
 `revoked_at = None`.
 
 Authorization server metadata (`/.well-known/oauth-authorization-server`) is
@@ -521,7 +524,9 @@ by `AuthMiddleware`.
 - Route-level OAuth scope enforcement was added in Phase 2f-1 (see above).
   At the Phase 2c-1 boundary the `scopes` field was populated in
   `AuthContext` but no handler checked it yet.
-- `resource` (audience) binding is not enforced.
+- Accepted self `resource` indicators are stored on authorization codes and
+  issued tokens, but full audience binding is not enforced across API
+  surfaces.
 
 ### Phase 2c-1.1: forbid `last_used_at` updates on rejected surfaces
 
@@ -686,7 +691,7 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 - `/oauth/userinfo` endpoint
 - `/.well-known/openid-configuration` metadata
 - `client_credentials` grant
-- MCP OAuth (resource indicator / audience binding)
+- Full MCP OAuth resource/audience enforcement
 - JWT/JWKS/OIDC
 - Handler migration to `Principal`
 
@@ -730,5 +735,6 @@ surface gates; OAuth2 access tokens remain non-delegable on agent transport
 surfaces.
 
 Unknown routes and tools fail closed for `AuthKind::OAuth2Token` (HTTP 403);
-Phase 2f-1 wired this helper into `AuthMiddleware`. Resource/audience binding
-is still not implemented.
+Phase 2f-1 wired this helper into `AuthMiddleware`. Self resource indicators
+may be stored on issued OAuth tokens for MCP compatibility, but full
+resource/audience enforcement is still not implemented.

@@ -251,8 +251,9 @@ OAuth2 scope failures return HTTP 403:
 
 Where a concrete scope is missing, the response includes
 `WWW-Authenticate: Bearer error="insufficient_scope", scope="<scope>"`.
-Resource/audience binding and route-level project-resource authorization are
-not implemented.
+Self resource indicators may be stored on issued OAuth tokens for MCP
+compatibility, but full resource/audience enforcement and route-level
+project-resource authorization are not implemented.
 
 ## Authorization flow
 
@@ -607,8 +608,8 @@ schemes, or GPT Action configuration.
    normalization match.
 5. **Redirectable validation**: only after client and redirect URI validation,
    unsupported or empty `response_type`, missing or invalid PKCE, invalid
-   scope, and unsupported `resource` redirect to the trusted redirect URI with
-   an OAuth `error` parameter.
+   scope, and unsupported or external `resource` redirect to the trusted
+   redirect URI with an OAuth `error` parameter.
 6. **PKCE and scope**: PKCE S256 is always required, independent of the token
    endpoint compatibility flag, and `normalize_oauth_scopes()` is used for
    authorize-time scope validation.
@@ -632,8 +633,8 @@ GPT Action configuration changes, or changes to `/oauth/token`,
    `wc_oac_*` authorization code.
 2. **Hash-only storage**: only `hash_token(plaintext_code)` is stored in
    `oauth_authorization_codes`, along with client, user, exact redirect URI,
-   normalized scopes, `resource = None`, PKCE S256 metadata, creation/expiry,
-   `used_at = None`, and `revoked_at = None`.
+   normalized scopes, optional accepted `resource`, PKCE S256 metadata,
+   creation/expiry, `used_at = None`, and `revoked_at = None`.
 3. **Success redirect**: the handler redirects to the validated
    `redirect_uri` with `code` and optional decoded/re-encoded `state`. Existing
    redirect URI query parameters are preserved and new parameters are appended
@@ -677,8 +678,8 @@ configuration, and artifact/import/action behavior unchanged.
    `oauth_scopes_supported()`, the same global OAuth scope registry used by
    protected resource metadata and authorize-time scope normalization.
 6. **Still not implemented**: `/.well-known/openid-configuration`, JWKS,
-   JWT/OIDC, route-level OAuth scope enforcement, and MCP resource/audience
-   binding remain out of scope.
+   JWT/OIDC, route-level OAuth scope enforcement, and full MCP
+   resource/audience enforcement remain out of scope.
 
 ### Phase 2f-0 — route-level OAuth scope policy definition
 
@@ -708,4 +709,5 @@ Route-level enforcement (Phase 2f-1) applies this policy only to
 WebCodex credentials and remain unrestricted by delegated OAuth scopes.
 AgentToken and AccountCredential surfaces remain governed by the existing
 surface gates. Unknown routes fail closed for OAuth2 tokens (HTTP 403).
-Resource or audience binding remains unimplemented.
+Self resource indicators are accepted and stored for MCP compatibility. Full
+resource/audience enforcement remains unimplemented.

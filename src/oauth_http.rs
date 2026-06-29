@@ -320,6 +320,79 @@ fn redirect_error_for_missing_authorize_param(error: &OAuthAuthorizeError) -> &'
     }
 }
 
+fn normalize_oauth_resource_indicator(resource: &str) -> Result<String, OAuthAuthorizeError> {
+    let resource = resource.trim();
+    if resource.is_empty() {
+        return Err(OAuthAuthorizeError::UnsupportedResource);
+    }
+
+    let parsed = url::Url::parse(resource).map_err(|_| OAuthAuthorizeError::UnsupportedResource)?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(OAuthAuthorizeError::UnsupportedResource);
+    }
+    if parsed.host_str().is_none()
+        || !parsed.username().is_empty()
+        || parsed.password().is_some()
+        || parsed.query().is_some()
+        || parsed.fragment().is_some()
+    {
+        return Err(OAuthAuthorizeError::UnsupportedResource);
+    }
+
+    let mut normalized = format!(
+        "{}://{}",
+        parsed.scheme(),
+        parsed
+            .host_str()
+            .ok_or(OAuthAuthorizeError::UnsupportedResource)?
+    );
+    if let Some(port) = parsed.port() {
+        normalized.push(':');
+        normalized.push_str(&port.to_string());
+    }
+
+    let mut path = parsed.path().to_string();
+    if path == "/" {
+        path.clear();
+    } else {
+        while path.ends_with('/') {
+            path.pop();
+        }
+    }
+    normalized.push_str(&path);
+    Ok(normalized)
+}
+
+fn allowed_oauth_resource_indicators(config: &crate::Config) -> Vec<String> {
+    let Some(base) = config.oauth2.issuer.as_deref() else {
+        return Vec::new();
+    };
+    let Ok(base) = normalize_oauth_resource_indicator(base) else {
+        return Vec::new();
+    };
+
+    let mcp = format!("{}/mcp", base);
+    vec![base, mcp]
+}
+
+fn validate_authorize_resource(
+    resource: Option<&str>,
+    config: &crate::Config,
+) -> Result<Option<String>, OAuthAuthorizeError> {
+    let Some(resource) = resource else {
+        return Ok(None);
+    };
+    let normalized = normalize_oauth_resource_indicator(resource)?;
+    if allowed_oauth_resource_indicators(config)
+        .iter()
+        .any(|allowed| allowed == &normalized)
+    {
+        Ok(Some(normalized))
+    } else {
+        Err(OAuthAuthorizeError::UnsupportedResource)
+    }
+}
+
 // ---------------------------------------------------------------------------
 // First-party authorize browser session (Phase 2e-3)
 // ---------------------------------------------------------------------------
@@ -520,6 +593,7 @@ fn authorize_consent_html(
     client_id: &str,
     redirect_uri: &str,
     scopes: &[String],
+    resource: Option<&str>,
     original_query: &str,
 ) -> String {
     let scope_items = scopes
@@ -527,6 +601,9 @@ fn authorize_consent_html(
         .map(|s| format!("<li>{}</li>", html_escape(s)))
         .collect::<Vec<_>>()
         .join("\n");
+    let resource_html = resource
+        .map(|r| format!("<p>Resource: <code>{}</code></p>", html_escape(r)))
+        .unwrap_or_default();
     // Re-render the original authorize query as hidden form fields so the
     // consent POST can revalidate every parameter from scratch.
     let hidden_fields: String = url::form_urlencoded::parse(original_query.as_bytes())
@@ -551,6 +628,7 @@ fn authorize_consent_html(
 <h1>Authorize WebCodex client</h1>
 <p>Client: <strong>{client_name}</strong> ({client_id})</p>
 <p>Redirect URI: <code>{redirect_uri}</code></p>
+{resource_html}
 <p>The application is requesting the following scopes:</p>
 <ul>
 {scope_items}
@@ -565,6 +643,7 @@ fn authorize_consent_html(
         client_name = html_escape(client_name),
         client_id = html_escape(client_id),
         redirect_uri = html_escape(redirect_uri),
+        resource_html = resource_html,
         scope_items = scope_items,
         hidden_fields = hidden_fields,
     )
@@ -887,15 +966,18 @@ pub(crate) async fn oauth_authorize_consent(
             return;
         }
     };
-    if parsed.resource.is_some() {
-        redirect_with_oauth_error(
-            res,
-            &parsed.redirect_uri,
-            "invalid_request",
-            parsed.state.as_deref(),
-        );
-        return;
-    }
+    let resource = match validate_authorize_resource(parsed.resource.as_deref(), &config) {
+        Ok(resource) => resource,
+        Err(_) => {
+            redirect_with_oauth_error(
+                res,
+                &parsed.redirect_uri,
+                "invalid_target",
+                parsed.state.as_deref(),
+            );
+            return;
+        }
+    };
 
     // Issue the authorization code bound to the session's user.
     let now = chrono::Utc::now().timestamp();
@@ -908,7 +990,7 @@ pub(crate) async fn oauth_authorize_consent(
         user_id: session.user_id.clone(),
         redirect_uri: parsed.redirect_uri.clone(),
         scopes,
-        resource: None,
+        resource,
         code_challenge: Some(parsed.code_challenge.clone()),
         code_challenge_method: Some("S256".to_string()),
         created_at: now,
@@ -1414,7 +1496,7 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
     // Path 2: browser first-party session cookie.
     if let Some(session_cookie) = authorize_session_id_from_request(req) {
         if session_store.get_session(&session_cookie).is_some() {
-            authorize_render_consent(res, &db, &query);
+            authorize_render_consent(res, &config, &db, &query);
             return;
         }
     }
@@ -1630,15 +1712,18 @@ async fn authorize_issue_with_context(
         }
     };
 
-    if parsed.resource.is_some() {
-        redirect_with_oauth_error(
-            res,
-            &redirect_uri,
-            "invalid_request",
-            parsed.state.as_deref(),
-        );
-        return;
-    }
+    let resource = match validate_authorize_resource(parsed.resource.as_deref(), config) {
+        Ok(resource) => resource,
+        Err(_) => {
+            redirect_with_oauth_error(
+                res,
+                &redirect_uri,
+                "invalid_target",
+                parsed.state.as_deref(),
+            );
+            return;
+        }
+    };
 
     let now = chrono::Utc::now().timestamp();
     let plaintext_code = generate_oauth_authorization_code();
@@ -1650,7 +1735,7 @@ async fn authorize_issue_with_context(
         user_id: user_id.to_string(),
         redirect_uri: redirect_uri.clone(),
         scopes,
-        resource: None,
+        resource,
         code_challenge: Some(parsed.code_challenge.clone()),
         code_challenge_method: Some("S256".to_string()),
         created_at: now,
@@ -1681,7 +1766,12 @@ async fn authorize_issue_with_context(
 /// the user picks Allow/Deny. Unknown client / redirect mismatch produce a
 /// direct 400. Invalid scope produces a direct error page so the user is not
 /// shown a misleading consent prompt.
-fn authorize_render_consent(res: &mut Response, db: &crate::Database, query: &str) {
+fn authorize_render_consent(
+    res: &mut Response,
+    config: &crate::Config,
+    db: &crate::Database,
+    query: &str,
+) {
     let parsed = match parse_authorize_query(query) {
         Ok(p) => p,
         Err(_) => {
@@ -1731,11 +1821,25 @@ fn authorize_render_consent(res: &mut Response, db: &crate::Database, query: &st
         }
     };
 
+    let resource = match validate_authorize_resource(parsed.resource.as_deref(), config) {
+        Ok(resource) => resource,
+        Err(_) => {
+            redirect_with_oauth_error(
+                res,
+                &parsed.redirect_uri,
+                "invalid_target",
+                parsed.state.as_deref(),
+            );
+            return;
+        }
+    };
+
     let html = authorize_consent_html(
         &client.name,
         &client.client_id,
         &parsed.redirect_uri,
         &scopes,
+        resource.as_deref(),
         query,
     );
     res.status_code(StatusCode::OK);
@@ -2830,6 +2934,20 @@ mod tests {
         }
     }
 
+    fn oauth2_enabled_with_issuer(issuer: &str) -> OAuth2Config {
+        OAuth2Config {
+            issuer: Some(issuer.to_string()),
+            ..oauth2_enabled()
+        }
+    }
+
+    fn oauth2_enabled_no_pkce_with_issuer(issuer: &str) -> OAuth2Config {
+        OAuth2Config {
+            issuer: Some(issuer.to_string()),
+            ..oauth2_enabled_no_pkce()
+        }
+    }
+
     fn oauth2_disabled() -> OAuth2Config {
         OAuth2Config {
             enabled: false,
@@ -3018,6 +3136,26 @@ mod tests {
     }
 
     #[test]
+    fn validate_authorize_resource_rejects_unsafe_values() {
+        let config = test_config(oauth2_enabled_with_issuer("https://example.test"));
+        for resource in [
+            "",
+            "   ",
+            "/mcp",
+            "ftp://example.test/mcp",
+            "https://example.test/mcp?x=1",
+            "https://example.test/mcp#frag",
+            "https://evil.example",
+        ] {
+            assert_eq!(
+                validate_authorize_resource(Some(resource), &config).unwrap_err(),
+                OAuthAuthorizeError::UnsupportedResource,
+                "resource should be rejected: {resource:?}"
+            );
+        }
+    }
+
+    #[test]
     fn parse_authorize_query_rejects_duplicate_parameters() {
         let query = format!("{}&client_id=client-2", valid_authorize_query());
         let err = parse_authorize_query(&query).unwrap_err();
@@ -3170,6 +3308,23 @@ mod tests {
         ])
     }
 
+    fn valid_authorize_url_with_resource(
+        client: &OAuthClientRecord,
+        redirect_uri: &str,
+        resource: &str,
+    ) -> String {
+        authorize_url(&[
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", redirect_uri),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+            ("resource", resource),
+        ])
+    }
+
     fn authorized_get(url: &str, token: &str) -> salvo::test::RequestBuilder {
         TestClient::get(url).add_header("authorization", &format!("Bearer {}", token), true)
     }
@@ -3296,6 +3451,28 @@ mod tests {
         code_challenge: Option<&str>,
         code_challenge_method: Option<&str>,
     ) -> (OAuthAuthorizationCodeRecord, String) {
+        seed_auth_code_with_resource(
+            db,
+            client,
+            user,
+            redirect_uri,
+            scopes,
+            code_challenge,
+            code_challenge_method,
+            None,
+        )
+    }
+
+    fn seed_auth_code_with_resource(
+        db: &crate::Database,
+        client: &OAuthClientRecord,
+        user: &UserRecord,
+        redirect_uri: &str,
+        scopes: &str,
+        code_challenge: Option<&str>,
+        code_challenge_method: Option<&str>,
+        resource: Option<&str>,
+    ) -> (OAuthAuthorizationCodeRecord, String) {
         let now = chrono::Utc::now().timestamp();
         let plaintext_code = generate_oauth_authorization_code();
         let code_hash = hash_token(&plaintext_code);
@@ -3308,7 +3485,7 @@ mod tests {
             scopes: scopes.to_string(),
             code_challenge: code_challenge.map(str::to_string),
             code_challenge_method: code_challenge_method.map(str::to_string),
-            resource: None,
+            resource: resource.map(str::to_string),
             created_at: now,
             expires_at: now + 300,
             used_at: None,
@@ -3327,6 +3504,16 @@ mod tests {
         user: &UserRecord,
         scopes: &str,
     ) -> (crate::models::OAuthRefreshTokenRecord, String) {
+        seed_refresh_token_with_resource(db, client, user, scopes, None)
+    }
+
+    fn seed_refresh_token_with_resource(
+        db: &crate::Database,
+        client: &OAuthClientRecord,
+        user: &UserRecord,
+        scopes: &str,
+        resource: Option<&str>,
+    ) -> (crate::models::OAuthRefreshTokenRecord, String) {
         let now = chrono::Utc::now().timestamp();
         let plaintext = crate::auth::generate_oauth_refresh_token();
         let token_hash = hash_token(&plaintext);
@@ -3336,7 +3523,7 @@ mod tests {
             client_id: client.client_id.clone(),
             user_id: user.id.clone(),
             scopes: scopes.to_string(),
-            resource: None,
+            resource: resource.map(str::to_string),
             created_at: now,
             expires_at: now + 2_592_000, // 30 days
             revoked_at: None,
@@ -3439,6 +3626,32 @@ mod tests {
             })
             .unwrap();
         (at, rt)
+    }
+
+    fn access_token_resource_by_plaintext(
+        db: &crate::Database,
+        plaintext_token: &str,
+    ) -> Option<String> {
+        db.conn_for_tests()
+            .query_row(
+                "SELECT resource FROM oauth_access_tokens WHERE token_hash = ?1",
+                [&hash_token(plaintext_token)],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn refresh_token_resource_by_plaintext(
+        db: &crate::Database,
+        plaintext_token: &str,
+    ) -> Option<String> {
+        db.conn_for_tests()
+            .query_row(
+                "SELECT resource FROM oauth_refresh_tokens WHERE token_hash = ?1",
+                [&hash_token(plaintext_token)],
+                |row| row.get(0),
+            )
+            .unwrap()
     }
 
     // -----------------------------------------------------------------------
@@ -3983,8 +4196,64 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authorize_rejects_resource_parameter() {
-        let config = test_config(oauth2_enabled());
+    async fn oauth_authorize_accepts_self_resource_base() {
+        let config = test_config(oauth2_enabled_with_issuer("https://example.test/"));
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url_with_resource(
+            &client,
+            "https://example.com/callback",
+            " https://example.test/ ",
+        );
+
+        let (_resp, _location, _parsed, code) =
+            authorize_success(&service, &db, &url, &token).await;
+        let record = auth_code_by_plaintext(&db, &code);
+
+        assert_eq!(record.resource.as_deref(), Some("https://example.test"));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_accepts_self_resource_mcp_endpoint() {
+        let config = test_config(oauth2_enabled_with_issuer("https://example.test"));
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url_with_resource(
+            &client,
+            "https://example.com/callback",
+            "https://example.test/mcp",
+        );
+
+        let (_resp, location, _parsed, code) = authorize_success(&service, &db, &url, &token).await;
+        let record = auth_code_by_plaintext(&db, &code);
+
+        assert!(
+            location.contains("code=wc_oac_"),
+            "ChatGPT MCP resource flow should return a code: {}",
+            location
+        );
+        assert_eq!(record.resource.as_deref(), Some("https://example.test/mcp"));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_rejects_external_resource() {
+        let config = test_config(oauth2_enabled_with_issuer("https://example.test"));
         let (_tmp, db) = test_db();
         let user = seed_user(&db, "alice");
         let token = seed_user_token(&db, &user);
@@ -4012,10 +4281,32 @@ mod tests {
             &url,
             &token,
             "https://example.com/callback",
-            "invalid_request",
+            "invalid_target",
             Some("state-1"),
         )
         .await;
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_without_resource_still_works() {
+        let config = test_config(oauth2_enabled_with_issuer("https://example.test"));
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+
+        let (_resp, _location, _parsed, code) =
+            authorize_success(&service, &db, &url, &token).await;
+        let record = auth_code_by_plaintext(&db, &code);
+
+        assert_eq!(record.resource, None);
     }
 
     #[tokio::test]
@@ -4378,6 +4669,50 @@ mod tests {
         let (at_after, rt_after) = oauth_token_counts(&db);
         assert_eq!(at_before + 1, at_after, "one access token inserted");
         assert_eq!(rt_before + 1, rt_after, "one refresh token inserted");
+    }
+
+    #[tokio::test]
+    async fn oauth_token_exchange_inherits_resource_from_code() {
+        let config = test_config(oauth2_enabled_no_pkce_with_issuer("https://example.test"));
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (_, code) = seed_auth_code_with_resource(
+            &db,
+            &client,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+            None,
+            None,
+            Some("https://example.test/mcp"),
+        );
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", "https://example.com/callback"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        let access_token = json["access_token"].as_str().unwrap();
+        let refresh_token = json["refresh_token"].as_str().unwrap();
+
+        assert_eq!(
+            access_token_resource_by_plaintext(&db, access_token).as_deref(),
+            Some("https://example.test/mcp")
+        );
+        assert_eq!(
+            refresh_token_resource_by_plaintext(&db, refresh_token).as_deref(),
+            Some("https://example.test/mcp")
+        );
     }
 
     #[tokio::test]
@@ -5482,6 +5817,46 @@ mod tests {
         let (at_after, rt_after) = oauth_token_counts(&db);
         assert_eq!(at_before + 1, at_after, "one new access token inserted");
         assert_eq!(rt_before + 1, rt_after, "one new refresh token inserted");
+    }
+
+    #[tokio::test]
+    async fn oauth_refresh_token_inherits_resource() {
+        let config = test_config(oauth2_enabled_no_pkce_with_issuer("https://example.test"));
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (_old_rt, old_rt_plaintext) = seed_refresh_token_with_resource(
+            &db,
+            &client,
+            &user,
+            "runtime:read",
+            Some("https://example.test/mcp"),
+        );
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        let access_token = json["access_token"].as_str().unwrap();
+        let refresh_token = json["refresh_token"].as_str().unwrap();
+
+        assert_eq!(
+            access_token_resource_by_plaintext(&db, access_token).as_deref(),
+            Some("https://example.test/mcp")
+        );
+        assert_eq!(
+            refresh_token_resource_by_plaintext(&db, refresh_token).as_deref(),
+            Some("https://example.test/mcp")
+        );
     }
 
     #[tokio::test]
@@ -6823,6 +7198,25 @@ mod tests {
         ])
     }
 
+    fn consent_form_body_with_resource(
+        client: &OAuthClientRecord,
+        redirect_uri: &str,
+        decision: &str,
+        resource: &str,
+    ) -> String {
+        form_body(&[
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", redirect_uri),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+            ("resource", resource),
+            ("decision", decision),
+        ])
+    }
+
     // -----------------------------------------------------------------------
     // OAuth client management API tests
     // -----------------------------------------------------------------------
@@ -7456,6 +7850,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth_authorize_consent_shows_resource_when_present() {
+        let config = test_config(oauth2_enabled_with_issuer("https://example.test"));
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+
+        let login_body = form_body(&[("return_to", return_to.as_str()), ("token", token.as_str())]);
+        let resp = post_form("http://localhost/oauth/authorize/login", login_body)
+            .send(&service)
+            .await;
+        let cookie_val = set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).expect("session cookie");
+        let cookie = format!("{}={}", AUTHORIZE_SESSION_COOKIE, cookie_val);
+
+        let url = valid_authorize_url_with_resource(
+            &client,
+            "https://example.com/callback",
+            "https://example.test/mcp",
+        );
+        let mut resp = TestClient::get(&url)
+            .add_header("cookie", &cookie, true)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let text = resp.take_string().await.unwrap_or_default();
+        assert!(text.contains("Resource:"), "resource label shown");
+        assert!(
+            text.contains("https://example.test/mcp"),
+            "resource value shown"
+        );
+        assert!(text.contains("Allow"), "Allow button");
+        assert!(!text.contains("wc_oac_"));
+    }
+
+    #[tokio::test]
     async fn oauth_authorize_consent_allow_redirects_with_code() {
         let config = test_config(oauth2_enabled());
         let (_tmp, db) = test_db();
@@ -7494,6 +7930,56 @@ mod tests {
             parsed.query_pairs().into_owned().collect();
         let code = params.get("code").expect("code in redirect");
         assert!(code.starts_with("wc_oac_"));
+        assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_consent_allow_stores_resource_on_code() {
+        let config = test_config(oauth2_enabled_with_issuer("https://example.test"));
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+
+        let login_body = form_body(&[("return_to", return_to.as_str()), ("token", token.as_str())]);
+        let resp = post_form("http://localhost/oauth/authorize/login", login_body)
+            .send(&service)
+            .await;
+        let cookie_val = set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).expect("session cookie");
+        let cookie = format!("{}={}", AUTHORIZE_SESSION_COOKIE, cookie_val);
+
+        let before = auth_code_count(&db);
+        let consent_body = consent_form_body_with_resource(
+            &client,
+            "https://example.com/callback",
+            "allow",
+            "https://example.test/mcp",
+        );
+        let resp = post_form_with_cookie(
+            "http://localhost/oauth/authorize/consent",
+            consent_body,
+            &cookie,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        assert_eq!(auth_code_count(&db), before + 1);
+        let location = location_header(&resp).expect("redirect with code");
+        let parsed = url::Url::parse(&location).unwrap();
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        let code = params.get("code").expect("code in redirect");
+        let record = auth_code_by_plaintext(&db, code);
+
+        assert!(code.starts_with("wc_oac_"));
+        assert_eq!(record.resource.as_deref(), Some("https://example.test/mcp"));
         assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
     }
 

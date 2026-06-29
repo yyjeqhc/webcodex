@@ -92,6 +92,20 @@ export CLIENT_ID=<wc_client_...>
 export CLIENT_SECRET=<wc_csec_...>
 ```
 
+For ChatGPT MCP OAuth, configure the connector with:
+
+- Server URL: `https://your-domain.example/mcp`
+- Authentication: OAuth
+- Client registration method: user-defined/custom OAuth client
+- Token endpoint auth method: `client_secret_post`
+- Scopes: the scopes allowed on the WebCodex OAuth client, for example
+  `runtime:read project:read project:write job:run`
+
+If ChatGPT includes an OAuth `resource` parameter, WebCodex accepts only self
+resource indicators derived from the configured public issuer/base URL:
+`https://your-domain.example` and `https://your-domain.example/mcp`. External
+or malformed resource values are rejected.
+
 Verify `list` never returns the secret/hash:
 
 ```bash
@@ -229,6 +243,7 @@ Revoking again is idempotent and still returns `{"success":true}`.
 - OIDC / `/.well-known/openid-configuration`, JWKS, JWT, `userinfo_endpoint`
   (not implemented).
 - `client_credentials` grant, device code flow (not implemented).
-- MCP resource/audience binding (not implemented).
+- Full MCP resource/audience enforcement (self resource indicators are accepted
+  and stored for MCP compatibility).
 - DB-backed session storage — the authorize session is in-process memory and
   resets on server restart; that is acceptable for this phase.

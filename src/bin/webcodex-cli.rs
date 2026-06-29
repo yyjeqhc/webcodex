@@ -38,6 +38,9 @@ mod admin_cli;
 #[path = "../agent_init.rs"]
 mod agent_init;
 
+#[path = "../build_info.rs"]
+mod build_info;
+
 use admin_cli::{
     build_admin_request, parse_admin_cli, run_admin_command, AdminCliCommand, AdminOptions,
 };
@@ -506,7 +509,7 @@ where
         },
         "--version" | "-V" => CliAction::Exit {
             code: 0,
-            stdout: format!("webcodex-cli {}\n", env!("CARGO_PKG_VERSION")),
+            stdout: build_info::version_output("webcodex-cli"),
             stderr: String::new(),
         },
         "server" => parse_server_subcommand(&args[1..]),
@@ -5031,10 +5034,32 @@ mod tests {
         match cli_action(["--version"]) {
             CliAction::Exit { code, stdout, .. } => {
                 assert_eq!(code, 0);
-                assert_eq!(
+                assert!(stdout.starts_with(&format!(
+                    "webcodex-cli {} (commit ",
+                    env!("CARGO_PKG_VERSION")
+                )));
+                assert!(stdout.trim_end().ends_with(')'));
+                assert_ne!(
                     stdout,
                     format!("webcodex-cli {}\n", env!("CARGO_PKG_VERSION"))
                 );
+            }
+            other => panic!("expected version exit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn cli_version_output_includes_build_metadata() {
+        match cli_action(["-V"]) {
+            CliAction::Exit {
+                code,
+                stdout,
+                stderr,
+            } => {
+                assert_eq!(code, 0);
+                assert!(stdout.contains("commit "));
+                assert!(stdout.starts_with("webcodex-cli "));
+                assert!(stderr.is_empty());
             }
             other => panic!("expected version exit, got {other:?}"),
         }

@@ -223,6 +223,10 @@ fn output_schema_for_tool(name: &str) -> Value {
         "runtime_status" => wrapped_output_schema(vec![
             ("service", schema_type("string", "Runtime service name.")),
             ("version", schema_type("string", "Runtime version.")),
+            (
+                "build",
+                open_object_schema("Build revision metadata for the running binary."),
+            ),
             ("server_time", schema_type("integer", "Server timestamp.")),
             ("pid", schema_type("integer", "Server process id.")),
             (

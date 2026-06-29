@@ -18,6 +18,9 @@ mod shell_protocol;
 #[path = "../agent_init.rs"]
 mod agent_init;
 
+#[path = "../build_info.rs"]
+mod build_info;
+
 use shell_protocol::{
     read_quic_frame, write_quic_frame, AgentEnvelope, AgentPolicySummary, QuicFrameError,
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
@@ -658,7 +661,7 @@ where
             "--version" | "-V" => {
                 return Ok(AgentCliAction::Exit {
                     code: 0,
-                    stdout: format!("webcodex-agent {}\n", env!("CARGO_PKG_VERSION")),
+                    stdout: build_info::version_output("webcodex-agent"),
                     stderr: String::new(),
                 });
             }
@@ -695,7 +698,7 @@ where
             "--version" | "-V" => {
                 return Ok(AgentCliAction::Exit {
                     code: 0,
-                    stdout: format!("webcodex-agent {}\n", env!("CARGO_PKG_VERSION")),
+                    stdout: build_info::version_output("webcodex-agent"),
                     stderr: String::new(),
                 });
             }
@@ -5270,10 +5273,32 @@ transport = "auto"
                 stderr,
             } => {
                 assert_eq!(code, 0);
-                assert_eq!(
+                assert!(stdout.starts_with(&format!(
+                    "webcodex-agent {} (commit ",
+                    env!("CARGO_PKG_VERSION")
+                )));
+                assert!(stdout.trim_end().ends_with(')'));
+                assert_ne!(
                     stdout,
                     format!("webcodex-agent {}\n", env!("CARGO_PKG_VERSION"))
                 );
+                assert!(stderr.is_empty());
+            }
+            other => panic!("expected version exit, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn agent_version_output_includes_build_metadata() {
+        match parse_agent_args(["-V"]).unwrap() {
+            AgentCliAction::Exit {
+                code,
+                stdout,
+                stderr,
+            } => {
+                assert_eq!(code, 0);
+                assert!(stdout.contains("commit "));
+                assert!(stdout.starts_with("webcodex-agent "));
                 assert!(stderr.is_empty());
             }
             other => panic!("expected version exit, got {other:?}"),

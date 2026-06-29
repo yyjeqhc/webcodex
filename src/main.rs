@@ -17,6 +17,7 @@ mod agent_tokens_http;
 mod agent_ws;
 mod audit_http;
 mod auth;
+mod build_info;
 mod codex;
 mod config;
 mod console_web;
@@ -120,7 +121,7 @@ where
             "--version" | "-V" => {
                 return ServerCliAction::Exit {
                     code: 0,
-                    stdout: format!("webcodex {}\n", env!("CARGO_PKG_VERSION")),
+                    stdout: build_info::version_output("webcodex"),
                     stderr: String::new(),
                 };
             }
@@ -195,7 +196,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
         tracing::warn!("Set WEBCODEX_TOKEN environment variable to enable authentication.");
     }
-    tracing::info!("Starting WebCodex v{}", env!("CARGO_PKG_VERSION"));
+    let build_info = build_info::current();
+    tracing::info!(
+        "Starting WebCodex v{} (commit {})",
+        build_info.version,
+        build_info.git_commit.unwrap_or("unknown")
+    );
     tracing::info!("Data directory: {:?}", config.data_dir);
     let addr = config.addr.clone();
     tracing::info!("Listening on: {}", addr);
@@ -542,14 +548,13 @@ mod tests {
             .unwrap()
             .unwrap()
             .contains("Usage: webcodex"));
-        assert_eq!(
+        for output in [
             server_cli_output(["--version"]).unwrap().unwrap(),
-            format!("webcodex {}\n", env!("CARGO_PKG_VERSION"))
-        );
-        assert_eq!(
             server_cli_output(["-V"]).unwrap().unwrap(),
-            format!("webcodex {}\n", env!("CARGO_PKG_VERSION"))
-        );
+        ] {
+            assert!(output.starts_with(&format!("webcodex {} (commit ", env!("CARGO_PKG_VERSION"))));
+            assert_ne!(output, format!("webcodex {}\n", env!("CARGO_PKG_VERSION")));
+        }
     }
 
     #[test]
@@ -591,7 +596,7 @@ mod tests {
     }
 
     #[test]
-    fn server_version_prints_package_version() {
+    fn version_output_includes_build_commit_or_unknown() {
         let action = server_cli_action(["-V"]);
         let ServerCliAction::Exit {
             code,
@@ -602,7 +607,9 @@ mod tests {
             panic!("expected version to exit");
         };
         assert_eq!(code, 0);
-        assert_eq!(stdout, format!("webcodex {}\n", env!("CARGO_PKG_VERSION")));
+        assert!(stdout.starts_with(&format!("webcodex {} (commit ", env!("CARGO_PKG_VERSION"))));
+        assert!(stdout.trim_end().ends_with(')'));
+        assert_ne!(stdout, format!("webcodex {}\n", env!("CARGO_PKG_VERSION")));
         assert!(stderr.is_empty());
     }
 

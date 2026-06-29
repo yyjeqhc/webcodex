@@ -883,6 +883,7 @@ impl ToolRuntime {
         let mut output = json!({
             "service": "webcodex",
             "version": env!("CARGO_PKG_VERSION"),
+            "build": crate::build_info::runtime_build_info(),
             "server_time": chrono::Utc::now().timestamp(),
             "pid": std::process::id(),
             "auth_enabled": self.runtime_info.auth_enabled,
@@ -1361,6 +1362,7 @@ mod tests {
         for field in [
             "service",
             "version",
+            "build",
             "auth_enabled",
             "configured_public_url",
             "agents",
@@ -4370,12 +4372,28 @@ new file mode 100644\n\
         let out = &result.output;
         assert_eq!(out["service"], "webcodex");
         assert_eq!(out["version"], env!("CARGO_PKG_VERSION"));
+        assert!(out["build"].is_object());
+        assert!(out["build"].get("git_commit").is_some());
+        assert!(out["build"].get("git_dirty").is_some());
+        assert!(out["build"].get("built_at").is_some());
         assert!(out["server_time"].is_i64());
         assert!(out["pid"].is_i64());
         // No projects.toml -> configured false, load_error present.
         assert_eq!(out["projects"]["configured"], false);
         assert_eq!(out["projects"]["count"], 0);
         assert!(out["projects"]["load_error"].is_string());
+    }
+
+    #[tokio::test]
+    async fn runtime_status_includes_build_metadata() {
+        let runtime = test_runtime();
+        let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+        assert!(result.success, "{:?}", result.error);
+        let build = &result.output["build"];
+        assert!(build.is_object());
+        assert!(build.get("git_commit").is_some());
+        assert!(build.get("git_dirty").is_some());
+        assert!(build.get("built_at").is_some());
     }
 
     #[tokio::test]

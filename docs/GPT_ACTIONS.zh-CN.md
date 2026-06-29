@@ -12,24 +12,46 @@ GPT Actions 和 MCP 共享同一个 `ToolRuntime`。GPT Actions 提供 typed RES
 
 ## 在 ChatGPT 中创建 GPT Action
 
-`docs/assets/gpt-action-*.png` 中的截图展示了当前 ChatGPT UI 流程：
+现有 `docs/assets/gpt-action-*.png` 截图适合当前部署说明：它们覆盖了 ChatGPT GPT builder 的完整路径，包括打开 editor、配置 GPT、添加 Action、设置 Bearer authentication，以及导入 WebCodex OpenAPI schema。请把这些截图视为 UI 路标，而不是固定按钮位置；ChatGPT 可能随时间调整控件名称或位置。
 
-![打开 GPT editor](assets/gpt-action-1.png)
-![配置 GPT](assets/gpt-action-2.png)
-![添加 Action](assets/gpt-action-3.png)
-![设置 Action 认证](assets/gpt-action-4.png)
-![导入 OpenAPI schema](assets/gpt-action-5.png)
+按下面的截图和核对清单配置：
 
-1. 打开 ChatGPT，创建或编辑一个 GPT，并进入 GPT 配置页面。
-2. 打开 **Actions** 区域，选择创建新的 Action。
-3. 在 **Authentication** 中选择 API key / HTTP auth，把 auth type 设置为 **Bearer**，并粘贴 `wc_pat_xxx` personal API token。不要使用 `WEBCODEX_TOKEN`、`wc_acct_xxx` 或 `wc_agent_xxx`。
-4. 在 schema/OpenAPI 字段中导入或粘贴：
+1. **打开或创建 GPT。**
+
+   ![打开 GPT editor](assets/gpt-action-1.png)
+
+   从 ChatGPT 的 GPT 创建或编辑流程开始。
+
+2. **进入 GPT 配置页面。**
+
+   ![配置 GPT](assets/gpt-action-2.png)
+
+   确认你正在编辑 GPT configuration，而不是普通聊天。
+
+3. **打开 Actions 并添加 Action。**
+
+   ![添加 Action](assets/gpt-action-3.png)
+
+   使用 GPT builder 的 Actions 区域；不要把 OpenAPI schema 粘贴到 GPT instructions 中。
+
+4. **配置 Action authentication。**
+
+   ![设置 Action 认证](assets/gpt-action-4.png)
+
+   选择 API key / HTTP authentication，把 auth type 设置为 **Bearer**，并粘贴 `wc_pat_xxx` personal API token。不要使用 `WEBCODEX_TOKEN`、`wc_acct_xxx` 或 `wc_agent_xxx`。
+
+5. **导入 OpenAPI schema 并填写必要 metadata。**
+
+   ![导入 OpenAPI schema](assets/gpt-action-5.png)
+
+   导入或粘贴 schema URL：
 
    ```text
    https://your-domain.example/openapi.json
    ```
 
-5. 如果 ChatGPT UI 要求填写 privacy policy URL，请填写你自己的产品或部署隐私链接；不要在该 URL 中放 secrets。
+   如果 ChatGPT UI 要求填写 privacy policy URL，请填写你自己的产品或部署隐私链接；不要在该 URL 中放 secrets。
+
 6. 保存 Action，然后先测试无破坏性的 discovery call，例如 `getRuntimeStatus`，再测试 `listProjects` 和只读 project call，例如 `getProjectGitStatus`。
 7. 在 GPT 验证完成前，mutation tools 只应对已知 disposable project 使用。
 

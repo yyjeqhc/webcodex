@@ -46,6 +46,12 @@ enum McpOutcome {
     /// JSON-RPC response body. The HTTP wrapper acknowledges with 202 and
     /// an empty body.
     Notification,
+    /// The HTTP request authenticated, but the OAuth2 bearer token lacks the
+    /// delegated scope needed by this JSON-RPC method or tool.
+    Forbidden {
+        body: Value,
+        required_scope: Option<&'static str>,
+    },
 }
 
 #[handler]
@@ -100,6 +106,17 @@ pub async fn mcp_post(req: &mut Request, depot: &mut Depot, res: &mut Response) 
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(Json(body));
         }
+        McpOutcome::Forbidden {
+            body,
+            required_scope,
+        } => {
+            res.status_code(StatusCode::FORBIDDEN);
+            let challenge = crate::auth::oauth_insufficient_scope_challenge(required_scope);
+            if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
+                res.headers_mut().insert("www-authenticate", val);
+            }
+            res.render(Json(body));
+        }
         McpOutcome::Notification => {
             // JSON-RPC notifications carry no `id`; the server MUST NOT reply
             // with a JSON-RPC body. Acknowledge with 202 and an empty body.
@@ -117,6 +134,28 @@ async fn handle_mcp_request(
     request: JsonRpcRequest,
     auth: Option<&AuthContext>,
 ) -> McpOutcome {
+    let is_oauth2 = auth.is_some_and(|ctx| ctx.is_oauth_token());
+
+    if is_oauth2
+        && matches!(
+            request.method.as_str(),
+            "initialize" | "ping" | "tools/list" | "notifications/initialized"
+        )
+    {
+        if let Some(outcome) = require_mcp_oauth_scope(auth, crate::auth::SCOPE_RUNTIME_READ) {
+            return outcome;
+        }
+    }
+
+    if is_oauth2
+        && !matches!(
+            request.method.as_str(),
+            "initialize" | "ping" | "tools/list" | "tools/call" | "notifications/initialized"
+        )
+    {
+        return oauth_forbidden(None, "OAuth2 access tokens cannot call unknown MCP methods");
+    }
+
     // A JSON-RPC request without an `id` member is a notification. Per the
     // JSON-RPC 2.0 and MCP specs the server MUST NOT reply with a JSON-RPC
     // response body, even if the method is unknown or malformed. We accept
@@ -165,6 +204,9 @@ async fn handle_mcp_request(
                     ));
                 }
             };
+            if let Some(outcome) = enforce_mcp_oauth_tool_scope(auth, &params.name) {
+                return outcome;
+            }
             let call = match ToolCall::from_tool_name(&params.name, params.arguments) {
                 Ok(call) => call,
                 Err(e) => {
@@ -206,6 +248,55 @@ async fn handle_mcp_request(
         }
     };
     McpOutcome::Ok(response)
+}
+
+fn require_mcp_oauth_scope(auth: Option<&AuthContext>, scope: &'static str) -> Option<McpOutcome> {
+    let auth = auth?;
+    if !auth.is_oauth_token() || auth.has_scope(scope) {
+        return None;
+    }
+    Some(oauth_forbidden(
+        Some(scope),
+        format!("missing required scope: {}", scope),
+    ))
+}
+
+fn enforce_mcp_oauth_tool_scope(auth: Option<&AuthContext>, tool_name: &str) -> Option<McpOutcome> {
+    let auth = auth?;
+    if !auth.is_oauth_token() {
+        return None;
+    }
+
+    match crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name) {
+        crate::auth::scopes::OAuthToolScopePolicy::Require(scope) => {
+            if auth.has_scope(scope) {
+                None
+            } else {
+                Some(oauth_forbidden(
+                    Some(scope),
+                    format!("missing required scope: {}", scope),
+                ))
+            }
+        }
+        crate::auth::scopes::OAuthToolScopePolicy::FirstPartyOnly => Some(oauth_forbidden(
+            None,
+            "OAuth2 access tokens cannot call first-party-only tools",
+        )),
+        crate::auth::scopes::OAuthToolScopePolicy::Unknown => Some(oauth_forbidden(
+            None,
+            "OAuth2 access tokens cannot call unknown runtime tools",
+        )),
+    }
+}
+
+fn oauth_forbidden(
+    required_scope: Option<&'static str>,
+    description: impl Into<String>,
+) -> McpOutcome {
+    McpOutcome::Forbidden {
+        body: crate::auth::oauth_insufficient_scope_body(description),
+        required_scope,
+    }
 }
 
 fn rpc_result(id: Option<Value>, result: Value) -> Value {
@@ -546,6 +637,24 @@ mod tests {
         })
     }
 
+    fn test_config_oauth2(token: Option<&str>) -> Arc<crate::Config> {
+        Arc::new(crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: token.map(str::to_string),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config {
+                enabled: true,
+                access_token_ttl_secs: 3600,
+                refresh_token_ttl_secs: 2_592_000,
+                ..crate::OAuth2Config::default()
+            },
+        })
+    }
+
     /// Create an empty Database in a temp dir. The TempDir must be kept alive
     /// for the lifetime of the returned Database so the sqlite file is not
     /// deleted mid-test.
@@ -553,6 +662,79 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = crate::Database::open(&tmp.path().join("test.db")).unwrap();
         (tmp, Arc::new(db))
+    }
+
+    fn seed_user(db: &crate::Database, username: &str) -> crate::models::UserRecord {
+        let now = chrono::Utc::now().timestamp();
+        let user = crate::models::UserRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            username: username.to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        };
+        db.create_user(&user).unwrap();
+        user
+    }
+
+    fn seed_oauth_client(
+        db: &crate::Database,
+        user: &crate::models::UserRecord,
+    ) -> crate::models::OAuthClientRecord {
+        let now = chrono::Utc::now().timestamp();
+        let secret = crate::auth::generate_oauth_client_secret();
+        let record = crate::models::OAuthClientRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            client_id: crate::auth::generate_oauth_client_id(),
+            client_secret_hash: crate::auth::hash_token(&secret),
+            name: "Test App".to_string(),
+            owner_user_id: user.id.clone(),
+            redirect_uris: "https://example.com/callback".to_string(),
+            allowed_scopes: "runtime:read project:read project:write job:run account:manage"
+                .to_string(),
+            created_at: now,
+            revoked_at: None,
+        };
+        db.insert_oauth_client(&record).unwrap();
+        record
+    }
+
+    fn seed_oauth_access_token(
+        db: &crate::Database,
+        client: &crate::models::OAuthClientRecord,
+        user: &crate::models::UserRecord,
+        scopes: &str,
+    ) -> String {
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = crate::auth::generate_oauth_access_token();
+        let record = crate::models::OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: crate::auth::hash_token(&plaintext),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: scopes.to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+        plaintext
+    }
+
+    fn oauth_mcp_service(scopes: &str) -> (tempfile::TempDir, Service, String) {
+        let config = test_config_oauth2(Some("secret"));
+        let (tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_oauth_client(&db, &user);
+        let token = seed_oauth_access_token(&db, &client, &user, scopes);
+        let runtime = Arc::new(test_runtime());
+        let service = Service::new(build_test_router(config, db, runtime));
+        (tmp, service, token)
     }
 
     /// Build a minimal Router matching the production /mcp wiring: Config,
@@ -804,6 +986,216 @@ mod tests {
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["id"], 9);
         assert!(body["result"].is_object());
+    }
+
+    async fn oauth_mcp_request(
+        service: &Service,
+        token: &str,
+        method: &str,
+        params: Value,
+    ) -> (StatusCode, Value, Option<String>) {
+        let mut resp = TestClient::post("http://localhost/mcp")
+            .bearer_auth(token)
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 42,
+                "method": method,
+                "params": params,
+            }))
+            .send(service)
+            .await;
+        let status = effective_status(&resp);
+        let challenge = resp
+            .headers()
+            .get("www-authenticate")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let body = resp.take_json::<Value>().await.unwrap();
+        (status, body, challenge)
+    }
+
+    fn assert_mcp_oauth_scope_rejected(
+        status: StatusCode,
+        body: &Value,
+        challenge: Option<&str>,
+        scope: Option<&str>,
+    ) {
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+        assert_eq!(body["error"], "insufficient_scope");
+        let challenge = challenge.unwrap_or("");
+        assert!(
+            challenge.contains("error=\"insufficient_scope\""),
+            "challenge: {}",
+            challenge
+        );
+        if let Some(scope) = scope {
+            assert!(
+                body["error_description"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains(scope),
+                "body: {:?}",
+                body
+            );
+            assert!(challenge.contains(scope), "challenge: {}", challenge);
+        }
+    }
+
+    #[tokio::test]
+    async fn oauth2_mcp_tools_list_requires_runtime_read() {
+        let (_tmp, service, token) = oauth_mcp_service("runtime:read");
+        let (status, body, _) = oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+
+        let (_tmp, service, token) = oauth_mcp_service("project:read");
+        let (status, body, challenge) =
+            oauth_mcp_request(&service, &token, "tools/list", json!({})).await;
+        assert_mcp_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_RUNTIME_READ),
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_mcp_tool_call_requires_project_read_for_read_file() {
+        let (_tmp, service, token) = oauth_mcp_service("project:read");
+        let (status, body, _) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            json!({"name": "read_file", "arguments": {"project": "demo", "path": "README.md"}}),
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+
+        let (_tmp, service, token) = oauth_mcp_service("runtime:read");
+        let (status, body, challenge) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            json!({"name": "read_file", "arguments": {"project": "demo", "path": "README.md"}}),
+        )
+        .await;
+        assert_mcp_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_PROJECT_READ),
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_mcp_tool_call_requires_project_write_for_line_edit() {
+        let (_tmp, service, token) = oauth_mcp_service("project:write");
+        let (status, body, _) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            json!({
+                "name": "replace_line_range",
+                "arguments": {
+                    "project": "demo",
+                    "path": "README.md",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "new_text": "updated\n"
+                }
+            }),
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+
+        let (_tmp, service, token) = oauth_mcp_service("project:read");
+        let (status, body, challenge) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            json!({
+                "name": "replace_line_range",
+                "arguments": {
+                    "project": "demo",
+                    "path": "README.md",
+                    "start_line": 1,
+                    "end_line": 1,
+                    "new_text": "updated\n"
+                }
+            }),
+        )
+        .await;
+        assert_mcp_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_PROJECT_WRITE),
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_mcp_tool_call_requires_job_run_for_run_shell() {
+        let (_tmp, service, token) = oauth_mcp_service("job:run");
+        let (status, body, _) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            json!({"name": "run_shell", "arguments": {"project": "demo", "command": "echo hi"}}),
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+
+        let (_tmp, service, token) = oauth_mcp_service("project:read");
+        let (status, body, challenge) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            json!({"name": "run_shell", "arguments": {"project": "demo", "command": "echo hi"}}),
+        )
+        .await;
+        assert_mcp_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_JOB_RUN),
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_mcp_unknown_tool_fails_closed() {
+        let (_tmp, service, token) = oauth_mcp_service("runtime:read project:read");
+        let (status, body, challenge) = oauth_mcp_request(
+            &service,
+            &token,
+            "tools/call",
+            json!({"name": "no_such_tool", "arguments": {}}),
+        )
+        .await;
+        assert_mcp_oauth_scope_rejected(status, &body, challenge.as_deref(), None);
+    }
+
+    #[tokio::test]
+    async fn api_token_mcp_behavior_unchanged() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let runtime = Arc::new(test_runtime());
+        let service = Service::new(build_test_router(config, db, runtime));
+        let mut resp = TestClient::post("http://localhost/mcp")
+            .bearer_auth("secret")
+            .json(&json!({
+                "jsonrpc": "2.0",
+                "id": 43,
+                "method": "tools/call",
+                "params": {"name": "no_such_tool", "arguments": {}}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["error"]["code"], -32602);
+        assert!(body["error"]["message"]
+            .as_str()
+            .unwrap_or("")
+            .contains("no_such_tool"));
     }
 
     #[tokio::test]

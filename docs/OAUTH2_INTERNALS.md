@@ -7,15 +7,53 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2e-2** publishes OAuth authorization server metadata and hardens the
-identity boundary for `GET /oauth/authorize`. The authorize endpoint still
-issues `wc_oac_*` authorization codes only after authenticated-user, client,
-exact redirect URI, `response_type`, PKCE S256, scope, and unsupported
-`resource` validation succeeds; the database stores only the code hash and
-metadata. See
+**Phase 2f-1** enables delegated OAuth scope enforcement for
+`AuthKind::OAuth2Token`. The authorize endpoint still issues `wc_oac_*`
+authorization codes only after authenticated-user, client, exact redirect URI,
+`response_type`, PKCE S256, scope, and unsupported `resource` validation
+succeeds; the database stores only the code hash and metadata. See
 [OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md) for the full request
 contract, state machine, security invariants, storage contract, test plan, and
 authorization-server metadata contract.
+
+### Phase 2f-1: delegated OAuth scope enforcement
+
+Phase 2f-1 turns the Phase 2f-0 route policy into executable enforcement for
+delegated OAuth access tokens only:
+
+- `AuthKind::OAuth2Token` is checked against an explicit route policy enum:
+  `Public`, `FirstPartyOnly`, `AgentSurface`, `Require(scope)`,
+  `BodyAware(policy)`, and `Unknown`.
+- First-party `AuthKind::Bootstrap` and `AuthKind::ApiToken` callers are not
+  constrained by delegated OAuth scopes.
+- `AuthKind::AgentToken` and `AuthKind::AccountCredential` continue to be
+  governed by the existing surface gates.
+- Public OAuth endpoints remain public: `/.well-known/oauth-protected-resource`,
+  `/.well-known/oauth-authorization-server`, `/oauth/token`, and
+  `/oauth/revoke`.
+- OAuth2 access tokens cannot call `FirstPartyOnly`, `AgentSurface`, or
+  `Unknown` routes. Unknown authenticated routes fail closed.
+- Simple routes use path-level policies such as `runtime:read`,
+  `project:read`, `project:write`, `job:run`, and `account:manage`.
+- Multiplexed `POST /api/tools/call` and `POST /mcp` use body-aware policy
+  after the handler has parsed the JSON body. Runtime tool names map to the
+  same delegated scopes; unknown tools fail closed for OAuth2 tokens.
+- Missing scopes return HTTP 403 with an OAuth-style JSON body:
+
+```json
+{
+  "error": "insufficient_scope",
+  "error_description": "missing required scope: project:read"
+}
+```
+
+When a concrete scope is required, the response also includes
+`WWW-Authenticate: Bearer error="insufficient_scope", scope="<scope>"`.
+
+Phase 2f-1 does not change `/oauth/authorize`, `/oauth/token`, or
+`/oauth/revoke` grant/revocation semantics. Resource/audience binding,
+route-level project-resource authorization, `client_credentials`, device code,
+JWKS, JWT, OIDC, and `/.well-known/openid-configuration` remain unimplemented.
 
 ### Phase 2e-2: authorization server metadata and authorize identity boundary
 

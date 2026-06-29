@@ -20,6 +20,10 @@ HTTP request
           ├─ enforce_token_surface(ctx, path)
           │     ├─ Agent token → only agent transport endpoints
           │     └─ Account credential → only account control endpoints
+          ├─ enforce OAuth route scope policy when ctx.kind == OAuth2Token
+          │     ├─ Simple route → require delegated scope
+          │     ├─ Body-aware route → handler enforces after JSON parse
+          │     └─ FirstPartyOnly / AgentSurface / Unknown → 403
           └─ Inject AuthContext into Depot
               └─ Handler reads AuthContext → dispatches tool
 ```
@@ -167,6 +171,58 @@ Bootstrap auth is treated as holding every scope (`admin` is a wildcard).
 
 The `require_scope` and `scopes_include` helpers in `scopes.rs` treat `admin`
 as satisfying any requirement.
+
+## OAuth2 delegated scope enforcement
+
+Delegated OAuth scopes are enforced only for `AuthKind::OAuth2Token`.
+First-party `Bootstrap` and `ApiToken` callers keep their existing behavior and
+are not limited by delegated OAuth scopes. `AgentToken` and
+`AccountCredential` callers keep using the existing surface gates.
+
+`src/auth/scopes.rs` defines an explicit route policy enum:
+
+| Variant | Meaning |
+| --- | --- |
+| `Public` | Public OAuth/discovery endpoint |
+| `FirstPartyOnly` | Authenticated first-party route such as `/oauth/authorize` |
+| `AgentSurface` | Agent/account transport surface not OAuth-delegable |
+| `Require(scope)` | Simple path-level delegated scope requirement |
+| `BodyAware(policy)` | Handler must inspect the parsed request body |
+| `Unknown` | Fail closed for OAuth2 tokens |
+
+`AuthMiddleware` applies the path-level policy after successful
+authentication and before handler dispatch. `Require(scope)` checks the
+OAuth2 token's stored scopes. `Unknown`, `FirstPartyOnly`, and `AgentSurface`
+return HTTP 403. `BodyAware` routes are allowed through the middleware so the
+handler can parse JSON without the middleware consuming the body.
+
+The body-aware routes are:
+
+- `POST /api/tools/call`: parses the runtime tool name and applies
+  `oauth_scope_policy_for_runtime_tool(name)`.
+- `POST /mcp`: requires `runtime:read` for `initialize`, `ping`,
+  `tools/list`, and `notifications/initialized`; for `tools/call`, it parses
+  `params.name` and applies the same runtime tool policy.
+
+Runtime tool policy maps read-only runtime operations to `runtime:read`,
+project inspection to `project:read`, file/patch/artifact/project mutation to
+`project:write`, and shell/Codex/cargo/job execution to `job:run`. Unknown
+routes, unknown MCP methods, and unknown runtime tools fail closed for OAuth2
+tokens.
+
+OAuth2 scope failures return HTTP 403:
+
+```json
+{
+  "error": "insufficient_scope",
+  "error_description": "missing required scope: project:read"
+}
+```
+
+Where a concrete scope is missing, the response includes
+`WWW-Authenticate: Bearer error="insufficient_scope", scope="<scope>"`.
+Resource/audience binding and route-level project-resource authorization are
+not implemented.
 
 ## Authorization flow
 

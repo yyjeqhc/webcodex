@@ -246,6 +246,33 @@ fn oauth2_bearer_challenge(config: &Config) -> Option<String> {
     ))
 }
 
+pub(crate) fn oauth_insufficient_scope_body(description: impl Into<String>) -> serde_json::Value {
+    serde_json::json!({
+        "error": "insufficient_scope",
+        "error_description": description.into(),
+    })
+}
+
+pub(crate) fn oauth_insufficient_scope_challenge(required_scope: Option<&str>) -> String {
+    match required_scope {
+        Some(scope) => format!("Bearer error=\"insufficient_scope\", scope=\"{}\"", scope),
+        None => "Bearer error=\"insufficient_scope\"".to_string(),
+    }
+}
+
+pub(crate) fn render_oauth_insufficient_scope(
+    res: &mut Response,
+    required_scope: Option<&str>,
+    description: impl Into<String>,
+) {
+    res.status_code(StatusCode::FORBIDDEN);
+    let challenge = oauth_insufficient_scope_challenge(required_scope);
+    if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
+        res.headers_mut().insert("www-authenticate", val);
+    }
+    res.render(Json(oauth_insufficient_scope_body(description)));
+}
+
 pub(crate) fn bearer_or_allowed_query_token(req: &Request) -> Option<String> {
     bearer_token(req).or_else(|| {
         if allow_query_token_for_path(req.uri().path()) {
@@ -690,6 +717,41 @@ pub(crate) fn enforce_token_surface(
     Ok(())
 }
 
+fn enforce_oauth_route_scope(
+    ctx: &AuthContext,
+    method: &str,
+    path: &str,
+) -> Result<(), (Option<&'static str>, String)> {
+    if !ctx.is_oauth_token() {
+        return Ok(());
+    }
+
+    match scopes::oauth_route_scope_policy_for_path_method(method, path) {
+        scopes::OAuthRouteScopePolicy::Public | scopes::OAuthRouteScopePolicy::BodyAware(_) => {
+            Ok(())
+        }
+        scopes::OAuthRouteScopePolicy::Require(scope) => {
+            if ctx.has_scope(scope) {
+                Ok(())
+            } else {
+                Err((Some(scope), format!("missing required scope: {}", scope)))
+            }
+        }
+        scopes::OAuthRouteScopePolicy::FirstPartyOnly => Err((
+            None,
+            "OAuth2 access tokens cannot call first-party-only routes".to_string(),
+        )),
+        scopes::OAuthRouteScopePolicy::AgentSurface => Err((
+            None,
+            "OAuth2 access tokens cannot call agent transport routes".to_string(),
+        )),
+        scopes::OAuthRouteScopePolicy::Unknown => Err((
+            None,
+            "OAuth2 access tokens cannot call unknown authenticated routes".to_string(),
+        )),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Verifier chain — shared authentication logic
 // ---------------------------------------------------------------------------
@@ -777,10 +839,11 @@ impl Handler for AuthMiddleware {
         // success, so we must not let it run on a surface that will
         // ultimately reject the token.
         if is_agent_transport_path(req.uri().path()) && is_oauth2_access_token(&token) {
-            res.status_code(StatusCode::FORBIDDEN);
-            res.render(Json(serde_json::json!({
-                "error": "OAuth2 tokens are not allowed on agent transport endpoints"
-            })));
+            render_oauth_insufficient_scope(
+                res,
+                None,
+                "OAuth2 access tokens cannot call agent transport routes",
+            );
             ctrl.skip_rest();
             return;
         }
@@ -793,6 +856,13 @@ impl Handler for AuthMiddleware {
                 if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
                     res.status_code(status);
                     res.render(Json(serde_json::json!({"error": msg})));
+                    ctrl.skip_rest();
+                    return;
+                }
+                if let Err((scope, description)) =
+                    enforce_oauth_route_scope(&ctx, req.method().as_str(), req.uri().path())
+                {
+                    render_oauth_insufficient_scope(res, scope, description);
                     ctrl.skip_rest();
                     return;
                 }
@@ -1225,7 +1295,11 @@ mod tests {
                     .push(Router::with_path("runtime/status").post(echo_ok))
                     .push(Router::with_path("tools/list").post(echo_ok))
                     .push(Router::with_path("tools/call").post(echo_ok))
+                    .push(Router::with_path("future/authenticated-route").post(echo_ok))
                     .push(Router::with_path("projects/list").post(echo_ok))
+                    .push(Router::with_path("projects/read_file").post(echo_ok))
+                    .push(Router::with_path("projects/write_file").post(echo_ok))
+                    .push(Router::with_path("projects/run_job").post(echo_ok))
                     .push(Router::with_path("jobs/list").post(echo_ok))
                     .push(Router::with_path("audit/sessions").post(echo_ok))
                     .push(Router::with_path("users/me").post(echo_ok))
@@ -1241,6 +1315,11 @@ mod tests {
                     .push(Router::with_path("shell/agent/job_update").post(echo_ok))
                     .push(Router::with_path("agents/ws").get(echo_ok)),
             )
+            .push(
+                Router::with_path("oauth/authorize")
+                    .hoop(AuthMiddleware)
+                    .get(echo_ok),
+            )
     }
 
     fn gate_status(resp: &salvo::Response) -> salvo::http::StatusCode {
@@ -1253,8 +1332,12 @@ mod tests {
         auth: Option<&str>,
     ) -> (salvo::http::StatusCode, serde_json::Value) {
         let mut req = TestClient::post(&format!("http://localhost{}", path));
-        if path == "/api/agents/ws" || path.starts_with("/api/agents/ws?") {
-            // The WS endpoint is GET-mounted in this test router.
+        if path == "/api/agents/ws"
+            || path.starts_with("/api/agents/ws?")
+            || path == "/oauth/authorize"
+            || path.starts_with("/oauth/authorize?")
+        {
+            // These endpoints are GET-mounted in this test router.
             req = TestClient::get(&format!("http://localhost{}", path));
         }
         if let Some(token) = auth {
@@ -2519,6 +2602,147 @@ mod tests {
         );
     }
 
+    async fn gate_oauth2_token_with_scopes(scopes: &str) -> (tempfile::TempDir, Service, String) {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, scopes);
+        let service = Service::new(gate_router(config, db));
+        (tmp, service, plaintext)
+    }
+
+    fn assert_insufficient_scope(
+        status: StatusCode,
+        body: &serde_json::Value,
+        expected: Option<&str>,
+    ) {
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+        assert_eq!(body["error"], "insufficient_scope");
+        if let Some(scope) = expected {
+            assert!(
+                body["error_description"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains(scope),
+                "body: {:?}",
+                body
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_with_runtime_read_can_call_runtime_status() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("runtime:read").await;
+        let (status, body) = gate_send(&service, "/api/runtime/status", Some(&token)).await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_without_runtime_read_cannot_call_runtime_status() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("project:read").await;
+        let (status, body) = gate_send(&service, "/api/runtime/status", Some(&token)).await;
+        assert_insufficient_scope(status, &body, Some(SCOPE_RUNTIME_READ));
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_with_project_read_can_read_project_file() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("project:read").await;
+        let (status, body) = gate_send(&service, "/api/projects/read_file", Some(&token)).await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_without_project_read_cannot_read_project_file() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("runtime:read").await;
+        let (status, body) = gate_send(&service, "/api/projects/read_file", Some(&token)).await;
+        assert_insufficient_scope(status, &body, Some(SCOPE_PROJECT_READ));
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_with_project_write_can_write_project_file() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("project:write").await;
+        let (status, body) = gate_send(&service, "/api/projects/write_file", Some(&token)).await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_with_project_read_cannot_write_project_file() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("project:read").await;
+        let (status, body) = gate_send(&service, "/api/projects/write_file", Some(&token)).await;
+        assert_insufficient_scope(status, &body, Some(SCOPE_PROJECT_WRITE));
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_with_job_run_can_run_job_or_shell() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("job:run").await;
+        let (status, body) = gate_send(&service, "/api/projects/run_job", Some(&token)).await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_without_job_run_cannot_run_job_or_shell() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("project:write").await;
+        let (status, body) = gate_send(&service, "/api/projects/run_job", Some(&token)).await;
+        assert_insufficient_scope(status, &body, Some(SCOPE_JOB_RUN));
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_with_account_manage_can_call_users_me_or_tokens_list() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("account:manage").await;
+        let (status, body) = gate_send(&service, "/api/users/me", Some(&token)).await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_without_account_manage_cannot_call_account_route() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("runtime:read").await;
+        let (status, body) = gate_send(&service, "/api/users/me", Some(&token)).await;
+        assert_insufficient_scope(status, &body, Some(SCOPE_ACCOUNT_MANAGE));
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_cannot_call_authorize() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("runtime:read").await;
+        let (status, body) = gate_send(&service, "/oauth/authorize", Some(&token)).await;
+        assert_insufficient_scope(status, &body, None);
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_cannot_call_agent_surface() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("runtime:read").await;
+        let (status, body) = gate_send(&service, "/api/shell/agent/register", Some(&token)).await;
+        assert_insufficient_scope(status, &body, None);
+    }
+
+    #[tokio::test]
+    async fn oauth2_token_unknown_route_fails_closed() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("runtime:read").await;
+        let (status, body) =
+            gate_send(&service, "/api/future/authenticated-route", Some(&token)).await;
+        assert_insufficient_scope(status, &body, None);
+    }
+
+    #[tokio::test]
+    async fn api_token_still_works_on_representative_routes() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let user_token = gate_mint_user_token(&db, &user);
+        let service = Service::new(gate_router(config, db));
+        for path in [
+            "/api/runtime/status",
+            "/api/projects/read_file",
+            "/api/projects/write_file",
+            "/api/projects/run_job",
+            "/api/users/me",
+            "/api/future/authenticated-route",
+        ] {
+            let (status, body) = gate_send(&service, path, Some(&user_token)).await;
+            assert_eq!(status, StatusCode::OK, "{} body: {:?}", path, body);
+        }
+    }
+
     // ------------------------------------------------------------------
     // WWW-Authenticate resource_metadata in 401 responses
     // ------------------------------------------------------------------
@@ -2582,7 +2806,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_middleware_forbidden_does_not_include_resource_metadata() {
+    async fn auth_middleware_forbidden_uses_insufficient_scope_challenge() {
         let config = gate_test_config_oauth2(Some("test-token"));
         let (_tmp, db) = gate_test_db();
         let user = gate_seed_user(&db, "alice");
@@ -2596,10 +2820,20 @@ mod tests {
             .send(&service)
             .await;
         assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
-        // 403 should NOT include WWW-Authenticate challenge
+        let challenge = resp
+            .headers
+            .get("www-authenticate")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
         assert!(
-            !resp.headers.contains_key("www-authenticate"),
-            "403 should not include WWW-Authenticate"
+            challenge.contains("error=\"insufficient_scope\""),
+            "403 should include insufficient_scope challenge, got: {}",
+            challenge
+        );
+        assert!(
+            !challenge.contains("resource_metadata="),
+            "403 scope challenge should not include resource metadata, got: {}",
+            challenge
         );
     }
 

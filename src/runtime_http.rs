@@ -9,6 +9,50 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
 
+fn enforce_oauth_runtime_tool_scope(
+    auth: Option<&crate::auth::AuthContext>,
+    tool_name: &str,
+    res: &mut Response,
+) -> bool {
+    let Some(auth) = auth else {
+        return true;
+    };
+    if !auth.is_oauth_token() {
+        return true;
+    }
+
+    match crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name) {
+        crate::auth::scopes::OAuthToolScopePolicy::Require(scope) => {
+            if auth.has_scope(scope) {
+                true
+            } else {
+                crate::auth::render_oauth_insufficient_scope(
+                    res,
+                    Some(scope),
+                    format!("missing required scope: {}", scope),
+                );
+                false
+            }
+        }
+        crate::auth::scopes::OAuthToolScopePolicy::FirstPartyOnly => {
+            crate::auth::render_oauth_insufficient_scope(
+                res,
+                None,
+                "OAuth2 access tokens cannot call first-party-only tools",
+            );
+            false
+        }
+        crate::auth::scopes::OAuthToolScopePolicy::Unknown => {
+            crate::auth::render_oauth_insufficient_scope(
+                res,
+                None,
+                "OAuth2 access tokens cannot call unknown runtime tools",
+            );
+            false
+        }
+    }
+}
+
 /// Generic runtime tool call body. `tool` is required; `params` carries the
 /// tool-specific arguments. `arguments` is accepted as a compatibility alias
 /// for `params` — when both are present, `params` wins. GPT Actions may also
@@ -487,6 +531,10 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     };
+    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
+    if !enforce_oauth_runtime_tool_scope(auth.as_ref(), &tool, res) {
+        return;
+    }
     let call = match ToolCall::from_tool_name(&tool, params) {
         Ok(call) => call,
         Err(e) => {
@@ -496,7 +544,6 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
         }
     };
     let project = tool_project(&call);
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let result = runtime.dispatch_with_auth(call, auth.as_ref()).await;
     render_result(res, &audit, &tool, project, result);
 }
@@ -1834,10 +1881,104 @@ mod tests {
         })
     }
 
+    fn test_config_oauth2(token: Option<&str>) -> Arc<crate::Config> {
+        Arc::new(crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: token.map(str::to_string),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: CodexConfig::default(),
+            oauth2: crate::OAuth2Config {
+                enabled: true,
+                access_token_ttl_secs: 3600,
+                refresh_token_ttl_secs: 2_592_000,
+                ..crate::OAuth2Config::default()
+            },
+        })
+    }
+
     fn test_db() -> (tempfile::TempDir, Arc<crate::Database>) {
         let tmp = tempfile::tempdir().unwrap();
         let db = crate::Database::open(&tmp.path().join("test.db")).unwrap();
         (tmp, Arc::new(db))
+    }
+
+    fn seed_user(db: &crate::Database, username: &str) -> crate::models::UserRecord {
+        let now = chrono::Utc::now().timestamp();
+        let user = crate::models::UserRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            username: username.to_string(),
+            created_at: now,
+            disabled: 0,
+            display_name: None,
+            role: "user".to_string(),
+            disabled_at: None,
+            updated_at: Some(now),
+        };
+        db.create_user(&user).unwrap();
+        user
+    }
+
+    fn seed_oauth_client(
+        db: &crate::Database,
+        user: &crate::models::UserRecord,
+    ) -> crate::models::OAuthClientRecord {
+        let now = chrono::Utc::now().timestamp();
+        let secret = crate::auth::generate_oauth_client_secret();
+        let record = crate::models::OAuthClientRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            client_id: crate::auth::generate_oauth_client_id(),
+            client_secret_hash: crate::auth::hash_token(&secret),
+            name: "Test App".to_string(),
+            owner_user_id: user.id.clone(),
+            redirect_uris: "https://example.com/callback".to_string(),
+            allowed_scopes: "runtime:read project:read project:write job:run account:manage"
+                .to_string(),
+            created_at: now,
+            revoked_at: None,
+        };
+        db.insert_oauth_client(&record).unwrap();
+        record
+    }
+
+    fn seed_oauth_access_token(
+        db: &crate::Database,
+        client: &crate::models::OAuthClientRecord,
+        user: &crate::models::UserRecord,
+        scopes: &str,
+    ) -> String {
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = crate::auth::generate_oauth_access_token();
+        let record = crate::models::OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: crate::auth::hash_token(&plaintext),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: scopes.to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+        plaintext
+    }
+
+    fn phase2_oauth_service(scopes: &str) -> (tempfile::TempDir, salvo::Service, String) {
+        let config = test_config_oauth2(Some("secret"));
+        let (tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_oauth_client(&db, &user);
+        let token = seed_oauth_access_token(&db, &client, &user, scopes);
+        let project_dir = tmp.path().join("project");
+        std::fs::create_dir(&project_dir).unwrap();
+        std::fs::write(project_dir.join("README.md"), "hello\n").unwrap();
+        let runtime = Arc::new(runtime_with_local_project(&project_dir, "demo"));
+        let service = Service::new(build_projects_router(config, db, runtime));
+        (tmp, service, token)
     }
 
     fn local_project_config(path: &str) -> ProjectConfig {
@@ -3114,6 +3255,185 @@ mod tests {
             .send(&service)
             .await;
         assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+    }
+
+    async fn oauth_tools_call(
+        service: &Service,
+        token: &str,
+        tool: &str,
+        params: Value,
+    ) -> (StatusCode, Value, Option<String>) {
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth(token)
+            .json(&json!({"tool": tool, "params": params}))
+            .send(service)
+            .await;
+        let status = effective_status(&resp);
+        let challenge = resp
+            .headers()
+            .get("www-authenticate")
+            .and_then(|v| v.to_str().ok())
+            .map(str::to_string);
+        let body = resp.take_json::<Value>().await.unwrap();
+        (status, body, challenge)
+    }
+
+    fn assert_oauth_scope_rejected(
+        status: StatusCode,
+        body: &Value,
+        challenge: Option<&str>,
+        scope: Option<&str>,
+    ) {
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+        assert_eq!(body["error"], "insufficient_scope");
+        let challenge = challenge.unwrap_or("");
+        assert!(
+            challenge.contains("error=\"insufficient_scope\""),
+            "challenge: {}",
+            challenge
+        );
+        if let Some(scope) = scope {
+            assert!(
+                body["error_description"]
+                    .as_str()
+                    .unwrap_or("")
+                    .contains(scope),
+                "body: {:?}",
+                body
+            );
+            assert!(challenge.contains(scope), "challenge: {}", challenge);
+        }
+    }
+
+    #[tokio::test]
+    async fn oauth2_tools_call_requires_runtime_read_for_list_tools_or_runtime_status() {
+        let (_tmp, service, token) = phase2_oauth_service("runtime:read");
+        let (status, body, _) = oauth_tools_call(&service, &token, "list_tools", Value::Null).await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+
+        let (_tmp, service, token) = phase2_oauth_service("project:read");
+        let (status, body, challenge) =
+            oauth_tools_call(&service, &token, "runtime_status", Value::Null).await;
+        assert_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_RUNTIME_READ),
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_tools_call_requires_project_read_for_read_file() {
+        let (_tmp, service, token) = phase2_oauth_service("project:read");
+        let (status, body, _) = oauth_tools_call(
+            &service,
+            &token,
+            "read_file",
+            json!({"project": "demo", "path": "README.md"}),
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+
+        let (_tmp, service, token) = phase2_oauth_service("runtime:read");
+        let (status, body, challenge) = oauth_tools_call(
+            &service,
+            &token,
+            "read_file",
+            json!({"project": "demo", "path": "README.md"}),
+        )
+        .await;
+        assert_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_PROJECT_READ),
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_tools_call_requires_project_write_for_line_edit_or_write_file() {
+        let (_tmp, service, token) = phase2_oauth_service("project:write");
+        let (status, body, _) = oauth_tools_call(
+            &service,
+            &token,
+            "write_project_file",
+            json!({"project": "demo", "path": "new.txt", "content": "hi\n", "overwrite": true}),
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+
+        let (_tmp, service, token) = phase2_oauth_service("project:read");
+        let (status, body, challenge) = oauth_tools_call(
+            &service,
+            &token,
+            "replace_line_range",
+            json!({
+                "project": "demo",
+                "path": "README.md",
+                "start_line": 1,
+                "end_line": 1,
+                "new_text": "updated\n"
+            }),
+        )
+        .await;
+        assert_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_PROJECT_WRITE),
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_tools_call_requires_job_run_for_run_shell_or_run_job() {
+        let (_tmp, service, token) = phase2_oauth_service("job:run");
+        let (status, body, _) = oauth_tools_call(
+            &service,
+            &token,
+            "run_shell",
+            json!({"project": "demo", "command": "echo hi"}),
+        )
+        .await;
+        assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+
+        let (_tmp, service, token) = phase2_oauth_service("project:read");
+        let (status, body, challenge) = oauth_tools_call(
+            &service,
+            &token,
+            "run_job",
+            json!({"project": "demo", "command": "echo hi"}),
+        )
+        .await;
+        assert_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_JOB_RUN),
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_tools_call_unknown_tool_fails_closed() {
+        let (_tmp, service, token) = phase2_oauth_service("runtime:read project:read");
+        let (status, body, challenge) =
+            oauth_tools_call(&service, &token, "definitely_not_a_tool", Value::Null).await;
+        assert_oauth_scope_rejected(status, &body, challenge.as_deref(), None);
+    }
+
+    #[tokio::test]
+    async fn api_token_tools_call_behavior_unchanged() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "definitely_not_a_tool"}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert!(body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("definitely_not_a_tool"));
     }
 
     // =========================================================================

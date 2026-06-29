@@ -418,8 +418,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(Router::with_path("oauth/token").post(oauth_http::oauth_token))
         .push(Router::with_path("oauth/revoke").post(oauth_http::oauth_revoke))
         // /oauth/authorize is protected by AuthMiddleware.
-        // Phase 2e-1b is validation-only and does not issue authorization
-        // codes yet.
         .push(
             Router::with_path("oauth/authorize")
                 .hoop(AuthMiddleware)
@@ -428,6 +426,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(
             Router::with_path(".well-known/oauth-protected-resource")
                 .get(oauth_http::oauth_metadata),
+        )
+        .push(
+            Router::with_path(".well-known/oauth-authorization-server")
+                .get(oauth_http::oauth_authorization_server_metadata),
         )
         .push(
             Router::with_path("mcp")

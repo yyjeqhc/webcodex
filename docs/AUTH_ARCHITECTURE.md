@@ -50,7 +50,7 @@ src/auth/
 | Type | Location | Purpose |
 | --- | --- | --- |
 | `AuthContext` | `auth/mod.rs` | Depot-injected struct carrying raw auth fields |
-| `AuthKind` | `auth/mod.rs` | Enum: Bootstrap, ApiToken, AgentToken, AccountCredential |
+| `AuthKind` | `auth/mod.rs` | Enum: Bootstrap, ApiToken, AgentToken, AccountCredential, OAuth2Token |
 | `Principal` | `auth/principal.rs` | Higher-level identity abstraction |
 | `AuthMethod` | `auth/principal.rs` | Enum: Bootstrap, Pat, AgentToken, AccountCredential, OAuth2 |
 | `AuthError` | `auth/principal.rs` | Error type for auth/authorization failures |
@@ -442,7 +442,7 @@ Not implemented: `/oauth/authorize`, `client_credentials` grant,
    `Bearer resource_metadata="<issuer>/.well-known/oauth-protected-resource"`
    when OAuth2 is enabled with an issuer. 403 responses do not include it.
 6. **Authorization server metadata** (`/.well-known/oauth-authorization-server`)
-   is intentionally deferred until the next metadata phase.
+   is implemented in Phase 2e-2 and points at the same issuer.
 
 ### Phase 2e-0 — authorization endpoint design contract
 
@@ -555,5 +555,41 @@ GPT Action configuration changes, or changes to `/oauth/token`,
 4. **No token issuance**: `/oauth/authorize` does not return access or refresh
    tokens. `/oauth/token` remains responsible for consuming the authorization
    code and issuing `wc_oat_*` and `wc_ort_*` tokens.
-5. **Metadata gate**: `/.well-known/oauth-authorization-server` remains
-   intentionally unexposed until the next metadata phase.
+5. **Metadata**: Phase 2e-2 exposes
+   `/.well-known/oauth-authorization-server` with only implemented OAuth
+   capabilities.
+
+### Phase 2e-2 — authorization server metadata and authorize identity hardening
+
+Phase 2e-2 keeps the existing `/oauth/token`, `/oauth/revoke`,
+`OAuth2Verifier`, AuthMiddleware, MCP security scheme, GPT Action
+configuration, and artifact/import/action behavior unchanged.
+
+1. **Authorize identity sources**: `/oauth/authorize` remains behind
+   `AuthMiddleware`, but the handler explicitly allows only
+   `AuthKind::Bootstrap` and `AuthKind::ApiToken` as first-party WebCodex
+   identity sources. OAuth2 access tokens cannot be used to obtain new
+   authorization codes. Agent tokens and account credentials are rejected by
+   existing surface gates or by the authorize handler if they reach it.
+   Rejected identities do not insert `oauth_authorization_codes`.
+2. **Authorization server metadata**:
+   `GET /.well-known/oauth-authorization-server` is public, requires no Bearer
+   token, and returns 404 with `{"error":"OAuth2 is not enabled"}` when OAuth2
+   is disabled.
+3. **Metadata fields**: the response includes `issuer`,
+   `authorization_endpoint`, `token_endpoint`, `revocation_endpoint`,
+   `response_types_supported = ["code"]`,
+   `grant_types_supported = ["authorization_code", "refresh_token"]`,
+   `code_challenge_methods_supported = ["S256"]`,
+   `token_endpoint_auth_methods_supported = ["client_secret_post", "none"]`,
+   and `scopes_supported`.
+4. **Issuer-derived URLs**: `issuer` comes from `config.oauth2.issuer` with
+   the existing `http://localhost` fallback. Endpoint URLs trim a trailing
+   issuer slash before appending `/oauth/authorize`, `/oauth/token`, and
+   `/oauth/revoke`.
+5. **Scope registry reuse**: `scopes_supported` reuses
+   `oauth_scopes_supported()`, the same global OAuth scope registry used by
+   protected resource metadata and authorize-time scope normalization.
+6. **Still not implemented**: `/.well-known/openid-configuration`, JWKS,
+   JWT/OIDC, route-level OAuth scope enforcement, and MCP resource/audience
+   binding remain out of scope.

@@ -2,11 +2,12 @@
 
 ## Status
 
-Phase 2e-1c authorization code issuance. `/oauth/authorize` is mounted behind
-`AuthMiddleware`; after successful validation it now issues an authorization
-code and redirects back to the validated client redirect URI.
+Phase 2e-2 authorization server metadata and authorize identity hardening.
+`/oauth/authorize` is mounted behind `AuthMiddleware`; after successful
+validation it issues an authorization code and redirects back to the validated
+client redirect URI.
 
-This document is the implementation contract for Phase 2e-1. It describes the
+This document is the implementation contract for Phase 2e. It describes the
 request contract, state machine, security invariants, storage shape, and test
 plan for the authorization endpoint.
 
@@ -42,11 +43,26 @@ Implemented in Phase 2e-1c:
 - `/oauth/authorize` does not return access tokens or refresh tokens.
 - `/oauth/token` remains responsible for code consumption and token issuance.
 
+Implemented in Phase 2e-2:
+
+- `/oauth/authorize` only accepts first-party WebCodex identity sources:
+  `AuthKind::Bootstrap` and `AuthKind::ApiToken`. OAuth2 access tokens,
+  agent tokens, account credentials, and other non-first-party identities are
+  rejected before authorization code issuance.
+- `GET /.well-known/oauth-authorization-server` is a public endpoint.
+- Authorization server metadata advertises only implemented OAuth
+  capabilities: real authorization/token/revocation endpoints,
+  `response_types_supported = ["code"]`,
+  `grant_types_supported = ["authorization_code", "refresh_token"]`,
+  `code_challenge_methods_supported = ["S256"]`,
+  `token_endpoint_auth_methods_supported = ["client_secret_post", "none"]`,
+  and `scopes_supported` from the global OAuth scope registry.
+
 Still not implemented:
 
-- Authorization server metadata
-  (`/.well-known/oauth-authorization-server` or
-  `/.well-known/openid-configuration`).
+- OpenID Connect metadata (`/.well-known/openid-configuration`).
+- Route-level OAuth scope enforcement.
+- MCP resource/audience binding.
 
 ## Goals
 
@@ -55,8 +71,7 @@ Still not implemented:
   `oauth_authorization_codes`.
 - Preserve existing `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, MCP,
   agent transport, and protected resource metadata semantics.
-- Keep authorization-server discovery gated until the authorize endpoint
-  exists and is tested.
+- Publish authorization-server discovery only for implemented capabilities.
 
 ## Non-goals
 
@@ -66,8 +81,7 @@ Still not implemented:
   cookie session.
 - No changes to `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, or
   `AuthMiddleware` behavior.
-- No `/.well-known/oauth-authorization-server` or
-  `/.well-known/openid-configuration`.
+- No `/.well-known/openid-configuration`.
 - No MCP `securitySchemes` changes, GPT Action configuration changes,
   `client_credentials` grant, device code flow, route-level scope enforcement,
   JWT, JWKS, or broad auth architecture refactor.
@@ -78,8 +92,12 @@ Phase 2e-1 should implement an authenticated first-party authorization
 endpoint:
 
 - `GET /oauth/authorize` is protected by the existing `AuthMiddleware`.
-- The caller must already hold a WebCodex user PAT or equivalent bearer auth
-  accepted by regular HTTP AuthMiddleware paths.
+- The caller must already hold first-party WebCodex auth. The authorize
+  handler allowlist accepts `AuthKind::Bootstrap` and `AuthKind::ApiToken`.
+- OAuth2 access tokens cannot be used to obtain new authorization codes.
+- Agent tokens and account credentials are not valid authorize identities; if
+  they reach the handler, they are rejected, and existing AuthMiddleware
+  surface gates may reject them earlier.
 - The authorizing user is `AuthContext.user_id`.
 - Requests with no authenticated user must fail and must not create a code.
 - No independent browser username/password login page is introduced.
@@ -311,8 +329,16 @@ The implementation phase must add tests covering at least:
 - `authorize_success_redirect_appends_with_ampersand_when_redirect_uri_has_query`
 - `authorize_success_does_not_return_access_or_refresh_token`
 - `authorize_success_code_can_be_exchanged_for_tokens`
+- `authorize_accepts_user_pat_for_code_issuance`
+- `authorize_rejects_oauth2_access_token_without_issuing_code`
+- `authorize_rejects_agent_token_without_issuing_code`
+- `authorize_rejects_account_credential_without_issuing_code`
 - `authorize_does_not_issue_code_on_any_error`
-- `authorization_server_metadata_not_exposed_before_metadata_phase`
+- `oauth_authorization_server_metadata_is_public`
+- `oauth_authorization_server_metadata_fields`
+- `oauth_authorization_server_metadata_trims_trailing_issuer_slash`
+- `oauth_authorization_server_metadata_disabled_returns_404`
+- `openid_configuration_not_exposed`
 
 Additional useful tests:
 
@@ -323,26 +349,36 @@ Additional useful tests:
 - `state` round-trips as the same decoded opaque value on success and error
   redirects.
 
-## Metadata Gating
+## Authorization Server Metadata
 
-`/.well-known/oauth-authorization-server` remains intentionally unexposed
-until the next metadata phase, even though `/oauth/authorize` now issues
-authorization codes.
+`GET /.well-known/oauth-authorization-server` is public and does not require a
+Bearer token. When OAuth2 is disabled it returns 404 with
+`{"error":"OAuth2 is not enabled"}`, matching protected resource metadata.
 
-After `/oauth/authorize` exists, authorization server metadata must only
-advertise endpoints and capabilities that are real. The minimum metadata
-must include:
+Authorization server metadata only advertises endpoints and capabilities that
+are real. The metadata includes:
 
+- `issuer`
 - `authorization_endpoint`
 - `token_endpoint`
 - `revocation_endpoint`
-- `code_challenge_methods_supported`
-- `response_types_supported`
-- `grant_types_supported`
-- `token_endpoint_auth_methods_supported`
+- `response_types_supported = ["code"]`
+- `grant_types_supported = ["authorization_code", "refresh_token"]`
+- `code_challenge_methods_supported = ["S256"]`
+- `token_endpoint_auth_methods_supported = ["client_secret_post", "none"]`
 - `scopes_supported`
 
-Do not advertise authorization server metadata until the next metadata phase.
+The endpoint URLs are derived from `config.oauth2.issuer` (fallback:
+`http://localhost`) after trimming a trailing slash before appending
+`/oauth/authorize`, `/oauth/token`, and `/oauth/revoke`.
+
+Do not advertise unimplemented features:
+
+- No `/.well-known/openid-configuration`.
+- No `jwks_uri`, `userinfo_endpoint`, registration endpoint, device
+  authorization endpoint, introspection endpoint, claims metadata, or ID token
+  signing algorithms.
+- No route-level scope enforcement or MCP resource/audience binding yet.
 
 ## Implementation Sequencing
 

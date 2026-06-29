@@ -7,15 +7,58 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2e-1c** issues authorization codes from `GET /oauth/authorize` after
-the existing authenticated-user, client, exact redirect URI, `response_type`,
-PKCE S256, scope, and unsupported `resource` validation succeeds. The
-plaintext `wc_oac_*` code appears only in the success redirect; the database
-stores only its SHA-256 hash and metadata. Authorization server metadata
-remains gated until the next metadata phase. See
+**Phase 2e-2** publishes OAuth authorization server metadata and hardens the
+identity boundary for `GET /oauth/authorize`. The authorize endpoint still
+issues `wc_oac_*` authorization codes only after authenticated-user, client,
+exact redirect URI, `response_type`, PKCE S256, scope, and unsupported
+`resource` validation succeeds; the database stores only the code hash and
+metadata. See
 [OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md) for the full request
 contract, state machine, security invariants, storage contract, test plan, and
-authorization-server metadata gate.
+authorization-server metadata contract.
+
+### Phase 2e-2: authorization server metadata and authorize identity boundary
+
+Phase 2e-2 keeps `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, and
+AuthMiddleware semantics unchanged, while adding two authorize/discovery
+boundaries:
+
+- `/oauth/authorize` still runs behind `AuthMiddleware`, but the handler now
+  explicitly allows only `AuthKind::Bootstrap` and `AuthKind::ApiToken` as
+  authorize identity sources. OAuth2 access tokens cannot be used to obtain
+  new authorization codes. Agent tokens and account credentials are rejected
+  by existing AuthMiddleware surface gates or, if they reach the handler, by
+  the authorize allowlist. Rejected identities create no
+  `oauth_authorization_codes` row.
+- `GET /.well-known/oauth-authorization-server` is public, requires no Bearer
+  token, and returns 404 with `{"error":"OAuth2 is not enabled"}` when OAuth2
+  is disabled.
+
+Authorization server metadata contains only implemented capabilities:
+
+```json
+{
+  "issuer": "https://codex.example.com",
+  "authorization_endpoint": "https://codex.example.com/oauth/authorize",
+  "token_endpoint": "https://codex.example.com/oauth/token",
+  "revocation_endpoint": "https://codex.example.com/oauth/revoke",
+  "response_types_supported": ["code"],
+  "grant_types_supported": ["authorization_code", "refresh_token"],
+  "code_challenge_methods_supported": ["S256"],
+  "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
+  "scopes_supported": ["runtime:read", "project:read", "project:write", "job:run", "account:manage"]
+}
+```
+
+`issuer` is `config.oauth2.issuer` with the existing `http://localhost`
+fallback. Endpoint URLs trim any trailing issuer slash before appending
+`/oauth/authorize`, `/oauth/token`, or `/oauth/revoke`. `scopes_supported`
+reuses `oauth_scopes_supported()`.
+
+`/.well-known/openid-configuration` is still not implemented. The server does
+not advertise JWKS, userinfo, registration, device authorization,
+introspection, claims, ID token signing algorithms, route-level OAuth scope
+enforcement, or MCP resource/audience binding.
 
 ### Phase 2e-1c: authorization code issuance
 
@@ -25,8 +68,9 @@ issuance:
 - `GET /oauth/authorize` is mounted at the root path, not under `/api`, and is
   protected by `AuthMiddleware`.
 - OAuth2 disabled returns a direct 404.
-- Requests must carry an authenticated `AuthContext.user_id`; unauthenticated
-  requests are rejected before handler validation and create no code.
+- Requests must carry an allowed first-party identity source and an
+  authenticated `AuthContext.user_id`; unauthenticated requests and rejected
+  identity sources create no code.
 - `client_id` is required and non-empty, and must identify a non-revoked
   client.
 - `redirect_uri` is required, non-empty, and must exactly match one registered
@@ -49,9 +93,8 @@ issuance:
   `/oauth/token` remains responsible for consuming the code and issuing
   `wc_oat_*` and `wc_ort_*` tokens.
 
-`/.well-known/oauth-authorization-server` remains intentionally unexposed
-until the next metadata phase, even though authorization code issuance is now
-implemented.
+Phase 2e-2 publishes authorization server metadata for the implemented
+authorization code and refresh token capabilities.
 
 ### Phase 2e-1a: authorization request helpers
 
@@ -113,8 +156,9 @@ and optional decoded/re-encoded `state`. The stored row includes `client_id`,
 challenge and method, `created_at`, `expires_at`, `used_at = None`, and
 `revoked_at = None`.
 
-Authorization server metadata (`/.well-known/oauth-authorization-server`)
-remains intentionally deferred until the next metadata phase.
+Authorization server metadata (`/.well-known/oauth-authorization-server`) is
+implemented in Phase 2e-2. OpenID Connect metadata
+(`/.well-known/openid-configuration`) remains intentionally unimplemented.
 
 ### Phase 2d-1: protected resource metadata
 
@@ -155,8 +199,8 @@ header when OAuth2 is enabled and an issuer is configured. 403 responses do
 not include this header.
 
 Authorization server metadata (`/.well-known/oauth-authorization-server`) is
-intentionally deferred until the next metadata phase, so discovery is not
-expanded in the same change as authorization code issuance.
+implemented in Phase 2e-2. It is public, derives its endpoint URLs from the
+issuer, and only advertises implemented OAuth capabilities.
 
 ### Phase 2b-1: `POST /oauth/token`
 
@@ -533,8 +577,7 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 ## What is NOT implemented yet
 
 - `/oauth/userinfo` endpoint
-- `/.well-known/oauth-authorization-server` metadata — intentionally deferred
-  until the next metadata phase
+- `/.well-known/openid-configuration` metadata
 - `client_credentials` grant
 - Route-level OAuth scope enforcement
 - MCP OAuth (resource indicator / audience binding)

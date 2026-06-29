@@ -3,6 +3,7 @@
 //! - `POST /oauth/token` — token endpoint (authorization_code, refresh_token)
 //! - `POST /oauth/revoke` — token revocation endpoint (RFC 7009)
 //! - `GET /.well-known/oauth-protected-resource` — protected resource metadata
+//! - `GET /.well-known/oauth-authorization-server` — authorization server metadata
 //!
 //! Token and revocation are **public** endpoints (no `AuthMiddleware`); clients
 //! authenticate via `client_id` + `client_secret` in the form body. The
@@ -25,7 +26,7 @@
 
 use crate::auth::{
     generate_oauth_access_token, generate_oauth_authorization_code, generate_oauth_refresh_token,
-    hash_token, scopes, AuthContext,
+    hash_token, scopes, AuthContext, AuthKind,
 };
 use crate::models::{
     OAuthAccessTokenRecord, OAuthAuthorizationCodeRecord, OAuthRefreshTokenRecord,
@@ -323,6 +324,10 @@ fn redirect_error_for_missing_authorize_param(error: &OAuthAuthorizeError) -> &'
 // GET /oauth/authorize
 // ---------------------------------------------------------------------------
 
+fn is_authorize_identity_allowed(ctx: &AuthContext) -> bool {
+    matches!(ctx.kind, AuthKind::Bootstrap | AuthKind::ApiToken)
+}
+
 /// Authorization endpoint for Phase 2e-1c.
 ///
 /// The route is protected by `AuthMiddleware` in `main.rs`. This handler
@@ -360,6 +365,16 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         );
         return;
     };
+
+    if !is_authorize_identity_allowed(auth) {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::FORBIDDEN,
+            "invalid_request",
+            "authorization endpoint requires first-party user authentication",
+        );
+        return;
+    }
 
     if auth.user_id.is_none() {
         oauth_authorize_direct_error(
@@ -1620,6 +1635,46 @@ pub(crate) async fn oauth_metadata(depot: &mut Depot, res: &mut Response) {
     res.render(Json(metadata));
 }
 
+/// Return OAuth Authorization Server Metadata (RFC 8414).
+///
+/// This is a **public** endpoint — no authentication required. It advertises
+/// only capabilities implemented by the current OAuth2 server.
+#[handler]
+pub(crate) async fn oauth_authorization_server_metadata(depot: &mut Depot, res: &mut Response) {
+    let Some(config) = crate::auth::get_config(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "no config"})));
+        return;
+    };
+
+    if !config.oauth2.enabled {
+        res.status_code(StatusCode::NOT_FOUND);
+        res.render(Json(serde_json::json!({"error": "OAuth2 is not enabled"})));
+        return;
+    }
+
+    let issuer = config
+        .oauth2
+        .issuer
+        .as_deref()
+        .unwrap_or("http://localhost");
+    let endpoint_base = issuer.trim_end_matches('/');
+
+    let metadata = serde_json::json!({
+        "issuer": issuer,
+        "authorization_endpoint": format!("{}/oauth/authorize", endpoint_base),
+        "token_endpoint": format!("{}/oauth/token", endpoint_base),
+        "revocation_endpoint": format!("{}/oauth/revoke", endpoint_base),
+        "response_types_supported": ["code"],
+        "grant_types_supported": ["authorization_code", "refresh_token"],
+        "code_challenge_methods_supported": ["S256"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
+        "scopes_supported": oauth_scopes_supported(),
+    });
+
+    res.render(Json(metadata));
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1628,10 +1683,12 @@ pub(crate) async fn oauth_metadata(depot: &mut Depot, res: &mut Response) {
 mod tests {
     use super::*;
     use crate::auth::{
-        generate_api_token, generate_oauth_authorization_code, hash_token, token_prefix,
+        generate_account_credential, generate_agent_token, generate_api_token,
+        generate_oauth_authorization_code, hash_token, token_prefix,
     };
     use crate::models::{
-        ApiKeyRecord, OAuthAuthorizationCodeRecord, OAuthClientRecord, UserRecord, TOKEN_KIND_USER,
+        AccountCredentialRecord, ApiKeyRecord, OAuthAuthorizationCodeRecord, OAuthClientRecord,
+        UserRecord, TOKEN_KIND_AGENT, TOKEN_KIND_USER,
     };
     use crate::OAuth2Config;
     use salvo::test::{ResponseExt, TestClient};
@@ -1954,6 +2011,43 @@ mod tests {
         plaintext
     }
 
+    fn seed_agent_token(db: &crate::Database, user: &UserRecord) -> String {
+        let plaintext = generate_agent_token();
+        let hash = hash_token(&plaintext);
+        let now = chrono::Utc::now().timestamp();
+        let record = ApiKeyRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: user.id.clone(),
+            name: "authorize-agent-token".to_string(),
+            key_prefix: token_prefix(&plaintext),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: "agent:poll agent:result".to_string(),
+            expires_at: None,
+            kind: TOKEN_KIND_AGENT.to_string(),
+            allowed_client_id: Some("alice-laptop".to_string()),
+        };
+        db.insert_api_key(&record, &hash).unwrap();
+        plaintext
+    }
+
+    fn seed_account_credential(db: &crate::Database, user: &UserRecord) -> String {
+        let plaintext = generate_account_credential();
+        let hash = hash_token(&plaintext);
+        let now = chrono::Utc::now().timestamp();
+        let record = AccountCredentialRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: user.id.clone(),
+            credential_prefix: token_prefix(&plaintext),
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+        };
+        db.insert_account_credential(&record, &hash).unwrap();
+        plaintext
+    }
+
     fn authorize_url(params: &[(&str, &str)]) -> String {
         let query = params
             .iter()
@@ -2191,6 +2285,10 @@ mod tests {
                     .get(oauth_authorize),
             )
             .push(Router::with_path(".well-known/oauth-protected-resource").get(oauth_metadata))
+            .push(
+                Router::with_path(".well-known/oauth-authorization-server")
+                    .get(oauth_authorization_server_metadata),
+            )
     }
 
     fn form_body(pairs: &[(&str, &str)]) -> String {
@@ -2246,6 +2344,96 @@ mod tests {
         let resp = TestClient::get(&url).send(&service).await;
 
         assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        assert_no_location(&resp);
+        assert_eq!(auth_code_count(&db), before);
+    }
+
+    #[tokio::test]
+    async fn authorize_accepts_user_pat_for_code_issuance() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+
+        let (_resp, _location, _parsed, code) =
+            authorize_success(&service, &db, &url, &token).await;
+
+        assert!(code.starts_with("wc_oac_"));
+    }
+
+    #[tokio::test]
+    async fn authorize_rejects_oauth2_access_token_without_issuing_code() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let (_record, token) = seed_access_token(&db, &client, &user, "runtime:read");
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+        let before = auth_code_count(&db);
+
+        let resp = authorized_get(&url, &token).send(&service).await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+        assert_no_location(&resp);
+        assert_eq!(auth_code_count(&db), before);
+    }
+
+    #[tokio::test]
+    async fn authorize_rejects_agent_token_without_issuing_code() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_agent_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+        let before = auth_code_count(&db);
+
+        let resp = authorized_get(&url, &token).send(&service).await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+        assert_no_location(&resp);
+        assert_eq!(auth_code_count(&db), before);
+    }
+
+    #[tokio::test]
+    async fn authorize_rejects_account_credential_without_issuing_code() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_account_credential(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+        let before = auth_code_count(&db);
+
+        let resp = authorized_get(&url, &token).send(&service).await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
         assert_no_location(&resp);
         assert_eq!(auth_code_count(&db), before);
     }
@@ -5261,20 +5449,146 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth_authorization_server_metadata_not_exposed_before_metadata_phase() {
-        // /.well-known/oauth-authorization-server remains intentionally gated
-        // until the metadata phase.
+    async fn oauth_authorization_server_metadata_is_public() {
         let config = test_config(oauth2_enabled());
         let (_tmp, db) = test_db();
         let service = Service::new(build_router(config, db));
-        let resp = TestClient::get("http://localhost/.well-known/oauth-authorization-server")
+        let mut resp = TestClient::get("http://localhost/.well-known/oauth-authorization-server")
             .send(&service)
             .await;
-        assert_eq!(
-            resp.status_code,
-            Some(StatusCode::NOT_FOUND),
-            "authorization server metadata must not be exposed before the metadata phase"
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let ct = resp
+            .headers
+            .get("content-type")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            ct.contains("application/json"),
+            "expected application/json, got {}",
+            ct
         );
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["issuer"], "http://localhost");
+        assert_eq!(
+            body["authorization_endpoint"],
+            "http://localhost/oauth/authorize"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_authorization_server_metadata_fields() {
+        let mut oauth2 = oauth2_enabled();
+        oauth2.issuer = Some("https://codex.example.com".to_string());
+        let config = test_config(oauth2);
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let mut resp = TestClient::get("http://localhost/.well-known/oauth-authorization-server")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+
+        assert_eq!(body["issuer"], "https://codex.example.com");
+        assert_eq!(
+            body["authorization_endpoint"],
+            "https://codex.example.com/oauth/authorize"
+        );
+        assert_eq!(
+            body["token_endpoint"],
+            "https://codex.example.com/oauth/token"
+        );
+        assert_eq!(
+            body["revocation_endpoint"],
+            "https://codex.example.com/oauth/revoke"
+        );
+        assert_eq!(
+            body["response_types_supported"],
+            serde_json::json!(["code"])
+        );
+        assert!(body["grant_types_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "authorization_code"));
+        assert!(body["grant_types_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "refresh_token"));
+        assert_eq!(
+            body["code_challenge_methods_supported"],
+            serde_json::json!(["S256"])
+        );
+        let auth_methods = body["token_endpoint_auth_methods_supported"]
+            .as_array()
+            .unwrap();
+        assert!(auth_methods.iter().any(|v| v == "client_secret_post"));
+        assert!(auth_methods.iter().any(|v| v == "none"));
+        assert_eq!(
+            body["scopes_supported"],
+            serde_json::json!(oauth_scopes_supported())
+        );
+
+        assert!(
+            body.get("jwks_uri").is_none(),
+            "metadata must not advertise JWKS"
+        );
+        assert!(
+            body.get("userinfo_endpoint").is_none(),
+            "metadata must not advertise OIDC userinfo"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_authorization_server_metadata_trims_trailing_issuer_slash() {
+        let mut oauth2 = oauth2_enabled();
+        oauth2.issuer = Some("https://codex.example.com/".to_string());
+        let config = test_config(oauth2);
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let mut resp = TestClient::get("http://localhost/.well-known/oauth-authorization-server")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+
+        assert_eq!(body["issuer"], "https://codex.example.com/");
+        assert_eq!(
+            body["authorization_endpoint"],
+            "https://codex.example.com/oauth/authorize"
+        );
+        assert_eq!(
+            body["token_endpoint"],
+            "https://codex.example.com/oauth/token"
+        );
+        assert_eq!(
+            body["revocation_endpoint"],
+            "https://codex.example.com/oauth/revoke"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_authorization_server_metadata_disabled_returns_404() {
+        let config = test_config(oauth2_disabled());
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let mut resp = TestClient::get("http://localhost/.well-known/oauth-authorization-server")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::NOT_FOUND));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["error"], "OAuth2 is not enabled");
+    }
+
+    #[tokio::test]
+    async fn openid_configuration_not_exposed() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let service = Service::new(build_router(config, db));
+        let resp = TestClient::get("http://localhost/.well-known/openid-configuration")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::NOT_FOUND));
     }
 
     #[tokio::test]

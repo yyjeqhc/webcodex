@@ -424,6 +424,16 @@ pub(crate) struct OAuth2Verifier;
 /// are handled by [`OAuth2Verifier`]; all others return `Ok(None)`.
 const OAUTH2_ACCESS_TOKEN_PREFIX: &str = "wc_oat_";
 
+/// Returns `true` when `token` looks like an OAuth2 access token by prefix.
+///
+/// This is a cheap text check — no DB access, no secret logging. Used by
+/// [`authenticate_bearer`] and [`AuthMiddleware`] to pre-reject OAuth2 tokens
+/// on forbidden surfaces **before** [`OAuth2Verifier`] runs, so that
+/// `last_used_at` is not updated for rejected attempts.
+pub(crate) fn is_oauth2_access_token(token: &str) -> bool {
+    token.starts_with(OAUTH2_ACCESS_TOKEN_PREFIX)
+}
+
 #[async_trait]
 impl TokenVerifier for OAuth2Verifier {
     async fn verify(
@@ -533,8 +543,10 @@ impl TokenVerifier for OAuth2Verifier {
 ///   Account credentials are only valid on HTTP account-control endpoints.
 ///   The QUIC/agent transport has no use for them, and accepting them would
 ///   silently update `last_used_at` before the caller rejects the connection.
-/// - **OAuth2**: not yet supported — the `OAuth2Verifier` stub always returns
-///   "not recognized", so this falls through to `None`.
+/// - **OAuth2 access token (`wc_oat_*`)**: **rejected** — returns `None`
+///   *before* running the verifier chain, so `last_used_at` is not updated.
+///   OAuth2 tokens are accepted on regular HTTP surfaces via `AuthMiddleware`,
+///   but not on the QUIC/agent transport surface.
 ///
 /// Returns `None` for unknown/invalid tokens or when the token is recognized
 /// but rejected (disabled user, expired token, account credential). The
@@ -551,15 +563,22 @@ pub(crate) async fn authenticate_bearer(
         return Some(bootstrap_context());
     }
     let token = token?;
+    // Pre-reject OAuth2 access tokens before running the verifier chain.
+    // OAuth2Verifier updates last_used_at on success, so we must not let it
+    // run on a surface that will ultimately reject the token. The QUIC/agent
+    // transport surface does not accept OAuth2 tokens.
+    if is_oauth2_access_token(token) {
+        return None;
+    }
     // Run the same verifier chain as the HTTP path (PatVerifier →
     // OAuth2Verifier). Any error (disabled user, expired token) is treated
     // the same as "unknown" for the QUIC transport — the caller rejects
     // the connection either way.
     let ctx = authenticate(config, db, token).await.ok().flatten()?;
-    // Account credentials and OAuth2 tokens are not valid on the agent
-    // transport surface. Reject them here so they don't silently update
-    // last_used_at and then get rejected by the caller anyway.
-    if ctx.is_account_credential() || ctx.is_oauth_token() {
+    // Account credentials are not valid on the agent transport surface.
+    // Reject them here so they don't silently update last_used_at and then
+    // get rejected by the caller anyway.
+    if ctx.is_account_credential() {
         return None;
     }
     Some(ctx)
@@ -733,6 +752,19 @@ impl Handler for AuthMiddleware {
                 return;
             }
         };
+
+        // Pre-reject OAuth2 access tokens on agent transport paths before
+        // running the verifier chain. OAuth2Verifier updates last_used_at on
+        // success, so we must not let it run on a surface that will
+        // ultimately reject the token.
+        if is_agent_transport_path(req.uri().path()) && is_oauth2_access_token(&token) {
+            res.status_code(StatusCode::FORBIDDEN);
+            res.render(Json(serde_json::json!({
+                "error": "OAuth2 tokens are not allowed on agent transport endpoints"
+            })));
+            ctrl.skip_rest();
+            return;
+        }
 
         // Run the verifier chain (PatVerifier → OAuth2Verifier).
         match authenticate(&config, db.as_ref(), &token).await {
@@ -2322,11 +2354,26 @@ mod tests {
         let (_tmp, db) = gate_test_db();
         let user = gate_seed_user(&db, "alice");
         let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+        let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+        assert!(at.last_used_at.is_none(), "precondition");
         let result = authenticate_bearer(&config, Some(&db), Some(&plaintext)).await;
         assert!(
             result.is_none(),
             "OAuth2 access tokens must be rejected on agent transport (QUIC)"
+        );
+        // last_used_at must NOT be updated — the token was pre-rejected
+        // before OAuth2Verifier ran.
+        let conn = db.conn_for_tests();
+        let last_used: Option<i64> = conn
+            .query_row(
+                "SELECT last_used_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            last_used.is_none(),
+            "last_used_at must not be updated on forbidden surface"
         );
     }
 
@@ -2340,9 +2387,10 @@ mod tests {
         let (_tmp, db) = gate_test_db();
         let user = gate_seed_user(&db, "alice");
         let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+        let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+        assert!(at.last_used_at.is_none(), "precondition");
 
-        let service = salvo::Service::new(gate_router(config, db));
+        let service = salvo::Service::new(gate_router(config, db.clone()));
         let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
             .add_header("authorization", &format!("Bearer {}", plaintext), true)
             .send(&service)
@@ -2351,6 +2399,19 @@ mod tests {
             resp.status_code,
             Some(StatusCode::OK),
             "valid OAuth2 access token should be accepted by AuthMiddleware"
+        );
+        // last_used_at MUST be updated on successful verification.
+        let conn = db.conn_for_tests();
+        let last_used: Option<i64> = conn
+            .query_row(
+                "SELECT last_used_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            last_used.is_some(),
+            "last_used_at must be updated on successful HTTP auth"
         );
     }
 
@@ -2389,6 +2450,41 @@ mod tests {
             resp.status_code,
             Some(StatusCode::UNAUTHORIZED),
             "refresh token should not be accepted as bearer"
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_rejects_oauth2_on_agent_path_without_updating_last_used() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+        assert!(at.last_used_at.is_none(), "precondition");
+
+        let service = salvo::Service::new(gate_router(config, db.clone()));
+        let resp = salvo::test::TestClient::post("http://localhost/api/shell/agent/register")
+            .add_header("authorization", &format!("Bearer {}", plaintext), true)
+            .send(&service)
+            .await;
+        assert_eq!(
+            resp.status_code,
+            Some(StatusCode::FORBIDDEN),
+            "OAuth2 token on agent transport path should be 403"
+        );
+        // last_used_at must NOT be updated — the token was pre-rejected
+        // before OAuth2Verifier ran.
+        let conn = db.conn_for_tests();
+        let last_used: Option<i64> = conn
+            .query_row(
+                "SELECT last_used_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            last_used.is_none(),
+            "last_used_at must not be updated on forbidden agent transport path"
         );
     }
 }

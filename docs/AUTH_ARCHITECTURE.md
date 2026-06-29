@@ -413,3 +413,15 @@ See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
 
 Not implemented: `/oauth/authorize`, `client_credentials` grant,
 `/.well-known/*`, route-level OAuth scope enforcement, MCP OAuth.
+
+### Phase 2c-1.1 — forbid `last_used_at` updates on rejected surfaces
+
+1. **Pre-rejection**: `wc_oat_*` tokens are now rejected *before*
+   `OAuth2Verifier` runs on forbidden surfaces, preventing `last_used_at`
+   from being updated on tokens that were never actually used.
+2. **`authenticate_bearer()`**: checks `is_oauth2_access_token(token)`
+   before calling `authenticate()`; returns `None` immediately.
+3. **`AuthMiddleware`**: checks `is_agent_transport_path(path) &&
+   is_oauth2_access_token(token)` before calling `authenticate()`; returns
+   403 immediately.
+4. **`enforce_token_surface()`**: retained as defense-in-depth.

@@ -213,10 +213,11 @@ by `AuthMiddleware`.
 - **HTTP `AuthMiddleware`** (API, MCP): OAuth2 tokens are accepted on all
   regular paths.
 - **Agent transport paths** (`/api/shell/agent/*`, `/api/agents/ws`): OAuth2
-  tokens are **rejected** — these endpoints require agent tokens or bootstrap
-  auth.
-- **QUIC / `authenticate_bearer()`**: OAuth2 tokens are **rejected** — the
-  QUIC surface is agent-only.
+  tokens are **pre-rejected** before `OAuth2Verifier` runs, so `last_used_at`
+  is not updated. These endpoints require agent tokens or bootstrap auth.
+- **QUIC / `authenticate_bearer()`**: OAuth2 tokens are **pre-rejected**
+  before `OAuth2Verifier` runs, so `last_used_at` is not updated. The QUIC
+  surface is agent-only.
 
 **What is NOT covered**:
 
@@ -224,6 +225,24 @@ by `AuthMiddleware`.
   from the access token is populated in `AuthContext` but no handler checks
   it yet.
 - `resource` (audience) binding is not enforced.
+
+### Phase 2c-1.1: forbid `last_used_at` updates on rejected surfaces
+
+In Phase 2c-1, `OAuth2Verifier` updated `last_used_at` on successful
+verification regardless of whether the surface would ultimately accept the
+token. `authenticate_bearer()` and `AuthMiddleware` rejected OAuth2 tokens
+*after* the verifier ran, leaving a stale `last_used_at` on tokens that
+were never actually used.
+
+Fix: `wc_oat_*` tokens are now pre-rejected before `OAuth2Verifier` runs:
+
+- `authenticate_bearer()` checks `is_oauth2_access_token(token)` before
+  calling `authenticate()` and returns `None` immediately.
+- `AuthMiddleware` checks `is_agent_transport_path(path) &&
+  is_oauth2_access_token(token)` before calling `authenticate()` and
+  returns 403 immediately.
+
+The `enforce_token_surface()` check is retained as defense-in-depth.
 
 ## Design decisions
 

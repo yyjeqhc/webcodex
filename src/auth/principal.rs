@@ -28,6 +28,7 @@ use crate::auth::scopes::SCOPE_ADMIN;
 /// arms.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[non_exhaustive]
+#[allow(dead_code)] // OAuth2 variant reserved for future phase
 pub enum AuthMethod {
     /// The server-wide `WEBCODEX_TOKEN` bootstrap token (or auth disabled in
     /// development mode).
@@ -62,6 +63,7 @@ impl std::fmt::Display for AuthMethod {
 
 /// Errors that can occur during the authentication or authorization pipeline.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(dead_code)] // Several variants reserved for future OAuth2 phase
 pub enum AuthError {
     /// No credentials were provided (missing or empty `Authorization` header).
     MissingToken,
@@ -105,6 +107,7 @@ impl std::error::Error for AuthError {}
 
 impl AuthError {
     /// HTTP status code to use when rendering this error as an HTTP response.
+    #[allow(dead_code)] // Will be used when handlers migrate to Principal
     pub fn status_code(&self) -> u16 {
         match self {
             AuthError::MissingToken | AuthError::InvalidToken | AuthError::TokenExpired => 401,
@@ -139,6 +142,7 @@ impl AuthError {
 /// The `allowed_agents` and `allowed_projects` fields are reserved for future
 /// fine-grained authorization without requiring a struct change.
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Fields and methods reserved for future handler migration
 pub struct Principal {
     /// The subject identifier — typically the user ID from the database.
     /// `None` only for bootstrap auth (which acts as a virtual admin).
@@ -180,6 +184,7 @@ pub struct Principal {
     pub allowed_projects: Vec<String>,
 }
 
+#[allow(dead_code)] // Methods reserved for future handler migration to Principal
 impl Principal {
     // ------------------------------------------------------------------
     // Construction

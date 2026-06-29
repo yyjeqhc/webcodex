@@ -38,7 +38,7 @@ pub const AGENT_SCOPES: &[&str] = &[
 
 /// All scopes recognized by this phase. Unknown scopes are rejected at token
 /// creation time so the stored scope string stays clean.
-pub const KNOWN_SCOPES: &[&str] = &[
+pub(crate) const KNOWN_SCOPES: &[&str] = &[
     SCOPE_RUNTIME_READ,
     SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE,
@@ -117,6 +117,7 @@ pub(crate) fn scopes_to_string(scopes: &[String]) -> String {
 /// Check whether a set of granted scopes includes the required scope, treating
 /// `admin` as a wildcard that satisfies any requirement. Bootstrap callers
 /// should pass an `admin`-containing scope set.
+#[allow(dead_code)] // Utility kept for handler migration to Principal
 pub(crate) fn scopes_include(granted: &[String], required: &str) -> bool {
     granted.iter().any(|s| s == required || s == SCOPE_ADMIN)
 }
@@ -124,6 +125,7 @@ pub(crate) fn scopes_include(granted: &[String], required: &str) -> bool {
 /// Require that `granted` scopes include `required`. Returns `Ok(())` on
 /// success, `Err(message)` when the scope is missing. `admin` satisfies any
 /// requirement.
+#[allow(dead_code)] // Utility kept for handler migration to Principal
 pub(crate) fn require_scope(granted: &[String], required: &str) -> Result<(), String> {
     if scopes_include(granted, required) {
         Ok(())

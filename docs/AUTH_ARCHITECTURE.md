@@ -119,7 +119,8 @@ Current implementations:
 - **`PatVerifier`** — handles bootstrap, PAT, agent tokens, and account
   credentials via the existing database lookup logic.
 - **`OAuth2Verifier`** — stub that always returns `Ok(None)`. Will be
-  implemented in a future phase to validate OAuth2 JWT tokens.
+  implemented in a future phase to validate WebCodex-issued OAuth2 access
+  tokens (initially opaque DB-backed; JWT/JWKS optional later).
 
 ## OAuth2 extension points (future phase)
 
@@ -228,6 +229,18 @@ per-endpoint via `can_use_agent_endpoint()`.
    endpoints. The QUIC/agent transport has no use for them, and accepting
    them would silently update `last_used_at` before the caller rejects the
    connection. `authenticate_bearer()` now filters them out explicitly.
+2. **`OAuth2Verifier` doc updated**: comments no longer lock the first
+   implementation to JWT/JWKS. The initial implementation may use opaque
+   DB-backed access tokens; JWT/JWKS/OIDC metadata can be added later
+   where MCP or OIDC clients require it.
+3. **Unused re-exports removed**: `AuthMethod`, `KNOWN_SCOPES`,
+   `require_scope`, `scopes_include` are no longer re-exported from
+   `auth/mod.rs`. They remain available within the `auth` module but are
+   not part of the public API surface.
+4. **Warning cleanup**: added `#[allow(dead_code)]` to future-use items
+   (`AuthMethod::OAuth2`, `AuthError` variants, `Principal` fields/methods,
+   `scopes_include`, `require_scope`) so the warning surface reflects
+   genuinely unused code rather than reserved extension points.
 
 All existing behavior is preserved. No handler signatures changed. No
 external API surface changed. No database schema changes.

@@ -53,18 +53,15 @@ pub(crate) mod pat;
 // All items that were previously exported from `auth.rs` are re-exported here
 // so that existing `use crate::auth::*` imports continue to work.
 
-pub use principal::{AuthError, AuthMethod, Principal};
+pub use principal::{AuthError, Principal};
 
 pub use scopes::{
-    AGENT_SCOPES, KNOWN_SCOPES, SCOPE_ACCOUNT_MANAGE, SCOPE_ADMIN, SCOPE_AGENT_JOB_UPDATE,
-    SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
+    AGENT_SCOPES, SCOPE_ACCOUNT_MANAGE, SCOPE_ADMIN, SCOPE_AGENT_JOB_UPDATE, SCOPE_AGENT_POLL,
+    SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
     SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
 };
 
-pub(crate) use scopes::{
-    is_agent_scope, require_scope, scopes_include, scopes_to_string, validate_agent_scopes,
-    validate_scopes,
-};
+pub(crate) use scopes::{is_agent_scope, scopes_to_string, validate_agent_scopes, validate_scopes};
 
 pub(crate) use pat::{
     generate_account_credential, generate_agent_token, generate_api_token, hash_token,
@@ -390,16 +387,14 @@ impl TokenVerifier for PatVerifier {
 
 /// OAuth2 bearer token verifier — **stub / placeholder** for future use.
 ///
-/// This verifier will validate OAuth2 JWT tokens against an OIDC provider.
-/// It is not wired up yet; the `verify` implementation always returns
+/// This verifier will validate WebCodex-issued OAuth2 access tokens. The
+/// initial implementation may use opaque DB-backed access tokens.
+/// JWT/JWKS/OIDC metadata can be added later where MCP or OIDC clients
+/// require it.
+///
+/// Currently not wired up; the `verify` implementation always returns
 /// `Ok(None)` (token not recognized), allowing `PatVerifier` to handle all
 /// tokens in the current phase.
-///
-/// When implemented, this verifier will:
-/// 1. Decode the JWT header to determine the signing algorithm
-/// 2. Fetch the JWKS from the configured OIDC provider
-/// 3. Validate the signature, expiry, audience, and issuer claims
-/// 4. Map the `sub` and `scope` claims to an `AuthContext`
 pub(crate) struct OAuth2Verifier;
 
 #[async_trait]
@@ -411,7 +406,6 @@ impl TokenVerifier for OAuth2Verifier {
         _token: &str,
     ) -> Result<Option<AuthContext>, String> {
         // Stub: always returns "not recognized" so PatVerifier handles everything.
-        // A real implementation will validate JWT, check JWKS, etc.
         Ok(None)
     }
 }
@@ -683,6 +677,7 @@ pub(crate) fn json_error(status: StatusCode, msg: impl Into<String>) -> Json<ser
 #[cfg(test)]
 mod tests {
     use super::*;
+    use principal::AuthMethod;
 
     fn bootstrap_ctx() -> AuthContext {
         AuthContext {

@@ -3,6 +3,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -4334,6 +4335,37 @@ fn resolve_quic_config(cfg: &AgentConfig) -> Result<QuicClientConfig, String> {
     Ok(quic)
 }
 
+fn resolve_quic_server_addrs(server_addr: &str) -> Result<Vec<SocketAddr>, String> {
+    let addrs = server_addr
+        .to_socket_addrs()
+        .map_err(|e| {
+            format!(
+                "failed to resolve [quic] server_addr '{}': {}",
+                server_addr, e
+            )
+        })?
+        .collect::<Vec<_>>();
+    if addrs.is_empty() {
+        return Err(format!(
+            "[quic] server_addr '{}' resolved to no socket addresses",
+            server_addr
+        ));
+    }
+    Ok(addrs)
+}
+
+fn quic_client_bind_addr_for(server_addr: SocketAddr) -> SocketAddr {
+    if server_addr.is_ipv6() {
+        "[::]:0"
+            .parse()
+            .expect("hard-coded IPv6 client bind address is valid")
+    } else {
+        "0.0.0.0:0"
+            .parse()
+            .expect("hard-coded IPv4 client bind address is valid")
+    }
+}
+
 /// The rustls crypto provider for the QUIC client. The dependency tree pulls
 /// both `aws-lc-rs` and `ring`, so rustls cannot auto-select; pin aws-lc-rs
 /// explicitly per config via `builder_with_provider` (thread-safe, no global
@@ -4398,32 +4430,61 @@ async fn quic_session(
     let quic = resolve_quic_config(cfg)?;
     let client_crypto = build_quic_client_crypto(&quic)?;
     let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
-    let client_endpoint = quinn::Endpoint::client("0.0.0.0:0".parse().unwrap())
-        .map_err(|e| format!("failed to bind quic client endpoint: {}", e))?;
-    let server_addr: std::net::SocketAddr = quic
-        .server_addr
-        .parse()
-        .map_err(|e| format!("invalid [quic] server_addr '{}': {}", quic.server_addr, e))?;
-    let connect = client_endpoint
-        .connect_with(client_config, server_addr, &quic.server_name)
-        .map_err(|e| format!("failed to start quic connect: {}", e))?;
-    let conn = tokio::time::timeout(Duration::from_secs(quic.connect_timeout_secs), connect)
-        .await
-        .map_err(|_| {
-            format!(
-                "quic connect timeout to {} after {}s; check UDP firewall/security group/NAT and that the server QUIC listener is enabled",
-                quic.server_addr, quic.connect_timeout_secs
-            )
-        })?
-        .map_err(|e| {
-            let raw = e.to_string();
-            format!(
-                "quic connect to {} failed: {} ({})",
-                quic.server_addr,
-                classify_quic_agent_connect_error(&raw),
-                raw
-            )
-        })?;
+    let server_addrs = resolve_quic_server_addrs(&quic.server_addr)?;
+    let mut connect_errors = Vec::new();
+    let mut client_endpoint = None;
+    let mut conn = None;
+    for server_addr in server_addrs {
+        let endpoint = match quinn::Endpoint::client(quic_client_bind_addr_for(server_addr)) {
+            Ok(endpoint) => endpoint,
+            Err(e) => {
+                connect_errors.push(format!(
+                    "{}: failed to bind quic client endpoint: {}",
+                    server_addr, e
+                ));
+                continue;
+            }
+        };
+        let connect =
+            match endpoint.connect_with(client_config.clone(), server_addr, &quic.server_name) {
+                Ok(connect) => connect,
+                Err(e) => {
+                    connect_errors.push(format!(
+                        "{}: failed to start quic connect: {}",
+                        server_addr, e
+                    ));
+                    continue;
+                }
+            };
+        match tokio::time::timeout(Duration::from_secs(quic.connect_timeout_secs), connect).await {
+            Ok(Ok(connection)) => {
+                client_endpoint = Some(endpoint);
+                conn = Some(connection);
+                break;
+            }
+            Err(_) => connect_errors.push(format!(
+                "{} timed out after {}s; check UDP firewall/security group/NAT and that the server QUIC listener is enabled",
+                server_addr, quic.connect_timeout_secs
+            )),
+            Ok(Err(e)) => {
+                let raw = e.to_string();
+                connect_errors.push(format!(
+                    "{}: {} ({})",
+                    server_addr,
+                    classify_quic_agent_connect_error(&raw),
+                    raw
+                ));
+            }
+        }
+    }
+    let _client_endpoint = client_endpoint.ok_or_else(|| {
+        format!(
+            "quic connect to {} failed for all resolved addresses: {}",
+            quic.server_addr,
+            connect_errors.join("; ")
+        )
+    })?;
+    let conn = conn.expect("client endpoint is set only after a successful QUIC connection");
 
     // ALPN is enforced by quinn during the TLS handshake: a connection only
     // completes when the client and server agree on a matching ALPN. A
@@ -5165,6 +5226,26 @@ transport = "auto"
         let resolved = resolve_quic_config(&cfg).unwrap();
         assert_eq!(resolved.server_addr, "v4.example.test:8443");
         assert_eq!(resolved.server_name, "v4.example.test");
+    }
+
+    #[test]
+    fn resolve_quic_server_addrs_accepts_hostname_port() {
+        let addrs = resolve_quic_server_addrs("localhost:8443").unwrap();
+        assert!(addrs.iter().any(|addr| addr.port() == 8443));
+    }
+
+    #[test]
+    fn resolve_quic_server_addrs_rejects_missing_port() {
+        let err = resolve_quic_server_addrs("localhost").unwrap_err();
+        assert!(err.contains("failed to resolve"), "err was: {err}");
+    }
+
+    #[test]
+    fn quic_client_bind_addr_matches_remote_address_family() {
+        let v4: SocketAddr = "127.0.0.1:8443".parse().unwrap();
+        let v6: SocketAddr = "[::1]:8443".parse().unwrap();
+        assert!(quic_client_bind_addr_for(v4).is_ipv4());
+        assert!(quic_client_bind_addr_for(v6).is_ipv6());
     }
 
     #[test]

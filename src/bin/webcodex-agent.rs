@@ -2567,6 +2567,153 @@ fn merge_json_object(target: &mut serde_json::Value, source: serde_json::Value) 
     }
 }
 
+fn handle_file_read_request(
+    policy: &AgentPolicy,
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let max = request
+        .max_bytes
+        .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES)
+        .min(policy.max_output_bytes);
+    if let (Some(start_line), Some(end_line)) = (request.start_line, request.end_line) {
+        return handle_file_read_range_request(resolved, start_line, end_line, max, start);
+    }
+
+    match std::fs::read(resolved) {
+        Ok(bytes) => {
+            if bytes.len() > max {
+                CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!(
+                        "file too large: {} bytes exceeds max_bytes {}",
+                        bytes.len(),
+                        max
+                    )),
+                }
+            } else {
+                CommandResult {
+                    exit_code: Some(0),
+                    stdout: Some(String::from_utf8_lossy(&bytes).to_string()),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: None,
+                }
+            }
+        }
+        Err(e) => CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some(format!("failed to read {}: {}", resolved.display(), e)),
+        },
+    }
+}
+
+fn handle_file_read_range_request(
+    resolved: &Path,
+    start_line: usize,
+    end_line: usize,
+    max: usize,
+    start: Instant,
+) -> CommandResult {
+    if start_line == 0 || end_line < start_line {
+        return CommandResult {
+            exit_code: None,
+            stdout: None,
+            stderr: None,
+            duration_ms: Some(start.elapsed().as_millis() as u64),
+            error: Some("invalid line range for file_read".to_string()),
+        };
+    }
+
+    let file = match std::fs::File::open(resolved) {
+        Ok(file) => file,
+        Err(e) => {
+            return CommandResult {
+                exit_code: None,
+                stdout: None,
+                stderr: None,
+                duration_ms: Some(start.elapsed().as_millis() as u64),
+                error: Some(format!("failed to read {}: {}", resolved.display(), e)),
+            }
+        }
+    };
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+    let mut content = String::new();
+    let mut total_lines = 0usize;
+    let mut wrote_any_line = false;
+
+    loop {
+        line.clear();
+        let bytes_read = match reader.read_line(&mut line) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                return CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!(
+                        "failed to read UTF-8 text {}: {}",
+                        resolved.display(),
+                        e
+                    )),
+                }
+            }
+        };
+        if bytes_read == 0 {
+            break;
+        }
+        total_lines = total_lines.saturating_add(1);
+        if total_lines >= start_line && total_lines <= end_line {
+            let line_content = line.strip_suffix('\n').unwrap_or(&line);
+            let line_content = line_content.strip_suffix('\r').unwrap_or(line_content);
+            let additional_len = line_content.len() + usize::from(wrote_any_line);
+            if content.len().saturating_add(additional_len) > max {
+                return CommandResult {
+                    exit_code: None,
+                    stdout: None,
+                    stderr: None,
+                    duration_ms: Some(start.elapsed().as_millis() as u64),
+                    error: Some(format!(
+                        "range output too large: {} bytes exceeds max_bytes {}",
+                        content.len().saturating_add(additional_len),
+                        max
+                    )),
+                };
+            }
+            if wrote_any_line {
+                content.push('\n');
+            }
+            content.push_str(line_content);
+            wrote_any_line = true;
+        }
+    }
+
+    let limit = end_line.saturating_sub(start_line).saturating_add(1);
+    let out = serde_json::json!({
+        "format": "webcodex.file_read_range.v1",
+        "content": content,
+        "total_lines": total_lines,
+        "start_line": start_line,
+        "limit": limit,
+    });
+    CommandResult {
+        exit_code: Some(0),
+        stdout: Some(out.to_string()),
+        stderr: Some(String::new()),
+        duration_ms: Some(start.elapsed().as_millis() as u64),
+        error: None,
+    }
+}
+
 fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -> CommandResult {
     let Some(path) = request.path.as_deref() else {
         return CommandResult {
@@ -2605,44 +2752,7 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         "file_replace_line_range" | "file_insert_at_line" | "file_delete_line_range" => {
             handle_line_edit_file_request(request, &resolved, start)
         }
-        "file_read" => {
-            let max = request
-                .max_bytes
-                .unwrap_or(DEFAULT_MAX_OUTPUT_BYTES)
-                .min(policy.max_output_bytes);
-            match std::fs::read(&resolved) {
-                Ok(bytes) => {
-                    if bytes.len() > max {
-                        CommandResult {
-                            exit_code: None,
-                            stdout: None,
-                            stderr: None,
-                            duration_ms: Some(start.elapsed().as_millis() as u64),
-                            error: Some(format!(
-                                "file too large: {} bytes exceeds max_bytes {}",
-                                bytes.len(),
-                                max
-                            )),
-                        }
-                    } else {
-                        CommandResult {
-                            exit_code: Some(0),
-                            stdout: Some(String::from_utf8_lossy(&bytes).to_string()),
-                            stderr: Some(String::new()),
-                            duration_ms: Some(start.elapsed().as_millis() as u64),
-                            error: None,
-                        }
-                    }
-                }
-                Err(e) => CommandResult {
-                    exit_code: None,
-                    stdout: None,
-                    stderr: None,
-                    duration_ms: Some(start.elapsed().as_millis() as u64),
-                    error: Some(format!("failed to read {}: {}", resolved.display(), e)),
-                },
-            }
-        }
+        "file_read" => handle_file_read_request(policy, request, &resolved, start),
         "file_write" => {
             let content = request.content.clone().unwrap_or_default();
             if content.len() > policy.max_output_bytes {
@@ -5811,6 +5921,36 @@ shell_profile = "../rust"
         }
     }
 
+    fn file_read_request(
+        cwd: &Path,
+        path: &str,
+        start_line: Option<usize>,
+        end_line: Option<usize>,
+        max_bytes: Option<usize>,
+    ) -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: "req-file-read".to_string(),
+            client_id: "agent-1".to_string(),
+            kind: "file_read".to_string(),
+            job_id: None,
+            cwd: Some(cwd.to_string_lossy().to_string()),
+            path: Some(path.to_string()),
+            content: None,
+            max_bytes,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line,
+            end_line,
+            line: None,
+            create_dirs: false,
+            command: String::new(),
+            stdin: None,
+            timeout_secs: 30,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        }
+    }
+
     fn line_edit_json(result: CommandResult) -> serde_json::Value {
         assert_eq!(result.exit_code, Some(0), "unexpected result: {:?}", result);
         assert!(
@@ -5819,6 +5959,104 @@ shell_profile = "../rust"
             result.error
         );
         serde_json::from_str(result.stdout.as_deref().expect("stdout json")).unwrap()
+    }
+
+    fn file_read_json(result: CommandResult) -> serde_json::Value {
+        assert_eq!(result.exit_code, Some(0), "unexpected result: {:?}", result);
+        assert!(
+            result.error.is_none(),
+            "unexpected error: {:?}",
+            result.error
+        );
+        serde_json::from_str(result.stdout.as_deref().expect("stdout json")).unwrap()
+    }
+
+    #[test]
+    fn agent_file_read_without_range_preserves_plain_text_output() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("small.txt"), "one\ntwo\n").unwrap();
+
+        let out = handle_file_request(
+            &policy,
+            &file_read_request(tmp.path(), "small.txt", None, None, Some(1024)),
+        );
+
+        assert_eq!(out.exit_code, Some(0), "unexpected result: {out:?}");
+        assert_eq!(out.stdout.as_deref(), Some("one\ntwo\n"));
+    }
+
+    #[test]
+    fn agent_file_read_range_reads_large_file_subset_under_max_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let mut content = String::new();
+        for n in 1..=500 {
+            content.push_str(&format!("line-{n:04}\n"));
+        }
+        std::fs::write(tmp.path().join("large.txt"), content).unwrap();
+
+        let out = file_read_json(handle_file_request(
+            &policy,
+            &file_read_request(tmp.path(), "large.txt", Some(250), Some(252), Some(128)),
+        ));
+
+        assert_eq!(out["format"], "webcodex.file_read_range.v1");
+        assert_eq!(out["content"], "line-0250\nline-0251\nline-0252");
+        assert_eq!(out["total_lines"], 500);
+        assert_eq!(out["start_line"], 250);
+        assert_eq!(out["limit"], 3);
+    }
+
+    #[test]
+    fn agent_file_read_range_beyond_total_lines_returns_empty_content() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("short.txt"), "one\ntwo\nthree\n").unwrap();
+
+        let out = file_read_json(handle_file_request(
+            &policy,
+            &file_read_request(tmp.path(), "short.txt", Some(10), Some(12), Some(128)),
+        ));
+
+        assert_eq!(out["format"], "webcodex.file_read_range.v1");
+        assert_eq!(out["content"], "");
+        assert_eq!(out["total_lines"], 3);
+        assert_eq!(out["start_line"], 10);
+        assert_eq!(out["limit"], 3);
+    }
+
+    #[test]
+    fn agent_file_read_range_preserves_empty_selected_lines() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("blank.txt"), "\nsecond\nthird\n").unwrap();
+
+        let out = file_read_json(handle_file_request(
+            &policy,
+            &file_read_request(tmp.path(), "blank.txt", Some(1), Some(2), Some(128)),
+        ));
+
+        assert_eq!(out["format"], "webcodex.file_read_range.v1");
+        assert_eq!(out["content"], "\nsecond");
+        assert_eq!(out["total_lines"], 3);
+        assert_eq!(out["start_line"], 1);
+        assert_eq!(out["limit"], 2);
+    }
+
+    #[test]
+    fn agent_file_read_range_output_obeys_max_bytes() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("limited.txt"), "alpha\nbeta\n").unwrap();
+
+        let out = handle_file_request(
+            &policy,
+            &file_read_request(tmp.path(), "limited.txt", Some(1), Some(1), Some(4)),
+        );
+
+        assert!(out.exit_code.is_none(), "unexpected success: {out:?}");
+        assert!(out.error.expect("error").contains("exceeds max_bytes"));
     }
 
     #[test]

@@ -41,6 +41,32 @@ pub(crate) fn read_file_content_result(
     }))
 }
 
+pub(crate) fn read_file_agent_stdout_result(
+    stdout: String,
+    start_line: Option<usize>,
+    limit: Option<usize>,
+) -> ToolResult {
+    let trimmed = stdout.trim();
+    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+        if value.get("format").and_then(|format| format.as_str())
+            == Some("webcodex.file_read_range.v1")
+        {
+            return ToolResult::ok(value);
+        }
+    }
+    read_file_content_result(stdout, start_line, limit)
+}
+
+pub(crate) fn effective_read_file_range(
+    start_line: Option<usize>,
+    limit: Option<usize>,
+) -> (usize, usize, usize) {
+    let eff_start = start_line.unwrap_or(1).max(1);
+    let eff_limit = limit.unwrap_or(2000).clamp(1, 2000);
+    let eff_end = eff_start.saturating_add(eff_limit).saturating_sub(1);
+    (eff_start, eff_limit, eff_end)
+}
+
 // =============================================================================
 // Phase A read-only console helpers
 // =============================================================================
@@ -1512,6 +1538,7 @@ impl ToolRuntime {
                 Err(e) => return ToolResult::err(e),
             };
             let wait_timeout = 30;
+            let (eff_start, _eff_limit, eff_end) = effective_read_file_range(start_line, limit);
             let (request_id, rx) = match self
                 .shell_clients
                 .enqueue_file_op(
@@ -1524,8 +1551,8 @@ impl ToolRuntime {
                         max_bytes: Some(512 * 1024),
                         expected_sha256: None,
                         expected_prefix: None,
-                        start_line: None,
-                        end_line: None,
+                        start_line: Some(eff_start),
+                        end_line: Some(eff_end),
                         line: None,
                         create_dirs: false,
                         wait_timeout_secs: wait_timeout,
@@ -1539,7 +1566,11 @@ impl ToolRuntime {
             };
             return match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
                 Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                    read_file_content_result(resp.stdout.unwrap_or_default(), start_line, limit)
+                    read_file_agent_stdout_result(
+                        resp.stdout.unwrap_or_default(),
+                        start_line,
+                        limit,
+                    )
                 }
                 Ok(Ok(resp)) => ToolResult::err(
                     resp.error
@@ -1806,5 +1837,75 @@ impl ToolRuntime {
             }
             Err(e) => ToolResult::err(format!("task join error: {}", e)),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn effective_read_file_range_defaults_and_clamps() {
+        assert_eq!(effective_read_file_range(None, None), (1, 2000, 2000));
+        assert_eq!(effective_read_file_range(Some(0), Some(0)), (1, 1, 1));
+        assert_eq!(
+            effective_read_file_range(Some(7), Some(5000)),
+            (7, 2000, 2006)
+        );
+    }
+
+    #[test]
+    fn read_file_agent_stdout_json_is_returned_without_reslicing() {
+        let result = read_file_agent_stdout_result(
+            serde_json::json!({
+                "format": "webcodex.file_read_range.v1",
+                "content": "line-560\nline-561",
+                "total_lines": 7348,
+                "start_line": 560,
+                "limit": 2,
+            })
+            .to_string(),
+            Some(1),
+            Some(1),
+        );
+
+        assert!(result.success);
+        assert_eq!(result.output["content"], "line-560\nline-561");
+        assert_eq!(result.output["total_lines"], 7348);
+        assert_eq!(result.output["start_line"], 560);
+        assert_eq!(result.output["limit"], 2);
+    }
+
+    #[test]
+    fn read_file_agent_stdout_json_without_sentinel_uses_legacy_fallback() {
+        let result = read_file_agent_stdout_result(
+            serde_json::json!({
+                "content": "file-json-content",
+                "total_lines": 7348,
+                "start_line": 560,
+                "limit": 2,
+            })
+            .to_string(),
+            Some(1),
+            Some(1),
+        );
+
+        assert!(result.success);
+        assert_eq!(result.output["content"], "{\"content\":\"file-json-content\",\"limit\":2,\"start_line\":560,\"total_lines\":7348}");
+        assert_eq!(result.output["total_lines"], 1);
+        assert_eq!(result.output["start_line"], 1);
+        assert_eq!(result.output["limit"], 1);
+    }
+
+    #[test]
+    fn read_file_agent_stdout_plain_text_keeps_legacy_fallback() {
+        let result =
+            read_file_agent_stdout_result("one\ntwo\nthree\n".to_string(), Some(2), Some(1));
+
+        assert!(result.success);
+        assert_eq!(result.output["content"], "two");
+        assert_eq!(result.output["total_lines"], 3);
+        assert_eq!(result.output["start_line"], 2);
+        assert_eq!(result.output["limit"], 1);
     }
 }

@@ -133,15 +133,15 @@ sudo webcodex-cli client enroll \
   --client-id alice-laptop \
   --display-name "Alice Laptop" \
   --transport auto \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml \
-  --projects-dir /etc/webcodex/projects.d \
+  --output-dir /etc/webcodex/clients/alice-laptop \
+  --agent-config /etc/webcodex/clients/alice-laptop/agent.toml \
+  --projects-dir /etc/webcodex/clients/alice-laptop/projects.d \
   --allowed-root /home/alice/git
 ```
 
-`client enroll` 会通过 HTTPS 接收 `wc_pat_xxx` 和 `wc_agent_xxx`，并以受限权限写到本机。
+`client enroll` 会通过 HTTPS 接收 `wc_pat_xxx` 和 `wc_agent_xxx`，并以受限权限写到本机。默认 profile 使用 `client_id`，因此 root enrollment 会写入 `/etc/webcodex/clients/alice-laptop/`；显式 `--output-dir` 仍然优先，且应指向目标 profile 目录。
 
-如果 server 已启用 QUIC listener，在 `/etc/webcodex/agent.toml` 中添加 `[quic]`：
+如果 server 已启用 QUIC listener，在 `/etc/webcodex/clients/alice-laptop/agent.toml` 中添加 `[quic]`：
 
 ```toml
 transport = "auto"
@@ -161,8 +161,8 @@ keepalive_interval_secs = 20
 在配置的 `projects_dir` 下创建项目注册文件：
 
 ```bash
-sudo mkdir -p /etc/webcodex/projects.d
-sudo tee /etc/webcodex/projects.d/my-repo.toml >/dev/null <<'EOF'
+sudo mkdir -p /etc/webcodex/clients/alice-laptop/projects.d
+sudo tee /etc/webcodex/clients/alice-laptop/projects.d/my-repo.toml >/dev/null <<'EOF'
 id = "my-repo"
 path = "/home/alice/git/my-repo"
 name = "My Repo"
@@ -188,7 +188,7 @@ agent:<client_id>:<project_id>
 
 systemd service 不会读取 `~/.bashrc` 这类交互式 shell 文件。项目命令环境应通过 agent shell profiles 配置，不要依赖登录 shell 状态。
 
-在 `/etc/webcodex/agent.toml` 中添加或调整：
+在 `/etc/webcodex/clients/alice-laptop/agent.toml` 中添加或调整：
 
 ```toml
 [shell]
@@ -211,23 +211,23 @@ RUSTUP_HOME = "/home/alice/.rustup"
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/alice-laptop/agent.toml \
   --bin "$(command -v webcodex-agent)"
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent
 
 webcodex-cli agent status \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/alice-laptop/agent.toml \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/alice-laptop/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/alice-laptop/webcodex-agent-token
 
 webcodex-cli doctor --strict \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token \
-  --agent-config /etc/webcodex/agent.toml
+  --user-token-file /etc/webcodex/clients/alice-laptop/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/alice-laptop/webcodex-agent-token \
+  --agent-config /etc/webcodex/clients/alice-laptop/agent.toml
 ```
 
 只有替换已有 unit 时才给 `agent install-service` 加 `--overwrite`。
@@ -245,17 +245,17 @@ webcodex-cli client enroll \
   --client-id alice-laptop \
   --display-name "Alice Laptop" \
   --transport auto \
-  --output-dir "$HOME/.config/webcodex" \
-  --agent-config "$HOME/.config/webcodex/agent.toml" \
-  --projects-dir "$HOME/.config/webcodex/projects.d" \
+  --output-dir "$HOME/.config/webcodex/clients/alice-laptop" \
+  --agent-config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
+  --projects-dir "$HOME/.config/webcodex/clients/alice-laptop/projects.d" \
   --allowed-root "$HOME/git"
 ```
 
 创建项目文件：
 
 ```bash
-mkdir -p "$HOME/.config/webcodex/projects.d"
-cat > "$HOME/.config/webcodex/projects.d/my-repo.toml" <<'EOF'
+mkdir -p "$HOME/.config/webcodex/clients/alice-laptop/projects.d"
+cat > "$HOME/.config/webcodex/clients/alice-laptop/projects.d/my-repo.toml" <<'EOF'
 id = "my-repo"
 path = "/home/alice/git/my-repo"
 name = "My Repo"
@@ -269,7 +269,7 @@ EOF
 
 ### 4.2 在 agent.toml 中添加 shell profile
 
-在 `$HOME/.config/webcodex/agent.toml` 中添加或调整：
+在 `$HOME/.config/webcodex/clients/alice-laptop/agent.toml` 中添加或调整：
 
 ```toml
 [shell]
@@ -293,17 +293,17 @@ RUSTUP_HOME = "/home/alice/.rustup"
 前台模式是最简单的 no-service 模式。它会直接打印日志，按 `Ctrl-C` 即可退出：
 
 ```bash
-webcodex-agent --config "$HOME/.config/webcodex/agent.toml"
+webcodex-agent --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml"
 ```
 
 另开一个终端检查状态：
 
 ```bash
 webcodex-cli agent status \
-  --config "$HOME/.config/webcodex/agent.toml" \
+  --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
   --server-url https://your-domain.example \
-  --user-token-file "$HOME/.config/webcodex/webcodex-user-token" \
-  --agent-token-file "$HOME/.config/webcodex/webcodex-agent-token"
+  --user-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token" \
+  --agent-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-agent-token"
 ```
 
 ### 4.4 或使用 nohup 后台启动
@@ -312,7 +312,7 @@ webcodex-cli agent status \
 
 ```bash
 mkdir -p "$HOME/.local/state/webcodex"
-nohup webcodex-agent --config "$HOME/.config/webcodex/agent.toml" \
+nohup webcodex-agent --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
   >> "$HOME/.local/state/webcodex/agent.log" 2>&1 &
 
 echo $! > "$HOME/.local/state/webcodex/agent.pid"
@@ -324,10 +324,10 @@ echo $! > "$HOME/.local/state/webcodex/agent.pid"
 tail -f "$HOME/.local/state/webcodex/agent.log"
 
 webcodex-cli agent status \
-  --config "$HOME/.config/webcodex/agent.toml" \
+  --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
   --server-url https://your-domain.example \
-  --user-token-file "$HOME/.config/webcodex/webcodex-user-token" \
-  --agent-token-file "$HOME/.config/webcodex/webcodex-agent-token"
+  --user-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token" \
+  --agent-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-agent-token"
 ```
 
 停止后台 agent：
@@ -341,7 +341,7 @@ kill "$(cat "$HOME/.local/state/webcodex/agent.pid")"
 agent 在线后，runtime 调用使用 user PAT，不使用 `WEBCODEX_TOKEN`：
 
 ```bash
-export WEBCODEX_PAT="$(cat /etc/webcodex/webcodex-user-token 2>/dev/null || cat "$HOME/.config/webcodex/webcodex-user-token")"
+export WEBCODEX_PAT="$(cat /etc/webcodex/clients/alice-laptop/webcodex-user-token 2>/dev/null || cat "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token")"
 
 curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
   -H 'Content-Type: application/json' \

@@ -16,8 +16,8 @@ Server：
 Client：
 
 - `webcodex-agent --version` 能打印版本。
-- `webcodex-cli agent status --config /etc/webcodex/agent.toml` 能读取本地 agent config。
-- `webcodex-cli doctor --strict --server-url https://your-domain.example --user-token-file /etc/webcodex/webcodex-user-token --agent-token-file /etc/webcodex/webcodex-agent-token` 通过。
+- `webcodex-cli agent status --config /etc/webcodex/clients/special/agent.toml` 能读取本地 agent config。
+- `webcodex-cli doctor --strict --server-url https://your-domain.example --user-token-file /etc/webcodex/clients/special/webcodex-user-token --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token` 通过。
 - `listAgents` / `runtime_status` 显示 agent online。
 
 ## 常见问题

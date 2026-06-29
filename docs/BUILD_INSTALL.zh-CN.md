@@ -118,27 +118,25 @@ sudo webcodex-cli client enroll \
   --server-url https://your-domain.example \
   --pairing-code <wc_pair_...> \
   --client-id friend-laptop \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml \
-  --projects-dir /etc/webcodex/projects.d \
+  --profile special \
   --allowed-root /home/friend/git
 ```
 
-`client enroll` 会在本地创建 `wc_pat_*` user token、`wc_agent_*` agent token 和 `/etc/webcodex/agent.toml`，Unix 上权限为 `0600`。
+`client enroll` 会在本地创建 `wc_pat_*` user token、`wc_agent_*` agent token 和 `/etc/webcodex/clients/special/agent.toml`，Unix 上权限为 `0600`。`/etc/webcodex/webcodex.env` 只属于 server 侧；多用户或多个 client 共用一台机器时，client-side token/config 文件应隔离在 `/etc/webcodex/clients/<profile>/` 下。
 
 8. 安装并启动 agent service，然后验证：
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent
 webcodex-cli doctor --strict \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
 ```
 
 GPT Actions 应使用生成的 client-side user-token file。GPT Actions 需要 public HTTPS URL；WebCodex CLI 不会自动配置 reverse proxies 或 tunnels。
@@ -160,11 +158,11 @@ webcodex-agent --config ~/.config/webcodex/agent.toml
 ```bash
 webcodex-cli doctor --strict \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
 ```
 
-添加 `--agent-config /etc/webcodex/agent.toml` 可运行本地 shell-profile / project diagnostics。添加 `--project <id>` 可对指定项目运行远程 shell roundtrip。
+添加 `--agent-config /etc/webcodex/clients/special/agent.toml` 可运行本地 shell-profile / project diagnostics。添加 `--project <id>` 可对指定项目运行远程 shell roundtrip。
 
 Doctor 不会打印 `init_script` bodies、env values 或 tokens。Profile 配置和排障见 [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md)。
 

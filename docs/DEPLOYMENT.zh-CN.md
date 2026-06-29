@@ -100,7 +100,7 @@ Client：
 13. 运行 `webcodex-cli agent status`。
 14. 运行 `webcodex-cli doctor --strict`。
 
-`/etc/webcodex/webcodex.env` 只属于 server 侧。把 client agent 部署为 service 时，`/etc/webcodex/agent.toml`、`webcodex-user-token` 和 `webcodex-agent-token` 是 client 侧文件。
+`/etc/webcodex/webcodex.env` 只属于 server 侧。多用户或多个 client 共享一台机器时，client 侧文件应放在 profile 目录下，例如 `/etc/webcodex/clients/special/agent.toml`、`/etc/webcodex/clients/special/webcodex-user-token`、`/etc/webcodex/clients/special/webcodex-agent-token` 和 `/etc/webcodex/clients/special/projects.d`。
 
 ## 账户凭据开通流程
 
@@ -140,13 +140,11 @@ webcodex-cli client enroll \
   --pairing-code <wc_pair_...> \
   --client-id friend-laptop \
   --display-name "Friend Name" \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml \
-  --projects-dir /etc/webcodex/projects.d \
+  --profile special \
   --allowed-root /home/friend/git
 
 webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 
@@ -155,8 +153,8 @@ sudo systemctl enable --now webcodex-agent
 
 webcodex-cli doctor \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token \
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token \
   --strict
 ```
 
@@ -227,15 +225,15 @@ server {
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --bin /opt/webcodex/bin/webcodex-agent
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent
 webcodex-cli agent status \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
 ```
 
 前台测试可直接启动 agent：

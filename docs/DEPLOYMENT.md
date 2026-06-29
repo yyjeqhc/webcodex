@@ -100,7 +100,7 @@ Client:
 13. Run `webcodex-cli agent status`.
 14. Run `webcodex-cli doctor --strict`.
 
-`/etc/webcodex/webcodex.env` is server-side only. `/etc/webcodex/agent.toml`, `webcodex-user-token`, and `webcodex-agent-token` are client-side files when deploying a client agent as a service.
+`/etc/webcodex/webcodex.env` is server-side only. Client-side files live under a profile directory such as `/etc/webcodex/clients/special/agent.toml`, `/etc/webcodex/clients/special/webcodex-user-token`, `/etc/webcodex/clients/special/webcodex-agent-token`, and `/etc/webcodex/clients/special/projects.d` when multiple users or clients share one machine.
 
 ## Account credential onboarding flow
 
@@ -140,13 +140,11 @@ webcodex-cli client enroll \
   --pairing-code <wc_pair_...> \
   --client-id friend-laptop \
   --display-name "Friend Name" \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml \
-  --projects-dir /etc/webcodex/projects.d \
+  --profile special \
   --allowed-root /home/friend/git
 
 webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 
@@ -155,8 +153,8 @@ sudo systemctl enable --now webcodex-agent
 
 webcodex-cli doctor \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token \
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token \
   --strict
 ```
 
@@ -227,15 +225,15 @@ Client enroll generates the agent config. Install a systemd unit with:
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --bin /opt/webcodex/bin/webcodex-agent
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent
 webcodex-cli agent status \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
 ```
 
 For a foreground test, start the agent with:

@@ -118,32 +118,30 @@ sudo webcodex-cli client enroll \
   --server-url https://your-domain.example \
   --pairing-code <wc_pair_...> \
   --client-id friend-laptop \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml \
-  --projects-dir /etc/webcodex/projects.d \
+  --profile special \
   --allowed-root /home/friend/git
 ```
 
-Client enroll creates the `wc_pat_*` user token, `wc_agent_*` agent token, and `/etc/webcodex/agent.toml` locally with `0600` permissions on Unix.
+Client enroll creates the `wc_pat_*` user token, `wc_agent_*` agent token, and `/etc/webcodex/clients/special/agent.toml` locally with `0600` permissions on Unix. `/etc/webcodex/webcodex.env` is server-side only; isolate client-side token/config files under `/etc/webcodex/clients/<profile>/` when multiple users or clients share one machine.
 
 8. Install and start the agent service, then validate:
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent
 webcodex-cli agent status \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/special/agent.toml \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
 webcodex-cli doctor --strict \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
 ```
 
 GPT Actions should use the generated client-side user-token file. GPT Actions require a public HTTPS URL; WebCodex CLI does not automate reverse proxies or tunnels.
@@ -174,11 +172,11 @@ Run non-destructive diagnostics:
 ```bash
 webcodex-cli doctor --strict \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
 ```
 
-Add `--agent-config /etc/webcodex/agent.toml` to run local shell-profile / project
+Add `--agent-config /etc/webcodex/clients/special/agent.toml` to run local shell-profile / project
 diagnostics (parses `agent.toml`, checks `projects_dir`, project paths, and
 `shell_profile` resolution) without contacting the server. Add `--project <id>`
 to also run a remote `printf webcodex-doctor-ok` shell roundtrip against a
@@ -186,9 +184,9 @@ specific project:
 
 ```bash
 webcodex-cli doctor --strict \
-  --agent-config /etc/webcodex/agent.toml \
+  --agent-config /etc/webcodex/clients/special/agent.toml \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
+  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
   --project agent:oe:webcodex
 ```
 

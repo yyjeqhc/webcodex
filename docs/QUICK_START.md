@@ -133,15 +133,15 @@ sudo webcodex-cli client enroll \
   --client-id alice-laptop \
   --display-name "Alice Laptop" \
   --transport auto \
-  --output-dir /etc/webcodex \
-  --agent-config /etc/webcodex/agent.toml \
-  --projects-dir /etc/webcodex/projects.d \
+  --output-dir /etc/webcodex/clients/alice-laptop \
+  --agent-config /etc/webcodex/clients/alice-laptop/agent.toml \
+  --projects-dir /etc/webcodex/clients/alice-laptop/projects.d \
   --allowed-root /home/alice/git
 ```
 
-`client enroll` receives `wc_pat_xxx` and `wc_agent_xxx` over HTTPS and writes them locally with restrictive file permissions.
+`client enroll` receives `wc_pat_xxx` and `wc_agent_xxx` over HTTPS and writes them locally with restrictive file permissions. By default the profile is the `client_id`, so root enrollment writes under `/etc/webcodex/clients/alice-laptop/`; an explicit `--output-dir` still wins and should point at the intended profile directory.
 
-If your server QUIC listener is enabled, add a `[quic]` section to `/etc/webcodex/agent.toml`:
+If your server QUIC listener is enabled, add a `[quic]` section to `/etc/webcodex/clients/alice-laptop/agent.toml`:
 
 ```toml
 transport = "auto"
@@ -161,8 +161,8 @@ With `transport = "auto"`, the agent tries QUIC first when `[quic]` is configure
 Create a project registry file under the configured `projects_dir`:
 
 ```bash
-sudo mkdir -p /etc/webcodex/projects.d
-sudo tee /etc/webcodex/projects.d/my-repo.toml >/dev/null <<'EOF'
+sudo mkdir -p /etc/webcodex/clients/alice-laptop/projects.d
+sudo tee /etc/webcodex/clients/alice-laptop/projects.d/my-repo.toml >/dev/null <<'EOF'
 id = "my-repo"
 path = "/home/alice/git/my-repo"
 name = "My Repo"
@@ -188,7 +188,7 @@ For the example above: `agent:alice-laptop:my-repo`.
 
 systemd services do not read interactive shell files such as `~/.bashrc`. Configure project command environment through agent shell profiles instead of relying on login-shell state.
 
-Add or adjust this in `/etc/webcodex/agent.toml`:
+Add or adjust this in `/etc/webcodex/clients/alice-laptop/agent.toml`:
 
 ```toml
 [shell]
@@ -211,23 +211,23 @@ If you use Python, Conda, Node, or Codex CLI, put their required `PATH` entries 
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/alice-laptop/agent.toml \
   --bin "$(command -v webcodex-agent)"
 
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent
 
 webcodex-cli agent status \
-  --config /etc/webcodex/agent.toml \
+  --config /etc/webcodex/clients/alice-laptop/agent.toml \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/alice-laptop/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/alice-laptop/webcodex-agent-token
 
 webcodex-cli doctor --strict \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/webcodex-user-token \
-  --agent-token-file /etc/webcodex/webcodex-agent-token \
-  --agent-config /etc/webcodex/agent.toml
+  --user-token-file /etc/webcodex/clients/alice-laptop/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/alice-laptop/webcodex-agent-token \
+  --agent-config /etc/webcodex/clients/alice-laptop/agent.toml
 ```
 
 Use `--overwrite` with `agent install-service` only when replacing an existing unit.
@@ -245,17 +245,17 @@ webcodex-cli client enroll \
   --client-id alice-laptop \
   --display-name "Alice Laptop" \
   --transport auto \
-  --output-dir "$HOME/.config/webcodex" \
-  --agent-config "$HOME/.config/webcodex/agent.toml" \
-  --projects-dir "$HOME/.config/webcodex/projects.d" \
+  --output-dir "$HOME/.config/webcodex/clients/alice-laptop" \
+  --agent-config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
+  --projects-dir "$HOME/.config/webcodex/clients/alice-laptop/projects.d" \
   --allowed-root "$HOME/git"
 ```
 
 Create a project file:
 
 ```bash
-mkdir -p "$HOME/.config/webcodex/projects.d"
-cat > "$HOME/.config/webcodex/projects.d/my-repo.toml" <<'EOF'
+mkdir -p "$HOME/.config/webcodex/clients/alice-laptop/projects.d"
+cat > "$HOME/.config/webcodex/clients/alice-laptop/projects.d/my-repo.toml" <<'EOF'
 id = "my-repo"
 path = "/home/alice/git/my-repo"
 name = "My Repo"
@@ -269,7 +269,7 @@ Edit the `path` to match the actual user and repository.
 
 ### 4.2 Add a shell profile to agent.toml
 
-Add or adjust this in `$HOME/.config/webcodex/agent.toml`:
+Add or adjust this in `$HOME/.config/webcodex/clients/alice-laptop/agent.toml`:
 
 ```toml
 [shell]
@@ -293,17 +293,17 @@ Use absolute paths in `agent.toml`; do not rely on `$HOME` expansion inside TOML
 Foreground mode is the simplest no-service mode. It prints logs directly and exits when you press `Ctrl-C`:
 
 ```bash
-webcodex-agent --config "$HOME/.config/webcodex/agent.toml"
+webcodex-agent --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml"
 ```
 
 In another terminal, check status:
 
 ```bash
 webcodex-cli agent status \
-  --config "$HOME/.config/webcodex/agent.toml" \
+  --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
   --server-url https://your-domain.example \
-  --user-token-file "$HOME/.config/webcodex/webcodex-user-token" \
-  --agent-token-file "$HOME/.config/webcodex/webcodex-agent-token"
+  --user-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token" \
+  --agent-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-agent-token"
 ```
 
 ### 4.4 Or start in the background with nohup
@@ -312,7 +312,7 @@ Use this after the foreground run works and you want the agent to keep running a
 
 ```bash
 mkdir -p "$HOME/.local/state/webcodex"
-nohup webcodex-agent --config "$HOME/.config/webcodex/agent.toml" \
+nohup webcodex-agent --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
   >> "$HOME/.local/state/webcodex/agent.log" 2>&1 &
 
 echo $! > "$HOME/.local/state/webcodex/agent.pid"
@@ -324,10 +324,10 @@ Check logs and status:
 tail -f "$HOME/.local/state/webcodex/agent.log"
 
 webcodex-cli agent status \
-  --config "$HOME/.config/webcodex/agent.toml" \
+  --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
   --server-url https://your-domain.example \
-  --user-token-file "$HOME/.config/webcodex/webcodex-user-token" \
-  --agent-token-file "$HOME/.config/webcodex/webcodex-agent-token"
+  --user-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token" \
+  --agent-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-agent-token"
 ```
 
 Stop the background agent:
@@ -341,7 +341,7 @@ kill "$(cat "$HOME/.local/state/webcodex/agent.pid")"
 After the agent is online, use a user PAT, not `WEBCODEX_TOKEN`, for runtime calls:
 
 ```bash
-export WEBCODEX_PAT="$(cat /etc/webcodex/webcodex-user-token 2>/dev/null || cat "$HOME/.config/webcodex/webcodex-user-token")"
+export WEBCODEX_PAT="$(cat /etc/webcodex/clients/alice-laptop/webcodex-user-token 2>/dev/null || cat "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token")"
 
 curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
   -H 'Content-Type: application/json' \

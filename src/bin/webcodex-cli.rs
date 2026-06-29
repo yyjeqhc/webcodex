@@ -311,7 +311,8 @@ fn client_enroll_usage() -> &'static str {
        --client-id CLIENT_ID         Client id matching the pairing record\n\
        --display-name NAME           Optional agent display name\n\
        --transport websocket|polling|quic|auto Agent transport [default: websocket]\n\
-       --output-dir DIR              Output dir [root: /etc/webcodex; user: ~/.config/webcodex]\n\
+       --profile NAME                Client config profile [default: client-id]\n\
+       --output-dir DIR              Output dir [default: root /etc/webcodex/clients/<profile>; user ~/.config/webcodex/clients/<profile>]\n\
        --agent-config PATH           Agent config path [default: <output-dir>/agent.toml]\n\
        --projects-dir PATH           Projects registry dir [default: <output-dir>/projects.d]\n\
        --allowed-root PATH           Repeatable allowed project root\n\
@@ -320,7 +321,8 @@ fn client_enroll_usage() -> &'static str {
        --json                        Print machine-readable output without full tokens\n\
        -h, --help                    Print help and exit\n\n\
      Enroll receives wc_pat_* and wc_agent_* tokens over HTTPS and writes them\n\
-     locally with 0600 permissions. It never sends an Authorization header.\n"
+     locally with 0600 permissions. Explicit --output-dir overrides the\n\
+     profile-derived default. It never sends an Authorization header.\n"
 }
 
 fn doctor_usage() -> &'static str {
@@ -1194,7 +1196,10 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
     Ok(opts)
 }
 
-fn default_client_output_dir() -> PathBuf {
+const CLIENT_PROFILE_ERROR: &str =
+    "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
+
+fn default_client_base_dir() -> PathBuf {
     if is_effective_root() {
         PathBuf::from("/etc/webcodex")
     } else {
@@ -1205,12 +1210,38 @@ fn default_client_output_dir() -> PathBuf {
     }
 }
 
+fn validate_client_profile(profile: &str) -> Result<String, String> {
+    let trimmed = profile.trim();
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.len() > 80
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || !trimmed
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(CLIENT_PROFILE_ERROR.to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn client_output_dir_for_profile(base_dir: &Path, profile: &str) -> PathBuf {
+    base_dir.join("clients").join(profile)
+}
+
+fn default_client_output_dir_for_profile(profile: &str) -> PathBuf {
+    client_output_dir_for_profile(&default_client_base_dir(), profile)
+}
+
 fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     let mut server_url = String::new();
     let mut pairing_code = String::new();
     let mut client_id = String::new();
     let mut display_name = None;
     let mut transport = TRANSPORT_WEBSOCKET.to_string();
+    let mut profile: Option<String> = None;
     let mut output_dir: Option<PathBuf> = None;
     let mut agent_config: Option<PathBuf> = None;
     let mut projects_dir: Option<PathBuf> = None;
@@ -1226,6 +1257,7 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
             "--client-id" => client_id = next_value(&mut iter, arg)?,
             "--display-name" => display_name = Some(next_value(&mut iter, arg)?),
             "--transport" => transport = next_value(&mut iter, arg)?,
+            "--profile" => profile = Some(next_value(&mut iter, arg)?),
             "--output-dir" => output_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--agent-config" => agent_config = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--projects-dir" => projects_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
@@ -1256,7 +1288,15 @@ fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
     ) {
         return Err("--transport must be websocket, polling, quic, or auto".to_string());
     }
-    let output_dir = output_dir.unwrap_or_else(default_client_output_dir);
+    let output_dir = if let Some(output_dir) = output_dir {
+        if let Some(profile) = profile.as_deref() {
+            validate_client_profile(profile)?;
+        }
+        output_dir
+    } else {
+        let profile = validate_client_profile(profile.as_deref().unwrap_or(&client_id))?;
+        default_client_output_dir_for_profile(&profile)
+    };
     if output_dir.as_os_str().is_empty() {
         return Err("--output-dir cannot be empty".to_string());
     }
@@ -5543,7 +5583,16 @@ mod tests {
     }
 
     #[test]
-    fn client_enroll_parse_defaults() {
+    fn client_output_dir_for_profile_uses_clients_subdir() {
+        let base = PathBuf::from("/tmp/wc-base");
+        assert_eq!(
+            client_output_dir_for_profile(&base, "alice-laptop"),
+            PathBuf::from("/tmp/wc-base/clients/alice-laptop")
+        );
+    }
+
+    #[test]
+    fn client_enroll_parse_defaults_to_client_id_profile() {
         let opts = parse_client_enroll(&args(&[
             "--server-url",
             "https://example.test",
@@ -5553,12 +5602,147 @@ mod tests {
             "alice-laptop",
         ]))
         .unwrap();
-        let default_dir = default_client_output_dir();
+        let default_dir = default_client_output_dir_for_profile("alice-laptop");
         assert_eq!(opts.output_dir, default_dir);
         assert_eq!(opts.agent_config, opts.output_dir.join("agent.toml"));
         assert_eq!(opts.projects_dir, opts.output_dir.join("projects.d"));
         assert_eq!(opts.transport, TRANSPORT_WEBSOCKET);
         assert!(!opts.overwrite);
+    }
+
+    #[test]
+    fn client_enroll_parse_uses_explicit_profile_for_default_output_dir() {
+        let opts = parse_client_enroll(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--pairing-code",
+            "wc_pair_fake",
+            "--client-id",
+            "alice-laptop",
+            "--profile",
+            "special",
+        ]))
+        .unwrap();
+        assert_eq!(
+            opts.output_dir,
+            default_client_output_dir_for_profile("special")
+        );
+        assert_eq!(opts.agent_config, opts.output_dir.join("agent.toml"));
+        assert_eq!(opts.projects_dir, opts.output_dir.join("projects.d"));
+    }
+
+    #[test]
+    fn client_enroll_parse_output_dir_overrides_profile_default() {
+        let opts = parse_client_enroll(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--pairing-code",
+            "wc_pair_fake",
+            "--client-id",
+            "alice-laptop",
+            "--profile",
+            "special",
+            "--output-dir",
+            "/tmp/wc",
+        ]))
+        .unwrap();
+        assert_eq!(opts.output_dir, PathBuf::from("/tmp/wc"));
+        assert_eq!(opts.agent_config, PathBuf::from("/tmp/wc/agent.toml"));
+        assert_eq!(opts.projects_dir, PathBuf::from("/tmp/wc/projects.d"));
+    }
+
+    #[test]
+    fn client_enroll_parse_output_dir_does_not_derive_profile_from_client_id() {
+        let opts = parse_client_enroll(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--pairing-code",
+            "wc_pair_fake",
+            "--client-id",
+            "alice laptop",
+            "--output-dir",
+            "/tmp/wc",
+        ]))
+        .unwrap();
+        assert_eq!(opts.output_dir, PathBuf::from("/tmp/wc"));
+        assert_eq!(opts.agent_config, PathBuf::from("/tmp/wc/agent.toml"));
+        assert_eq!(opts.projects_dir, PathBuf::from("/tmp/wc/projects.d"));
+    }
+
+    #[test]
+    fn client_enroll_parse_agent_config_and_projects_dir_override_defaults() {
+        let opts = parse_client_enroll(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--pairing-code",
+            "wc_pair_fake",
+            "--client-id",
+            "alice-laptop",
+            "--profile",
+            "special",
+            "--agent-config",
+            "/tmp/custom-agent.toml",
+            "--projects-dir",
+            "/tmp/custom-projects.d",
+        ]))
+        .unwrap();
+        assert_eq!(
+            opts.output_dir,
+            default_client_output_dir_for_profile("special")
+        );
+        assert_eq!(opts.agent_config, PathBuf::from("/tmp/custom-agent.toml"));
+        assert_eq!(opts.projects_dir, PathBuf::from("/tmp/custom-projects.d"));
+    }
+
+    #[test]
+    fn client_enroll_rejects_unsafe_profiles() {
+        for profile in [
+            "",
+            "   ",
+            ".",
+            "..",
+            "../x",
+            "a/b",
+            r"a\b",
+            "has space",
+            "ümlaut",
+        ] {
+            let err = parse_client_enroll(&args(&[
+                "--server-url",
+                "https://example.test",
+                "--pairing-code",
+                "wc_pair_fake",
+                "--client-id",
+                "alice-laptop",
+                "--profile",
+                profile,
+            ]))
+            .unwrap_err();
+            assert_eq!(err, CLIENT_PROFILE_ERROR);
+        }
+    }
+
+    #[test]
+    fn client_enroll_rejects_unsafe_default_client_id_profile() {
+        let err = parse_client_enroll(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--pairing-code",
+            "wc_pair_fake",
+            "--client-id",
+            "alice laptop",
+        ]))
+        .unwrap_err();
+        assert_eq!(err, CLIENT_PROFILE_ERROR);
+    }
+
+    #[test]
+    fn client_enroll_help_documents_profile_and_output_dir_precedence() {
+        let help = client_enroll_usage();
+        assert!(help.contains("--profile NAME"));
+        assert!(help.contains("/etc/webcodex/clients/<profile>"));
+        assert!(help.contains("~/.config/webcodex/clients/<profile>"));
+        assert!(help.contains("Explicit --output-dir overrides"));
     }
 
     #[test]
@@ -5828,6 +6012,20 @@ connect_timeout_secs = 12
         );
         let agent_config = std::fs::read_to_string(tmp.path().join("agent.toml")).unwrap();
         assert!(agent_config.contains("agent_fake_plaintext_abcdef"));
+        assert!(output.contains(
+            tmp.path()
+                .join("webcodex-user-token")
+                .to_string_lossy()
+                .as_ref()
+        ));
+        assert!(output.contains(
+            tmp.path()
+                .join("webcodex-agent-token")
+                .to_string_lossy()
+                .as_ref()
+        ));
+        assert!(output.contains(tmp.path().join("agent.toml").to_string_lossy().as_ref()));
+        assert!(output.contains(tmp.path().join("projects.d").to_string_lossy().as_ref()));
         assert!(!output.contains("pat_fake_plaintext_123456"));
         assert!(!output.contains("agent_fake_plaintext_abcdef"));
         #[cfg(unix)]

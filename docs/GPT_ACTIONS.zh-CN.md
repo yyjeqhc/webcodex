@@ -130,6 +130,21 @@ GPT Action OpenAPI operations 和 MCP/runtime tools 相关但不完全一样。r
 
 不要用 shell/base64 作为大文件兜底方案。通过 `callRuntimeTool` 调用 `save_project_artifact` 只适合小型二进制 payload，或已经明确持有可信 base64 字符串的情况；ChatGPT 会话文件应优先使用带 `openaiFileIdRefs` 的 import Action。
 
+artifact runtime tools 组成项目内读写闭环：
+
+- `save_project_artifact` 用于把有界 base64 payload 保存到项目内 artifact path；
+- `read_project_artifact_metadata` 用于查看 artifact 元数据，例如 bytes、MIME type、sha256、图片尺寸、zip entry count，但不返回文件内容；
+- `read_project_artifact` 用于从非敏感项目路径读取小型 artifact 内容，返回 `content_base64` 以及 `bytes`、`mime_type`、`sha256`。它默认使用较小的 1 MiB `max_bytes` 上限，适合缩略图、小型 JSON/zip 测试夹具和其它小型二进制 artifact。
+
+不要用 `read_project_artifact` 直接读取大文件。大文件应优先使用 metadata-only inspection、targeted source reads，或其它外部 artifact transfer flow，避免通过 `callRuntimeTool` 返回大型 base64 payload。
+
 该流程不由 WebCodex 调用 OpenAI Images API，因此不消耗 `gpt-image-2` API 生图费用。图片生成发生在 ChatGPT 内置生图能力中；WebCodex 只通过 GPT Actions 文件传递机制导入会话文件。
 
 安全约束：单次最多导入 10 个文件，单文件最多 10 MiB。输出路径必须位于 project root 内；拒绝 `..`、绝对路径、`.git`、`.env*`、`*.pem`、`secrets`、`tokens`、`node_modules`、`target`。`overwrite` 默认是 `false`。zip 第一版只保存，不自动解压。
+
+
+## Artifact metadata 与分段内容读取
+
+对于已有 project artifacts，应优先调用 `read_project_artifact_metadata`。它会返回 size、sha256、MIME type，以及可用时的图片尺寸，不会把文件内容嵌入 GPT Action 响应。
+
+不要一次性把大文件作为 base64 响应读取。确实需要内容时，使用 `read_project_artifact` 做分段读取：传入 `offset` 和 `length`（默认 32768 bytes，最大 65536 bytes），并在 `truncated` 为 true 时从 `next_offset` 继续读取。返回的 `content_base64` 只包含当前分段；`sha256` 和 `file_bytes` 描述完整 artifact 文件。该工具用于定向检查或小型二进制传输，不是大文件传输机制。

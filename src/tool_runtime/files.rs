@@ -169,6 +169,13 @@ pub(crate) const RUN_HELPER_STDIN_BUDGET: usize = 15 * 1024 * 1024; // 15 MiB
 /// carries base64 over stdin.
 pub(crate) const MAX_PROJECT_ARTIFACT_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
 
+/// Default returned segment size for `read_project_artifact`. This tool returns
+/// base64 content in the JSON response, so keep chunks small for GPT Actions.
+pub(crate) const DEFAULT_READ_PROJECT_ARTIFACT_LENGTH: usize = 32 * 1024; // 32 KiB
+
+/// Maximum returned segment size for `read_project_artifact`.
+pub(crate) const MAX_READ_PROJECT_ARTIFACT_LENGTH: usize = 64 * 1024; // 64 KiB
+
 /// Hard cap for a base64-encoded artifact payload plus JSON overhead.
 pub(crate) const MAX_PROJECT_ARTIFACT_BASE64_BYTES: usize = 14 * 1024 * 1024; // ~10 MiB decoded
 
@@ -716,6 +723,72 @@ if mime == "application/zip":
 emit(out)
 "#;
 
+/// Fixed python3 helper for artifact content reads. Reads a bounded binary
+/// artifact and returns one base64-encoded content segment plus full-file
+/// sha256/MIME metadata. This is a chunked read helper, not a large-file
+/// transfer mechanism.
+pub(crate) const READ_PROJECT_ARTIFACT_HELPER: &str = r#"
+import sys, json, hashlib, os, mimetypes, base64
+def emit(obj):
+    sys.stdout.write(json.dumps(obj))
+    sys.exit(0)
+def fail(path, msg):
+    emit({"path": path if isinstance(path, str) else None, "mime_type": None, "file_bytes": 0, "sha256": None, "offset": 0, "bytes_returned": 0, "content_base64": "", "next_offset": 0, "truncated": False, "error": msg})
+try:
+    req = json.load(sys.stdin)
+except Exception as e:
+    emit({"path": None, "mime_type": None, "file_bytes": 0, "sha256": None, "offset": 0, "bytes_returned": 0, "content_base64": "", "next_offset": 0, "truncated": False, "error": "invalid json: " + str(e)})
+path = req.get("path", "")
+try:
+    offset = int(req.get("offset", 0))
+    length = int(req.get("length", 32768))
+    max_file_bytes = int(req.get("max_file_bytes", 10485760))
+except Exception:
+    fail(path, "offset, length, and max_file_bytes must be integers")
+if offset < 0:
+    fail(path, "offset must be >= 0")
+if length < 1:
+    fail(path, "length must be >= 1")
+if max_file_bytes < 1:
+    fail(path, "max_file_bytes must be >= 1")
+if not isinstance(path, str) or not path or path.startswith("/") or "\x00" in path or ".." in path.split("/"):
+    fail(path, "invalid path")
+try:
+    file_bytes = os.path.getsize(path)
+except Exception as e:
+    fail(path, "stat failed: " + str(e))
+if file_bytes > max_file_bytes:
+    fail(path, "artifact too large to read; use metadata or a smaller artifact")
+try:
+    with open(path, "rb") as f:
+        data = f.read()
+except Exception as e:
+    fail(path, "read failed: " + str(e))
+sha = hashlib.sha256(data).hexdigest()
+mime = mimetypes.guess_type(path)[0]
+if data.startswith(b"\x89PNG\r\n\x1a\n"):
+    mime = "image/png"
+elif data.startswith(b"\xff\xd8"):
+    mime = "image/jpeg"
+elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+    mime = "image/webp"
+elif data.startswith(b"%PDF-"):
+    mime = "application/pdf"
+elif data.startswith(b"PK\x03\x04") or data.startswith(b"PK\x05\x06"):
+    mime = "application/zip"
+elif data.lstrip()[:1] in (b"{", b"["):
+    mime = "application/json"
+if offset >= file_bytes:
+    segment = b""
+    next_offset = file_bytes
+    truncated = False
+else:
+    next_offset = min(file_bytes, offset + length)
+    segment = data[offset:next_offset]
+    truncated = next_offset < file_bytes
+emit({"path": path, "mime_type": mime, "file_bytes": file_bytes, "sha256": sha, "offset": offset, "bytes_returned": len(segment), "content_base64": base64.b64encode(segment).decode("ascii"), "next_offset": next_offset, "truncated": truncated})
+"#;
+
 impl ToolRuntime {
     pub(crate) async fn delete_project_files(
         &self,
@@ -1015,6 +1088,79 @@ impl ToolRuntime {
             "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
         });
         let command = format!("python3 -c '{}'", READ_PROJECT_ARTIFACT_METADATA_HELPER);
+        let obj = match self
+            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(err),
+            };
+        }
+        ToolResult::ok(obj)
+    }
+
+    pub(crate) async fn read_project_artifact(
+        &self,
+        project: String,
+        path: String,
+        encoding: Option<String>,
+        offset: Option<usize>,
+        length: Option<usize>,
+        max_bytes: Option<usize>,
+    ) -> ToolResult {
+        if let Err(e) = validate_artifact_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        let encoding = encoding.unwrap_or_else(|| "base64".to_string());
+        if encoding != "base64" {
+            return ToolResult::err("unsupported encoding; only 'base64' is currently supported");
+        }
+        let offset = offset.unwrap_or(0);
+        let mut length =
+            length.unwrap_or_else(|| max_bytes.unwrap_or(DEFAULT_READ_PROJECT_ARTIFACT_LENGTH));
+        if let Some(max_bytes) = max_bytes {
+            if max_bytes == 0 {
+                return ToolResult::err("max_bytes must be at least 1");
+            }
+            length = length.min(max_bytes);
+        }
+        if length == 0 {
+            return ToolResult::err("length must be at least 1");
+        }
+        if length > MAX_READ_PROJECT_ARTIFACT_LENGTH {
+            return ToolResult::err(format!(
+                "length too large; maximum is {} bytes",
+                MAX_READ_PROJECT_ARTIFACT_LENGTH
+            ));
+        }
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err("read_project_artifact requires an agent-registered project");
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+        let payload = json!({
+            "path": path,
+            "offset": offset,
+            "length": length,
+            "max_file_bytes": MAX_PROJECT_ARTIFACT_BYTES,
+        });
+        let command = format!("python3 -c '{}'", READ_PROJECT_ARTIFACT_HELPER);
         let obj = match self
             .run_agent_helper(client_id, proj.path.clone(), command, payload)
             .await

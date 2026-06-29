@@ -129,6 +129,21 @@ Recommended generated-image flow:
 
 Do not use shell/base64 as a fallback for large files. Calling `save_project_artifact` through `callRuntimeTool` is only appropriate for small binary payloads or cases where a trusted base64 string already exists; the import Action with `openaiFileIdRefs` is the preferred path for ChatGPT conversation files.
 
+Artifact runtime tools form the project-local read/write loop:
+
+- `save_project_artifact` saves a bounded base64 payload into a project artifact path.
+- `read_project_artifact_metadata` inspects artifact metadata such as bytes, MIME type, sha256, image dimensions, and zip entry count without returning file content.
+- `read_project_artifact` reads small artifact content from a non-sensitive project path and returns `content_base64` plus `bytes`, `mime_type`, and `sha256`. It defaults to a small 1 MiB `max_bytes` cap and is intended for thumbnails, small JSON/zip test fixtures, and other small binary artifacts.
+
+Do not use `read_project_artifact` for large files. Prefer metadata-only inspection, targeted source reads, or external artifact transfer flows instead of returning large base64 payloads through `callRuntimeTool`.
+
 This flow does not call the OpenAI Images API from WebCodex and therefore does not consume `gpt-image-2` API image-generation charges. The image generation happens in ChatGPT; WebCodex only imports the resulting conversation file through the GPT Actions file-passing mechanism.
 
 Security constraints: imports are limited to at most 10 files per request and 10 MiB per file. Paths must stay inside the project root; `..`, absolute paths, `.git`, `.env*`, `*.pem`, `secrets`, `tokens`, `node_modules`, and `target` paths are rejected. `overwrite` defaults to `false`. Zip files are saved as zip files and are not automatically extracted.
+
+
+## Artifact metadata and chunked content reads
+
+For existing project artifacts, prefer `read_project_artifact_metadata` first. It returns size, sha256, MIME type, and image dimensions where available without embedding file content in the GPT Action response.
+
+Do not read large files as one base64 response. If content is needed, call `read_project_artifact` as a chunked content read: use `offset` and `length` (default 32768 bytes, maximum 65536 bytes) and continue from `next_offset` while `truncated` is true. The returned `content_base64` contains only the current chunk; `sha256` and `file_bytes` describe the full artifact file. This tool is for targeted inspection or small binary transfer, not large-file transfer.

@@ -949,7 +949,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
                 "params": {
                     "type": "object",
@@ -1093,6 +1093,14 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
+                "encoding": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "max_bytes": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
                 "overwrite": {
                     "type": "boolean",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
@@ -1143,6 +1151,10 @@ fn schemas() -> Value {
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
                 "offset": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "length": {
                     "type": "integer",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
@@ -2484,6 +2496,10 @@ mod tests {
             "new_text",
             "content_base64",
             "mime_type",
+            "encoding",
+            "offset",
+            "length",
+            "max_bytes",
             "expected_old_prefix",
             "expected_anchor_prefix",
         ] {

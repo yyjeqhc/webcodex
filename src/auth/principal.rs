@@ -220,6 +220,7 @@ impl Principal {
             AuthKind::ApiToken => AuthMethod::Pat,
             AuthKind::AgentToken => AuthMethod::AgentToken,
             AuthKind::AccountCredential => AuthMethod::AccountCredential,
+            AuthKind::OAuth2Token => AuthMethod::OAuth2,
         };
 
         Principal {

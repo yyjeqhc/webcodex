@@ -7,15 +7,10 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2b-3** adds `POST /oauth/revoke` token revocation endpoint (RFC 7009).
-
-No OAuth2 tokens are accepted by `AuthMiddleware`. The GPT Actions / MCP /
-REST surface continues to accept only the existing token formats (PAT, agent
-tokens, account credentials).
-
-No OAuth2 tokens are accepted by `AuthMiddleware`. The GPT Actions / MCP /
-REST surface continues to accept only the existing token formats (PAT, agent
-tokens, account credentials).
+**Phase 2c-1** enables `OAuth2Verifier` to validate opaque `wc_oat_*` access
+tokens. OAuth2 access tokens are now accepted by `AuthMiddleware` on regular
+HTTP endpoints (API, MCP). They are rejected on agent-transport paths and the
+QUIC surface.
 
 ### Phase 2b-1: `POST /oauth/token`
 
@@ -192,6 +187,44 @@ tokens and refresh tokens.
 - The response `{}` does not disclose whether the token existed, which client
   it belongs to, or what type it is — preventing token enumeration.
 
+### Phase 2c-1: OAuth2 access token verification
+
+`OAuth2Verifier` now validates opaque `wc_oat_*` access tokens so that
+OAuth2-issued tokens can be used as bearer tokens on HTTP endpoints protected
+by `AuthMiddleware`.
+
+**Validation flow**:
+
+1. Only tokens starting with `wc_oat_` are handled. Non-matching tokens
+   return `Ok(None)` (not recognized), allowing `PatVerifier` to handle them.
+2. If OAuth2 is disabled in config, returns `Ok(None)` — the subsystem is
+   dormant, not rejecting.
+3. Hash the plaintext token and look up `oauth_access_tokens` (the query
+   enforces `revoked_at IS NULL`).
+4. Check `expires_at > now` — expired tokens are rejected.
+5. Verify the owning client is not revoked (`get_oauth_client_by_client_id`
+   enforces `revoked_at IS NULL`).
+6. Verify the owning user is not disabled (consistent with `PatVerifier`).
+7. On success, update `last_used_at` and return an `AuthContext` with
+   `AuthKind::OAuth2Token`.
+
+**Surface restrictions**:
+
+- **HTTP `AuthMiddleware`** (API, MCP): OAuth2 tokens are accepted on all
+  regular paths.
+- **Agent transport paths** (`/api/shell/agent/*`, `/api/agents/ws`): OAuth2
+  tokens are **rejected** — these endpoints require agent tokens or bootstrap
+  auth.
+- **QUIC / `authenticate_bearer()`**: OAuth2 tokens are **rejected** — the
+  QUIC surface is agent-only.
+
+**What is NOT covered**:
+
+- Route-level OAuth scope enforcement is not implemented. The `scopes` field
+  from the access token is populated in `AuthContext` but no handler checks
+  it yet.
+- `resource` (audience) binding is not enforced.
+
 ## Design decisions
 
 ### Opaque DB-backed tokens (not JWT)
@@ -338,8 +371,7 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 - `/oauth/userinfo` endpoint
 - `/.well-known/oauth-authorization-server` metadata
 - `client_credentials` grant
-- `OAuth2Verifier` real validation (still a stub)
-- OAuth2 tokens accepted by `AuthMiddleware`
+- Route-level OAuth scope enforcement
 - MCP OAuth (resource indicator / audience binding)
 - JWT/JWKS/OIDC
 - Handler migration to `Principal`

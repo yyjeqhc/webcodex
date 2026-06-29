@@ -16,7 +16,7 @@ HTTP request
       └─ AuthMiddleware (Salvo hoop)
           ├─ authenticate(config, db, token)
           │     ├─ PatVerifier: bootstrap → PAT → agent token → account credential
-          │     └─ OAuth2Verifier: stub (returns "not recognized")
+          │     └─ OAuth2Verifier: wc_oat_* access token validation
           ├─ enforce_token_surface(ctx, path)
           │     ├─ Agent token → only agent transport endpoints
           │     └─ Account credential → only account control endpoints
@@ -118,9 +118,10 @@ The trait returns:
 Current implementations:
 - **`PatVerifier`** — handles bootstrap, PAT, agent tokens, and account
   credentials via the existing database lookup logic.
-- **`OAuth2Verifier`** — stub that always returns `Ok(None)`. Will be
-  implemented in a future phase to validate WebCodex-issued OAuth2 access
-  tokens (initially opaque DB-backed; JWT/JWKS optional later).
+- **`OAuth2Verifier`** — validates opaque `wc_oat_*` access tokens via
+  SHA-256 hash lookup in `oauth_access_tokens`. Rejects expired, revoked,
+  and client-revoked tokens. Returns `Ok(None)` for non-`wc_oat_*` tokens,
+  allowing `PatVerifier` to handle them.
 
 ## OAuth2 extension points (future phase)
 
@@ -203,7 +204,8 @@ per-endpoint via `can_use_agent_endpoint()`.
    `scopes.rs` for use outside the `AuthContext` type.
 5. **`PatVerifier`**: the existing PAT validation logic wrapped in the
    `TokenVerifier` trait for composability.
-6. **`OAuth2Verifier`**: stub for future OAuth2 validation.
+6. **`OAuth2Verifier`**: stub for future OAuth2 validation (implemented in
+   Phase 2c-1).
 
 ### Phase 1b — verifier chain integration
 
@@ -266,8 +268,9 @@ configuration reference.
    downstream modules can match on the method enum.
 
 No OAuth2 endpoints are exposed. No OAuth2 tokens are accepted by
-`AuthMiddleware`. The `OAuth2Verifier` remains a stub. Existing PAT, agent
-token, and account credential behavior is unchanged.
+`AuthMiddleware`. The `OAuth2Verifier` remains a stub (implemented in Phase
+2c-1). Existing PAT, agent token, and account credential behavior is
+unchanged.
 
 ### Phase 2a.1 — tighten storage helpers
 
@@ -384,4 +387,29 @@ See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
 6. **Token records not deleted**: only `revoked_at` is set; the row remains.
 
 Not implemented: `/oauth/authorize`, `client_credentials` grant,
-`/.well-known/*`, `OAuth2Verifier` real validation, MCP OAuth.
+`/.well-known/*`, route-level OAuth scope enforcement, MCP OAuth.
+
+### Phase 2c-1 — OAuth2 access token verification
+
+See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
+
+1. **`OAuth2Verifier`**: now validates opaque `wc_oat_*` access tokens
+   (previously a stub returning `Ok(None)`). The verifier hashes the
+   plaintext token and looks it up in `oauth_access_tokens`.
+2. **Validation**: revoked (`revoked_at IS NULL`), expired (`expires_at`),
+   revoked client, and disabled user are all rejected.
+3. **`last_used_at`**: updated only on successful verification.
+4. **`AuthKind::OAuth2Token`**: new variant; mapped to `AuthMethod::OAuth2`
+   in `Principal`.
+5. **Surface restrictions**: OAuth2 tokens are accepted on all regular HTTP
+   paths (API, MCP) via `AuthMiddleware`. They are rejected on agent
+   transport paths and the QUIC surface (`authenticate_bearer()`).
+6. **Verifier chain**: `PatVerifier` → `OAuth2Verifier`. Non-`wc_oat_*`
+   tokens return `Ok(None)` from `OAuth2Verifier`, falling through to
+   `PatVerifier` unchanged.
+7. **Refresh tokens** (`wc_ort_*`), authorization codes (`wc_oac_*`), client
+   secrets (`wc_csec_*`), and client IDs (`wc_client_*`) are never accepted
+   as bearer tokens.
+
+Not implemented: `/oauth/authorize`, `client_credentials` grant,
+`/.well-known/*`, route-level OAuth scope enforcement, MCP OAuth.

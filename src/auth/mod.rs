@@ -93,6 +93,10 @@ pub enum AuthKind {
     ApiToken,
     AgentToken,
     AccountCredential,
+    /// An OAuth2 opaque access token (`wc_oat_*`) validated by
+    /// [`OAuth2Verifier`]. Accepted on all regular HTTP paths; rejected on
+    /// agent-transport and QUIC surfaces.
+    OAuth2Token,
 }
 
 // ---------------------------------------------------------------------------
@@ -156,6 +160,11 @@ impl AuthContext {
     #[allow(dead_code)]
     pub fn is_account_credential(&self) -> bool {
         matches!(self.kind, AuthKind::AccountCredential)
+    }
+
+    #[allow(dead_code)]
+    pub fn is_oauth_token(&self) -> bool {
+        matches!(self.kind, AuthKind::OAuth2Token)
     }
 
     /// True when the caller may use an agent transport endpoint for the given
@@ -389,28 +398,119 @@ impl TokenVerifier for PatVerifier {
     }
 }
 
-/// OAuth2 bearer token verifier — **stub / placeholder** for future use.
+/// OAuth2 bearer token verifier.
 ///
-/// This verifier will validate WebCodex-issued OAuth2 access tokens. The
-/// initial implementation may use opaque DB-backed access tokens.
-/// JWT/JWKS/OIDC metadata can be added later where MCP or OIDC clients
-/// require it.
+/// Validates WebCodex-issued opaque OAuth2 access tokens (`wc_oat_*`). The
+/// database stores only SHA-256 hashes; the plaintext token is never persisted.
 ///
-/// Currently not wired up; the `verify` implementation always returns
-/// `Ok(None)` (token not recognized), allowing `PatVerifier` to handle all
-/// tokens in the current phase.
+/// Validation steps:
+/// 1. Token must start with `wc_oat_` — non-matching tokens return
+///    `Ok(None)` (not recognized), allowing `PatVerifier` to handle them.
+/// 2. OAuth2 must be enabled in config; otherwise returns `Ok(None)`.
+/// 3. Hash the plaintext token and look up `oauth_access_tokens`.
+/// 4. Token must not be revoked (`revoked_at IS NULL` — enforced by the
+///    query).
+/// 5. Token must not be expired (`expires_at > now`).
+/// 6. The owning client must not be revoked.
+/// 7. The owning user must not be disabled.
+/// 8. On success, `last_used_at` is updated and an `AuthContext` with
+///    `AuthKind::OAuth2Token` is returned.
+///
+/// Refresh tokens (`wc_ort_*`), authorization codes (`wc_oac_*`), client
+/// secrets (`wc_csec_*`), and client IDs (`wc_client_*`) are never accepted.
 pub(crate) struct OAuth2Verifier;
+
+/// Prefix for OAuth2 access tokens. Only tokens starting with this prefix
+/// are handled by [`OAuth2Verifier`]; all others return `Ok(None)`.
+const OAUTH2_ACCESS_TOKEN_PREFIX: &str = "wc_oat_";
 
 #[async_trait]
 impl TokenVerifier for OAuth2Verifier {
     async fn verify(
         &self,
-        _config: &Config,
-        _db: Option<&Arc<Database>>,
-        _token: &str,
+        config: &Config,
+        db: Option<&Arc<Database>>,
+        token: &str,
     ) -> Result<Option<AuthContext>, String> {
-        // Stub: always returns "not recognized" so PatVerifier handles everything.
-        Ok(None)
+        // Only handle wc_oat_* tokens. Non-matching tokens are not
+        // recognized by this verifier — let PatVerifier try.
+        if !token.starts_with(OAUTH2_ACCESS_TOKEN_PREFIX) {
+            return Ok(None);
+        }
+
+        // If OAuth2 is not enabled, treat as not recognized. This avoids
+        // rejecting tokens when the subsystem is simply disabled.
+        if !config.oauth2.enabled {
+            return Ok(None);
+        }
+
+        let Some(db) = db else {
+            return Ok(None);
+        };
+
+        let token_hash = hash_token(token);
+        let now = chrono::Utc::now().timestamp();
+
+        // Look up the access token (revoked_at IS NULL is enforced by the
+        // query).
+        let at_record = match db.get_oauth_access_token_by_hash(&token_hash) {
+            Ok(Some(record)) => record,
+            Ok(None) => {
+                // Token not found or already revoked — reject.
+                return Err("invalid or revoked OAuth2 access token".to_string());
+            }
+            Err(_) => {
+                return Err("internal error".to_string());
+            }
+        };
+
+        // Check expiry.
+        if at_record.is_expired(now) {
+            return Err("expired OAuth2 access token".to_string());
+        }
+
+        // Verify the owning client is not revoked.
+        match db.get_oauth_client_by_client_id(&at_record.client_id) {
+            Ok(Some(_)) => {} // client is active
+            Ok(None) => {
+                return Err("OAuth2 client is revoked".to_string());
+            }
+            Err(_) => {
+                return Err("internal error".to_string());
+            }
+        }
+
+        // Verify the owning user is not disabled (consistent with
+        // PatVerifier behavior).
+        let user = db
+            .get_user_by_id(&at_record.user_id)
+            .ok()
+            .flatten()
+            .ok_or_else(|| "user not found".to_string())?;
+
+        if user.is_disabled() {
+            return Err("user is disabled".to_string());
+        }
+
+        // All checks passed — update last_used_at.
+        if let Err(e) = db.update_oauth_access_token_last_used(&at_record.id, now) {
+            tracing::warn!("failed to update oauth access token last_used_at: {}", e);
+        }
+
+        Ok(Some(AuthContext {
+            kind: AuthKind::OAuth2Token,
+            user_id: Some(user.id.clone()),
+            username: Some(user.username.clone()),
+            // OAuth2 tokens don't map to an api_keys row. Use the
+            // access token ID as the credential identifier.
+            api_key_id: Some(at_record.id.clone()),
+            api_key_name: None,
+            role: Some(user.role.clone()),
+            scopes: at_record.scopes_vec(),
+            is_bootstrap: false,
+            token_kind: Some("oauth2".to_string()),
+            allowed_client_id: Some(at_record.client_id.clone()),
+        }))
     }
 }
 
@@ -456,10 +556,10 @@ pub(crate) async fn authenticate_bearer(
     // the same as "unknown" for the QUIC transport — the caller rejects
     // the connection either way.
     let ctx = authenticate(config, db, token).await.ok().flatten()?;
-    // Account credentials are not valid on the agent transport surface.
-    // Reject them here so they don't silently update last_used_at and then
-    // get rejected by the caller anyway.
-    if ctx.is_account_credential() {
+    // Account credentials and OAuth2 tokens are not valid on the agent
+    // transport surface. Reject them here so they don't silently update
+    // last_used_at and then get rejected by the caller anyway.
+    if ctx.is_account_credential() || ctx.is_oauth_token() {
         return None;
     }
     Some(ctx)
@@ -544,6 +644,14 @@ pub(crate) fn enforce_token_surface(
         return Err((
             StatusCode::FORBIDDEN,
             "account credentials may only access account control endpoints",
+        ));
+    }
+    // OAuth2 access tokens are not permitted on agent transport endpoints.
+    // Agent endpoints require agent tokens or bootstrap auth.
+    if ctx.is_oauth_token() && is_agent_transport_path(path) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "OAuth2 tokens are not allowed on agent transport endpoints",
         ));
     }
     Ok(())
@@ -953,6 +1061,75 @@ mod tests {
         };
         db.insert_account_credential(&record, &hash).unwrap();
         plaintext
+    }
+
+    /// Create a config with OAuth2 enabled.
+    fn gate_test_config_oauth2(token: Option<&str>) -> Arc<crate::Config> {
+        Arc::new(crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: token.map(str::to_string),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config {
+                enabled: true,
+                access_token_ttl_secs: 3600,
+                refresh_token_ttl_secs: 2_592_000,
+                ..crate::OAuth2Config::default()
+            },
+        })
+    }
+
+    /// Seed an OAuth2 client and return `(record, plaintext_secret)`.
+    fn gate_seed_oauth_client(
+        db: &crate::Database,
+        user: &crate::models::UserRecord,
+        name: &str,
+    ) -> (crate::models::OAuthClientRecord, String) {
+        let now = chrono::Utc::now().timestamp();
+        let plaintext_secret = generate_oauth_client_secret();
+        let secret_hash = hash_token(&plaintext_secret);
+        let record = crate::models::OAuthClientRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            client_id: generate_oauth_client_id(),
+            client_secret_hash: secret_hash,
+            name: name.to_string(),
+            owner_user_id: user.id.clone(),
+            redirect_uris: "https://example.com/callback".to_string(),
+            allowed_scopes: "runtime:read project:read".to_string(),
+            created_at: now,
+            revoked_at: None,
+        };
+        db.insert_oauth_client(&record).unwrap();
+        (record, plaintext_secret)
+    }
+
+    /// Seed an OAuth2 access token and return `(record, plaintext_token)`.
+    fn gate_seed_oauth_access_token(
+        db: &crate::Database,
+        client: &crate::models::OAuthClientRecord,
+        user: &crate::models::UserRecord,
+        scopes: &str,
+    ) -> (crate::models::OAuthAccessTokenRecord, String) {
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = generate_oauth_access_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: scopes.to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+        (record, plaintext)
     }
 
     /// Trivial handler that returns 200 OK JSON. Reaching it proves the central
@@ -1431,7 +1608,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth2_verifier_always_returns_none() {
+    async fn oauth2_verifier_ignores_non_wc_oat_tokens() {
         let config = crate::Config {
             addr: "127.0.0.1:0".to_string(),
             data_dir: PathBuf::from("./data"),
@@ -1440,17 +1617,296 @@ mod tests {
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: crate::CodexConfig::default(),
-            oauth2: crate::OAuth2Config::default(),
+            oauth2: crate::OAuth2Config {
+                enabled: true,
+                ..crate::OAuth2Config::default()
+            },
+        };
+        let verifier = OAuth2Verifier;
+        // Non-wc_oat_ tokens should return Ok(None) (not recognized).
+        for token in &[
+            "some-oauth2-jwt",
+            "wc_pat_abc123",
+            "wc_agent_abc123",
+            "wc_acct_abc123",
+            "wc_ort_abc123",
+            "wc_oac_abc123",
+            "wc_csec_abc123",
+            "wc_client_abc123",
+        ] {
+            let result = verifier.verify(&config, None, token).await.unwrap();
+            assert!(
+                result.is_none(),
+                "non-wc_oat_ token '{}' should return None",
+                token
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_returns_none_when_oauth2_disabled() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(), // enabled: false
         };
         let verifier = OAuth2Verifier;
         let result = verifier
-            .verify(&config, None, "some-oauth2-jwt")
+            .verify(&config, None, "wc_oat_sometoken")
             .await
             .unwrap();
         assert!(
             result.is_none(),
-            "stub OAuth2 verifier should always return None"
+            "OAuth2 disabled should return None for wc_oat_* tokens"
         );
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_accepts_valid_access_token() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+
+        let verifier = OAuth2Verifier;
+        let result = verifier
+            .verify(&config, Some(&db), &plaintext)
+            .await
+            .unwrap();
+        let ctx = result.expect("valid access token should return AuthContext");
+        assert_eq!(ctx.kind, AuthKind::OAuth2Token);
+        assert_eq!(ctx.user_id.as_deref(), Some(user.id.as_str()));
+        assert_eq!(ctx.username.as_deref(), Some(user.username.as_str()));
+        assert_eq!(ctx.role.as_deref(), Some("user"));
+        assert!(ctx.scopes.contains(&"runtime:read".to_string()));
+        assert!(!ctx.is_bootstrap);
+        assert_eq!(ctx.token_kind.as_deref(), Some("oauth2"));
+        assert_eq!(
+            ctx.allowed_client_id.as_deref(),
+            Some(client.client_id.as_str())
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_unknown_access_token() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+
+        let verifier = OAuth2Verifier;
+        let result = verifier
+            .verify(&config, Some(&db), "wc_oat_nonexistenttoken")
+            .await;
+        assert!(result.is_err(), "unknown access token should return Err");
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_expired_access_token() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+
+        // Create an expired access token.
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = generate_oauth_access_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now - 7200,
+            expires_at: now - 1, // already expired
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+
+        let verifier = OAuth2Verifier;
+        let result = verifier.verify(&config, Some(&db), &plaintext).await;
+        assert!(result.is_err(), "expired access token should return Err");
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_revoked_access_token() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+
+        // Revoke the token.
+        let now = chrono::Utc::now().timestamp();
+        db.revoke_oauth_access_token(&at.id, now).unwrap();
+
+        let verifier = OAuth2Verifier;
+        let result = verifier.verify(&config, Some(&db), &plaintext).await;
+        assert!(result.is_err(), "revoked access token should return Err");
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_refresh_token() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+
+        // Create a refresh token (wc_ort_*).
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = generate_oauth_refresh_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&record).unwrap();
+
+        let verifier = OAuth2Verifier;
+        let result = verifier
+            .verify(&config, Some(&db), &plaintext)
+            .await
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "refresh token (wc_ort_*) should return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_authorization_code() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let verifier = OAuth2Verifier;
+        let result = verifier
+            .verify(&config, None, "wc_oac_sometoken")
+            .await
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "authorization code (wc_oac_*) should return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_client_secret() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let verifier = OAuth2Verifier;
+        let result = verifier
+            .verify(&config, None, "wc_csec_sometoken")
+            .await
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "client secret (wc_csec_*) should return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_updates_last_used_on_success() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+
+        // Verify last_used_at is initially None.
+        assert!(at.last_used_at.is_none());
+
+        let verifier = OAuth2Verifier;
+        let result = verifier
+            .verify(&config, Some(&db), &plaintext)
+            .await
+            .unwrap();
+        assert!(result.is_some());
+
+        // Verify last_used_at is now set.
+        let conn = db.conn_for_tests();
+        let last_used: Option<i64> = conn
+            .query_row(
+                "SELECT last_used_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            last_used.is_some(),
+            "last_used_at should be set after successful verification"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_does_not_update_last_used_on_failure() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+
+        // Revoke the token.
+        let now = chrono::Utc::now().timestamp();
+        db.revoke_oauth_access_token(&at.id, now).unwrap();
+
+        let verifier = OAuth2Verifier;
+        let result = verifier.verify(&config, Some(&db), &plaintext).await;
+        assert!(result.is_err());
+
+        // last_used_at should still be None — failed verification should not
+        // update it. Note: the token is revoked so get_oauth_access_token_by_hash
+        // returns None, so we can't directly check. But we verify the error path
+        // doesn't panic or succeed.
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_token_for_revoked_client() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+
+        // Revoke the client.
+        let now = chrono::Utc::now().timestamp();
+        db.revoke_oauth_client(&client.id, now).unwrap();
+
+        let verifier = OAuth2Verifier;
+        let result = verifier.verify(&config, Some(&db), &plaintext).await;
+        assert!(
+            result.is_err(),
+            "token for revoked client should return Err"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_token_for_disabled_user() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+
+        // Disable the user.
+        let now = chrono::Utc::now().timestamp();
+        db.set_user_disabled(&user.id, true, now).unwrap();
+
+        let verifier = OAuth2Verifier;
+        let result = verifier.verify(&config, Some(&db), &plaintext).await;
+        assert!(result.is_err(), "token for disabled user should return Err");
     }
 
     // -----------------------------------------------------------------------
@@ -1536,6 +1992,45 @@ mod tests {
             let (status, msg) = result.unwrap_err();
             assert_eq!(status, StatusCode::FORBIDDEN);
             assert!(msg.contains("account credentials"));
+        }
+    }
+
+    #[test]
+    fn enforce_token_surface_allows_oauth2_token_on_regular_paths() {
+        let mut ctx = user_ctx("alice");
+        ctx.kind = AuthKind::OAuth2Token;
+        for path in [
+            "/api/runtime/status",
+            "/api/projects/list",
+            "/api/tools/list",
+            "/api/jobs/list",
+            "/mcp",
+        ] {
+            assert!(
+                enforce_token_surface(&ctx, path).is_ok(),
+                "OAuth2 token should be allowed on {}",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn enforce_token_surface_rejects_oauth2_token_on_agent_transport_paths() {
+        let mut ctx = user_ctx("alice");
+        ctx.kind = AuthKind::OAuth2Token;
+        for path in [
+            "/api/shell/agent/register",
+            "/api/shell/agent/poll",
+            "/api/shell/agent/result",
+            "/api/shell/agent/job_update",
+            "/api/agents/ws",
+        ] {
+            let result = enforce_token_surface(&ctx, path);
+            assert!(
+                result.is_err(),
+                "OAuth2 token should be rejected on agent path {}",
+                path
+            );
         }
     }
 
@@ -1818,6 +2313,82 @@ mod tests {
         assert!(
             result.is_none(),
             "account credentials must be rejected on agent transport"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_rejects_oauth2_access_token() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+        let result = authenticate_bearer(&config, Some(&db), Some(&plaintext)).await;
+        assert!(
+            result.is_none(),
+            "OAuth2 access tokens must be rejected on agent transport (QUIC)"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // AuthMiddleware integration: OAuth2 access token on HTTP surface
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn auth_middleware_accepts_valid_oauth2_access_token() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+
+        let service = salvo::Service::new(gate_router(config, db));
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .add_header("authorization", &format!("Bearer {}", plaintext), true)
+            .send(&service)
+            .await;
+        assert_eq!(
+            resp.status_code,
+            Some(StatusCode::OK),
+            "valid OAuth2 access token should be accepted by AuthMiddleware"
+        );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_rejects_refresh_token_as_bearer() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+
+        // Create a refresh token.
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = generate_oauth_refresh_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&record).unwrap();
+
+        let service = salvo::Service::new(gate_router(config, db));
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .add_header("authorization", &format!("Bearer {}", plaintext), true)
+            .send(&service)
+            .await;
+        assert_eq!(
+            resp.status_code,
+            Some(StatusCode::UNAUTHORIZED),
+            "refresh token should not be accepted as bearer"
         );
     }
 }

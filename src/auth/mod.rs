@@ -421,69 +421,42 @@ impl TokenVerifier for OAuth2Verifier {
 // ---------------------------------------------------------------------------
 
 /// Authenticate a bearer token *outside* the HTTP request path, reusing the
-/// exact same validation as [`AuthMiddleware`]. Used by the QUIC agent
+/// same verifier chain as [`AuthMiddleware`]. Used by the QUIC agent
 /// transport, which has no HTTP middleware to inject an `AuthContext`.
 ///
-/// Mirrors `AuthMiddleware::handle`:
-/// - When auth is disabled (`!config.is_auth_enabled()`), returns a bootstrap
-///   context (full access). This matches the HTTP behavior where unauthenticated
-///   dev mode is treated as bootstrap.
-/// - When auth is enabled, the bootstrap token is checked first
-///   (`config.validate_token`); otherwise the token is hashed and looked up in
-///   the `api_keys` table (personal API tokens and Phase 3 agent tokens).
-///   Disabled users and expired tokens are rejected. Returns `None` for an
-///   unknown/invalid token; the caller MUST treat `None` as "reject the
-///   connection".
+/// Authentication coverage:
+/// - **Bootstrap token**: yes — returns bootstrap context.
+/// - **Personal API token (`wc_pat_*`)**: yes — returns `AuthKind::ApiToken`.
+/// - **Agent token (`wc_agent_*`)**: yes — returns `AuthKind::AgentToken`.
+///   The agent-transport path gate does NOT apply here: the QUIC listener is
+///   inherently an agent-only transport, so an agent token reaching it is
+///   already on an allowed surface.
+/// - **Account credential (`wc_acct_*`)**: yes — returns
+///   `AuthKind::AccountCredential`. Callers should enforce their own surface
+///   restrictions if needed.
+/// - **OAuth2**: not yet supported — the `OAuth2Verifier` stub always returns
+///   "not recognized", so this falls through to `None`.
 ///
-/// The `is_agent_transport_path` gate from `AuthMiddleware` does not apply
-/// here: the QUIC listener is inherently an agent-only transport, so an agent
-/// token reaching it is already on an allowed surface.
-pub(crate) fn authenticate_bearer(
+/// Returns `None` for unknown/invalid tokens or when the token is recognized
+/// but rejected (disabled user, expired token). The caller MUST treat `None`
+/// as "reject the connection".
+pub(crate) async fn authenticate_bearer(
     config: &Config,
     db: Option<&Arc<Database>>,
     token: Option<&str>,
 ) -> Option<AuthContext> {
     // Auth disabled in development -> bootstrap (full access), identical to
-    // AuthMiddleware's `!config.is_auth_enabled()` branch. This lets local
-    // QUIC integration tests run without a configured token.
+    // AuthMiddleware's behavior. This lets local QUIC integration tests run
+    // without a configured token.
     if !config.is_auth_enabled() {
         return Some(bootstrap_context());
     }
     let token = token?;
-    if config.validate_token(token) {
-        return Some(bootstrap_context());
-    }
-    let db = db?;
-    let key_hash = hash_token(token);
-    let api_key = db.get_api_key_by_hash(&key_hash).ok()??;
-    let user = db.get_user_by_id(&api_key.user_id).ok()??;
-    if user.is_disabled() {
-        return None;
-    }
-    let now = chrono::Utc::now().timestamp();
-    if api_key.is_expired(now) {
-        return None;
-    }
-    if let Err(e) = db.update_api_key_last_used(&api_key.id, now) {
-        tracing::warn!("failed to update api key last_used_at: {}", e);
-    }
-    let auth_kind = if api_key.is_agent_token() {
-        AuthKind::AgentToken
-    } else {
-        AuthKind::ApiToken
-    };
-    Some(AuthContext {
-        kind: auth_kind,
-        user_id: Some(user.id.clone()),
-        username: Some(user.username.clone()),
-        api_key_id: Some(api_key.id.clone()),
-        api_key_name: Some(api_key.name.clone()),
-        role: Some(user.role.clone()),
-        scopes: api_key.scopes_vec(),
-        is_bootstrap: false,
-        token_kind: Some(api_key.kind().to_string()),
-        allowed_client_id: api_key.allowed_client_id.clone(),
-    })
+    // Run the same verifier chain as the HTTP path (PatVerifier →
+    // OAuth2Verifier). Any error (disabled user, expired token) is treated
+    // the same as "unknown" for the QUIC transport — the caller rejects
+    // the connection either way.
+    authenticate(config, db, token).await.ok().flatten()
 }
 
 /// Build the bootstrap `AuthContext` used when auth is disabled or the
@@ -543,6 +516,65 @@ pub(crate) fn is_account_control_path(path: &str) -> bool {
     ACCOUNT_CONTROL_PATHS.contains(&path)
 }
 
+/// Enforce that the token kind is permitted on the requested HTTP path.
+///
+/// Agent tokens are only allowed on agent transport endpoints. Account
+/// credentials are only allowed on account control endpoints. All other
+/// token kinds (bootstrap, user PAT) are allowed on any authenticated path.
+///
+/// Returns `Ok(())` when the token is permitted, `Err((status, message))`
+/// when it should be rejected.
+pub(crate) fn enforce_token_surface(
+    ctx: &AuthContext,
+    path: &str,
+) -> Result<(), (StatusCode, &'static str)> {
+    if ctx.is_agent_token() && !is_agent_transport_path(path) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "agent tokens are only allowed on agent transport endpoints",
+        ));
+    }
+    if ctx.is_account_credential() && !is_account_control_path(path) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "account credentials may only access account control endpoints",
+        ));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Verifier chain — shared authentication logic
+// ---------------------------------------------------------------------------
+
+/// Run the token through the verifier chain and return an [`AuthContext`].
+///
+/// Verifiers are tried in order: [`PatVerifier`], then [`OAuth2Verifier`].
+/// The first verifier that returns `Ok(Some(ctx))` wins. If a verifier
+/// returns `Err`, authentication fails immediately (the token was recognized
+/// but invalid — e.g. disabled user or expired token). If all verifiers
+/// return `Ok(None)`, the token is unknown and the caller should return 401.
+///
+/// This is the **single** token verification path used by both the HTTP
+/// [`AuthMiddleware`] and the non-HTTP [`authenticate_bearer`].
+async fn authenticate(
+    config: &Config,
+    db: Option<&Arc<Database>>,
+    token: &str,
+) -> Result<Option<AuthContext>, AuthError> {
+    let verifiers: &[&dyn TokenVerifier] = &[&PatVerifier, &OAuth2Verifier];
+
+    for verifier in verifiers {
+        match verifier.verify(config, db, token).await {
+            Ok(Some(ctx)) => return Ok(Some(ctx)),
+            Ok(None) => continue,
+            Err(_) => return Err(AuthError::InvalidToken),
+        }
+    }
+
+    Ok(None)
+}
+
 // ---------------------------------------------------------------------------
 // AuthMiddleware — the Salvo handler
 // ---------------------------------------------------------------------------
@@ -568,174 +600,60 @@ impl Handler for AuthMiddleware {
         let db = get_db(depot);
         let token = bearer_or_allowed_query_token(req);
 
-        if !config.is_auth_enabled() {
-            let ctx = AuthContext {
-                kind: AuthKind::Bootstrap,
-                user_id: None,
-                username: None,
-                api_key_id: None,
-                api_key_name: None,
-                role: Some("admin".to_string()),
-                scopes: vec![SCOPE_ADMIN.to_string()],
-                is_bootstrap: true,
-                token_kind: None,
-                allowed_client_id: None,
-            };
-            depot.inject(ctx);
-            ctrl.call_next(req, depot, res).await;
-            return;
-        }
-
-        let Some(token) = token else {
-            res.status_code(StatusCode::UNAUTHORIZED);
-            res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-            ctrl.skip_rest();
-            return;
+        // When no token is present and auth is enabled, reject immediately.
+        // When auth is disabled, the verifier chain handles the bootstrap
+        // fallback — we still call authenticate with a dummy token so the
+        // code path stays uniform.
+        let token = match token {
+            Some(t) => t,
+            None => {
+                if !config.is_auth_enabled() {
+                    // Auth disabled, no token: inject bootstrap and continue.
+                    depot.inject(bootstrap_context());
+                    ctrl.call_next(req, depot, res).await;
+                    return;
+                }
+                res.status_code(StatusCode::UNAUTHORIZED);
+                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
+                ctrl.skip_rest();
+                return;
+            }
         };
 
-        if config.validate_token(&token) {
-            let ctx = AuthContext {
-                kind: AuthKind::Bootstrap,
-                user_id: None,
-                username: None,
-                api_key_id: None,
-                api_key_name: None,
-                role: Some("admin".to_string()),
-                scopes: vec![SCOPE_ADMIN.to_string()],
-                is_bootstrap: true,
-                token_kind: None,
-                allowed_client_id: None,
-            };
-            depot.inject(ctx);
-            ctrl.call_next(req, depot, res).await;
-            return;
-        }
-
-        let Some(db) = db else {
-            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-            res.render(Json(serde_json::json!({"error": "DB not available"})));
-            ctrl.skip_rest();
-            return;
-        };
-
-        let token_hash = hash_token(&token);
-
-        // Lookup is centralized in the DB layer; the same "Unauthorized"
-        // message is used whether the token prefix exists or not, to avoid
-        // leaking which prefixes are present.
-        if let Ok(Some(api_key)) = db.get_api_key_by_hash(&token_hash) {
-            let Ok(Some(user)) = db.get_user_by_id(&api_key.user_id) else {
-                res.status_code(StatusCode::UNAUTHORIZED);
-                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-                ctrl.skip_rest();
-                return;
-            };
-
-            if user.is_disabled() {
-                res.status_code(StatusCode::UNAUTHORIZED);
-                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-                ctrl.skip_rest();
-                return;
-            }
-
-            let now = chrono::Utc::now().timestamp();
-            if api_key.is_expired(now) {
-                res.status_code(StatusCode::UNAUTHORIZED);
-                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-                ctrl.skip_rest();
-                return;
-            }
-
-            if let Err(e) = db.update_api_key_last_used(&api_key.id, now) {
-                tracing::warn!("failed to update api key last_used_at: {}", e);
-            }
-
-            // Phase 3: distinguish agent tokens (kind="agent") from personal API
-            // tokens (kind="user"). Agent tokens authenticate but carry a
-            // different AuthKind so handlers can reject them from normal runtime
-            // endpoints and accept them only on agent transport endpoints.
-            let auth_kind = if api_key.is_agent_token() {
-                AuthKind::AgentToken
-            } else {
-                AuthKind::ApiToken
-            };
-
-            let ctx = AuthContext {
-                kind: auth_kind,
-                user_id: Some(user.id.clone()),
-                username: Some(user.username.clone()),
-                api_key_id: Some(api_key.id.clone()),
-                api_key_name: Some(api_key.name.clone()),
-                role: Some(user.role.clone()),
-                scopes: api_key.scopes_vec(),
-                is_bootstrap: false,
-                token_kind: Some(api_key.kind().to_string()),
-                allowed_client_id: api_key.allowed_client_id.clone(),
-            };
-
-            if ctx.is_agent_token() {
-                let path = req.uri().path();
-                if !is_agent_transport_path(path) {
-                    res.status_code(StatusCode::FORBIDDEN);
-                    res.render(Json(serde_json::json!({
-                        "error": "agent tokens are only allowed on agent transport endpoints",
-                    })));
+        // Run the verifier chain (PatVerifier → OAuth2Verifier).
+        match authenticate(&config, db.as_ref(), &token).await {
+            Ok(Some(ctx)) => {
+                // Enforce token-kind surface restrictions (agent tokens,
+                // account credentials) before the handler runs.
+                if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
+                    res.status_code(status);
+                    res.render(Json(serde_json::json!({"error": msg})));
                     ctrl.skip_rest();
                     return;
                 }
+                depot.inject(ctx);
+                ctrl.call_next(req, depot, res).await;
             }
-
-            depot.inject(ctx);
-            ctrl.call_next(req, depot, res).await;
-            return;
+            Ok(None) => {
+                // Token not recognized by any verifier.
+                res.status_code(StatusCode::UNAUTHORIZED);
+                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
+                ctrl.skip_rest();
+            }
+            Err(e) => {
+                // Token recognized but invalid (disabled user, expired token,
+                // etc.). Map to the appropriate HTTP status without leaking
+                // internal details.
+                let status = match e {
+                    AuthError::ForbiddenTokenKind => StatusCode::FORBIDDEN,
+                    AuthError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
+                    _ => StatusCode::UNAUTHORIZED,
+                };
+                res.status_code(status);
+                res.render(Json(serde_json::json!({"error": "Unauthorized"})));
+                ctrl.skip_rest();
+            }
         }
-
-        let Ok(Some(account_credential)) = db.get_account_credential_by_hash(&token_hash) else {
-            res.status_code(StatusCode::UNAUTHORIZED);
-            res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-            ctrl.skip_rest();
-            return;
-        };
-
-        let Ok(Some(user)) = db.get_user_by_id(&account_credential.user_id) else {
-            res.status_code(StatusCode::UNAUTHORIZED);
-            res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-            ctrl.skip_rest();
-            return;
-        };
-        if user.is_disabled() {
-            res.status_code(StatusCode::UNAUTHORIZED);
-            res.render(Json(serde_json::json!({"error": "Unauthorized"})));
-            ctrl.skip_rest();
-            return;
-        }
-        let now = chrono::Utc::now().timestamp();
-        if let Err(e) = db.update_account_credential_last_used(&account_credential.id, now) {
-            tracing::warn!("failed to update account credential last_used_at: {}", e);
-        }
-        let ctx = AuthContext {
-            kind: AuthKind::AccountCredential,
-            user_id: Some(user.id.clone()),
-            username: Some(user.username.clone()),
-            api_key_id: None,
-            api_key_name: None,
-            role: Some(user.role.clone()),
-            scopes: vec![SCOPE_ACCOUNT_MANAGE.to_string()],
-            is_bootstrap: false,
-            token_kind: Some("account".to_string()),
-            allowed_client_id: None,
-        };
-        if !is_account_control_path(req.uri().path()) {
-            res.status_code(StatusCode::FORBIDDEN);
-            res.render(Json(serde_json::json!({
-                "error": "account credentials may only access account control endpoints",
-            })));
-            ctrl.skip_rest();
-            return;
-        }
-
-        depot.inject(ctx);
-        ctrl.call_next(req, depot, res).await;
     }
 }
 
@@ -1521,5 +1439,353 @@ mod tests {
             result.is_none(),
             "stub OAuth2 verifier should always return None"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // enforce_token_surface tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn enforce_token_surface_allows_bootstrap_on_any_path() {
+        let ctx = bootstrap_ctx();
+        assert!(enforce_token_surface(&ctx, "/api/runtime/status").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/shell/agent/register").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/users/me").is_ok());
+    }
+
+    #[test]
+    fn enforce_token_surface_allows_user_pat_on_any_path() {
+        let ctx = user_ctx("alice");
+        assert!(enforce_token_surface(&ctx, "/api/runtime/status").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/tools/list").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/projects/list").is_ok());
+    }
+
+    #[test]
+    fn enforce_token_surface_allows_agent_token_on_agent_transport_paths() {
+        let ctx = agent_ctx("alice", "laptop", vec![SCOPE_AGENT_REGISTER.to_string()]);
+        assert!(enforce_token_surface(&ctx, "/api/shell/agent/register").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/shell/agent/poll").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/shell/agent/result").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/shell/agent/job_update").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/agents/ws").is_ok());
+    }
+
+    #[test]
+    fn enforce_token_surface_rejects_agent_token_on_normal_paths() {
+        let ctx = agent_ctx("alice", "laptop", vec![SCOPE_AGENT_REGISTER.to_string()]);
+        for path in [
+            "/api/runtime/status",
+            "/api/tools/list",
+            "/api/projects/list",
+            "/mcp",
+            "/api/users/me",
+        ] {
+            let result = enforce_token_surface(&ctx, path);
+            assert!(
+                result.is_err(),
+                "agent token should be rejected on {}",
+                path
+            );
+            let (status, msg) = result.unwrap_err();
+            assert_eq!(status, StatusCode::FORBIDDEN);
+            assert!(msg.contains("agent tokens"));
+        }
+    }
+
+    #[test]
+    fn enforce_token_surface_allows_account_credential_on_account_control_paths() {
+        let mut ctx = user_ctx("alice");
+        ctx.kind = AuthKind::AccountCredential;
+        assert!(enforce_token_surface(&ctx, "/api/users/me").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/tokens/list").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/tokens/register_hash").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/tokens/revoke").is_ok());
+        assert!(enforce_token_surface(&ctx, "/api/agent-tokens/register_hash").is_ok());
+    }
+
+    #[test]
+    fn enforce_token_surface_rejects_account_credential_on_normal_paths() {
+        let mut ctx = user_ctx("alice");
+        ctx.kind = AuthKind::AccountCredential;
+        for path in [
+            "/api/runtime/status",
+            "/api/projects/list",
+            "/api/tools/list",
+            "/mcp",
+            "/api/shell/agent/register",
+        ] {
+            let result = enforce_token_surface(&ctx, path);
+            assert!(
+                result.is_err(),
+                "account credential should be rejected on {}",
+                path
+            );
+            let (status, msg) = result.unwrap_err();
+            assert_eq!(status, StatusCode::FORBIDDEN);
+            assert!(msg.contains("account credentials"));
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // authenticate() verifier chain tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn authenticate_returns_bootstrap_when_auth_disabled() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: None, // auth disabled
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let result = authenticate(&config, None, "anything").await.unwrap();
+        let ctx = result.expect("should return bootstrap context");
+        assert!(ctx.is_bootstrap);
+        assert_eq!(ctx.kind, AuthKind::Bootstrap);
+    }
+
+    #[tokio::test]
+    async fn authenticate_returns_bootstrap_for_bootstrap_token() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let result = authenticate(&config, None, "secret").await.unwrap();
+        let ctx = result.expect("should return bootstrap context");
+        assert!(ctx.is_bootstrap);
+        assert_eq!(ctx.kind, AuthKind::Bootstrap);
+    }
+
+    #[tokio::test]
+    async fn authenticate_returns_none_for_unknown_token_without_db() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let result = authenticate(&config, None, "wc_pat_bogus").await.unwrap();
+        assert!(
+            result.is_none(),
+            "unknown token without DB should return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn authenticate_returns_none_for_unknown_token_with_db() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let (_tmp, db) = gate_test_db();
+        let result = authenticate(&config, Some(&db), "wc_pat_bogus")
+            .await
+            .unwrap();
+        assert!(result.is_none(), "unknown token should return None");
+    }
+
+    #[tokio::test]
+    async fn authenticate_returns_api_token_for_valid_user_pat() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let token = gate_mint_user_token(&db, &user);
+        let result = authenticate(&config, Some(&db), &token).await.unwrap();
+        let ctx = result.expect("should return auth context");
+        assert_eq!(ctx.kind, AuthKind::ApiToken);
+        assert_eq!(ctx.username.as_deref(), Some("alice"));
+        assert!(!ctx.is_bootstrap);
+    }
+
+    #[tokio::test]
+    async fn authenticate_returns_agent_token_for_valid_agent_token() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let token = gate_mint_agent_token(&db, &user, "alice-laptop");
+        let result = authenticate(&config, Some(&db), &token).await.unwrap();
+        let ctx = result.expect("should return auth context");
+        assert_eq!(ctx.kind, AuthKind::AgentToken);
+        assert_eq!(ctx.username.as_deref(), Some("alice"));
+        assert_eq!(ctx.allowed_client_id.as_deref(), Some("alice-laptop"));
+    }
+
+    #[tokio::test]
+    async fn authenticate_returns_account_credential_for_valid_credential() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let credential = gate_mint_account_credential(&db, &user);
+        let result = authenticate(&config, Some(&db), &credential).await.unwrap();
+        let ctx = result.expect("should return auth context");
+        assert_eq!(ctx.kind, AuthKind::AccountCredential);
+        assert_eq!(ctx.username.as_deref(), Some("alice"));
+    }
+
+    #[tokio::test]
+    async fn authenticate_rejects_disabled_user_pat() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let token = gate_mint_user_token(&db, &user);
+        db.set_user_disabled(&user.id, true, chrono::Utc::now().timestamp())
+            .unwrap();
+        let result = authenticate(&config, Some(&db), &token).await;
+        assert!(result.is_err(), "disabled user should return Err");
+    }
+
+    #[tokio::test]
+    async fn authenticate_rejects_expired_token() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let plaintext = generate_api_token();
+        let prefix = token_prefix(&plaintext);
+        let hash = hash_token(&plaintext);
+        let now = chrono::Utc::now().timestamp();
+        let record = crate::models::ApiKeyRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            user_id: user.id.clone(),
+            name: "expired".to_string(),
+            key_prefix: prefix,
+            created_at: now,
+            last_used_at: None,
+            revoked_at: None,
+            scopes: "runtime:read".to_string(),
+            expires_at: Some(now - 3600), // expired 1 hour ago
+            kind: crate::models::TOKEN_KIND_USER.to_string(),
+            allowed_client_id: None,
+        };
+        db.insert_api_key(&record, &hash).unwrap();
+        let result = authenticate(&config, Some(&db), &plaintext).await;
+        assert!(result.is_err(), "expired token should return Err");
+    }
+
+    #[tokio::test]
+    async fn authenticate_oauth2_stub_does_not_break_pat_fallback() {
+        // The OAuth2Verifier stub always returns Ok(None), so PatVerifier
+        // should still handle the token. This test verifies the chain works.
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let token = gate_mint_user_token(&db, &user);
+        // authenticate runs PatVerifier first, which should succeed.
+        let result = authenticate(&config, Some(&db), &token).await.unwrap();
+        assert!(
+            result.is_some(),
+            "PAT should still work with OAuth2 stub in chain"
+        );
+        let ctx = result.unwrap();
+        assert_eq!(ctx.kind, AuthKind::ApiToken);
+    }
+
+    // -----------------------------------------------------------------------
+    // authenticate_bearer() integration tests (verifier chain for QUIC path)
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn authenticate_bearer_bootstrap_when_auth_disabled() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: None,
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let result = authenticate_bearer(&config, None, Some("anything")).await;
+        let ctx = result.expect("should return bootstrap context");
+        assert!(ctx.is_bootstrap);
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_bootstrap_token() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let result = authenticate_bearer(&config, None, Some("secret")).await;
+        let ctx = result.expect("should return bootstrap context");
+        assert!(ctx.is_bootstrap);
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_none_when_no_token() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let result = authenticate_bearer(&config, None, None).await;
+        assert!(result.is_none(), "no token should return None");
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_valid_user_pat() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let token = gate_mint_user_token(&db, &user);
+        let result = authenticate_bearer(&config, Some(&db), Some(&token)).await;
+        let ctx = result.expect("should return auth context");
+        assert_eq!(ctx.kind, AuthKind::ApiToken);
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_valid_agent_token() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let token = gate_mint_agent_token(&db, &user, "alice-laptop");
+        let result = authenticate_bearer(&config, Some(&db), Some(&token)).await;
+        let ctx = result.expect("should return auth context");
+        assert_eq!(ctx.kind, AuthKind::AgentToken);
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_rejects_disabled_user() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let token = gate_mint_user_token(&db, &user);
+        db.set_user_disabled(&user.id, true, chrono::Utc::now().timestamp())
+            .unwrap();
+        let result = authenticate_bearer(&config, Some(&db), Some(&token)).await;
+        assert!(result.is_none(), "disabled user should return None");
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_rejects_unknown_token() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let result = authenticate_bearer(&config, Some(&db), Some("wc_pat_bogus")).await;
+        assert!(result.is_none(), "unknown token should return None");
     }
 }

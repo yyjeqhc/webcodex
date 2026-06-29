@@ -14,12 +14,19 @@ All protected API endpoints share a single authentication pipeline:
 HTTP request
   └─ Bearer token extraction
       └─ AuthMiddleware (Salvo hoop)
-          ├─ Bootstrap check (WEBCODEX_TOKEN)
-          ├─ PAT / Agent token lookup (api_keys table, SHA-256 hash)
-          ├─ Account credential lookup (account_credentials table)
+          ├─ authenticate(config, db, token)
+          │     ├─ PatVerifier: bootstrap → PAT → agent token → account credential
+          │     └─ OAuth2Verifier: stub (returns "not recognized")
+          ├─ enforce_token_surface(ctx, path)
+          │     ├─ Agent token → only agent transport endpoints
+          │     └─ Account credential → only account control endpoints
           └─ Inject AuthContext into Depot
               └─ Handler reads AuthContext → dispatches tool
 ```
+
+The QUIC agent transport uses the same `authenticate()` function via
+`authenticate_bearer()`, ensuring a single verification path for all
+transport surfaces.
 
 ## Module structure
 
@@ -64,18 +71,23 @@ During this refactoring phase both types coexist:
 ## PAT compatibility
 
 Existing `Authorization: Bearer <PAT>` requests continue to work unchanged.
-The PAT validation flow is:
+The verification is performed by `PatVerifier` (the primary verifier in the
+chain), which handles:
 
-1. Extract bearer token from the `Authorization` header
-2. Check if it matches the bootstrap `WEBCODEX_TOKEN` (constant-time compare)
-3. SHA-256 hash the token → look up in `api_keys` table
-4. Validate user exists, is not disabled, token is not expired
-5. Distinguish `ApiToken` vs `AgentToken` by the `kind` column
-6. For agent tokens: enforce the agent-transport-path gate
+1. Auth-disabled mode → bootstrap context
+2. Bootstrap token match (constant-time compare) → bootstrap context
+3. SHA-256 hash → `api_keys` table lookup → `ApiToken` or `AgentToken`
+4. SHA-256 hash → `account_credentials` table lookup → `AccountCredential`
+5. User disabled / token expired → error (mapped to 401)
 
-This flow is wrapped in the `PatVerifier` struct implementing the
-`TokenVerifier` trait. It is functionally identical to the pre-refactoring
-logic.
+After verification, `enforce_token_surface()` applies the path gate:
+- Agent tokens → only agent transport endpoints
+- Account credentials → only account control endpoints
+
+Both the HTTP `AuthMiddleware` and the QUIC `authenticate_bearer()` call
+the same `authenticate()` function, which runs the verifier chain
+(`PatVerifier` → `OAuth2Verifier`). This eliminates the previous
+duplication between the two authentication paths.
 
 ## TokenVerifier trait
 
@@ -117,8 +129,11 @@ When OAuth2 is implemented, the pipeline will be:
 1. Extract bearer token
 2. Try `PatVerifier` first (existing PAT/agent tokens)
 3. If `PatVerifier` returns `None`, try `OAuth2Verifier`
-4. `OAuth2Verifier` decodes the JWT, validates against OIDC JWKS
-5. Maps claims to `AuthContext` with `AuthMethod::OAuth2`
+4. `OAuth2Verifier` validates the token and maps claims to `AuthContext`
+
+`OAuth2Verifier` will validate WebCodex-issued OAuth2 access tokens. The
+initial implementation may use opaque DB-backed access tokens.
+JWT/JWKS/OIDC metadata can be added later where required by MCP clients.
 
 No OAuth2 endpoints will be exposed in this phase. The GPT Actions / MCP /
 REST surface continues to accept only the existing token formats.
@@ -168,6 +183,8 @@ per-endpoint via `can_use_agent_endpoint()`.
 
 ## What changed in this refactoring
 
+### Phase 1 — module restructure and new types
+
 1. **Module restructure**: `src/auth.rs` → `src/auth/` directory with
    `mod.rs`, `principal.rs`, `scopes.rs`, `pat.rs`.
 2. **New types**: `Principal`, `AuthMethod`, `AuthError`, `TokenVerifier`,
@@ -178,7 +195,24 @@ per-endpoint via `can_use_agent_endpoint()`.
    `scopes.rs` for use outside the `AuthContext` type.
 5. **`PatVerifier`**: the existing PAT validation logic wrapped in the
    `TokenVerifier` trait for composability.
-6. **`OAuth2Verifier`**: stub for future OAuth2 JWT validation.
+6. **`OAuth2Verifier`**: stub for future OAuth2 validation.
+
+### Phase 1b — verifier chain integration
+
+1. **`authenticate()`**: shared async function that runs the verifier chain
+   (`PatVerifier` → `OAuth2Verifier`). This is the single token verification
+   path used by both the HTTP `AuthMiddleware` and the QUIC
+   `authenticate_bearer()`.
+2. **`enforce_token_surface()`**: extracted the token-kind path gate into a
+   reusable function. Applied after verification, before handler dispatch.
+3. **`AuthMiddleware` rewritten**: the middleware now calls `authenticate()`
+   and `enforce_token_surface()` instead of inline bootstrap/DB lookup logic.
+4. **`authenticate_bearer()` made async**: the QUIC transport function now
+   calls the same `authenticate()` verifier chain, eliminating the previous
+   code duplication.
+5. **`PatVerifier` is the actual primary verifier**: it handles bootstrap,
+   PAT, agent tokens, and account credentials. The inline logic in
+   `AuthMiddleware` was removed.
 
 All existing behavior is preserved. No handler signatures changed. No
 external API surface changed. No database schema changes.

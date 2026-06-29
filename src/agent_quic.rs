@@ -293,7 +293,7 @@ async fn handle_quic_connection(
 
     // 2. Authenticate the agent token exactly like the HTTP/WebSocket paths.
     //    The token is dropped immediately after auth so it is never logged.
-    let auth = authenticate_bearer(&config, db.as_ref(), auth_token.as_deref());
+    let auth = authenticate_bearer(&config, db.as_ref(), auth_token.as_deref()).await;
     let auth = match auth {
         Some(ctx) => ctx,
         None => {

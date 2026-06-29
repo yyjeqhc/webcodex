@@ -443,3 +443,32 @@ Not implemented: `/oauth/authorize`, `client_credentials` grant,
    when OAuth2 is enabled with an issuer. 403 responses do not include it.
 6. **Authorization server metadata** (`/.well-known/oauth-authorization-server`)
    is intentionally deferred until `/oauth/authorize` exists.
+
+### Phase 2e-0 — authorization endpoint design contract
+
+See [OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md) for the full
+contract.
+
+1. **Design only**: `/oauth/authorize` is still not implemented in this
+   phase. No route, UI, authorization code issuance, token endpoint change, or
+   verifier behavior change is introduced.
+2. **Identity source**: Phase 2e-1 should protect `GET /oauth/authorize` with
+   the existing `AuthMiddleware`. The authorizing user is
+   `AuthContext.user_id`; no standalone login page, cookie session, or consent
+   UI is introduced yet.
+3. **Redirect trust boundary**: unknown clients, revoked clients, missing
+   `redirect_uri`, and redirect URI mismatches return direct 400 errors.
+   Errors after a registered redirect URI is validated may redirect with
+   `error` and verbatim `state`.
+4. **PKCE**: browser authorization code issuance must always require
+   `code_challenge_method=S256` and a `code_challenge`, regardless of the
+   legacy token-exchange `require_pkce` config.
+5. **Scopes**: requested scopes must be a subset of both
+   `client.allowed_scopes` and the global OAuth scope registry. Empty
+   requests default to the normalized intersection. `agent:*` and `admin` are
+   not valid OAuth delegation scopes.
+6. **Code storage**: successful authorization will store only a hash of the
+   `wc_oac_*` code in `oauth_authorization_codes` with user, client, redirect,
+   scope, resource, PKCE, creation, expiry, unused, and unrevoked metadata.
+7. **Metadata gate**: `/.well-known/oauth-authorization-server` remains
+   unexposed until `/oauth/authorize` is implemented and tested.

@@ -7,10 +7,51 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2d-1** publishes `GET /.well-known/oauth-protected-resource`, the
-OAuth Protected Resource Metadata endpoint (RFC 9728). This enables OAuth
-clients and MCP consumers to discover the resource identifier, authorization
-server, supported bearer methods, and available scopes.
+**Phase 2e-0** documents the design contract for the future
+`GET /oauth/authorize` endpoint. The endpoint is still not implemented. See
+[OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md) for the full request
+contract, state machine, security invariants, storage contract, test plan, and
+authorization-server metadata gate.
+
+### Phase 2e-0: authorization endpoint contract
+
+The future `/oauth/authorize` endpoint will be an authenticated first-party
+authorization endpoint protected by `AuthMiddleware`. The authorizing user is
+`AuthContext.user_id`; Phase 2e-1 will not add an independent username/password
+login page, third-party cookie session, or consent UI.
+
+Planned request contract:
+
+- `response_type` must be `code`.
+- `client_id` must identify a non-revoked registered client.
+- `redirect_uri` is required and must exactly match one registered URI.
+- `code_challenge` is required and `code_challenge_method` must be `S256`,
+  even if `config.oauth2.require_pkce` is false.
+- `scope`, when present, must be a subset of the client's allowed scopes and
+  the global OAuth scopes (`runtime:read`, `project:read`, `project:write`,
+  `job:run`, `account:manage`). `agent:*` and `admin` are not delegable.
+- Empty `scope` defaults to the normalized client/global OAuth intersection;
+  an empty result is `invalid_scope`.
+- `resource` is not yet supported and must be rejected rather than ignored.
+- `state` is opaque and must be returned verbatim on success and redirect
+  errors.
+
+Error handling is split by redirect trust. Unknown clients, revoked clients,
+missing `redirect_uri`, and redirect URI mismatches return direct 400 errors
+and must not redirect to a request-controlled URI. After `client_id` and
+`redirect_uri` are validated, request errors such as unsupported
+`response_type`, invalid scope, invalid PKCE, or unsupported `resource` may
+redirect to the registered URI with `error` and verbatim `state`.
+
+Successful authorization will generate one plaintext `wc_oac_*` code, store
+only its SHA-256 hash in `oauth_authorization_codes`, and redirect once with
+`code` and optional `state`. The stored row must include `client_id`,
+`user_id`, `redirect_uri`, normalized `scopes`, `resource`, PKCE challenge and
+method, `created_at`, `expires_at`, `used_at = None`, and
+`revoked_at = None`.
+
+Authorization server metadata (`/.well-known/oauth-authorization-server`)
+remains intentionally deferred until `/oauth/authorize` exists and is tested.
 
 ### Phase 2d-1: protected resource metadata
 

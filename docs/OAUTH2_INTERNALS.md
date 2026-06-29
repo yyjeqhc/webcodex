@@ -7,14 +7,66 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2f-1** enables delegated OAuth scope enforcement for
-`AuthKind::OAuth2Token`. The authorize endpoint still issues `wc_oac_*`
-authorization codes only after authenticated-user, client, exact redirect URI,
-`response_type`, PKCE S256, scope, and unsupported `resource` validation
-succeeds; the database stores only the code hash and metadata. See
-[OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md) for the full request
-contract, state machine, security invariants, storage contract, test plan, and
-authorization-server metadata contract.
+**Phase 2e-3** adds the minimal OAuth2 onboarding closed loop: a first-party
+client management API (`/api/oauth/clients/{create,list,revoke}`) so OAuth
+clients no longer need to be hand-inserted into the database, plus a minimal
+browser login + consent UX on `/oauth/authorize` backed by a short-lived
+in-memory first-party session cookie. The Bearer Bootstrap/PAT direct-issuance
+path on `/oauth/authorize` is preserved unchanged.
+
+### Phase 2e-3: client management and authorize UX
+
+Phase 2e-3 closes the OAuth2 onboarding loop without touching
+`/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, delegated scope
+enforcement, or existing PAT behavior:
+
+- **`POST /api/oauth/clients/create`** — creates a `wc_client_*` /
+  `wc_csec_*` pair. The plaintext `client_secret` is returned **exactly once**
+  in the response; only its SHA-256 hash is persisted
+  (`oauth_clients.client_secret_hash`). `redirect_uris` must be non-empty
+  absolute URLs; `http` is allowed only for `localhost`/`127.0.0.1`, all other
+  hosts require `https`. `allowed_scopes` defaults to the full delegable OAuth
+  scope set (`runtime:read project:read project:write job:run account:manage`)
+  when omitted/empty, must be a subset of `oauth_scopes_supported()`, is
+  deduplicated and stored in canonical order. Bootstrap/PAT may call; OAuth2
+  access tokens are rejected (`FirstPartyOnly` route policy).
+- **`POST /api/oauth/clients/list`** — lists all clients (including revoked).
+  Never returns `client_secret` or `client_secret_hash`.
+- **`POST /api/oauth/clients/revoke`** — sets `oauth_clients.revoked_at`
+  (idempotent) and cascades to revoke every active access token, refresh
+  token, and authorization code owned by that client.
+- **`GET /oauth/authorize`** is no longer behind `AuthMiddleware`. The handler
+  accepts either:
+  1. a first-party Bearer token (Bootstrap / PAT) → direct authorization-code
+     issuance (backward compatible, identical validation + redirect behavior),
+     or
+  2. a valid `webcodex_authorize_session` cookie → consent page, or
+  3. neither → minimal HTML login page.
+  OAuth2 access tokens, agent tokens, and account credentials presented as
+  Bearer are rejected with 403; no code is issued.
+- **`POST /oauth/authorize/login`** — accepts `application/x-www-form-urlencoded`
+  `token` (PAT or bootstrap) + `return_to`. Reuses the shared `authenticate()`
+  verifier chain, then narrows to Bootstrap/ApiToken only. On success sets a
+  short-lived (10 min) `HttpOnly; SameSite=Lax; Secure-when-https` session
+  cookie carrying an opaque `wc_authsess_*` id; only the SHA-256 hash of the
+  id is kept in the in-memory session store. The PAT/bootstrap plaintext is
+  never stored in the cookie, session, DB, or logs. `return_to` must be a
+  same-origin relative `/oauth/authorize?...` path (open-redirect guard).
+- **`POST /oauth/authorize/consent`** — requires a valid session cookie,
+  revalidates `client_id` / `redirect_uri` / scope / PKCE from the submitted
+  form (hidden fields are not trusted for identity or security), then either
+  issues an authorization code (`decision=allow`) or redirects with
+  `error=access_denied` (`decision=deny`).
+
+Route policy additions (`src/auth/scopes.rs`):
+`/api/oauth/clients/{create,list,revoke}` → `FirstPartyOnly`;
+`/oauth/authorize/{login,consent}` → `Public` (handlers do their own
+token/session validation).
+
+Not implemented in this phase: dynamic client registration, OIDC, JWKS/JWT,
+`userinfo_endpoint`, `client_credentials` grant, device code flow,
+resource/audience binding, full username/password login, and DB-backed session
+storage (the session store is process-local in-memory).
 
 ### Phase 2f-1: delegated OAuth scope enforcement
 

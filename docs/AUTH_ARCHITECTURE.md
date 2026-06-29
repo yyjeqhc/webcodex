@@ -39,6 +39,34 @@ QUIC agent transport
       └─ Reject if AuthKind::AccountCredential
 ```
 
+## OAuth2 authorize and client management
+
+Two OAuth2 surfaces intentionally sit **outside** the shared `AuthMiddleware`
+pipeline and do their own authentication:
+
+- `GET /oauth/authorize` accepts either a first-party Bearer token
+  (Bootstrap / PAT → direct authorization-code issuance, backward compatible)
+  or a short-lived `webcodex_authorize_session` cookie (browser consent flow).
+  No Bearer and no session → minimal HTML login page. OAuth2 access tokens,
+  agent tokens, and account credentials presented as Bearer are rejected
+  (403); the handler reuses `authenticate()` + `is_authorize_identity_allowed()`
+  so the first-party identity boundary is identical to the pre-session era.
+- `POST /oauth/authorize/login` and `POST /oauth/authorize/consent` do their
+  own token/session validation (route policy `Public`). The login form
+  authenticates a PAT/bootstrap token via the shared verifier chain and sets
+  an opaque `HttpOnly; SameSite=Lax` session cookie; only the SHA-256 hash of
+  the session id is kept in an in-process session store. The consent endpoint
+  requires a valid session and revalidates client/redirect/scope/PKCE from
+  scratch.
+
+The first-party OAuth client management API
+(`POST /api/oauth/clients/{create,list,revoke}`) **is** behind
+`AuthMiddleware`. Its route policy is `FirstPartyOnly`, so `OAuth2Token`
+callers are rejected even when they hold `account:manage`; agent tokens and
+account credentials are rejected by the existing surface gates. The plaintext
+`client_secret` is returned only once at creation; only its SHA-256 hash is
+stored.
+
 ## Module structure
 
 ```

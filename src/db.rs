@@ -1738,6 +1738,85 @@ impl Database {
         ))
     }
 
+    /// List all OAuth clients (including revoked ones), ordered by creation
+    /// time descending. Used by the first-party client management API.
+    pub fn list_oauth_clients(&self) -> anyhow::Result<Vec<OAuthClientRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, client_id, client_secret_hash, name, owner_user_id,
+                    redirect_uris, allowed_scopes, created_at, revoked_at
+             FROM oauth_clients ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map([], row_to_oauth_client)?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    /// Revoke an OAuth client by its public `client_id` (e.g. `wc_client_*`).
+    /// Idempotent: already-revoked clients are left untouched and still count
+    /// as success. Returns `true` when a row matched the `client_id`.
+    pub fn revoke_oauth_client_by_client_id(
+        &self,
+        client_id: &str,
+        ts: i64,
+    ) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE oauth_clients SET revoked_at = COALESCE(revoked_at, ?2) \
+             WHERE client_id = ?1",
+            params![client_id, ts],
+        )?;
+        Ok(updated > 0)
+    }
+
+    /// Revoke all active access tokens belonging to `client_id`. Returns the
+    /// number of rows updated. Idempotent (already-revoked tokens use
+    /// `COALESCE` and are not double-stamped).
+    pub fn revoke_oauth_access_tokens_for_client(
+        &self,
+        client_id: &str,
+        ts: i64,
+    ) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE oauth_access_tokens SET revoked_at = COALESCE(revoked_at, ?2) \
+             WHERE client_id = ?1",
+            params![client_id, ts],
+        )?;
+        Ok(updated)
+    }
+
+    /// Revoke all active refresh tokens belonging to `client_id`. Returns the
+    /// number of rows updated.
+    pub fn revoke_oauth_refresh_tokens_for_client(
+        &self,
+        client_id: &str,
+        ts: i64,
+    ) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE oauth_refresh_tokens SET revoked_at = COALESCE(revoked_at, ?2) \
+             WHERE client_id = ?1",
+            params![client_id, ts],
+        )?;
+        Ok(updated)
+    }
+
+    /// Revoke all active authorization codes belonging to `client_id`.
+    /// Returns the number of rows updated.
+    pub fn revoke_oauth_authorization_codes_for_client(
+        &self,
+        client_id: &str,
+        ts: i64,
+    ) -> anyhow::Result<usize> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE oauth_authorization_codes SET revoked_at = COALESCE(revoked_at, ?2) \
+             WHERE client_id = ?1",
+            params![client_id, ts],
+        )?;
+        Ok(updated)
+    }
+
     // --- OAuth authorization codes ---
 
     pub fn insert_oauth_authorization_code(

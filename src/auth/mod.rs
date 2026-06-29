@@ -766,7 +766,7 @@ fn enforce_oauth_route_scope(
 ///
 /// This is the **single** token verification path used by both the HTTP
 /// [`AuthMiddleware`] and the non-HTTP [`authenticate_bearer`].
-async fn authenticate(
+pub(crate) async fn authenticate(
     config: &Config,
     db: Option<&Arc<Database>>,
     token: &str,

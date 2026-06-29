@@ -24,6 +24,60 @@ WEBCODEX_DATA=/var/lib/webcodex
 
 `WEBCODEX_TOKEN` 只用于初始设置和管理操作。日常 GPT Actions 与 MCP 调用应使用用户 API token；agent 应使用 agent token。
 
+## OAuth2
+
+OAuth2 默认关闭。启用后，GPT Actions / MCP 客户端可通过 authorization code 流程获取委托的 `wc_oat_*` access token：
+
+```text
+WEBCODEX_OAUTH2_ENABLED=true
+WEBCODEX_OAUTH2_ISSUER=https://your-domain.example
+WEBCODEX_PUBLIC_URL=https://your-domain.example
+```
+
+`WEBCODEX_OAUTH2_ISSUER` 优先于 `WEBCODEX_PUBLIC_URL` 用于 `/.well-known/*`
+元数据中的端点 URL。生产环境请将两者都设为公开 HTTPS 域名，使 discovery
+公布的 authorize/token/revocation 端点可被客户端访问，并让 authorize
+session cookie 标记 `Secure`。
+
+### 创建 OAuth client
+
+```bash
+curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
+  -H "Authorization: Bearer $WEBCODEX_PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ChatGPT Action","redirect_uris":["https://example.com/oauth/callback"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
+```
+
+请妥善保存响应中的 `client_secret` —— 它只返回一次，数据库只存其
+SHA-256 哈希。省略 `allowed_scopes` 则授予完整可委托 OAuth scope 集合
+（`runtime:read project:read project:write job:run account:manage`）。
+
+使用 `POST /api/oauth/clients/list` 与
+`POST /api/oauth/clients/revoke`（body `{"client_id":"wc_client_..."}`）
+列出与撤销 client。撤销 client 会同时撤销该 client 下所有有效的 access
+token、refresh token 与 authorization code。
+
+### 浏览器 authorize 流程
+
+将客户端指向 `https://your-domain.example/oauth/authorize?...`。在没有
+Bearer token 且没有 session cookie 时，WebCodex 渲染一个最小登录页；输入
+WebCodex PAT（或 bootstrap token）即可获得 10 分钟的 `HttpOnly` session
+cookie，随后在 consent 页确认。点击 `Allow` 会重定向回注册的
+`redirect_uri` 并携带 `wc_oac_*` code；在 `POST /oauth/token` 用它换取
+`wc_oat_*` access token。`/oauth/authorize` 的 Bearer Bootstrap/PAT 直接签发
+路径对非浏览器客户端继续可用。
+
+完整的端到端 smoke test 演练（启用、创建 client、authorize、换 token、
+撤销）见 [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md)。
+
+### 暂不支持
+
+动态客户端注册、OIDC / `/.well-known/openid-configuration`、JWKS/JWT ID
+token、`userinfo_endpoint`、`client_credentials` grant、device code 流程，
+以及 MCP resource/audience 绑定均未实现。默认 client scope 集合可授予
+完整可委托权限，便于自托管 GPT Action / MCP 使用；对不可信客户端请使用
+收窄的 `allowed_scopes`。
+
 ## Server-first setup
 
 推荐的分发路径是 npm thin installer/wrapper：

@@ -321,6 +321,960 @@ fn redirect_error_for_missing_authorize_param(error: &OAuthAuthorizeError) -> &'
 }
 
 // ---------------------------------------------------------------------------
+// First-party authorize browser session (Phase 2e-3)
+// ---------------------------------------------------------------------------
+
+/// Cookie name carrying the opaque authorize session id.
+const AUTHORIZE_SESSION_COOKIE: &str = "webcodex_authorize_session";
+
+/// Authorize session lifetime in seconds (10 minutes). Short on purpose:
+/// the session only bridges the login form to the consent decision.
+const AUTHORIZE_SESSION_TTL_SECS: i64 = 600;
+
+/// In-memory first-party authorize session store. Holds short-lived sessions
+/// created when a user submits a PAT/bootstrap token at the authorize login
+/// page. The session cookie carries an opaque random id; only its SHA-256
+/// hash is used as the map key so the plaintext id is never stored.
+#[derive(Default)]
+pub(crate) struct AuthorizeSessionStore {
+    inner: std::sync::Mutex<std::collections::HashMap<String, AuthorizeSession>>,
+}
+
+#[derive(Clone)]
+#[allow(dead_code)] // fields retained for session audit/future consent display
+struct AuthorizeSession {
+    user_id: String,
+    username: Option<String>,
+    /// `AuthKind` of the credential used to log in (Bootstrap or ApiToken).
+    auth_kind: AuthKind,
+    created_at: i64,
+    expires_at: i64,
+}
+
+impl AuthorizeSessionStore {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    /// Create a new session and return the opaque plaintext session id. Only
+    /// the SHA-256 hash of the id is stored in the map. PAT/bootstrap
+    /// plaintext is never stored — only the resolved user identity.
+    fn create_session(
+        &self,
+        user_id: String,
+        username: Option<String>,
+        auth_kind: AuthKind,
+    ) -> String {
+        let now = chrono::Utc::now().timestamp();
+        let session = AuthorizeSession {
+            user_id,
+            username,
+            auth_kind,
+            created_at: now,
+            expires_at: now + AUTHORIZE_SESSION_TTL_SECS,
+        };
+        let id = generate_authorize_session_id();
+        let hash = hash_token(&id);
+        let mut guard = self.inner.lock().unwrap();
+        // Opportunistic cleanup of expired sessions to bound growth.
+        guard.retain(|_, s| s.expires_at > now);
+        guard.insert(hash, session);
+        id
+    }
+
+    /// Look up a session by its opaque plaintext id. Returns `None` when the
+    /// session does not exist or has expired. Expired sessions are removed.
+    fn get_session(&self, id: &str) -> Option<AuthorizeSession> {
+        if id.is_empty() {
+            return None;
+        }
+        let hash = hash_token(id);
+        let now = chrono::Utc::now().timestamp();
+        let mut guard = self.inner.lock().unwrap();
+        let session = guard.get(&hash).cloned();
+        match session {
+            Some(s) if s.expires_at > now => Some(s),
+            Some(_) => {
+                guard.remove(&hash);
+                None
+            }
+            None => None,
+        }
+    }
+}
+
+fn generate_authorize_session_id() -> String {
+    let mut random = String::with_capacity(64);
+    while random.len() < 64 {
+        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
+    }
+    random.truncate(64);
+    format!("wc_authsess_{}", random)
+}
+
+/// Build a `Set-Cookie` header value for the authorize session id.
+fn authorize_session_cookie_header(id: &str, secure: bool) -> String {
+    let mut cookie = format!(
+        "{}={}; Max-Age={}; Path=/; HttpOnly; SameSite=Lax",
+        AUTHORIZE_SESSION_COOKIE, id, AUTHORIZE_SESSION_TTL_SECS
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
+}
+
+/// Build a `Set-Cookie` header that clears the authorize session cookie.
+fn authorize_session_clear_cookie_header(secure: bool) -> String {
+    let mut cookie = format!(
+        "{}=; Max-Age=0; Path=/; HttpOnly; SameSite=Lax",
+        AUTHORIZE_SESSION_COOKIE
+    );
+    if secure {
+        cookie.push_str("; Secure");
+    }
+    cookie
+}
+
+/// Return the opaque session id from the request's Cookie header, if present.
+fn authorize_session_id_from_request(req: &Request) -> Option<String> {
+    let header = req.headers().get("cookie")?.to_str().ok()?;
+    let prefix = format!("{}=", AUTHORIZE_SESSION_COOKIE);
+    for pair in header.split(';') {
+        let pair = pair.trim();
+        if let Some(rest) = pair.strip_prefix(&prefix) {
+            let value = rest.trim();
+            if !value.is_empty() {
+                return Some(value.to_string());
+            }
+        }
+    }
+    None
+}
+
+/// True when the configured issuer/public URL is an https URL, so the session
+/// cookie should carry the `Secure` attribute.
+fn is_secure_authorize(config: &crate::Config) -> bool {
+    config
+        .oauth2
+        .issuer
+        .as_deref()
+        .map(|s| s.trim_start().to_ascii_lowercase().starts_with("https://"))
+        .unwrap_or(false)
+}
+
+/// Minimal HTML-escaping for interpolating untrusted text into an HTML page.
+fn html_escape(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
+            '"' => out.push_str("&quot;"),
+            '\'' => out.push_str("&#39;"),
+            _ => out.push(ch),
+        }
+    }
+    out
+}
+
+/// Render the minimal authorize login page. `return_to` is the original
+/// `/oauth/authorize?...` path+query the user navigated to. It is rendered
+/// into a hidden field and revalidated on POST.
+fn authorize_login_html(return_to: &str, error: Option<&str>) -> String {
+    let error_html = match error {
+        Some(msg) => format!(r#"<p class="error">{}</p>"#, html_escape(msg)),
+        None => String::new(),
+    };
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>WebCodex Authorize</title>
+</head>
+<body>
+<h1>WebCodex Authorization</h1>
+<p>Sign in with a WebCodex token (PAT or bootstrap token) to continue.</p>
+{error_html}
+<form method="post" action="/oauth/authorize/login">
+  <input type="hidden" name="return_to" value="{return_to}">
+  <label>WebCodex token<br>
+    <input type="password" name="token" autocomplete="current-password" required>
+  </label>
+  <button type="submit">Continue</button>
+</form>
+</body>
+</html>"#,
+        return_to = html_escape(return_to),
+        error_html = error_html,
+    )
+}
+
+/// Render the minimal authorize consent page. The original authorize query
+/// parameters are carried as hidden fields and revalidated on POST.
+fn authorize_consent_html(
+    client_name: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    scopes: &[String],
+    original_query: &str,
+) -> String {
+    let scope_items = scopes
+        .iter()
+        .map(|s| format!("<li>{}</li>", html_escape(s)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    // Re-render the original authorize query as hidden form fields so the
+    // consent POST can revalidate every parameter from scratch.
+    let hidden_fields: String = url::form_urlencoded::parse(original_query.as_bytes())
+        .map(|(k, v)| {
+            format!(
+                r#"  <input type="hidden" name="{}" value="{}">"#,
+                html_escape(k.as_ref()),
+                html_escape(v.as_ref())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Authorize WebCodex client</title>
+</head>
+<body>
+<h1>Authorize WebCodex client</h1>
+<p>Client: <strong>{client_name}</strong> ({client_id})</p>
+<p>Redirect URI: <code>{redirect_uri}</code></p>
+<p>The application is requesting the following scopes:</p>
+<ul>
+{scope_items}
+</ul>
+<form method="post" action="/oauth/authorize/consent">
+{hidden_fields}
+  <button name="decision" value="allow">Allow</button>
+  <button name="decision" value="deny">Deny</button>
+</form>
+</body>
+</html>"#,
+        client_name = html_escape(client_name),
+        client_id = html_escape(client_id),
+        redirect_uri = html_escape(redirect_uri),
+        scope_items = scope_items,
+        hidden_fields = hidden_fields,
+    )
+}
+
+/// Validate a `return_to` value submitted from the login form. It must be a
+/// same-origin relative path to prevent open redirect. Accepted form:
+/// starts with a single `/`, is not `//...` or `/\...`, and must point at the
+/// authorize endpoint.
+fn validate_authorize_return_to(return_to: &str) -> Result<(), ()> {
+    if !return_to.starts_with('/') {
+        return Err(());
+    }
+    // Reject scheme-relative (`//host`) and backslash tricks.
+    if return_to.starts_with("//") || return_to.starts_with("/\\") {
+        return Err(());
+    }
+    let path = return_to.split('?').next().unwrap_or("");
+    // Normalize trailing slash for the comparison.
+    let path = path.trim_end_matches('/');
+    if path != "/oauth/authorize" {
+        return Err(());
+    }
+    Ok(())
+}
+
+/// Parse an `application/x-www-form-urlencoded` body into owned pairs.
+async fn parse_form_body(req: &mut Request) -> Option<Vec<(String, String)>> {
+    let body = req.payload().await.ok()?;
+    if body.len() > 16 * 1024 {
+        return None;
+    }
+    Some(
+        url::form_urlencoded::parse(&body)
+            .into_owned()
+            .collect::<Vec<_>>(),
+    )
+}
+
+fn form_field<'a>(pairs: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    pairs
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+}
+
+// ---------------------------------------------------------------------------
+// POST /oauth/authorize/login
+// ---------------------------------------------------------------------------
+
+#[handler]
+pub(crate) async fn oauth_authorize_login(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let Some(config) = crate::auth::get_config(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "no config"})));
+        return;
+    };
+    if !config.oauth2.enabled {
+        res.status_code(StatusCode::NOT_FOUND);
+        res.render(Json(serde_json::json!({"error": "OAuth2 is not enabled"})));
+        return;
+    }
+    let db = crate::auth::get_db(depot);
+    let Some(session_store) = depot
+        .obtain::<std::sync::Arc<AuthorizeSessionStore>>()
+        .ok()
+        .cloned()
+    else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "no session store"})));
+        return;
+    };
+
+    let pairs = match parse_form_body(req).await {
+        Some(p) => p,
+        None => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Text::Html(authorize_login_html(
+                "/oauth/authorize",
+                Some("invalid request body"),
+            )));
+            return;
+        }
+    };
+
+    let return_to = form_field(&pairs, "return_to").unwrap_or("/oauth/authorize");
+    let return_to_owned = return_to.to_string();
+
+    // Revalidate return_to before doing anything with the submitted token.
+    if validate_authorize_return_to(&return_to_owned).is_err() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Text::Html(authorize_login_html(
+            "/oauth/authorize",
+            Some("invalid return destination"),
+        )));
+        return;
+    }
+
+    let token = match form_field(&pairs, "token") {
+        Some(t) if !t.is_empty() => t.to_string(),
+        _ => {
+            res.status_code(StatusCode::UNAUTHORIZED);
+            res.render(Text::Html(authorize_login_html(
+                &return_to_owned,
+                Some("a WebCodex token is required"),
+            )));
+            return;
+        }
+    };
+
+    // Reuse the shared verifier chain (PatVerifier -> OAuth2Verifier). This
+    // accepts PAT (wc_pat_*), bootstrap, agent, account credentials, and
+    // OAuth2 access tokens. We then narrow to Bootstrap / ApiToken only.
+    let ctx = match crate::auth::authenticate(&config, db.as_ref(), &token).await {
+        Ok(Some(ctx)) => ctx,
+        _ => {
+            res.status_code(StatusCode::UNAUTHORIZED);
+            res.render(Text::Html(authorize_login_html(
+                &return_to_owned,
+                Some("invalid token"),
+            )));
+            return;
+        }
+    };
+
+    if !is_authorize_identity_allowed(&ctx) {
+        // Reject OAuth2 access tokens, agent tokens, and account credentials.
+        // Do not reveal which kind was rejected; generic message.
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Text::Html(authorize_login_html(
+            &return_to_owned,
+            Some("this token kind cannot authorize OAuth clients"),
+        )));
+        return;
+    }
+
+    let Some(user_id) = ctx.user_id.clone() else {
+        // Bootstrap has no user_id. For the authorize flow we need a concrete
+        // resource owner, so bootstrap login is mapped to a synthetic owner.
+        // (Bootstrap is a server-wide admin token; in practice OAuth clients
+        // are created by a real user. We still allow bootstrap to drive the
+        // browser flow for local dev by using a stable sentinel owner id.)
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(Text::Html(authorize_login_html(
+            &return_to_owned,
+            Some("bootstrap login is not supported for OAuth authorize; use a PAT"),
+        )));
+        return;
+    };
+
+    let session_id = session_store.create_session(user_id, ctx.username.clone(), ctx.kind);
+    let secure = is_secure_authorize(&config);
+    res.headers_mut().append(
+        salvo::http::header::SET_COOKIE,
+        HeaderValue::from_str(&authorize_session_cookie_header(&session_id, secure)).unwrap(),
+    );
+    res.status_code(StatusCode::FOUND);
+    res.headers_mut().insert(
+        salvo::http::header::LOCATION,
+        HeaderValue::from_str(&return_to_owned).unwrap(),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// POST /oauth/authorize/consent
+// ---------------------------------------------------------------------------
+
+#[handler]
+pub(crate) async fn oauth_authorize_consent(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let Some(config) = crate::auth::get_config(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "no config"})));
+        return;
+    };
+    if !config.oauth2.enabled {
+        res.status_code(StatusCode::NOT_FOUND);
+        res.render(Json(serde_json::json!({"error": "OAuth2 is not enabled"})));
+        return;
+    }
+    let Some(db) = crate::auth::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "DB not available"})));
+        return;
+    };
+    let Some(session_store) = depot
+        .obtain::<std::sync::Arc<AuthorizeSessionStore>>()
+        .ok()
+        .cloned()
+    else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "no session store"})));
+        return;
+    };
+
+    // A valid first-party authorize session is mandatory. Hidden form fields
+    // are NOT trusted for identity.
+    let Some(session_cookie) = authorize_session_id_from_request(req) else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(Text::Html(authorize_login_html(
+            "/oauth/authorize",
+            Some("session expired; please sign in again"),
+        )));
+        return;
+    };
+    let Some(session) = session_store.get_session(&session_cookie) else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        // Clear the stale cookie.
+        let secure = is_secure_authorize(&config);
+        res.headers_mut().append(
+            salvo::http::header::SET_COOKIE,
+            HeaderValue::from_str(&authorize_session_clear_cookie_header(secure)).unwrap(),
+        );
+        res.render(Text::Html(authorize_login_html(
+            "/oauth/authorize",
+            Some("session expired; please sign in again"),
+        )));
+        return;
+    };
+
+    let pairs = match parse_form_body(req).await {
+        Some(p) => p,
+        None => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(serde_json::json!({"error": "invalid request body"})));
+            return;
+        }
+    };
+
+    let decision = form_field(&pairs, "decision").unwrap_or("").to_string();
+    let is_allow = decision == "allow";
+
+    // Reconstruct the authorize query from the submitted hidden fields and
+    // revalidate client / redirect_uri / scope / PKCE from scratch.
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for (k, v) in pairs.iter().filter(|(k, _)| k != "decision") {
+        serializer.append_pair(k, v);
+    }
+    let query = serializer.finish();
+
+    // Always need client + redirect to issue a safe redirect (even for deny).
+    let parsed = match parse_authorize_query(&query) {
+        Ok(p) => p,
+        Err(_) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(
+                serde_json::json!({"error": "invalid authorization request"}),
+            ));
+            return;
+        }
+    };
+
+    let client = match db.get_oauth_client_by_client_id(&parsed.client_id) {
+        Ok(Some(c)) => c,
+        _ => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(serde_json::json!({"error": "invalid client_id"})));
+            return;
+        }
+    };
+
+    if !client
+        .redirect_uris_vec()
+        .iter()
+        .any(|r| r == &parsed.redirect_uri)
+    {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(serde_json::json!({"error": "redirect_uri mismatch"})));
+        return;
+    }
+
+    if !is_allow {
+        // Deny: redirect with error=access_denied.
+        redirect_with_oauth_error(
+            res,
+            &parsed.redirect_uri,
+            "access_denied",
+            parsed.state.as_deref(),
+        );
+        return;
+    }
+
+    // Allow: revalidate response_type / PKCE / scope / resource.
+    if parsed.response_type != "code" {
+        redirect_with_oauth_error(
+            res,
+            &parsed.redirect_uri,
+            "unsupported_response_type",
+            parsed.state.as_deref(),
+        );
+        return;
+    }
+    if parsed.code_challenge.is_empty() || parsed.code_challenge_method != "S256" {
+        redirect_with_oauth_error(
+            res,
+            &parsed.redirect_uri,
+            "invalid_request",
+            parsed.state.as_deref(),
+        );
+        return;
+    }
+    let scopes = match normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
+        Ok(s) => s,
+        Err(_) => {
+            redirect_with_oauth_error(
+                res,
+                &parsed.redirect_uri,
+                "invalid_scope",
+                parsed.state.as_deref(),
+            );
+            return;
+        }
+    };
+    if parsed.resource.is_some() {
+        redirect_with_oauth_error(
+            res,
+            &parsed.redirect_uri,
+            "invalid_request",
+            parsed.state.as_deref(),
+        );
+        return;
+    }
+
+    // Issue the authorization code bound to the session's user.
+    let now = chrono::Utc::now().timestamp();
+    let plaintext_code = generate_oauth_authorization_code();
+    let code_hash = hash_token(&plaintext_code);
+    let record = OAuthAuthorizationCodeRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        code_hash,
+        client_id: client.client_id.clone(),
+        user_id: session.user_id.clone(),
+        redirect_uri: parsed.redirect_uri.clone(),
+        scopes,
+        resource: None,
+        code_challenge: Some(parsed.code_challenge.clone()),
+        code_challenge_method: Some("S256".to_string()),
+        created_at: now,
+        expires_at: now + config.oauth2.authorization_code_ttl_secs,
+        used_at: None,
+        revoked_at: None,
+    };
+    if db
+        .insert_oauth_authorization_code(&record, &record.code_hash)
+        .is_err()
+    {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "internal error",
+        );
+        return;
+    }
+
+    redirect_with_authorization_code(
+        res,
+        &parsed.redirect_uri,
+        &plaintext_code,
+        parsed.state.as_deref(),
+    );
+}
+
+// ---------------------------------------------------------------------------
+// OAuth client management API (first-party)
+// ---------------------------------------------------------------------------
+
+const MAX_CLIENT_NAME_LEN: usize = 128;
+const MAX_CLIENT_REDIRECT_URIS: usize = 16;
+
+#[derive(Debug, serde::Deserialize)]
+struct CreateOAuthClientRequest {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    redirect_uris: Option<Vec<String>>,
+    #[serde(default)]
+    allowed_scopes: Option<Vec<String>>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RevokeOAuthClientRequest {
+    client_id: String,
+}
+
+/// The full default delegable OAuth scope set, used when `allowed_scopes` is
+/// omitted or empty on client creation.
+fn default_client_allowed_scopes() -> Vec<&'static str> {
+    OAUTH_SCOPES_SUPPORTED.to_vec()
+}
+
+/// Validate a redirect URI for OAuth client registration.
+///
+/// Rules:
+/// - Must parse as an absolute URL.
+/// - Scheme must be `http` or `https`.
+/// - `http` is only allowed for loopback hosts (`localhost`, `127.0.0.1`,
+///   `[::1]`). All other hosts must use `https`.
+fn validate_redirect_uri(uri: &str) -> Result<(), String> {
+    let trimmed = uri.trim();
+    if trimmed.is_empty() {
+        return Err("redirect_uri cannot be empty".to_string());
+    }
+    let parsed =
+        url::Url::parse(trimmed).map_err(|_| "redirect_uri is not a valid URL".to_string())?;
+    let scheme = parsed.scheme().to_ascii_lowercase();
+    if scheme != "http" && scheme != "https" {
+        return Err("redirect_uri must use http or https".to_string());
+    }
+    let host = parsed.host_str().unwrap_or("");
+    if scheme == "http" {
+        let is_loopback = matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]");
+        if !is_loopback {
+            return Err("http redirect_uri is only allowed for localhost/127.0.0.1; use https for other hosts".to_string());
+        }
+    }
+    if host.is_empty() {
+        return Err("redirect_uri must have a host".to_string());
+    }
+    Ok(())
+}
+
+/// Normalize an `allowed_scopes` input for client registration. When `input`
+/// is `None` or empty, returns the full default delegable OAuth scope set.
+/// Otherwise every scope must be a member of the global OAuth scope registry.
+/// Output is deduplicated and ordered by the global registry.
+fn normalize_client_allowed_scopes(input: Option<&[String]>) -> Result<Vec<String>, String> {
+    let provided: Vec<&String> = input
+        .map(|v| v.iter().filter(|s| !s.trim().is_empty()).collect())
+        .unwrap_or_default();
+    if provided.is_empty() {
+        return Ok(default_client_allowed_scopes()
+            .iter()
+            .map(|s| s.to_string())
+            .collect());
+    }
+    let supported: std::collections::HashSet<&str> =
+        oauth_scopes_supported().iter().copied().collect();
+    for scope in &provided {
+        if !supported.contains(scope.as_str()) {
+            return Err(format!("unknown scope '{}'", scope));
+        }
+    }
+    // Order by the global registry and dedup.
+    let mut out = Vec::new();
+    for scope in oauth_scopes_supported() {
+        if provided.iter().any(|s| s == scope) {
+            out.push((*scope).to_string());
+        }
+    }
+    Ok(out)
+}
+
+#[handler]
+pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(Json(
+            serde_json::json!({"error": "authenticated user required"}),
+        ));
+        return;
+    };
+    // Double-check first-party identity. The route policy + AuthMiddleware
+    // already block OAuth2Token/AgentToken/AccountCredential, but we defend
+    // in depth here too.
+    if !is_authorize_identity_allowed(auth) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(serde_json::json!({
+            "error": "OAuth2 access tokens cannot manage OAuth clients"
+        })));
+        return;
+    }
+    let Some(db) = crate::auth::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "DB not available"})));
+        return;
+    };
+
+    let body: CreateOAuthClientRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(serde_json::json!({
+                "error": "invalid request body",
+                "detail": e.to_string()
+            })));
+            return;
+        }
+    };
+
+    let name = body.name.as_deref().unwrap_or("").trim().to_string();
+    if name.is_empty() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(serde_json::json!({"error": "name is required"})));
+        return;
+    }
+    if name.chars().count() > MAX_CLIENT_NAME_LEN {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(serde_json::json!({
+            "error": format!("name is too long; maximum is {} characters", MAX_CLIENT_NAME_LEN)
+        })));
+        return;
+    }
+
+    let redirect_uris: Vec<String> = body.redirect_uris.unwrap_or_default();
+    if redirect_uris.is_empty() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(
+            serde_json::json!({"error": "redirect_uris must be a non-empty array"}),
+        ));
+        return;
+    }
+    if redirect_uris.len() > MAX_CLIENT_REDIRECT_URIS {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(serde_json::json!({
+            "error": format!("too many redirect_uris; maximum is {}", MAX_CLIENT_REDIRECT_URIS)
+        })));
+        return;
+    }
+    for uri in &redirect_uris {
+        if let Err(msg) = validate_redirect_uri(uri) {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(serde_json::json!({"error": msg})));
+            return;
+        }
+    }
+    // Dedup redirect URIs preserving order.
+    let mut seen = std::collections::HashSet::new();
+    let redirect_uris: Vec<String> = redirect_uris
+        .into_iter()
+        .filter(|u| seen.insert(u.clone()))
+        .collect();
+    let redirect_uris_str = redirect_uris.join("\n");
+
+    let allowed_scopes = match normalize_client_allowed_scopes(body.allowed_scopes.as_deref()) {
+        Ok(s) => s,
+        Err(msg) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(serde_json::json!({"error": msg})));
+            return;
+        }
+    };
+    let allowed_scopes_str = allowed_scopes.join(" ");
+
+    // Bootstrap has no real user_id; attribute the client to the first
+    // registered user (bootstrap is the server-wide admin and has no identity
+    // row of its own). PATs carry their real user_id. If no users exist,
+    // refuse rather than violating the `owner_user_id` foreign key.
+    let owner_user_id = match auth.user_id.clone() {
+        Some(id) => id,
+        None => match db.list_users().map(|mut u| u.pop()) {
+            Ok(Some(u)) => u.id,
+            _ => {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(Json(serde_json::json!({
+                    "error": "no registered users; create a user or use a PAT to create OAuth clients"
+                })));
+                return;
+            }
+        },
+    };
+
+    let plaintext_secret = crate::auth::generate_oauth_client_secret();
+    let secret_hash = hash_token(&plaintext_secret);
+    let now = chrono::Utc::now().timestamp();
+    let record = crate::models::OAuthClientRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        client_id: crate::auth::generate_oauth_client_id(),
+        client_secret_hash: secret_hash,
+        name: name.clone(),
+        owner_user_id,
+        redirect_uris: redirect_uris_str,
+        allowed_scopes: allowed_scopes_str,
+        created_at: now,
+        revoked_at: None,
+    };
+    if let Err(e) = db.insert_oauth_client(&record) {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(
+            serde_json::json!({"error": "failed to create client", "detail": e.to_string()}),
+        ));
+        return;
+    }
+
+    apply_oauth_no_store_headers(res);
+    res.render(Json(serde_json::json!({
+        "success": true,
+        "client": {
+            "client_id": record.client_id,
+            "name": record.name,
+            "redirect_uris": record.redirect_uris_vec(),
+            "allowed_scopes": record.allowed_scopes_vec(),
+            "created_at": record.created_at,
+            "revoked_at": record.revoked_at,
+        },
+        "client_secret": plaintext_secret,
+    })));
+}
+
+#[handler]
+pub(crate) async fn oauth_clients_list(depot: &mut Depot, res: &mut Response) {
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(Json(
+            serde_json::json!({"error": "authenticated user required"}),
+        ));
+        return;
+    };
+    if !is_authorize_identity_allowed(auth) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(serde_json::json!({
+            "error": "OAuth2 access tokens cannot manage OAuth clients"
+        })));
+        return;
+    }
+    let Some(db) = crate::auth::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "DB not available"})));
+        return;
+    };
+
+    let clients = match db.list_oauth_clients() {
+        Ok(c) => c,
+        Err(_) => {
+            res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+            res.render(Json(serde_json::json!({"error": "failed to list clients"})));
+            return;
+        }
+    };
+
+    let clients_json: Vec<serde_json::Value> = clients
+        .into_iter()
+        .map(|c| {
+            serde_json::json!({
+                "client_id": c.client_id,
+                "name": c.name,
+                "redirect_uris": c.redirect_uris_vec(),
+                "allowed_scopes": c.allowed_scopes_vec(),
+                "created_at": c.created_at,
+                "revoked_at": c.revoked_at,
+            })
+        })
+        .collect();
+
+    apply_oauth_no_store_headers(res);
+    res.render(Json(serde_json::json!({
+        "success": true,
+        "clients": clients_json,
+    })));
+}
+
+#[handler]
+pub(crate) async fn oauth_clients_revoke(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
+        res.status_code(StatusCode::UNAUTHORIZED);
+        res.render(Json(
+            serde_json::json!({"error": "authenticated user required"}),
+        ));
+        return;
+    };
+    if !is_authorize_identity_allowed(auth) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(serde_json::json!({
+            "error": "OAuth2 access tokens cannot manage OAuth clients"
+        })));
+        return;
+    }
+    let Some(db) = crate::auth::get_db(depot) else {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({"error": "DB not available"})));
+        return;
+    };
+
+    let body: RevokeOAuthClientRequest = match req.parse_json().await {
+        Ok(b) => b,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Json(serde_json::json!({
+                "error": "invalid request body",
+                "detail": e.to_string()
+            })));
+            return;
+        }
+    };
+    let client_id = body.client_id.trim().to_string();
+    if client_id.is_empty() {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Json(serde_json::json!({"error": "client_id is required"})));
+        return;
+    }
+
+    let now = chrono::Utc::now().timestamp();
+    // Revoke the client (idempotent), then cascade to all tokens/codes.
+    let _ = db.revoke_oauth_client_by_client_id(&client_id, now);
+    let _ = db.revoke_oauth_access_tokens_for_client(&client_id, now);
+    let _ = db.revoke_oauth_refresh_tokens_for_client(&client_id, now);
+    let _ = db.revoke_oauth_authorization_codes_for_client(&client_id, now);
+
+    apply_oauth_no_store_headers(res);
+    res.render(Json(serde_json::json!({"success": true})));
+}
+
+// ---------------------------------------------------------------------------
 // GET /oauth/authorize
 // ---------------------------------------------------------------------------
 
@@ -356,36 +1310,6 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         return;
     }
 
-    let Some(auth) = depot.obtain::<AuthContext>().ok() else {
-        oauth_authorize_direct_error(
-            res,
-            StatusCode::UNAUTHORIZED,
-            "invalid_request",
-            "authenticated user required",
-        );
-        return;
-    };
-
-    if !is_authorize_identity_allowed(auth) {
-        oauth_authorize_direct_error(
-            res,
-            StatusCode::FORBIDDEN,
-            "invalid_request",
-            "authorization endpoint requires first-party user authentication",
-        );
-        return;
-    }
-
-    if auth.user_id.is_none() {
-        oauth_authorize_direct_error(
-            res,
-            StatusCode::UNAUTHORIZED,
-            "invalid_request",
-            "authenticated user required",
-        );
-        return;
-    }
-
     let Some(db) = crate::auth::get_db(depot) else {
         oauth_authorize_direct_error(
             res,
@@ -396,7 +1320,84 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         return;
     };
 
-    let query = req.uri().query().unwrap_or("");
+    let Some(session_store) = depot
+        .obtain::<std::sync::Arc<AuthorizeSessionStore>>()
+        .ok()
+        .cloned()
+    else {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "no session store",
+        );
+        return;
+    };
+
+    let query = req.uri().query().unwrap_or("").to_string();
+
+    // Path 1: Bearer token (first-party direct issuance). Backward
+    // compatible with the pre-session behavior where Bootstrap / ApiToken
+    // Bearer callers go straight to code issuance.
+    if let Some(token) = crate::auth::bearer_token(req) {
+        match crate::auth::authenticate(&config, Some(&db), &token).await {
+            Ok(Some(ctx)) if is_authorize_identity_allowed(&ctx) && ctx.user_id.is_some() => {
+                let user_id = ctx.user_id.clone().unwrap();
+                authorize_issue_with_context(res, &config, &db, &user_id, &query).await;
+                return;
+            }
+            Ok(Some(_)) => {
+                // OAuth2Token / AgentToken / AccountCredential / bootstrap
+                // without user_id: not a valid authorize identity.
+                oauth_authorize_direct_error(
+                    res,
+                    StatusCode::FORBIDDEN,
+                    "invalid_request",
+                    "authorization endpoint requires first-party user authentication",
+                );
+                return;
+            }
+            _ => {
+                oauth_authorize_direct_error(
+                    res,
+                    StatusCode::UNAUTHORIZED,
+                    "invalid_request",
+                    "invalid token",
+                );
+                return;
+            }
+        }
+    }
+
+    // Path 2: browser first-party session cookie.
+    if let Some(session_cookie) = authorize_session_id_from_request(req) {
+        if session_store.get_session(&session_cookie).is_some() {
+            authorize_render_consent(res, &db, &query);
+            return;
+        }
+    }
+
+    // Path 3: no Bearer, no session -> minimal login page.
+    let return_to = if query.is_empty() {
+        "/oauth/authorize".to_string()
+    } else {
+        format!("/oauth/authorize?{}", query)
+    };
+    res.status_code(StatusCode::OK);
+    res.render(Text::Html(authorize_login_html(&return_to, None)));
+}
+
+/// First-party direct issuance path: validate the authorize query against the
+/// registered client and, on success, issue a hashed authorization code bound
+/// to `user_id` and redirect with the plaintext code. Used by the Bearer
+/// Bootstrap / ApiToken path of [`oauth_authorize`].
+async fn authorize_issue_with_context(
+    res: &mut Response,
+    config: &crate::Config,
+    db: &crate::Database,
+    user_id: &str,
+    query: &str,
+) {
     let parsed = parse_authorize_query(query);
 
     let (client_id, redirect_uri) = match &parsed {
@@ -596,16 +1597,6 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         return;
     }
 
-    let Some(user_id) = auth.user_id.clone() else {
-        oauth_authorize_direct_error(
-            res,
-            StatusCode::UNAUTHORIZED,
-            "invalid_request",
-            "authenticated user required",
-        );
-        return;
-    };
-
     let now = chrono::Utc::now().timestamp();
     let plaintext_code = generate_oauth_authorization_code();
     let code_hash = hash_token(&plaintext_code);
@@ -613,7 +1604,7 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: client.client_id.clone(),
-        user_id,
+        user_id: user_id.to_string(),
         redirect_uri: redirect_uri.clone(),
         scopes,
         resource: None,
@@ -639,6 +1630,73 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
     }
 
     redirect_with_authorization_code(res, &redirect_uri, &plaintext_code, parsed.state.as_deref());
+}
+
+/// Browser session path: validate the client + redirect_uri + scope against
+/// the authorize query, then render the minimal consent page. Does NOT issue
+/// a code; the actual issuance happens in [`oauth_authorize_consent`] after
+/// the user picks Allow/Deny. Unknown client / redirect mismatch produce a
+/// direct 400. Invalid scope produces a direct error page so the user is not
+/// shown a misleading consent prompt.
+fn authorize_render_consent(res: &mut Response, db: &crate::Database, query: &str) {
+    let parsed = match parse_authorize_query(query) {
+        Ok(p) => p,
+        Err(_) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Text::Html(authorize_login_html(
+                "/oauth/authorize",
+                Some("invalid authorization request"),
+            )));
+            return;
+        }
+    };
+
+    let client = match db.get_oauth_client_by_client_id(&parsed.client_id) {
+        Ok(Some(c)) => c,
+        _ => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Text::Html(authorize_login_html(
+                "/oauth/authorize",
+                Some("invalid client_id"),
+            )));
+            return;
+        }
+    };
+
+    if !client
+        .redirect_uris_vec()
+        .iter()
+        .any(|r| r == &parsed.redirect_uri)
+    {
+        res.status_code(StatusCode::BAD_REQUEST);
+        res.render(Text::Html(authorize_login_html(
+            "/oauth/authorize",
+            Some("redirect_uri mismatch"),
+        )));
+        return;
+    }
+
+    let scopes = match normalize_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
+        Ok(s) => s.split_whitespace().map(str::to_string).collect::<Vec<_>>(),
+        Err(_) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(Text::Html(authorize_login_html(
+                "/oauth/authorize",
+                Some("invalid scope"),
+            )));
+            return;
+        }
+    };
+
+    let html = authorize_consent_html(
+        &client.name,
+        &client.client_id,
+        &parsed.redirect_uri,
+        &scopes,
+        query,
+    );
+    res.status_code(StatusCode::OK);
+    res.render(Text::Html(html));
 }
 
 // ---------------------------------------------------------------------------
@@ -2274,15 +3332,33 @@ mod tests {
     }
 
     fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
+        let session_store = Arc::new(AuthorizeSessionStore::new());
+        build_router_with_session(config, db, session_store)
+    }
+
+    fn build_router_with_session(
+        config: Arc<crate::Config>,
+        db: Arc<crate::Database>,
+        session_store: Arc<AuthorizeSessionStore>,
+    ) -> Router {
         Router::new()
             .hoop(salvo::prelude::affix_state::inject(config))
             .hoop(salvo::prelude::affix_state::inject(db))
+            .hoop(salvo::prelude::affix_state::inject(session_store))
             .push(Router::with_path("oauth/token").post(oauth_token))
             .push(Router::with_path("oauth/revoke").post(oauth_revoke))
             .push(
                 Router::with_path("oauth/authorize")
+                    .get(oauth_authorize)
+                    .push(Router::with_path("login").post(oauth_authorize_login))
+                    .push(Router::with_path("consent").post(oauth_authorize_consent)),
+            )
+            .push(
+                Router::with_path("api/oauth/clients")
                     .hoop(crate::AuthMiddleware)
-                    .get(oauth_authorize),
+                    .push(Router::with_path("create").post(oauth_clients_create))
+                    .push(Router::with_path("list").post(oauth_clients_list))
+                    .push(Router::with_path("revoke").post(oauth_clients_revoke)),
             )
             .push(Router::with_path(".well-known/oauth-protected-resource").get(oauth_metadata))
             .push(
@@ -2327,7 +3403,7 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn authorize_requires_authenticated_user() {
+    async fn oauth_authorize_without_bearer_or_session_returns_login_page() {
         let config = test_config(oauth2_enabled());
         let (_tmp, db) = test_db();
         let user = seed_user(&db, "alice");
@@ -2341,11 +3417,20 @@ mod tests {
         let before = auth_code_count(&db);
         let service = Service::new(build_router(config, db.clone()));
 
-        let resp = TestClient::get(&url).send(&service).await;
+        let mut resp = TestClient::get(&url).send(&service).await;
 
-        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
         assert_no_location(&resp);
         assert_eq!(auth_code_count(&db), before);
+        let body = resp.take_string().await.unwrap_or_default();
+        assert!(
+            body.contains("/oauth/authorize/login"),
+            "login form missing"
+        );
+        assert!(body.contains("name=\"token\""), "token input missing");
+        // The login page must not reveal the original query token or echo
+        // any secret; it only carries the return_to path.
+        assert!(body.contains("return_to"));
     }
 
     #[tokio::test]
@@ -5617,5 +6702,808 @@ mod tests {
             !scopes.iter().any(|s| s == "admin"),
             "admin scope must not appear in scopes_supported"
         );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test helpers for client management + authorize browser UX
+    // -----------------------------------------------------------------------
+
+    fn authorized_post_json(url: &str, body: String, token: &str) -> salvo::test::RequestBuilder {
+        TestClient::post(url)
+            .add_header("authorization", format!("Bearer {}", token), true)
+            .add_header("content-type", "application/json", true)
+            .body(body)
+    }
+
+    fn set_cookie_value(resp: &Response, name: &str) -> Option<String> {
+        for v in resp.headers.get_all("set-cookie") {
+            if let Ok(s) = v.to_str() {
+                let prefix = format!("{}=", name);
+                if let Some(rest) = s.strip_prefix(&prefix) {
+                    if let Some(val) = rest.split(';').next() {
+                        if !val.is_empty() {
+                            return Some(val.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    fn post_form_with_cookie(url: &str, body: String, cookie: &str) -> salvo::test::RequestBuilder {
+        TestClient::post(url)
+            .add_header("content-type", "application/x-www-form-urlencoded", true)
+            .add_header("cookie", cookie, true)
+            .body(body)
+    }
+
+    fn create_client_json(name: &str, redirect_uris: &[&str], scopes: Option<&[&str]>) -> String {
+        let mut obj = serde_json::json!({
+            "name": name,
+            "redirect_uris": redirect_uris,
+        });
+        if let Some(s) = scopes {
+            obj["allowed_scopes"] = serde_json::json!(s);
+        }
+        obj.to_string()
+    }
+
+    fn return_to_for(client: &OAuthClientRecord, redirect_uri: &str) -> String {
+        let params: &[(&str, &str)] = &[
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", redirect_uri),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+        ];
+        let query = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", urlencoding::encode(k), urlencoding::encode(v)))
+            .collect::<Vec<_>>()
+            .join("&");
+        format!("/oauth/authorize?{}", query)
+    }
+
+    fn consent_form_body(client: &OAuthClientRecord, redirect_uri: &str, decision: &str) -> String {
+        form_body(&[
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", redirect_uri),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+            ("decision", decision),
+        ])
+    }
+
+    // -----------------------------------------------------------------------
+    // OAuth client management API tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn oauth_client_create_returns_client_secret_once() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("ChatGPT Action", &["https://example.com/callback"], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        let secret = body["client_secret"]
+            .as_str()
+            .expect("client_secret returned");
+        assert!(secret.starts_with("wc_csec_"));
+        assert!(body["client"]["client_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_client_"));
+
+        // list must NOT return the secret.
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/list",
+            "{}".to_string(),
+            &token,
+        )
+        .send(&service)
+        .await;
+        let list_body: serde_json::Value = resp.take_json().await.unwrap();
+        assert!(list_body["clients"].as_array().unwrap().len() >= 1);
+        let clients = list_body["clients"].as_array().unwrap();
+        assert!(clients.iter().all(|c| c.get("client_secret").is_none()));
+        assert!(clients
+            .iter()
+            .all(|c| c.get("client_secret_hash").is_none()));
+    }
+
+    #[tokio::test]
+    async fn oauth_client_create_hashes_secret_only() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Hashed", &["https://example.com/callback"], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        let secret = body["client_secret"].as_str().unwrap();
+        let client_id = body["client"]["client_id"].as_str().unwrap();
+
+        let stored_hash: String = {
+            let conn = db.conn_for_tests();
+            conn.query_row(
+                "SELECT client_secret_hash FROM oauth_clients WHERE client_id = ?1",
+                rusqlite::params![client_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_ne!(stored_hash, secret);
+        assert_eq!(stored_hash, hash_token(secret));
+    }
+
+    #[tokio::test]
+    async fn oauth_client_create_validates_redirect_uris() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        // not a URL
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Bad", &["not-a-url"], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+
+        // http non-loopback rejected
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Bad", &["http://example.com/cb"], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+
+        // http loopback accepted
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json(
+                "Local",
+                &["http://127.0.0.1:3000/cb", "http://localhost:3000/cb"],
+                None,
+            ),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // empty array rejected
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Empty", &[], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    }
+
+    #[tokio::test]
+    async fn oauth_client_create_defaults_to_full_delegable_scopes() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Default Scopes", &["https://example.com/callback"], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        let scopes: Vec<String> = body["client"]["allowed_scopes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        assert_eq!(
+            scopes,
+            oauth_scopes_supported()
+                .iter()
+                .map(|s| s.to_string())
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_client_create_rejects_unknown_scopes() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json(
+                "Bad Scopes",
+                &["https://example.com/callback"],
+                Some(&["runtime:read", "bogus:scope"]),
+            ),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+
+        // agent:poll and admin are rejected for OAuth delegation
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json(
+                "Agent Scope",
+                &["https://example.com/callback"],
+                Some(&["agent:poll"]),
+            ),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+    }
+
+    #[tokio::test]
+    async fn oauth_client_list_does_not_return_secret_hash() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+        seed_client(&db, &user, "Seeded");
+
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/list",
+            "{}".to_string(),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        let clients = body["clients"].as_array().unwrap();
+        assert!(!clients.is_empty());
+        for c in clients {
+            assert!(c.get("client_secret_hash").is_none(), "secret hash leaked");
+            assert!(c.get("client_secret").is_none(), "secret leaked");
+        }
+    }
+
+    #[tokio::test]
+    async fn oauth_client_revoke_revokes_client() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("To Revoke", &["https://example.com/callback"], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        let client_id = body["client"]["client_id"].as_str().unwrap().to_string();
+
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/revoke",
+            serde_json::json!({ "client_id": client_id }).to_string(),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+
+        // Idempotent: revoke again still success.
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/revoke",
+            serde_json::json!({ "client_id": client_id }).to_string(),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // The revoked client is no longer returned by the active lookup.
+        assert!(db
+            .get_oauth_client_by_client_id(&client_id)
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn oauth_client_revoke_revokes_related_tokens() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Tokens", &["https://example.com/callback"], None),
+            &token,
+        )
+        .send(&service)
+        .await;
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        let client_id = body["client"]["client_id"].as_str().unwrap().to_string();
+        // Build a temporary client record handle for seeding helpers.
+        let client = db
+            .list_oauth_clients()
+            .unwrap()
+            .into_iter()
+            .find(|c| c.client_id == client_id)
+            .unwrap();
+
+        let (_at_rec, _at_plain) = seed_access_token(&db, &client, &user, "runtime:read");
+        let (_rt_rec, _rt_plain) = seed_refresh_token(&db, &client, &user, "runtime:read");
+        let (_ac_rec, _ac_plain) = seed_auth_code(
+            &db,
+            &client,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+            Some("challenge-1"),
+            Some("S256"),
+        );
+
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/revoke",
+            serde_json::json!({ "client_id": client_id }).to_string(),
+            &token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        let conn = db.conn_for_tests();
+        let at_revoked: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM oauth_access_tokens WHERE client_id = ?1 AND revoked_at IS NOT NULL",
+                rusqlite::params![client_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let rt_revoked: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM oauth_refresh_tokens WHERE client_id = ?1 AND revoked_at IS NOT NULL",
+                rusqlite::params![client_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let ac_revoked: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM oauth_authorization_codes WHERE client_id = ?1 AND revoked_at IS NOT NULL",
+                rusqlite::params![client_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(at_revoked >= 1, "access token should be revoked");
+        assert!(rt_revoked >= 1, "refresh token should be revoked");
+        assert!(ac_revoked >= 1, "authorization code should be revoked");
+    }
+
+    #[tokio::test]
+    async fn oauth_client_management_rejects_oauth2_token() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let service = Service::new(build_router(config, db.clone()));
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let (_at, oauth_access_token) = seed_access_token(&db, &client, &user, "runtime:read");
+
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Should Fail", &["https://example.com/callback"], None),
+            &oauth_access_token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/list",
+            "{}".to_string(),
+            &oauth_access_token,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+    }
+
+    #[tokio::test]
+    async fn oauth_client_management_allows_api_token_or_bootstrap() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let pat = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        // PAT
+        let resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Via PAT", &["https://example.com/callback"], None),
+            &pat,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // Bootstrap token
+        let mut resp = authorized_post_json(
+            "http://localhost/api/oauth/clients/create",
+            create_client_json("Via Bootstrap", &["https://example.com/callback"], None),
+            "bootstrap-token",
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+    }
+
+    // -----------------------------------------------------------------------
+    // Authorize login / session / consent tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn oauth_authorize_login_rejects_invalid_token() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+        let body = form_body(&[("return_to", &return_to), ("token", "wc_pat_bogus")]);
+
+        let mut resp = post_form("http://localhost/oauth/authorize/login", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let text = resp.take_string().await.unwrap_or_default();
+        assert!(text.contains("invalid token") || text.contains("required"));
+        // No session cookie set on failure.
+        assert!(set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).is_none());
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_login_accepts_pat_and_sets_httponly_cookie() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+        let body = form_body(&[("return_to", return_to.as_str()), ("token", token.as_str())]);
+
+        let resp = post_form("http://localhost/oauth/authorize/login", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        let location = location_header(&resp).expect("redirect after login");
+        assert!(location.starts_with("/oauth/authorize"));
+        let cookie = set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE)
+            .expect("session cookie should be set");
+        assert!(cookie.starts_with("wc_authsess_"));
+        // Verify HttpOnly + SameSite=Lax attributes on the raw Set-Cookie.
+        let raw = resp
+            .headers
+            .get_all("set-cookie")
+            .iter()
+            .map(|v| v.to_str().unwrap_or("").to_string())
+            .collect::<Vec<_>>()
+            .join("");
+        assert!(raw.contains("HttpOnly"), "cookie must be HttpOnly");
+        assert!(raw.contains("SameSite=Lax"), "cookie must be SameSite=Lax");
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_login_rejects_oauth2_access_token() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let (_at, oauth_access_token) = seed_access_token(&db, &client, &user, "runtime:read");
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+        let body = form_body(&[
+            ("return_to", return_to.as_str()),
+            ("token", oauth_access_token.as_str()),
+        ]);
+
+        let resp = post_form("http://localhost/oauth/authorize/login", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_with_valid_session_shows_consent_page() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+
+        // Log in to obtain a session cookie.
+        let login_body = form_body(&[("return_to", return_to.as_str()), ("token", token.as_str())]);
+        let resp = post_form("http://localhost/oauth/authorize/login", login_body)
+            .send(&service)
+            .await;
+        let cookie_val = set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).expect("session cookie");
+        let cookie = format!("{}={}", AUTHORIZE_SESSION_COOKIE, cookie_val);
+
+        // GET /oauth/authorize with the session cookie -> consent page.
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+        let mut resp = TestClient::get(&url)
+            .add_header("cookie", &cookie, true)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let text = resp.take_string().await.unwrap_or_default();
+        assert!(text.contains("Authorize WebCodex client"), "consent title");
+        assert!(text.contains("Allow"), "Allow button");
+        assert!(text.contains("Deny"), "Deny button");
+        assert!(text.contains(&client.name), "client name shown");
+        assert!(text.contains("runtime:read"), "requested scope shown");
+        // No code is issued yet.
+        assert!(!text.contains("wc_oac_"));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_consent_allow_redirects_with_code() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+
+        let login_body = form_body(&[("return_to", return_to.as_str()), ("token", token.as_str())]);
+        let resp = post_form("http://localhost/oauth/authorize/login", login_body)
+            .send(&service)
+            .await;
+        let cookie_val = set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).expect("session cookie");
+        let cookie = format!("{}={}", AUTHORIZE_SESSION_COOKIE, cookie_val);
+
+        let before = auth_code_count(&db);
+        let consent_body = consent_form_body(&client, "https://example.com/callback", "allow");
+        let resp = post_form_with_cookie(
+            "http://localhost/oauth/authorize/consent",
+            consent_body,
+            &cookie,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        assert_eq!(auth_code_count(&db), before + 1);
+        let location = location_header(&resp).expect("redirect with code");
+        let parsed = url::Url::parse(&location).unwrap();
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        let code = params.get("code").expect("code in redirect");
+        assert!(code.starts_with("wc_oac_"));
+        assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_consent_deny_redirects_with_access_denied() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+
+        let login_body = form_body(&[("return_to", return_to.as_str()), ("token", token.as_str())]);
+        let resp = post_form("http://localhost/oauth/authorize/login", login_body)
+            .send(&service)
+            .await;
+        let cookie_val = set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).expect("session cookie");
+        let cookie = format!("{}={}", AUTHORIZE_SESSION_COOKIE, cookie_val);
+
+        let before = auth_code_count(&db);
+        let consent_body = consent_form_body(&client, "https://example.com/callback", "deny");
+        let resp = post_form_with_cookie(
+            "http://localhost/oauth/authorize/consent",
+            consent_body,
+            &cookie,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        assert_eq!(auth_code_count(&db), before);
+        let location = location_header(&resp).expect("redirect on deny");
+        let parsed = url::Url::parse(&location).unwrap();
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        assert_eq!(
+            params.get("error").map(String::as_str),
+            Some("access_denied")
+        );
+        assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_consent_requires_valid_session() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let before = auth_code_count(&db);
+
+        // No cookie at all.
+        let consent_body = consent_form_body(&client, "https://example.com/callback", "allow");
+        let resp = post_form("http://localhost/oauth/authorize/consent", consent_body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        assert_eq!(auth_code_count(&db), before);
+
+        // Bogus cookie.
+        let cookie = format!("{}=wc_authsess_bogus", AUTHORIZE_SESSION_COOKIE);
+        let consent_body = consent_form_body(&client, "https://example.com/callback", "allow");
+        let resp = post_form_with_cookie(
+            "http://localhost/oauth/authorize/consent",
+            consent_body,
+            &cookie,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        assert_eq!(auth_code_count(&db), before);
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_consent_revalidates_redirect_uri() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+
+        let login_body = form_body(&[("return_to", return_to.as_str()), ("token", token.as_str())]);
+        let resp = post_form("http://localhost/oauth/authorize/login", login_body)
+            .send(&service)
+            .await;
+        let cookie_val = set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).expect("session cookie");
+        let cookie = format!("{}={}", AUTHORIZE_SESSION_COOKIE, cookie_val);
+
+        let before = auth_code_count(&db);
+        // Tampered redirect_uri in the consent hidden fields.
+        let consent_body = form_body(&[
+            ("response_type", "code"),
+            ("client_id", client.client_id.as_str()),
+            ("redirect_uri", "https://evil.com/callback"),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+            ("decision", "allow"),
+        ]);
+        let resp = post_form_with_cookie(
+            "http://localhost/oauth/authorize/consent",
+            consent_body,
+            &cookie,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        assert_no_location(&resp);
+        assert_eq!(auth_code_count(&db), before);
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_return_to_rejects_absolute_url() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        // Absolute URL return_to -> rejected (open-redirect guard).
+        let body = form_body(&[
+            ("return_to", "https://evil.com/oauth/authorize"),
+            ("token", token.as_str()),
+        ]);
+        let resp = post_form("http://localhost/oauth/authorize/login", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
     }
 }

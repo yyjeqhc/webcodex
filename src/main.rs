@@ -232,6 +232,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cors = Cors::permissive();
     let config = Arc::new(config);
     let db = Arc::new(db);
+    // First-party authorize browser session store (in-memory, short-lived).
+    // Holds the opaque session id -> user mapping bridging the authorize
+    // login form to the consent decision. PAT/bootstrap plaintext is never
+    // stored here — only the resolved user identity.
+    let authorize_session_store = Arc::new(oauth_http::AuthorizeSessionStore::new());
     let projects_state = Arc::new(projects_state);
     let shell_registry = Arc::new(ShellClientRegistry::default());
     let quic_cfg = config::QuicServerConfig::from_env();
@@ -344,6 +349,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(Router::with_path("projects/write_file").post(runtime_http::projects_write_file))
         .push(Router::with_path("projects/run_job").post(runtime_http::projects_run_job))
         .push(Router::with_path("runtime/status").post(runtime_http::runtime_status))
+        // Phase 2e-3: first-party OAuth client management API. Behind
+        // AuthMiddleware; route policy is FirstPartyOnly so OAuth2 access
+        // tokens are rejected even with account:manage.
+        .push(Router::with_path("oauth/clients/create").post(oauth_http::oauth_clients_create))
+        .push(Router::with_path("oauth/clients/list").post(oauth_http::oauth_clients_list))
+        .push(Router::with_path("oauth/clients/revoke").post(oauth_http::oauth_clients_revoke))
         // Phase 2 multi-user auth: user + personal API token management.
         // REST-only admin/self-management surface; intentionally NOT
         // exposed in /openapi.json (GPT Actions) because token creation is
@@ -405,6 +416,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut router = Router::new()
         .hoop(affix_state::inject(config.clone()))
         .hoop(affix_state::inject(db.clone()))
+        .hoop(affix_state::inject(authorize_session_store.clone()))
         .hoop(affix_state::inject(projects_state.clone()))
         .hoop(affix_state::inject(shell_registry.clone()))
         .hoop(affix_state::inject(tool_runtime.clone()))
@@ -417,11 +429,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         // client_id + client_secret in the form body.
         .push(Router::with_path("oauth/token").post(oauth_http::oauth_token))
         .push(Router::with_path("oauth/revoke").post(oauth_http::oauth_revoke))
-        // /oauth/authorize is protected by AuthMiddleware.
+        // /oauth/authorize is NOT behind AuthMiddleware: the handler accepts
+        // either a first-party Bearer token (Bootstrap / PAT, backward
+        // compatible direct code issuance) or a short-lived authorize
+        // session cookie set by the login form. login/consent do their own
+        // token/session validation.
         .push(
             Router::with_path("oauth/authorize")
-                .hoop(AuthMiddleware)
-                .get(oauth_http::oauth_authorize),
+                .get(oauth_http::oauth_authorize)
+                .push(Router::with_path("login").post(oauth_http::oauth_authorize_login))
+                .push(Router::with_path("consent").post(oauth_http::oauth_authorize_consent)),
         )
         .push(
             Router::with_path(".well-known/oauth-protected-resource")

@@ -24,6 +24,62 @@ WEBCODEX_DATA=/var/lib/webcodex
 
 Use the bootstrap token only for initial setup/admin work. Day-to-day GPT Actions and MCP calls should use a user API token. Agents should use agent tokens.
 
+## OAuth2
+
+OAuth2 is disabled by default. Enable it to let GPT Actions / MCP clients obtain delegated `wc_oat_*` access tokens via the authorization-code flow:
+
+```text
+WEBCODEX_OAUTH2_ENABLED=true
+WEBCODEX_OAUTH2_ISSUER=https://your-domain.example
+WEBCODEX_PUBLIC_URL=https://your-domain.example
+```
+
+`WEBCODEX_OAUTH2_ISSUER` takes precedence over `WEBCODEX_PUBLIC_URL` for the
+`/.well-known/*` metadata endpoint URLs. Set both to your public HTTPS domain
+in production so the authorize/token/revocation endpoints advertised by
+discovery are reachable by clients and the authorize session cookie is marked
+`Secure`.
+
+### Create an OAuth client
+
+```bash
+curl -fsS -X POST https://your-domain.example/api/oauth/clients/create \
+  -H "Authorization: Bearer $WEBCODEX_PAT" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"ChatGPT Action","redirect_uris":["https://example.com/oauth/callback"],"allowed_scopes":["runtime:read","project:read","project:write","job:run"]}'
+```
+
+Save the `client_secret` from the response — it is returned only once and only
+its SHA-256 hash is stored. Omit `allowed_scopes` to grant the full delegable
+OAuth scope set (`runtime:read project:read project:write job:run account:manage`).
+
+List and revoke clients with `POST /api/oauth/clients/list` and
+`POST /api/oauth/clients/revoke` (body `{"client_id":"wc_client_..."}`).
+Revoking a client also revokes all of its active access tokens, refresh tokens,
+and authorization codes.
+
+### Browser authorize flow
+
+Point the client at `https://your-domain.example/oauth/authorize?...`. With no
+Bearer token and no session cookie, WebCodex renders a minimal login page;
+enter a WebCodex PAT (or bootstrap token) to get a 10-minute `HttpOnly` session
+cookie, then approve the consent page. `Allow` redirects back to the registered
+`redirect_uri` with a `wc_oac_*` code; exchange it at `POST /oauth/token` for a
+`wc_oat_*` access token. The Bearer Bootstrap/PAT direct-issuance path on
+`/oauth/authorize` still works for non-browser clients.
+
+A full end-to-end smoke test walkthrough (enable, create client, authorize,
+token exchange, revoke) is in [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md).
+
+### Not yet supported
+
+Dynamic client registration, OIDC / `/.well-known/openid-configuration`,
+JWKS/JWT ID tokens, `userinfo_endpoint`, `client_credentials` grant, device
+code flow, and MCP resource/audience binding are not implemented. The default
+client scope set can grant full delegable access, which is convenient for
+self-hosted GPT Action / MCP use; use narrowed `allowed_scopes` for
+untrusted clients.
+
 ## Server-first setup
 
 The documented distribution path uses the npm thin installer/wrapper:

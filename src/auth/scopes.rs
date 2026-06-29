@@ -174,8 +174,17 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         (_, "/.well-known/oauth-protected-resource")
         | (_, "/.well-known/oauth-authorization-server")
         | (_, "/oauth/token")
-        | (_, "/oauth/revoke") => OAuthRouteScopePolicy::Public,
+        | (_, "/oauth/revoke")
+        | ("POST", "/oauth/authorize/login")
+        | ("POST", "/oauth/authorize/consent") => OAuthRouteScopePolicy::Public,
         (_, "/oauth/authorize") => OAuthRouteScopePolicy::FirstPartyOnly,
+
+        // First-party OAuth client management API. Only Bootstrap / ApiToken
+        // may call these; OAuth2 access tokens are blocked even with
+        // `account:manage`.
+        ("POST", "/api/oauth/clients/create")
+        | ("POST", "/api/oauth/clients/list")
+        | ("POST", "/api/oauth/clients/revoke") => OAuthRouteScopePolicy::FirstPartyOnly,
 
         ("GET", "/mcp") => OAuthRouteScopePolicy::Require(SCOPE_RUNTIME_READ),
         ("POST", "/mcp") => OAuthRouteScopePolicy::BodyAware(OAuthBodyAwarePolicy::McpToolCall),
@@ -392,6 +401,8 @@ mod tests {
             ("GET", "/.well-known/oauth-authorization-server"),
             ("POST", "/oauth/token"),
             ("POST", "/oauth/revoke"),
+            ("POST", "/oauth/authorize/login"),
+            ("POST", "/oauth/authorize/consent"),
         ] {
             assert_eq!(
                 oauth_route_scope_policy_for_path_method(method, path),
@@ -412,6 +423,22 @@ mod tests {
             required_oauth_scope_for_path_method("GET", "/oauth/authorize"),
             None
         );
+    }
+
+    #[test]
+    fn oauth_route_policy_oauth_client_management_is_first_party_only() {
+        for path in [
+            "/api/oauth/clients/create",
+            "/api/oauth/clients/list",
+            "/api/oauth/clients/revoke",
+        ] {
+            assert_eq!(
+                oauth_route_scope_policy_for_path_method("POST", path),
+                OAuthRouteScopePolicy::FirstPartyOnly,
+                "POST {path}"
+            );
+            assert_eq!(required_oauth_scope_for_path_method("POST", path), None);
+        }
     }
 
     #[test]
@@ -554,6 +581,11 @@ mod tests {
             ("GET", "/mcp"),
             ("POST", "/mcp"),
             ("GET", "/oauth/authorize"),
+            ("POST", "/oauth/authorize/login"),
+            ("POST", "/oauth/authorize/consent"),
+            ("POST", "/api/oauth/clients/create"),
+            ("POST", "/api/oauth/clients/list"),
+            ("POST", "/api/oauth/clients/revoke"),
         ] {
             assert_ne!(
                 oauth_route_scope_policy_for_path_method(method, path),

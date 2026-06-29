@@ -376,6 +376,10 @@ pub struct ShellAgentShellRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_bytes: Option<usize>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub old_text: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pattern: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_sha256: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub expected_prefix: Option<String>,
@@ -478,6 +482,10 @@ pub struct ShellFileOpRequest {
     pub content: Option<String>,
     #[serde(default)]
     pub max_bytes: Option<usize>,
+    #[serde(default)]
+    pub old_text: Option<String>,
+    #[serde(default)]
+    pub pattern: Option<String>,
     #[serde(default)]
     pub expected_sha256: Option<String>,
     #[serde(default)]
@@ -998,6 +1006,8 @@ mod envelope_tests {
             path: None,
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,

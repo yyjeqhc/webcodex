@@ -154,7 +154,10 @@ impl ToolRuntime {
             | ToolCall::ReadProjectArtifact { .. } => Some(AgentCapability::Shell),
             ToolCall::ReplaceLineRange { .. }
             | ToolCall::InsertAtLine { .. }
-            | ToolCall::DeleteLineRange { .. } => Some(AgentCapability::FileWrite),
+            | ToolCall::DeleteLineRange { .. }
+            | ToolCall::ReplaceExactBlock { .. }
+            | ToolCall::InsertBeforePattern { .. }
+            | ToolCall::InsertAfterPattern { .. } => Some(AgentCapability::FileWrite),
             ToolCall::ReadFile { .. } | ToolCall::ListProjectFiles { .. } => {
                 Some(AgentCapability::FileRead)
             }
@@ -204,6 +207,9 @@ impl ToolRuntime {
             | ToolCall::DiscardUntracked { project, .. }
             | ToolCall::ValidatePatch { project, .. }
             | ToolCall::ReplaceInFile { project, .. }
+            | ToolCall::ReplaceExactBlock { project, .. }
+            | ToolCall::InsertBeforePattern { project, .. }
+            | ToolCall::InsertAfterPattern { project, .. }
             | ToolCall::WriteProjectFile { project, .. }
             | ToolCall::SaveProjectArtifact { project, .. }
             | ToolCall::ReadProjectArtifactMetadata { project, .. }
@@ -569,6 +575,37 @@ impl ToolRuntime {
                     allow_multiple,
                 )
                 .await
+            }
+
+            ToolCall::ReplaceExactBlock {
+                project,
+                path,
+                old_text,
+                new_text,
+                expected_old_sha256,
+            } => {
+                self.replace_exact_block(project, path, old_text, new_text, expected_old_sha256)
+                    .await
+            }
+
+            ToolCall::InsertBeforePattern {
+                project,
+                path,
+                pattern,
+                text,
+            } => {
+                self.insert_around_pattern(project, path, pattern, text, "insert_before_pattern")
+                    .await
+            }
+
+            ToolCall::InsertAfterPattern {
+                project,
+                path,
+                pattern,
+                text,
+            } => {
+                self.insert_around_pattern(project, path, pattern, text, "insert_after_pattern")
+                    .await
             }
 
             ToolCall::WriteProjectFile {
@@ -5986,12 +6023,89 @@ new file mode 100644\n\
     }
 
     #[test]
+    fn from_tool_name_parses_replace_exact_block() {
+        let call = ToolCall::from_tool_name(
+            "replace_exact_block",
+            json!({
+                "project": "agent:c:p",
+                "path": "src/main.rs",
+                "old_text": "old",
+                "new_text": "new",
+                "expected_old_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            call,
+            ToolCall::ReplaceExactBlock { project, path, old_text, new_text, expected_old_sha256 }
+                if project == "agent:c:p"
+                && path == "src/main.rs"
+                && old_text == "old"
+                && new_text == "new"
+                && expected_old_sha256.is_some()
+        ));
+    }
+
+    #[test]
+    fn from_tool_name_parses_insert_before_pattern() {
+        let call = ToolCall::from_tool_name(
+            "insert_before_pattern",
+            json!({"project": "agent:c:p", "path": "src/main.rs", "pattern": "fn main", "text": "// before\n"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            call,
+            ToolCall::InsertBeforePattern { project, path, pattern, text }
+                if project == "agent:c:p" && path == "src/main.rs" && pattern == "fn main" && text == "// before\n"
+        ));
+    }
+
+    #[test]
+    fn from_tool_name_parses_insert_after_pattern() {
+        let call = ToolCall::from_tool_name(
+            "insert_after_pattern",
+            json!({"project": "agent:c:p", "path": "src/main.rs", "pattern": "fn main", "text": " // after"}),
+        )
+        .unwrap();
+        assert!(matches!(
+            call,
+            ToolCall::InsertAfterPattern { project, path, pattern, text }
+                if project == "agent:c:p" && path == "src/main.rs" && pattern == "fn main" && text == " // after"
+        ));
+    }
+
+    #[test]
     fn known_tool_names_includes_phase4_edit_tools() {
         assert!(KNOWN_TOOL_NAMES.contains(&"replace_in_file"));
+        assert!(KNOWN_TOOL_NAMES.contains(&"replace_exact_block"));
+        assert!(KNOWN_TOOL_NAMES.contains(&"insert_before_pattern"));
+        assert!(KNOWN_TOOL_NAMES.contains(&"insert_after_pattern"));
         assert!(KNOWN_TOOL_NAMES.contains(&"write_project_file"));
         assert!(KNOWN_TOOL_NAMES.contains(&"replace_line_range"));
         assert!(KNOWN_TOOL_NAMES.contains(&"insert_at_line"));
         assert!(KNOWN_TOOL_NAMES.contains(&"delete_line_range"));
+    }
+
+    #[test]
+    fn tool_specs_include_anchor_edit_tools() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        for required in [
+            "replace_exact_block",
+            "insert_before_pattern",
+            "insert_after_pattern",
+        ] {
+            let spec = specs
+                .iter()
+                .find(|s| s.name == required)
+                .expect("anchor edit spec");
+            assert!(spec.description.contains("literal"), "{}", spec.description);
+            assert!(
+                spec.description.contains("no regex"),
+                "{}",
+                spec.description
+            );
+        }
     }
 
     #[test]
@@ -6002,17 +6116,16 @@ new file mode 100644\n\
             .iter()
             .map(|s| s.name.clone())
             .collect();
-        assert!(
-            names.iter().any(|n| n == "replace_in_file"),
-            "tool_specs must include replace_in_file: {:?}",
-            names
-        );
-        assert!(
-            names.iter().any(|n| n == "write_project_file"),
-            "tool_specs must include write_project_file: {:?}",
-            names
-        );
-        for required in ["replace_line_range", "insert_at_line", "delete_line_range"] {
+        for required in [
+            "replace_in_file",
+            "replace_exact_block",
+            "insert_before_pattern",
+            "insert_after_pattern",
+            "write_project_file",
+            "replace_line_range",
+            "insert_at_line",
+            "delete_line_range",
+        ] {
             assert!(
                 names.iter().any(|n| n == required),
                 "tool_specs must include {}: {:?}",

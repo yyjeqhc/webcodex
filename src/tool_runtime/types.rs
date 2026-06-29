@@ -249,6 +249,32 @@ pub enum ToolCall {
         allow_multiple: Option<bool>,
     },
 
+    /// Replace a literal block that must occur exactly once in a UTF-8 file.
+    ReplaceExactBlock {
+        project: String,
+        path: String,
+        old_text: String,
+        new_text: String,
+        #[serde(default)]
+        expected_old_sha256: Option<String>,
+    },
+
+    /// Insert literal text before a literal pattern that must occur exactly once.
+    InsertBeforePattern {
+        project: String,
+        path: String,
+        pattern: String,
+        text: String,
+    },
+
+    /// Insert literal text after a literal pattern that must occur exactly once.
+    InsertAfterPattern {
+        project: String,
+        path: String,
+        pattern: String,
+        text: String,
+    },
+
     /// Write a UTF-8 file in a project via the owning agent. Creates new files
     /// and (with `overwrite`) replaces existing ones, gating overwrites on an
     /// optional `expected_sha256` / `expected_content_prefix` so a stale caller
@@ -416,6 +442,9 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "discard_untracked",
     "validate_patch",
     "replace_in_file",
+    "replace_exact_block",
+    "insert_before_pattern",
+    "insert_after_pattern",
     "write_project_file",
     "save_project_artifact",
     "read_project_artifact_metadata",

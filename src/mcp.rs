@@ -1087,20 +1087,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth2_mcp_tool_call_requires_project_write_for_line_edit() {
+    async fn oauth2_mcp_tool_call_requires_project_write_for_anchor_edit_tools() {
         let (_tmp, service, token) = oauth_mcp_service("project:write");
         let (status, body, _) = oauth_mcp_request(
             &service,
             &token,
             "tools/call",
             json!({
-                "name": "replace_line_range",
+                "name": "replace_exact_block",
                 "arguments": {
                     "project": "demo",
                     "path": "README.md",
-                    "start_line": 1,
-                    "end_line": 1,
-                    "new_text": "updated\n"
+                    "old_text": "old",
+                    "new_text": "new"
                 }
             }),
         )
@@ -1113,13 +1112,12 @@ mod tests {
             &token,
             "tools/call",
             json!({
-                "name": "replace_line_range",
+                "name": "insert_after_pattern",
                 "arguments": {
                     "project": "demo",
                     "path": "README.md",
-                    "start_line": 1,
-                    "end_line": 1,
-                    "new_text": "updated\n"
+                    "pattern": "anchor",
+                    "text": "inserted\n"
                 }
             }),
         )

@@ -536,6 +536,44 @@ fn output_schema_for_tool(name: &str) -> Value {
                 schema_type("boolean", "Whether file contents changed."),
             ),
         ]),
+        "replace_exact_block" => wrapped_output_schema(vec![
+            ("path", schema_type("string", "Project-relative path.")),
+            (
+                "bytes_before",
+                schema_type("integer", "File size in bytes before edit."),
+            ),
+            (
+                "bytes_after",
+                schema_type("integer", "File size in bytes after edit."),
+            ),
+            (
+                "matches_replaced",
+                schema_type("integer", "Literal matches replaced; always 1 on success."),
+            ),
+            (
+                "changed",
+                schema_type("boolean", "Whether file contents changed."),
+            ),
+        ]),
+        "insert_before_pattern" | "insert_after_pattern" => wrapped_output_schema(vec![
+            ("path", schema_type("string", "Project-relative path.")),
+            (
+                "bytes_before",
+                schema_type("integer", "File size in bytes before edit."),
+            ),
+            (
+                "bytes_after",
+                schema_type("integer", "File size in bytes after edit."),
+            ),
+            (
+                "pattern_matches",
+                schema_type("integer", "Literal pattern matches; always 1 on success."),
+            ),
+            (
+                "changed",
+                schema_type("boolean", "Whether file contents changed."),
+            ),
+        ]),
         _ => default_output_schema(),
     }
 }
@@ -1020,6 +1058,43 @@ impl ToolRuntime {
                 annotations: tool_annotations("replace_in_file"),
             },
             ToolSpec {
+                name: "replace_exact_block".to_string(),
+                description: "Replace literal UTF-8 text that matches exactly once; no regex or auto-format. Use line edit tools when line numbers are known.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("old_text", "string", "Non-empty literal block; must match exactly once.", true),
+                    ("new_text", "string", "Replacement text; may be empty to delete the block.", true),
+                    ("expected_old_sha256", "string", "Optional sha256 guard for current whole-file content.", false),
+                ]),
+                output_schema: output_schema_for_tool("replace_exact_block"),
+                annotations: tool_annotations("replace_exact_block"),
+            },
+            ToolSpec {
+                name: "insert_before_pattern".to_string(),
+                description: "Insert UTF-8 text before one literal pattern match; no regex, AST, auto-newline, or auto-format.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("pattern", "string", "Non-empty literal pattern; must match exactly once.", true),
+                    ("text", "string", "Non-empty text to insert, including intended newlines.", true),
+                ]),
+                output_schema: output_schema_for_tool("insert_before_pattern"),
+                annotations: tool_annotations("insert_before_pattern"),
+            },
+            ToolSpec {
+                name: "insert_after_pattern".to_string(),
+                description: "Insert UTF-8 text after one literal pattern match; no regex, AST, auto-newline, or auto-format.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("pattern", "string", "Non-empty literal pattern; must match exactly once.", true),
+                    ("text", "string", "Non-empty text to insert, including intended newlines.", true),
+                ]),
+                output_schema: output_schema_for_tool("insert_after_pattern"),
+                annotations: tool_annotations("insert_after_pattern"),
+            },
+            ToolSpec {
                 name: "write_project_file".to_string(),
                 description: "Create a new UTF-8 file or deliberately overwrite a small whole file. Not the first choice for ordinary local source edits; prefer line edit tools when scoped by line.".to_string(),
                 input_schema: object_schema(vec![
@@ -1186,7 +1261,9 @@ impl ToolRuntime {
             ]),
             "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
             "edit": pick(&[
-                "replace_in_file", "write_project_file", "save_project_artifact",
+                "replace_in_file", "replace_exact_block",
+                "insert_before_pattern", "insert_after_pattern",
+                "write_project_file", "save_project_artifact",
                 "read_project_artifact_metadata", "read_project_artifact",
                 "replace_line_range", "insert_at_line", "delete_line_range",
                 "apply_patch_checked"

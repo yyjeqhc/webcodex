@@ -2316,7 +2316,12 @@ fn resolve_requested_path(
 fn is_line_edit_request_kind(kind: &str) -> bool {
     matches!(
         kind,
-        "file_replace_line_range" | "file_insert_at_line" | "file_delete_line_range"
+        "file_replace_line_range"
+            | "file_insert_at_line"
+            | "file_delete_line_range"
+            | "file_replace_exact_block"
+            | "file_insert_before_pattern"
+            | "file_insert_after_pattern"
     )
 }
 
@@ -2485,6 +2490,36 @@ fn handle_line_edit_file_request(
         );
     }
     if request
+        .old_text
+        .as_deref()
+        .map(|old_text| old_text.contains('\0'))
+        .unwrap_or(false)
+    {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": "old_text cannot contain NUL bytes",
+            }),
+            start,
+        );
+    }
+    if request
+        .pattern
+        .as_deref()
+        .map(|pattern| pattern.contains('\0'))
+        .unwrap_or(false)
+    {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": "pattern cannot contain NUL bytes",
+            }),
+            start,
+        );
+    }
+    if request
         .expected_prefix
         .as_deref()
         .map(|prefix| prefix.contains('\0'))
@@ -2576,6 +2611,132 @@ fn handle_line_edit_file_request(
                 serde_json::json!({"line": line}),
             )
         }
+        "file_replace_exact_block" => {
+            let old = request.old_text.as_deref().unwrap_or_default();
+            let new = request.content.as_deref().unwrap_or_default();
+            if old.is_empty() {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "error": "old_text must be non-empty",
+                    }),
+                    start,
+                );
+            }
+            let before_sha256 = sha256_hex_bytes(content.as_bytes());
+            if let Some(expected) = request.expected_sha256.as_deref() {
+                if before_sha256 != expected {
+                    return line_edit_stdout(
+                        serde_json::json!({
+                            "changed": false,
+                            "path": path,
+                            "before_sha256": before_sha256,
+                            "error": "Rejected before write: expected_old_sha256 mismatch.\nNo files were modified.\nRetry guidance: read the file again to refresh context, then retry with the current file sha256.",
+                        }),
+                        start,
+                    );
+                }
+            }
+            let matches = content.matches(old).count();
+            if matches == 0 {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "bytes_before": content.len(),
+                        "matches_replaced": 0,
+                        "error": format!("Rejected before write: old_text was not found exactly once in path {}.\nNo files were modified.\nRetry guidance: read the file again to refresh context, then retry with a more exact block.", path),
+                    }),
+                    start,
+                );
+            }
+            if matches > 1 {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "bytes_before": content.len(),
+                        "matches_replaced": 0,
+                        "error": format!("Rejected before write: old_text matched {} times in path {}; expected exactly one match.\nNo files were modified.\nRetry guidance: make old_text more specific or use replace_line_range with guards.", matches, path),
+                    }),
+                    start,
+                );
+            }
+            (
+                old.to_string(),
+                content.replacen(old, new, 1),
+                1,
+                1,
+                serde_json::json!({"matches_replaced": 1}),
+            )
+        }
+        "file_insert_before_pattern" | "file_insert_after_pattern" => {
+            let pattern = request.pattern.as_deref().unwrap_or_default();
+            let text = request.content.as_deref().unwrap_or_default();
+            if pattern.is_empty() {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "error": "pattern must be non-empty literal pattern",
+                    }),
+                    start,
+                );
+            }
+            if text.is_empty() {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "error": "Rejected before write: inserted text must not be empty.\nNo files were modified.\nRetry guidance: provide the exact text to insert, including any intended newlines.",
+                    }),
+                    start,
+                );
+            }
+            let matches = content.matches(pattern).count();
+            if matches == 0 {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "bytes_before": content.len(),
+                        "pattern_matches": 0,
+                        "error": format!("Rejected before write: pattern was not found exactly once in path {}.\nNo files were modified.\nRetry guidance: read the file again and retry with a more specific literal pattern.", path),
+                    }),
+                    start,
+                );
+            }
+            if matches > 1 {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "path": path,
+                        "bytes_before": content.len(),
+                        "pattern_matches": matches,
+                        "error": format!("Rejected before write: pattern matched {} times in path {}; expected exactly one match.\nNo files were modified.\nRetry guidance: use a more specific literal pattern or use insert_at_line with guards.", matches, path),
+                    }),
+                    start,
+                );
+            }
+            let idx = content.find(pattern).unwrap_or(0);
+            let insert_at = if request.kind == "file_insert_after_pattern" {
+                idx + pattern.len()
+            } else {
+                idx
+            };
+            let mut new_content = String::with_capacity(content.len() + text.len());
+            new_content.push_str(&content[..insert_at]);
+            new_content.push_str(text);
+            new_content.push_str(&content[insert_at..]);
+            (
+                pattern.to_string(),
+                new_content,
+                1,
+                1,
+                serde_json::json!({"pattern_matches": 1}),
+            )
+        }
         _ => {
             return line_edit_stdout(
                 serde_json::json!({
@@ -2590,21 +2751,24 @@ fn handle_line_edit_file_request(
 
     let (old_text, new_content, old_line_count, new_line_count, coords) = edit;
     let old_sha256 = sha256_hex_bytes(old_text.as_bytes());
-    if let Some(expected) = request.expected_sha256.as_deref() {
-        if old_sha256 != expected {
-            let err = if request.kind == "file_insert_at_line" {
-                "expected_anchor_sha256 mismatch"
-            } else {
-                "expected_old_sha256 mismatch"
-            };
-            let mut out = serde_json::json!({
-                "changed": false,
-                "path": path,
-                "old_sha256": old_sha256,
-                "error": err,
-            });
-            merge_json_object(&mut out, coords.clone());
-            return line_edit_stdout(out, start);
+    let selected_text_sha_guard_applies = request.kind != "file_replace_exact_block";
+    if selected_text_sha_guard_applies {
+        if let Some(expected) = request.expected_sha256.as_deref() {
+            if old_sha256 != expected {
+                let err = if request.kind == "file_insert_at_line" {
+                    "expected_anchor_sha256 mismatch"
+                } else {
+                    "expected_old_sha256 mismatch"
+                };
+                let mut out = serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "old_sha256": old_sha256,
+                    "error": err,
+                });
+                merge_json_object(&mut out, coords.clone());
+                return line_edit_stdout(out, start);
+            }
         }
     }
     if let Some(prefix) = request.expected_prefix.as_deref() {
@@ -2634,12 +2798,17 @@ fn handle_line_edit_file_request(
         merge_json_object(&mut out, coords.clone());
         return line_edit_stdout(out, start);
     }
+    let new_sha256 = sha256_hex_bytes(new_content.as_bytes());
     let mut out = serde_json::json!({
         "path": path,
         "old_sha256": old_sha256,
-        "new_sha256": sha256_hex_bytes(new_content.as_bytes()),
+        "new_sha256": new_sha256,
+        "before_sha256": sha256_hex_bytes(content.as_bytes()),
+        "after_sha256": new_sha256,
         "old_line_count": old_line_count,
         "new_line_count": new_line_count,
+        "bytes_before": content.len(),
+        "bytes_after": new_content.len(),
         "bytes_written": new_content.len(),
         "changed": new_content != content,
     });
@@ -2837,9 +3006,12 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         }
     };
     match request.kind.as_str() {
-        "file_replace_line_range" | "file_insert_at_line" | "file_delete_line_range" => {
-            handle_line_edit_file_request(request, &resolved, start)
-        }
+        "file_replace_line_range"
+        | "file_insert_at_line"
+        | "file_delete_line_range"
+        | "file_replace_exact_block"
+        | "file_insert_before_pattern"
+        | "file_insert_after_pattern" => handle_line_edit_file_request(request, &resolved, start),
         "file_read" => handle_file_read_request(policy, request, &resolved, start),
         "file_write" => {
             let content = request.content.clone().unwrap_or_default();
@@ -6071,6 +6243,8 @@ shell_profile = "../rust"
             path: None,
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,
@@ -6128,11 +6302,47 @@ shell_profile = "../rust"
             path: Some(path.to_string()),
             content: content.map(str::to_string),
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256,
             expected_prefix: expected_prefix.map(str::to_string),
             start_line,
             end_line,
             line,
+            create_dirs: false,
+            command: String::new(),
+            stdin: None,
+            timeout_secs: 30,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        }
+    }
+
+    fn anchor_edit_request(
+        cwd: &Path,
+        kind: &str,
+        path: &str,
+        old_text: Option<&str>,
+        pattern: Option<&str>,
+        content: Option<&str>,
+        expected_sha256: Option<String>,
+    ) -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: format!("req-{kind}"),
+            client_id: "agent-1".to_string(),
+            kind: kind.to_string(),
+            job_id: None,
+            cwd: Some(cwd.to_string_lossy().to_string()),
+            path: Some(path.to_string()),
+            content: content.map(str::to_string),
+            max_bytes: None,
+            old_text: old_text.map(str::to_string),
+            pattern: pattern.map(str::to_string),
+            expected_sha256,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
             create_dirs: false,
             command: String::new(),
             stdin: None,
@@ -6158,6 +6368,8 @@ shell_profile = "../rust"
             path: Some(path.to_string()),
             content: None,
             max_bytes,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line,
@@ -6278,6 +6490,341 @@ shell_profile = "../rust"
 
         assert!(out.exit_code.is_none(), "unexpected success: {out:?}");
         assert!(out.error.expect("error").contains("exceeds max_bytes"));
+    }
+
+    #[test]
+    fn replace_exact_block_replaces_single_block() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        std::fs::write(&file, "alpha\nold block\nomega\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_replace_exact_block",
+                "anchor.txt",
+                Some("old block\n"),
+                None,
+                Some("new block\n"),
+                None,
+            ),
+        ));
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["matches_replaced"], 1);
+        assert_eq!(out["bytes_before"], "alpha\nold block\nomega\n".len());
+        assert_eq!(out["bytes_after"], "alpha\nnew block\nomega\n".len());
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "alpha\nnew block\nomega\n"
+        );
+    }
+
+    #[test]
+    fn replace_exact_block_accepts_matching_whole_file_sha256_guard() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        let original = "alpha\nold block\nomega\n";
+        std::fs::write(&file, original).unwrap();
+        let whole_file_sha256 = sha256_hex_bytes(original.as_bytes());
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_replace_exact_block",
+                "anchor.txt",
+                Some("old block\n"),
+                None,
+                Some("new block\n"),
+                Some(whole_file_sha256),
+            ),
+        ));
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["matches_replaced"], 1);
+        assert_ne!(
+            out.get("error").and_then(|v| v.as_str()),
+            Some("expected_old_sha256 mismatch")
+        );
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "alpha\nnew block\nomega\n"
+        );
+    }
+
+    #[test]
+    fn replace_exact_block_rejects_mismatched_whole_file_sha256_guard() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        let original = "alpha\nold block\nomega\n";
+        std::fs::write(&file, original).unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_replace_exact_block",
+                "anchor.txt",
+                Some("old block\n"),
+                None,
+                Some("new block\n"),
+                Some(
+                    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string(),
+                ),
+            ),
+        ));
+        assert_eq!(out["changed"], false);
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("expected_old_sha256 mismatch"));
+        assert!(err.contains("No files were modified"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), original);
+    }
+
+    #[test]
+    fn replace_exact_block_rejects_missing_old_text_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        std::fs::write(&file, "alpha\nomega\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_replace_exact_block",
+                "anchor.txt",
+                Some("missing"),
+                None,
+                Some("new"),
+                None,
+            ),
+        ));
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("Rejected before write"));
+        assert!(err.contains("No files were modified"));
+        assert!(err.contains("Retry guidance"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "alpha\nomega\n");
+    }
+
+    #[test]
+    fn replace_exact_block_rejects_multiple_matches_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        std::fs::write(&file, "dup\ndup\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_replace_exact_block",
+                "anchor.txt",
+                Some("dup"),
+                None,
+                Some("x"),
+                None,
+            ),
+        ));
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("Rejected before write"));
+        assert!(err.contains("expected exactly one match"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "dup\ndup\n");
+    }
+
+    #[test]
+    fn replace_exact_block_rejects_empty_old_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("anchor.txt"), "alpha\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_replace_exact_block",
+                "anchor.txt",
+                Some(""),
+                None,
+                Some("x"),
+                None,
+            ),
+        ));
+        assert!(out["error"]
+            .as_str()
+            .unwrap()
+            .contains("old_text must be non-empty"));
+    }
+
+    #[test]
+    fn replace_exact_block_rejects_non_utf8_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("binary.bin");
+        std::fs::write(&file, [0xff, 0xfe, 0xfd]).unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_replace_exact_block",
+                "binary.bin",
+                Some("old"),
+                None,
+                Some("new"),
+                None,
+            ),
+        ));
+        assert!(out["error"].as_str().unwrap().contains("not valid UTF-8"));
+        assert_eq!(std::fs::read(&file).unwrap(), vec![0xff, 0xfe, 0xfd]);
+    }
+
+    #[test]
+    fn insert_before_pattern_inserts_before_single_literal_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        std::fs::write(&file, "alpha\nomega\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_insert_before_pattern",
+                "anchor.txt",
+                None,
+                Some("omega"),
+                Some("before\n"),
+                None,
+            ),
+        ));
+        assert_eq!(out["pattern_matches"], 1);
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "alpha\nbefore\nomega\n"
+        );
+    }
+
+    #[test]
+    fn insert_after_pattern_inserts_after_single_literal_match() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        std::fs::write(&file, "alpha\nomega\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_insert_after_pattern",
+                "anchor.txt",
+                None,
+                Some("alpha"),
+                Some("-after"),
+                None,
+            ),
+        ));
+        assert_eq!(out["pattern_matches"], 1);
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "alpha-after\nomega\n"
+        );
+    }
+
+    #[test]
+    fn insert_pattern_rejects_missing_pattern_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        std::fs::write(&file, "alpha\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_insert_before_pattern",
+                "anchor.txt",
+                None,
+                Some("missing"),
+                Some("x"),
+                None,
+            ),
+        ));
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("Rejected before write"));
+        assert!(err.contains("No files were modified"));
+        assert!(err.contains("Retry guidance"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "alpha\n");
+    }
+
+    #[test]
+    fn insert_pattern_rejects_multiple_matches_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("anchor.txt");
+        std::fs::write(&file, "x-x-x").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_insert_after_pattern",
+                "anchor.txt",
+                None,
+                Some("x"),
+                Some("!"),
+                None,
+            ),
+        ));
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("expected exactly one match"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "x-x-x");
+    }
+
+    #[test]
+    fn insert_pattern_rejects_empty_pattern() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("anchor.txt"), "alpha\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_insert_before_pattern",
+                "anchor.txt",
+                None,
+                Some(""),
+                Some("x"),
+                None,
+            ),
+        ));
+        assert!(out["error"].as_str().unwrap().contains("literal pattern"));
+    }
+
+    #[test]
+    fn insert_pattern_rejects_empty_text() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        std::fs::write(tmp.path().join("anchor.txt"), "alpha\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &anchor_edit_request(
+                tmp.path(),
+                "file_insert_after_pattern",
+                "anchor.txt",
+                None,
+                Some("alpha"),
+                Some(""),
+                None,
+            ),
+        ));
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("inserted text must not be empty"));
+        assert!(err.contains("Retry guidance"));
     }
 
     #[test]
@@ -7213,6 +7760,8 @@ shell_profile = "../rust"
             path: None,
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,
@@ -7264,6 +7813,8 @@ shell_profile = "../rust"
             path: None,
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,
@@ -7308,6 +7859,8 @@ shell_profile = "../rust"
             path: None,
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,

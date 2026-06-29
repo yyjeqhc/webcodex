@@ -373,15 +373,21 @@ fn validate_optional_field(value: &Option<String>, field: &str) -> Result<(), St
     }
     Ok(())
 }
-
 fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
     validate_id(&body.client_id, "client_id")?;
     match body.op.as_str() {
-        "read" | "write" | "list" | "replace_line_range" | "insert_at_line"
-        | "delete_line_range" => {}
+        "read"
+        | "write"
+        | "list"
+        | "replace_line_range"
+        | "insert_at_line"
+        | "delete_line_range"
+        | "replace_exact_block"
+        | "insert_before_pattern"
+        | "insert_after_pattern" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range"
+                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern"
                     .to_string(),
             )
         }
@@ -390,6 +396,13 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
         body.op.as_str(),
         "replace_line_range" | "insert_at_line" | "delete_line_range"
     );
+    let replace_exact_block = body.op == "replace_exact_block";
+    let insert_pattern = matches!(
+        body.op.as_str(),
+        "insert_before_pattern" | "insert_after_pattern"
+    );
+    let anchor_edit = replace_exact_block || insert_pattern;
+
     let path = body.path.trim();
     if path.is_empty() {
         return Err("path cannot be empty".to_string());
@@ -411,9 +424,13 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
             return Err("cwd cannot contain NUL bytes".to_string());
         }
     }
+
     validate_sha256(&body.expected_sha256)?;
-    if body.expected_sha256.is_some() && body.op != "write" && !line_edit {
-        return Err("expected_sha256 is only allowed for op=write or line edit ops".to_string());
+    if body.expected_sha256.is_some() && body.op != "write" && !line_edit && !replace_exact_block {
+        return Err(
+            "expected_sha256 is only allowed for op=write, replace_exact_block, or line edit ops"
+                .to_string(),
+        );
     }
     if let Some(prefix) = &body.expected_prefix {
         if !line_edit {
@@ -426,6 +443,7 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
     if body.create_dirs && body.op != "write" {
         return Err("create_dirs is only allowed for op=write".to_string());
     }
+
     if let Some(content) = &body.content {
         if content.len() > MAX_FILE_CONTENT_BYTES {
             return Err(format!(
@@ -433,15 +451,38 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
                 MAX_FILE_CONTENT_BYTES
             ));
         }
-        if body.op != "write" && body.op != "replace_line_range" && body.op != "insert_at_line" {
+        if body.op != "write"
+            && body.op != "replace_line_range"
+            && body.op != "insert_at_line"
+            && !anchor_edit
+        {
             return Err(
-                "content is only allowed for op=write or line edit insert/replace".to_string(),
+                "content is only allowed for op=write, line edit insert/replace, or anchor edit tools"
+                    .to_string(),
             );
         }
     }
+    if let Some(old_text) = &body.old_text {
+        if !replace_exact_block {
+            return Err("old_text is only allowed for op=replace_exact_block".to_string());
+        }
+        if old_text.contains('\0') {
+            return Err("old_text cannot contain NUL bytes".to_string());
+        }
+    }
+    if let Some(pattern) = &body.pattern {
+        if !insert_pattern {
+            return Err("pattern is only allowed for insert pattern ops".to_string());
+        }
+        if pattern.contains('\0') {
+            return Err("pattern cannot contain NUL bytes".to_string());
+        }
+    }
+
     if body.op == "write" && body.content.is_none() {
         return Err("content is required for op=write".to_string());
     }
+
     match body.op.as_str() {
         "read" => {
             match (body.start_line, body.end_line) {
@@ -513,6 +554,42 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
                 return Err("content is required for op=insert_at_line".to_string());
             }
         }
+        "replace_exact_block" => {
+            if body.old_text.as_deref().unwrap_or_default().is_empty() {
+                return Err("old_text is required for op=replace_exact_block".to_string());
+            }
+            if body.content.is_none() {
+                return Err("content is required for op=replace_exact_block".to_string());
+            }
+            if body.pattern.is_some()
+                || body.expected_prefix.is_some()
+                || body.start_line.is_some()
+                || body.end_line.is_some()
+                || body.line.is_some()
+            {
+                return Err(
+                    "replace_exact_block only accepts old_text/content/expected_sha256 guards"
+                        .to_string(),
+                );
+            }
+        }
+        "insert_before_pattern" | "insert_after_pattern" => {
+            if body.pattern.as_deref().unwrap_or_default().is_empty() {
+                return Err("pattern is required for insert pattern ops".to_string());
+            }
+            if body.content.as_deref().unwrap_or_default().is_empty() {
+                return Err("content is required for insert pattern ops".to_string());
+            }
+            if body.old_text.is_some()
+                || body.expected_sha256.is_some()
+                || body.expected_prefix.is_some()
+                || body.start_line.is_some()
+                || body.end_line.is_some()
+                || body.line.is_some()
+            {
+                return Err("insert pattern ops only accept pattern/content".to_string());
+            }
+        }
         _ => {
             if body.expected_prefix.is_some()
                 || body.start_line.is_some()
@@ -520,6 +597,9 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
                 || body.line.is_some()
             {
                 return Err("line edit fields are only allowed for line edit ops".to_string());
+            }
+            if body.old_text.is_some() || body.pattern.is_some() {
+                return Err("anchor edit fields are only allowed for anchor edit ops".to_string());
             }
         }
     }
@@ -1212,6 +1292,8 @@ impl ShellClientRegistry {
             path: Some(body.path.trim().to_string()),
             content: body.content.clone(),
             max_bytes: body.max_bytes,
+            old_text: body.old_text.clone(),
+            pattern: body.pattern.clone(),
             expected_sha256: body.expected_sha256.clone(),
             expected_prefix: body.expected_prefix.clone(),
             start_line: body.start_line,
@@ -1261,6 +1343,8 @@ impl ShellClientRegistry {
             path: None,
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,
@@ -1332,6 +1416,8 @@ impl ShellClientRegistry {
             path: None,
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,
@@ -1513,6 +1599,8 @@ impl ShellClientRegistry {
             path: None,
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,
@@ -1694,6 +1782,8 @@ impl ShellClientRegistry {
                     path: None,
                     content: None,
                     max_bytes: None,
+                    old_text: None,
+                    pattern: None,
                     expected_sha256: None,
                     expected_prefix: None,
                     start_line: None,
@@ -3318,6 +3408,8 @@ mod tests {
             cwd: Some("/root/git/webcodex".to_string()),
             content: None,
             max_bytes: None,
+            old_text: None,
+            pattern: None,
             expected_sha256: None,
             expected_prefix: None,
             start_line: None,
@@ -3890,6 +3982,8 @@ mod tests {
                     cwd: None,
                     content: None,
                     max_bytes: None,
+                    old_text: None,
+                    pattern: None,
                     expected_sha256: None,
                     expected_prefix: None,
                     start_line: None,

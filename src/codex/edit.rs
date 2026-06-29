@@ -877,6 +877,8 @@ async fn agent_file_request(
                 cwd: Some(cwd.to_string()),
                 content,
                 max_bytes,
+                old_text: None,
+                pattern: None,
                 expected_sha256,
                 expected_prefix: None,
                 start_line: None,

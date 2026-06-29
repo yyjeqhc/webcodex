@@ -1309,6 +1309,8 @@ impl ToolRuntime {
                     cwd: Some(proj.path.clone()),
                     content,
                     max_bytes: None,
+                    old_text: None,
+                    pattern: None,
                     expected_sha256,
                     expected_prefix,
                     start_line,
@@ -1374,6 +1376,188 @@ impl ToolRuntime {
         ToolResult::ok(obj)
     }
 
+    fn validate_anchor_edit_common(path: &str, text: &str) -> Result<(), String> {
+        validate_edit_file_path(path)?;
+        if text.contains('\0') {
+            return Err("text cannot contain NUL bytes".to_string());
+        }
+        if text.len() > MAX_WRITE_CONTENT_BYTES {
+            return Err(format!(
+                "text too large; maximum is {} bytes",
+                MAX_WRITE_CONTENT_BYTES
+            ));
+        }
+        Ok(())
+    }
+
+    async fn run_anchor_edit(
+        &self,
+        project: String,
+        path: String,
+        op: &str,
+        old_text: Option<String>,
+        pattern: Option<String>,
+        content: String,
+        expected_sha256: Option<String>,
+    ) -> ToolResult {
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "anchor edit tools require an agent-registered project; \
+                 server-configured projects are not supported",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+        let wait_timeout = 60_u64;
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: op.to_string(),
+                    client_id,
+                    path: path.clone(),
+                    cwd: Some(proj.path.clone()),
+                    content: Some(content),
+                    max_bytes: None,
+                    old_text,
+                    pattern,
+                    expected_sha256,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: wait_timeout,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(recoverable_write_rejection(e)),
+        };
+        let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return ToolResult::err("agent anchor edit request was dropped");
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return ToolResult::err("timed out waiting for agent anchor edit");
+            }
+        };
+        if let Some(e) = resp.error {
+            return ToolResult::err(recoverable_write_rejection(e));
+        }
+        if resp.exit_code != Some(0) {
+            return ToolResult::err(recoverable_write_rejection(resp.stderr.unwrap_or_else(
+                || format!("agent anchor edit failed with code {:?}", resp.exit_code),
+            )));
+        }
+        let stdout = resp.stdout.unwrap_or_default();
+        let stdout = stdout.trim();
+        let obj: Value = match serde_json::from_str(stdout) {
+            Ok(v) => v,
+            Err(e) => {
+                return ToolResult::err(format!(
+                    "agent anchor edit returned invalid JSON: {} (got: {})",
+                    e,
+                    &stdout[..stdout.len().min(200)]
+                ))
+            }
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(err),
+            };
+        }
+        ToolResult::ok(obj)
+    }
+
+    pub(crate) async fn replace_exact_block(
+        &self,
+        project: String,
+        path: String,
+        old_text: String,
+        new_text: String,
+        expected_old_sha256: Option<String>,
+    ) -> ToolResult {
+        if let Err(e) = Self::validate_anchor_edit_common(&path, &new_text) {
+            return ToolResult::err(e);
+        }
+        if old_text.is_empty() {
+            return ToolResult::err("old_text must be non-empty");
+        }
+        if old_text.contains('\0') {
+            return ToolResult::err("old_text cannot contain NUL bytes");
+        }
+        if old_text.len() > MAX_REPLACE_FIELD_BYTES {
+            return ToolResult::err(format!(
+                "old_text too large; maximum is {} bytes",
+                MAX_REPLACE_FIELD_BYTES
+            ));
+        }
+        if let Some(hash) = expected_old_sha256.as_deref() {
+            if !is_hex_sha256(hash) {
+                return ToolResult::err(
+                    "expected_old_sha256 must be a lowercase 64-char hex sha256 digest",
+                );
+            }
+        }
+        self.run_anchor_edit(
+            project,
+            path,
+            "replace_exact_block",
+            Some(old_text),
+            None,
+            new_text,
+            expected_old_sha256,
+        )
+        .await
+    }
+
+    pub(crate) async fn insert_around_pattern(
+        &self,
+        project: String,
+        path: String,
+        pattern: String,
+        text: String,
+        op: &str,
+    ) -> ToolResult {
+        if let Err(e) = Self::validate_anchor_edit_common(&path, &text) {
+            return ToolResult::err(e);
+        }
+        if pattern.is_empty() {
+            return ToolResult::err("pattern must be non-empty literal pattern");
+        }
+        if text.is_empty() {
+            return ToolResult::err("Rejected before write: inserted text must not be empty.\nNo files were modified.\nRetry guidance: provide the exact text to insert, including any intended newlines.");
+        }
+        if pattern.contains('\0') {
+            return ToolResult::err("pattern cannot contain NUL bytes");
+        }
+        if pattern.len() > MAX_REPLACE_FIELD_BYTES {
+            return ToolResult::err(format!(
+                "pattern too large; maximum is {} bytes",
+                MAX_REPLACE_FIELD_BYTES
+            ));
+        }
+        self.run_anchor_edit(project, path, op, None, Some(pattern), text, None)
+            .await
+    }
     pub(crate) async fn replace_line_range(
         &self,
         project: String,
@@ -1576,6 +1760,8 @@ impl ToolRuntime {
                         cwd: Some(proj.path.clone()),
                         content: None,
                         max_bytes: Some(512 * 1024),
+                        old_text: None,
+                        pattern: None,
                         expected_sha256: None,
                         expected_prefix: None,
                         start_line: Some(eff_start),
@@ -1678,6 +1864,8 @@ impl ToolRuntime {
                         cwd: Some(proj.path.clone()),
                         content: None,
                         max_bytes: None,
+                        old_text: None,
+                        pattern: None,
                         expected_sha256: None,
                         expected_prefix: None,
                         start_line: None,

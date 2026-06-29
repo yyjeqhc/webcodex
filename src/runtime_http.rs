@@ -3351,13 +3351,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth2_tools_call_requires_project_write_for_line_edit_or_write_file() {
+    async fn oauth2_tools_call_requires_project_write_for_anchor_edit_tools() {
         let (_tmp, service, token) = phase2_oauth_service("project:write");
         let (status, body, _) = oauth_tools_call(
             &service,
             &token,
-            "write_project_file",
-            json!({"project": "demo", "path": "new.txt", "content": "hi\n", "overwrite": true}),
+            "replace_exact_block",
+            json!({"project": "demo", "path": "README.md", "old_text": "old", "new_text": "new"}),
         )
         .await;
         assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
@@ -3366,13 +3366,12 @@ mod tests {
         let (status, body, challenge) = oauth_tools_call(
             &service,
             &token,
-            "replace_line_range",
+            "insert_before_pattern",
             json!({
                 "project": "demo",
                 "path": "README.md",
-                "start_line": 1,
-                "end_line": 1,
-                "new_text": "updated\n"
+                "pattern": "anchor",
+                "text": "inserted\n"
             }),
         )
         .await;

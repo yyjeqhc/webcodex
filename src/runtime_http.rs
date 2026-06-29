@@ -133,11 +133,11 @@ struct ApplyPatchRequest {
     pub patch: String,
 }
 
-/// `POST /api/projects/validate_patch` — thin REST wrapper over
-/// `ToolCall::ValidatePatch`. Patch preflight / dry-run only; never modifies
-/// the worktree and never falls back to a real apply. NOT a GPT Action
-/// (excluded from `/openapi.json`); intended for full-auto coding agent loops
-/// and the MCP App console.
+/// `POST /api/projects/validate_patch` — dedicated read-only GPT Action
+/// wrapper over `ToolCall::ValidatePatch`. Patch preflight / dry-run only;
+/// accepts only raw standard unified diff, runs `git apply --check`/`--stat`
+/// through the owning agent, never modifies the worktree, and never falls back
+/// to a real apply.
 #[derive(Debug, Deserialize)]
 struct ValidatePatchRequest {
     pub project: String,
@@ -1100,10 +1100,10 @@ pub async fn projects_apply_patch(req: &mut Request, depot: &mut Depot, res: &mu
     render_result(res, &audit, "apply_patch", project, result);
 }
 
-/// `POST /api/projects/validate_patch` — thin REST wrapper over
-/// `ToolCall::ValidatePatch`. Patch preflight / dry-run: checks whether a
-/// unified diff can apply without modifying the worktree. Routed to the owning
-/// agent via `ToolRuntime`. NOT a GPT Action (excluded from `/openapi.json`).
+/// `POST /api/projects/validate_patch` — dedicated read-only GPT Action
+/// wrapper over `ToolCall::ValidatePatch`. It accepts only raw standard
+/// unified diff and performs `git apply --check`/`--stat` through the owning
+/// agent via `ToolRuntime`. Never writes files.
 #[handler]
 pub async fn projects_validate_patch(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(

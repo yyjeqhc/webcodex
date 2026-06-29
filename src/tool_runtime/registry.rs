@@ -65,6 +65,8 @@ fn open_object_schema(description: &str) -> Value {
     })
 }
 
+const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
+
 fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
     let properties = output_properties
         .into_iter()
@@ -916,7 +918,7 @@ impl ToolRuntime {
                     .to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Configured project id.", true),
-                    ("patch", "string", "Unified diff patch.", true),
+                    ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
                 ]),
                 output_schema: output_schema_for_tool("apply_patch"),
                 annotations: tool_annotations("apply_patch"),
@@ -926,7 +928,7 @@ impl ToolRuntime {
                 description: "Validate/apply a unified diff and return a diff summary. Best for broad or multi-file patches; for local line edits prefer structured line edit tools.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
-                    ("patch", "string", "Unified diff patch.", true),
+                    ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings before applying.", false),
                 ]),
                 output_schema: output_schema_for_tool("apply_patch_checked"),
@@ -967,7 +969,7 @@ impl ToolRuntime {
                 description: "Dry-run a unified diff with git apply --check/--stat through the owning agent; never writes files.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
-                    ("patch", "string", "Unified diff patch to validate.", true),
+                    ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings.", false),
                 ]),
                 output_schema: output_schema_for_tool("validate_patch"),
@@ -1196,5 +1198,54 @@ impl ToolRuntime {
             "Cleanup: use delete_project_files / git_restore_paths / discard_untracked instead of ad hoc rm.",
             "Codex: run_codex is optional delegation only when explicitly requested and Codex CLI is configured; otherwise use direct WebCodex tools.",
         ]
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::types::RuntimeInfo;
+    use super::*;
+    use crate::config::CodexConfig;
+    use crate::projects::ProjectsState;
+    use crate::shell_client::ShellClientRegistry;
+    use std::sync::Arc;
+
+    fn test_runtime() -> ToolRuntime {
+        ToolRuntime::new(
+            Arc::new(ProjectsState::failed(
+                "projects not configured for test".to_string(),
+                "test".to_string(),
+            )),
+            Arc::new(ShellClientRegistry::default()),
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        )
+    }
+
+    #[test]
+    fn tool_specs_patch_fields_reject_codex_wrapper() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        for tool in ["apply_patch", "apply_patch_checked", "validate_patch"] {
+            let spec = specs
+                .iter()
+                .find(|spec| spec.name == tool)
+                .unwrap_or_else(|| panic!("missing tool spec: {tool}"));
+            let description = spec.input_schema["properties"]["patch"]["description"]
+                .as_str()
+                .unwrap_or_else(|| panic!("missing patch description for {tool}"));
+            assert!(
+                description.contains("raw standard unified diff"),
+                "{tool}: {description}"
+            );
+            assert!(
+                description.contains("Codex apply_patch wrapper"),
+                "{tool}: {description}"
+            );
+            assert!(
+                description.contains("*** Begin Patch"),
+                "{tool}: {description}"
+            );
+        }
     }
 }

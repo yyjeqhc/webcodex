@@ -1,6 +1,8 @@
 use salvo::prelude::*;
 use serde_json::{json, Value};
 
+const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
+
 fn public_url() -> String {
     std::env::var("WEBCODEX_PUBLIC_URL")
         .ok()
@@ -1337,7 +1339,7 @@ fn schemas() -> Value {
                 },
                 "patch": {
                     "type": "string",
-                    "description": "Unified diff patch content. Applied by the owning agent."
+                    "description": PATCH_FIELD_DESCRIPTION
                 }
             }
         },
@@ -1353,7 +1355,7 @@ fn schemas() -> Value {
                 },
                 "patch": {
                     "type": "string",
-                    "description": "Unified diff patch content to validate."
+                    "description": PATCH_FIELD_DESCRIPTION
                 },
                 "deny_sensitive_paths": {
                     "type": "boolean",
@@ -1373,7 +1375,7 @@ fn schemas() -> Value {
                 },
                 "patch": {
                     "type": "string",
-                    "description": "Unified diff patch content. Applied by the owning agent when the preflight passes."
+                    "description": PATCH_FIELD_DESCRIPTION
                 },
                 "deny_sensitive_paths": {
                     "type": "boolean",
@@ -2740,5 +2742,36 @@ mod tests {
             count, 28,
             "GPT Actions schema must remain 28 operations: prior 27 plus the single import Action"
         );
+    }
+}
+
+#[cfg(test)]
+mod patch_description_tests {
+    use super::*;
+
+    #[test]
+    fn openapi_patch_request_descriptions_reject_codex_wrapper() {
+        let spec = build_openapi_spec();
+        let schemas = &spec["components"]["schemas"];
+        let apply_desc = schemas["ApplyPatchRequest"]["properties"]["patch"]["description"]
+            .as_str()
+            .expect("ApplyPatchRequest patch description");
+        let validate_desc = schemas["ValidatePatchRequest"]["properties"]["patch"]["description"]
+            .as_str()
+            .expect("ValidatePatchRequest patch description");
+        let checked_desc = schemas["ApplyPatchCheckedRequest"]["properties"]["patch"]
+            ["description"]
+            .as_str()
+            .expect("ApplyPatchCheckedRequest patch description");
+
+        assert!(
+            apply_desc.contains("raw standard unified diff"),
+            "{apply_desc}"
+        );
+        assert!(
+            validate_desc.contains("Codex apply_patch wrapper"),
+            "{validate_desc}"
+        );
+        assert!(checked_desc.contains("*** Begin Patch"), "{checked_desc}");
     }
 }

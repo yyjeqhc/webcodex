@@ -28,6 +28,27 @@ pub(crate) fn parse_changed_files_from_patch(patch: &str) -> Vec<String> {
     files
 }
 
+const UNSUPPORTED_CODEX_PATCH_WRAPPER_ERROR: &str = "Patch uses Codex apply_patch wrapper syntax. This endpoint accepts only raw standard unified diff. Retry with diff --git / --- / +++ unified diff format.";
+
+pub(crate) fn looks_like_codex_apply_patch_wrapper(patch: &str) -> bool {
+    patch.lines().any(|line| {
+        let line = line.trim_end();
+        line == "*** Begin Patch"
+            || line == "*** End Patch"
+            || line.starts_with("*** Update File:")
+            || line.starts_with("*** Add File:")
+            || line.starts_with("*** Delete File:")
+    })
+}
+
+pub(crate) fn reject_unsupported_patch_wrapper(patch: &str) -> Option<String> {
+    if looks_like_codex_apply_patch_wrapper(patch) {
+        Some(UNSUPPORTED_CODEX_PATCH_WRAPPER_ERROR.to_string())
+    } else {
+        None
+    }
+}
+
 pub(crate) fn validate_patch_file_path(path: &str) -> Result<(), String> {
     if path.is_empty() {
         return Err("patch path cannot be empty".to_string());
@@ -115,6 +136,9 @@ impl ToolRuntime {
         }
         if patch.contains('\0') {
             return ToolResult::err("Patch contains NUL byte");
+        }
+        if let Some(err) = reject_unsupported_patch_wrapper(&patch) {
+            return ToolResult::err(err);
         }
         let changed = parse_changed_files_from_patch(&patch);
         if changed.is_empty() {
@@ -282,6 +306,9 @@ impl ToolRuntime {
                 MAX_VALIDATE_PATCH_BYTES
             ));
         }
+        if let Some(err) = reject_unsupported_patch_wrapper(&patch) {
+            return ToolResult::err(err);
+        }
 
         // ---- Project resolution (agent-registered only) ----
         let proj = match self.resolve_project(&project).await {
@@ -418,5 +445,167 @@ impl ToolRuntime {
             "stderr": check_stderr,
             "warnings": warnings,
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::types::{RuntimeInfo, ToolResult};
+    use super::*;
+    use crate::config::CodexConfig;
+    use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
+    use crate::shell_client::ShellClientRegistry;
+    use crate::shell_protocol::{
+        ShellAgentPollRequest, ShellAgentProjectSummary, ShellClientCapabilities,
+        ShellClientRegisterRequest,
+    };
+    use std::collections::HashMap;
+    use std::sync::Arc;
+
+    fn codex_apply_patch_wrapper() -> &'static str {
+        "*** Begin Patch\n*** Update File: src/example.rs\n@@\n-old\n+new\n*** End Patch\n"
+    }
+
+    fn standard_unified_diff() -> &'static str {
+        "diff --git a/src/example.rs b/src/example.rs\n--- a/src/example.rs\n+++ b/src/example.rs\n@@ -1,1 +1,1 @@\n-old\n+new\n"
+    }
+
+    fn runtime_with_agent_project(client_id: &str) -> ToolRuntime {
+        let mut projects = HashMap::new();
+        projects.insert(
+            "agent-proj".to_string(),
+            ProjectConfig {
+                path: "/tmp/agent-proj".to_string(),
+                executor: Executor::Agent,
+                client_id: Some(client_id.to_string()),
+                allow_patch: true,
+                allow_command_requests: false,
+                allow_raw_command_requests: false,
+                default_apply_patch_backend: None,
+                allowed_checks: Vec::new(),
+                checks: None,
+                commands: HashMap::new(),
+                hooks: HashMap::new(),
+            },
+        );
+        ToolRuntime::new(
+            Arc::new(ProjectsState::loaded(
+                ProjectsConfig { projects },
+                "test".to_string(),
+            )),
+            Arc::new(ShellClientRegistry::default()),
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        )
+    }
+
+    async fn register_patch_agent(runtime: &ToolRuntime, client_id: &str) {
+        runtime
+            .shell_clients
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    ..ShellClientCapabilities::default()
+                }),
+                projects: Some(vec![ShellAgentProjectSummary {
+                    id: "agent-proj".to_string(),
+                    name: None,
+                    path: "/tmp/agent-proj".to_string(),
+                    allow_patch: true,
+                    kind: None,
+                    description: None,
+                    hooks: Vec::new(),
+                    disabled: false,
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 0,
+                    shell_profile: None,
+                }]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn assert_no_agent_shell_request(runtime: &ToolRuntime, client_id: &str) {
+        let req = runtime
+            .shell_clients
+            .poll(ShellAgentPollRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        assert!(
+            req.is_none(),
+            "wrapper rejection must not enqueue agent shell requests"
+        );
+    }
+
+    fn assert_codex_wrapper_rejected(result: &ToolResult) {
+        assert!(!result.success, "wrapper patch must fail: {:?}", result);
+        let err = result.error.as_deref().unwrap_or("");
+        assert!(err.contains("Codex apply_patch wrapper"), "{err}");
+        assert!(err.contains("raw standard unified diff"), "{err}");
+    }
+
+    #[test]
+    fn standard_unified_diff_is_not_codex_apply_patch_wrapper() {
+        assert!(!looks_like_codex_apply_patch_wrapper(
+            standard_unified_diff()
+        ));
+        assert!(reject_unsupported_patch_wrapper(standard_unified_diff()).is_none());
+    }
+
+    #[tokio::test]
+    async fn validate_patch_rejects_codex_apply_patch_wrapper() {
+        let runtime = runtime_with_agent_project("patcher");
+        register_patch_agent(&runtime, "patcher").await;
+        let result = runtime
+            .validate_patch(
+                "agent:patcher:agent-proj".to_string(),
+                codex_apply_patch_wrapper().to_string(),
+                None,
+            )
+            .await;
+        assert_codex_wrapper_rejected(&result);
+        assert_no_agent_shell_request(&runtime, "patcher").await;
+    }
+
+    #[tokio::test]
+    async fn apply_patch_checked_rejects_codex_apply_patch_wrapper_before_apply() {
+        let runtime = runtime_with_agent_project("patcher");
+        register_patch_agent(&runtime, "patcher").await;
+        let result = runtime
+            .apply_patch_checked(
+                "agent:patcher:agent-proj".to_string(),
+                codex_apply_patch_wrapper().to_string(),
+                Some(true),
+            )
+            .await;
+        assert_codex_wrapper_rejected(&result);
+        assert_no_agent_shell_request(&runtime, "patcher").await;
+    }
+
+    #[tokio::test]
+    async fn apply_patch_rejects_codex_apply_patch_wrapper() {
+        let runtime = runtime_with_agent_project("patcher");
+        register_patch_agent(&runtime, "patcher").await;
+        let result = runtime
+            .apply_patch(
+                "agent:patcher:agent-proj".to_string(),
+                codex_apply_patch_wrapper().to_string(),
+            )
+            .await;
+        assert_codex_wrapper_rejected(&result);
+        assert_no_agent_shell_request(&runtime, "patcher").await;
     }
 }

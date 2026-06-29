@@ -1,3 +1,4 @@
+use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
 #[cfg(test)]
 use sha2::{Digest, Sha256};
@@ -161,7 +162,15 @@ pub(crate) const MAX_EXPECTED_PREFIX_BYTES: usize = 64 * 1024; // 64 KiB
 /// Hard cap on the serialized helper payload sent to the agent over the
 /// run-shell stdin transport. Mirrors `MAX_RUN_STDIN_BYTES` in shell_client
 /// without coupling this module to that private constant.
-pub(crate) const RUN_HELPER_STDIN_BUDGET: usize = 512 * 1024; // 512 KiB
+pub(crate) const RUN_HELPER_STDIN_BUDGET: usize = 15 * 1024 * 1024; // 15 MiB
+
+/// Maximum decoded size for one binary project artifact imported through GPT
+/// Actions/runtime tools. Keep bounded because the current agent helper path
+/// carries base64 over stdin.
+pub(crate) const MAX_PROJECT_ARTIFACT_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
+
+/// Hard cap for a base64-encoded artifact payload plus JSON overhead.
+pub(crate) const MAX_PROJECT_ARTIFACT_BASE64_BYTES: usize = 14 * 1024 * 1024; // ~10 MiB decoded
 
 /// Validate a project-relative file path for the Phase 4 structured edit
 /// tools (`replace_in_file`, `write_project_file`). Unlike the patch preflight
@@ -193,6 +202,64 @@ pub(crate) fn validate_edit_file_path(path: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Validate a project-relative binary artifact path. This is stricter than
+/// source edit validation: in addition to build/VCS dirs it rejects secrets,
+/// token paths, and private-key filenames.
+pub(crate) fn validate_artifact_file_path(path: &str) -> Result<(), String> {
+    if path.is_empty() {
+        return Err("path cannot be empty".to_string());
+    }
+    if path.contains('\0') {
+        return Err("path cannot contain NUL bytes".to_string());
+    }
+    let p = Path::new(path);
+    if p.is_absolute() {
+        return Err("path must be project-relative".to_string());
+    }
+    if p.components()
+        .any(|component| matches!(component, std::path::Component::ParentDir))
+    {
+        return Err("path cannot contain parent traversal".to_string());
+    }
+    if is_sensitive_artifact_path(path) {
+        return Err(format!("refusing sensitive artifact path '{}'", path));
+    }
+    Ok(())
+}
+
+pub(crate) fn is_sensitive_artifact_path(path: &str) -> bool {
+    for comp in path.to_lowercase().split('/') {
+        if matches!(
+            comp,
+            ".git" | "target" | "node_modules" | "secrets" | "tokens"
+        ) {
+            return true;
+        }
+        if comp == ".env" || comp.starts_with(".env") || comp.ends_with(".pem") {
+            return true;
+        }
+    }
+    false
+}
+
+fn validate_artifact_mime(mime_type: Option<&str>) -> Result<Option<String>, String> {
+    let Some(mime) = mime_type.map(str::trim).filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    match mime {
+        "image/png"
+        | "image/jpeg"
+        | "image/webp"
+        | "application/pdf"
+        | "application/zip"
+        | "text/plain"
+        | "text/csv"
+        | "application/json" => Ok(Some(mime.to_string())),
+        "application/octet-stream" => Ok(Some(mime.to_string())),
+        _ => Err(format!("unsupported mime_type '{}'; allowed first-pass artifact MIME types are image/png, image/jpeg, image/webp, application/pdf, application/zip, text/plain, text/csv, application/json", mime)),
+    }
 }
 
 /// True if `path` contains a sensitive component for the structured edit
@@ -521,6 +588,134 @@ sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
 emit({"path": path, "created": not exists, "overwritten": exists, "bytes_written": written_bytes, "sha256": sha, "warning": warning})
 "#;
 
+/// Fixed python3 helper for binary artifact writes. Payload carries base64 over
+/// stdin; helper decodes and writes bytes atomically on the owning agent.
+pub(crate) const SAVE_PROJECT_ARTIFACT_HELPER: &str = r#"
+import sys, json, hashlib, os, tempfile, base64
+NUL = "\x00"
+def emit(obj):
+    sys.stdout.write(json.dumps(obj))
+    sys.exit(0)
+def invalid(path, msg):
+    emit({"path": path if isinstance(path, str) else None, "bytes_written": 0, "sha256": None, "mime_type": None, "error": msg})
+try:
+    req = json.load(sys.stdin)
+except Exception as e:
+    emit({"path": None, "bytes_written": 0, "sha256": None, "mime_type": None, "error": "invalid json: " + str(e)})
+path = req.get("path", "")
+content_base64 = req.get("content_base64", "")
+mime_type = req.get("mime_type", None)
+overwrite = bool(req.get("overwrite", False))
+max_bytes = int(req.get("max_bytes", 10485760))
+if not isinstance(path, str) or not path or path.startswith("/") or NUL in path or ".." in path.split("/"):
+    invalid(path, "invalid path")
+if not isinstance(content_base64, str) or NUL in content_base64:
+    invalid(path, "content_base64 must be a base64 string without NUL")
+try:
+    data = base64.b64decode(content_base64, validate=True)
+except Exception as e:
+    invalid(path, "invalid base64: " + str(e))
+if len(data) > max_bytes:
+    invalid(path, "decoded artifact too large")
+exists = os.path.lexists(path)
+if exists and not overwrite:
+    invalid(path, "file exists and overwrite is false")
+base_dir = os.path.dirname(path) or "."
+tmp = None
+try:
+    os.makedirs(base_dir, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-artifact-")
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.replace(tmp, path)
+except Exception as e:
+    if tmp is not None:
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+    invalid(path, "write failed: " + str(e))
+sha = hashlib.sha256(data).hexdigest()
+emit({"path": path, "bytes_written": len(data), "sha256": sha, "mime_type": mime_type})
+"#;
+
+/// Fixed python3 helper for artifact metadata. Reads bytes only to compute
+/// bounded metadata; zip files are counted but never extracted.
+pub(crate) const READ_PROJECT_ARTIFACT_METADATA_HELPER: &str = r#"
+import sys, json, hashlib, os, mimetypes, zipfile, io, struct
+def emit(obj):
+    sys.stdout.write(json.dumps(obj))
+    sys.exit(0)
+def fail(path, msg):
+    emit({"path": path if isinstance(path, str) else None, "bytes": 0, "sha256": None, "mime_type": None, "error": msg})
+def png_size(data):
+    if len(data) >= 24 and data[:8] == b"\x89PNG\r\n\x1a\n":
+        return struct.unpack(">II", data[16:24])
+    return None
+def webp_size(data):
+    if len(data) >= 30 and data[:4] == b"RIFF" and data[8:12] == b"WEBP" and data[12:16] == b"VP8X":
+        w = 1 + int.from_bytes(data[24:27], "little")
+        h = 1 + int.from_bytes(data[27:30], "little")
+        return (w, h)
+    return None
+def jpeg_size(data):
+    if len(data) < 4 or data[:2] != b"\xff\xd8":
+        return None
+    i = 2
+    while i + 9 < len(data):
+        if data[i] != 0xFF:
+            i += 1
+            continue
+        marker = data[i+1]
+        i += 2
+        if marker in (0xC0,0xC1,0xC2,0xC3,0xC5,0xC6,0xC7,0xC9,0xCA,0xCB,0xCD,0xCE,0xCF):
+            return (int.from_bytes(data[i+5:i+7], "big"), int.from_bytes(data[i+3:i+5], "big"))
+        if i + 2 > len(data):
+            break
+        seg = int.from_bytes(data[i:i+2], "big")
+        if seg < 2:
+            break
+        i += seg
+    return None
+try:
+    req = json.load(sys.stdin)
+except Exception as e:
+    emit({"path": None, "bytes": 0, "sha256": None, "mime_type": None, "error": "invalid json: " + str(e)})
+path = req.get("path", "")
+max_bytes = int(req.get("max_bytes", 10485760))
+if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
+    fail(path, "invalid path")
+try:
+    with open(path, "rb") as f:
+        data = f.read(max_bytes + 1)
+except Exception as e:
+    fail(path, "read failed: " + str(e))
+if len(data) > max_bytes:
+    fail(path, "artifact too large to inspect")
+sha = hashlib.sha256(data).hexdigest()
+mime = mimetypes.guess_type(path)[0]
+if data.startswith(b"\x89PNG\r\n\x1a\n"):
+    mime = "image/png"
+elif data.startswith(b"\xff\xd8"):
+    mime = "image/jpeg"
+elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+    mime = "image/webp"
+elif data.startswith(b"%PDF-"):
+    mime = "application/pdf"
+elif data.startswith(b"PK\x03\x04") or data.startswith(b"PK\x05\x06"):
+    mime = "application/zip"
+out = {"path": path, "bytes": len(data), "sha256": sha, "mime_type": mime}
+size = png_size(data) or jpeg_size(data) or webp_size(data)
+if size:
+    out["width"], out["height"] = size
+if mime == "application/zip":
+    try:
+        out["archive_entries_count"] = len(zipfile.ZipFile(io.BytesIO(data)).infolist())
+    except Exception:
+        out["archive_entries_count"] = None
+emit(out)
+"#;
+
 impl ToolRuntime {
     pub(crate) async fn delete_project_files(
         &self,
@@ -689,6 +884,137 @@ impl ToolRuntime {
             "expected_content_prefix": expected_content_prefix,
         });
         let command = format!("python3 -c '{}'", WRITE_PROJECT_FILE_HELPER);
+        let obj = match self
+            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(err),
+            };
+        }
+        ToolResult::ok(obj)
+    }
+
+    pub(crate) async fn save_project_artifact(
+        &self,
+        project: String,
+        path: String,
+        content_base64: String,
+        mime_type: Option<String>,
+        overwrite: Option<bool>,
+    ) -> ToolResult {
+        if let Err(e) = validate_artifact_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        if content_base64.len() > MAX_PROJECT_ARTIFACT_BASE64_BYTES {
+            return ToolResult::err(format!(
+                "content_base64 too large; maximum encoded size is {} bytes",
+                MAX_PROJECT_ARTIFACT_BASE64_BYTES
+            ));
+        }
+        let mime_type = match validate_artifact_mime(mime_type.as_deref()) {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        let decoded = match general_purpose::STANDARD.decode(content_base64.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(e) => return ToolResult::err(format!("invalid base64: {}", e)),
+        };
+        if decoded.len() > MAX_PROJECT_ARTIFACT_BYTES {
+            return ToolResult::err(format!(
+                "decoded artifact too large; maximum is {} bytes",
+                MAX_PROJECT_ARTIFACT_BYTES
+            ));
+        }
+        if matches!(mime_type.as_deref(), Some("application/octet-stream")) {
+            let lower = path.to_lowercase();
+            let allowed = [
+                ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".zip", ".txt", ".csv", ".json",
+            ];
+            if !allowed.iter().any(|suffix| lower.ends_with(suffix)) {
+                return ToolResult::err(
+                    "application/octet-stream requires a safe artifact extension".to_string(),
+                );
+            }
+        }
+
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err("save_project_artifact requires an agent-registered project");
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+
+        let payload = json!({
+            "path": path,
+            "content_base64": content_base64,
+            "mime_type": mime_type,
+            "overwrite": overwrite.unwrap_or(false),
+            "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
+        });
+        let command = format!("python3 -c '{}'", SAVE_PROJECT_ARTIFACT_HELPER);
+        let obj = match self
+            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(err),
+            };
+        }
+        ToolResult::ok(obj)
+    }
+
+    pub(crate) async fn read_project_artifact_metadata(
+        &self,
+        project: String,
+        path: String,
+    ) -> ToolResult {
+        if let Err(e) = validate_artifact_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "read_project_artifact_metadata requires an agent-registered project",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+        let payload = json!({
+            "path": path,
+            "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
+        });
+        let command = format!("python3 -c '{}'", READ_PROJECT_ARTIFACT_METADATA_HELPER);
         let obj = match self
             .run_agent_helper(client_id, proj.path.clone(), command, payload)
             .await

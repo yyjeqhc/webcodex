@@ -112,3 +112,20 @@ They must not expose tokens, env values, `Authorization` headers, full `agent.to
 ## Compatibility notes
 
 The management CLI compatibility commands `webcodex users`, `webcodex tokens`, and `webcodex agent-tokens` still work, but `webcodex-cli` is the recommended CLI for current setup and operations.
+
+## Conversation file import / generated image saving
+
+GPT Action OpenAPI operations and MCP/runtime tools are related but not identical. The runtime side exposes more tools, and `callRuntimeTool` is the generic entry point for runtime-only tools. To avoid approaching the GPT Actions operation limit, WebCodex exposes exactly one dedicated conversation-file import Action: `importConversationFilesToProject` at `POST /api/artifacts/import`.
+
+Use this single Action for generated images, user-uploaded files, Code Interpreter outputs, PDFs, zip archives, CSV/JSON/text files, and other supported bounded binary artifacts. Do not create separate dedicated GPT Actions for images, zip files, or PDFs.
+
+Recommended generated-image flow:
+
+1. The GPT uses built-in image generation in the current ChatGPT conversation.
+2. The GPT calls `importConversationFilesToProject` with `openaiFileIdRefs`, `project`, and optionally `output_dir` such as `docs/assets` or `artifacts/imports`.
+3. WebCodex immediately downloads each `download_link`, validates MIME type and project-relative output paths, and saves the file under the selected agent/project directory.
+4. The response returns each saved file's `source_name`, `project`, `path`, `bytes_written`, `mime_type`, and `sha256`.
+
+This flow does not call the OpenAI Images API from WebCodex and therefore does not consume `gpt-image-2` API image-generation charges. The image generation happens in ChatGPT; WebCodex only imports the resulting conversation file through the GPT Actions file-passing mechanism.
+
+Security constraints: imports are limited to at most 10 files per request and 10 MiB per file. Paths must stay inside the project root; `..`, absolute paths, `.git`, `.env*`, `*.pem`, `secrets`, `tokens`, `node_modules`, and `target` paths are rejected. `overwrite` defaults to `false`. Zip files are saved as zip files and are not automatically extracted.

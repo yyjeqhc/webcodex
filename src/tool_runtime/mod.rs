@@ -5,7 +5,7 @@
 
 mod cargo;
 mod codex;
-mod files;
+pub(crate) mod files;
 mod git;
 mod helpers;
 mod jobs;
@@ -145,12 +145,12 @@ impl ToolRuntime {
             // the agent shell path; it requires the same shell capability as
             // apply_patch but never mutates the worktree.
             ToolCall::ValidatePatch { .. } => Some(AgentCapability::Shell),
-            // `replace_in_file` / `write_project_file` still run fixed helper
-            // commands over the shell path. Line edits use native agent file
-            // ops and require file_write instead.
-            ToolCall::ReplaceInFile { .. } | ToolCall::WriteProjectFile { .. } => {
-                Some(AgentCapability::Shell)
-            }
+            // Fixed helper commands over the shell path. Line edits use native
+            // agent file ops and require file_write instead.
+            ToolCall::ReplaceInFile { .. }
+            | ToolCall::WriteProjectFile { .. }
+            | ToolCall::SaveProjectArtifact { .. }
+            | ToolCall::ReadProjectArtifactMetadata { .. } => Some(AgentCapability::Shell),
             ToolCall::ReplaceLineRange { .. }
             | ToolCall::InsertAtLine { .. }
             | ToolCall::DeleteLineRange { .. } => Some(AgentCapability::FileWrite),
@@ -204,6 +204,8 @@ impl ToolRuntime {
             | ToolCall::ValidatePatch { project, .. }
             | ToolCall::ReplaceInFile { project, .. }
             | ToolCall::WriteProjectFile { project, .. }
+            | ToolCall::SaveProjectArtifact { project, .. }
+            | ToolCall::ReadProjectArtifactMetadata { project, .. }
             | ToolCall::ReplaceLineRange { project, .. }
             | ToolCall::InsertAtLine { project, .. }
             | ToolCall::DeleteLineRange { project, .. }
@@ -584,6 +586,21 @@ impl ToolRuntime {
                     expected_content_prefix,
                 )
                 .await
+            }
+
+            ToolCall::SaveProjectArtifact {
+                project,
+                path,
+                content_base64,
+                mime_type,
+                overwrite,
+            } => {
+                self.save_project_artifact(project, path, content_base64, mime_type, overwrite)
+                    .await
+            }
+
+            ToolCall::ReadProjectArtifactMetadata { project, path } => {
+                self.read_project_artifact_metadata(project, path).await
             }
 
             ToolCall::ReplaceLineRange {
@@ -6692,6 +6709,78 @@ new file mode 100644\n\
         let out = run_helper_locally(REPLACE_IN_FILE_HELPER, &payload, tmp.path());
         assert_eq!(out["changed"], false);
         assert!(out["error"].as_str().unwrap().contains("UTF-8"));
+    }
+
+    #[test]
+    fn validate_artifact_file_path_rejects_sensitive_paths() {
+        assert!(validate_artifact_file_path("docs/assets/generated.png").is_ok());
+        for path in [
+            "../evil.png",
+            ".git/config",
+            ".env",
+            "secrets/key.pem",
+            "tokens/api.txt",
+            "target/out.bin",
+            "node_modules/pkg/file",
+        ] {
+            assert!(
+                validate_artifact_file_path(path).is_err(),
+                "{} should be rejected",
+                path
+            );
+        }
+    }
+
+    #[test]
+    fn helper_save_project_artifact_writes_binary_and_blocks_overwrite() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let payload = json!({
+            "path": "artifacts/imports/tiny.png",
+            "content_base64": base64::Engine::encode(&base64::engine::general_purpose::STANDARD, [0x89, b'P', b'N', b'G']),
+            "mime_type": "image/png",
+            "overwrite": false,
+            "max_bytes": 1024
+        });
+        let out = run_helper_locally(SAVE_PROJECT_ARTIFACT_HELPER, &payload, tmp.path());
+        assert_eq!(out["bytes_written"], 4);
+        assert_eq!(out["mime_type"], "image/png");
+        assert!(out["sha256"].as_str().unwrap().len() == 64);
+        assert_eq!(
+            std::fs::read(tmp.path().join("artifacts/imports/tiny.png")).unwrap(),
+            vec![0x89, b'P', b'N', b'G']
+        );
+
+        let out2 = run_helper_locally(SAVE_PROJECT_ARTIFACT_HELPER, &payload, tmp.path());
+        assert!(out2["error"]
+            .as_str()
+            .unwrap()
+            .contains("overwrite is false"));
+    }
+
+    #[test]
+    fn helper_read_project_artifact_metadata_counts_zip_without_extracting() {
+        if !python3_available() {
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let zip_path = tmp.path().join("sample.zip");
+        let status = std::process::Command::new("python3")
+            .arg("-c")
+            .arg("import zipfile; z=zipfile.ZipFile('sample.zip','w'); z.writestr('a.txt','a'); z.writestr('b.txt','b'); z.close()")
+            .current_dir(tmp.path())
+            .status()
+            .unwrap();
+        assert!(status.success());
+        assert!(zip_path.exists());
+        let payload = json!({"path": "sample.zip", "max_bytes": 1024 * 1024});
+        let out = run_helper_locally(READ_PROJECT_ARTIFACT_METADATA_HELPER, &payload, tmp.path());
+        assert_eq!(out["mime_type"], "application/zip");
+        assert_eq!(out["archive_entries_count"], 2);
+        assert!(!tmp.path().join("a.txt").exists());
+        assert!(!tmp.path().join("b.txt").exists());
     }
 
     #[test]

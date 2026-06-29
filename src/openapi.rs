@@ -57,6 +57,7 @@ const GPT_ACTION_OPS: &[&str] = &[
     "discardUntrackedFiles",
     "replaceProjectFileText",
     "writeProjectFile",
+    "importConversationFilesToProject",
     "startProjectShellJob",
     "listRuntimeJobs",
     "getRuntimeJobTail",
@@ -661,6 +662,31 @@ pub(crate) fn build_openapi_spec() -> Value {
                     })
                 )
             },
+            "/api/artifacts/import": {
+                "post": operation_with_examples(
+                    "importConversationFilesToProject",
+                    "Import ChatGPT conversation files to a project",
+                    "Mutation with side effects. Downloads GPT Actions openaiFileIdRefs immediately and saves bounded binary files into an agent-registered project. This is the only dedicated conversation-file import Action; use callRuntimeTool for runtime-only artifact tools.",
+                    "ImportConversationFilesRequest",
+                    "ImportConversationFilesResponse",
+                    json!({
+                        "generatedImage": {
+                            "summary": "Save a generated image into docs/assets",
+                            "value": {
+                                "project": "agent:oe:webcodex",
+                                "output_dir": "docs/assets",
+                                "overwrite": false,
+                                "openaiFileIdRefs": [{
+                                    "name": "generated.png",
+                                    "id": "file_abc123",
+                                    "mime_type": "image/png",
+                                    "download_link": "https://files.oaiusercontent.com/example"
+                                }]
+                            }
+                        }
+                    })
+                )
+            },
             "/api/projects/run_job": {
                 "post": operation_with_examples(
                     "startProjectShellJob",
@@ -851,6 +877,7 @@ fn is_consequential_operation(operation_id: &str) -> bool {
         | "applyProjectPatch"
         | "applyProjectPatchChecked"
         | "writeProjectFile"
+        | "importConversationFilesToProject"
         | "replaceProjectFileText"
         | "runProjectShellCommand"
         | "startProjectShellJob"
@@ -873,6 +900,47 @@ fn schemas() -> Value {
             "properties": {},
             "description": "Empty request body. Send {} for actions that take no arguments (listRuntimeTools, listProjects)."
         },
+        "OpenAiFileIdRef": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["download_link"],
+            "description": "GPT Actions file reference. Field name openaiFileIdRefs must be used by the Action request so ChatGPT can pass conversation files.",
+            "properties": {
+                "name": {"type": "string"},
+                "id": {"type": "string"},
+                "mime_type": {"type": "string"},
+                "download_link": {"type": "string", "description": "Temporary download URL; WebCodex downloads it immediately."}
+            }
+        },
+        "ImportConversationFilesRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["openaiFileIdRefs", "project"],
+            "description": "Import up to 10 GPT Actions conversation files into a project. Supports image/png, image/jpeg, image/webp, application/pdf, application/zip, text/plain, text/csv, application/json, and restricted application/octet-stream.",
+            "properties": {
+                "openaiFileIdRefs": {"type": "array", "maxItems": 10, "items": {"$ref": "#/components/schemas/OpenAiFileIdRef"}},
+                "project": {"type": "string", "description": "Agent-registered runtime project id from listProjects."},
+                "output_dir": {"type": "string", "description": "Optional project-relative output directory, for example docs/assets or artifacts/imports."},
+                "targets": {"type": "array", "items": {"type": "string"}, "description": "Optional per-file output filenames."},
+                "overwrite": {"type": "boolean", "description": "Allow overwriting existing files. Defaults to false."}
+            }
+        },
+        "ImportConversationFilesResponse": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+                "success": {"type": "boolean"},
+                "output": {
+                    "type": "object",
+                    "additionalProperties": true,
+                    "properties": {
+                        "count": {"type": "integer"},
+                        "imported": {"type": "array", "items": {"type": "object", "additionalProperties": true}}
+                    }
+                },
+                "error": {"type": "string", "nullable": true}
+            }
+        },
         "ToolCallRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -881,7 +949,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
                 "params": {
                     "type": "object",
@@ -1727,7 +1795,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(count, 27);
+        assert_eq!(count, 28);
     }
 
     #[test]
@@ -1783,7 +1851,7 @@ mod tests {
         for id in consequential {
             assert_eq!(flags.get(id), Some(&true), "{} should be consequential", id);
         }
-        assert_eq!(flags.len(), 27);
+        assert_eq!(flags.len(), 28);
     }
 
     #[test]
@@ -2482,7 +2550,7 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_is_twenty_seven() {
+    fn openapi_operation_count_is_twenty_eight_after_import_action() {
         // Phase 3 promoted 10 core runtime tools to dedicated GPT Actions,
         // bringing the schema from 12 to 22 ops. Phase 5 promotes
         // replace_in_file to a dedicated GPT Action (replaceProjectFileText),
@@ -2499,7 +2567,10 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 27, "GPT Actions schema must be 27 operations");
+        assert_eq!(
+            count, 28,
+            "GPT Actions schema must be 28 operations after adding the single import Action"
+        );
         assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
     }
 
@@ -2628,7 +2699,7 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_stays_twenty_seven_after_phase3() {
+    fn openapi_operation_count_stays_twenty_eight_after_import_action() {
         // Phase 3 adds agent token management endpoints to the REST surface
         // but does NOT add them to /openapi.json. The GPT Actions operation
         // count must remain 27.
@@ -2639,6 +2710,9 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 27, "GPT Actions schema must remain 27 operations");
+        assert_eq!(
+            count, 28,
+            "GPT Actions schema must remain 28 operations: prior 27 plus the single import Action"
+        );
     }
 }

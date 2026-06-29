@@ -356,9 +356,9 @@ pub(crate) fn load_startup_env_files() -> Result<Vec<EnvFileLoad>, String> {
 
 /// OAuth2 server configuration, sourced from `WEBCODEX_OAUTH2_*` env vars.
 ///
-/// This is a standalone config struct (like [`QuicServerConfig`]) so existing
-/// `Config { ... }` literals are untouched. OAuth2 is **disabled by default**;
-/// operators must explicitly set `WEBCODEX_OAUTH2_ENABLED=true`.
+/// Embedded in [`Config`] but **disabled by default**, so it does not change
+/// existing runtime behavior unless explicitly enabled with
+/// `WEBCODEX_OAUTH2_ENABLED=true`.
 ///
 /// The first OAuth2 implementation uses opaque DB-backed tokens. JWT/JWKS/OIDC
 /// can be added later as an extension.
@@ -397,11 +397,12 @@ impl Default for OAuth2Config {
 impl OAuth2Config {
     pub fn from_env() -> Self {
         let enabled = env_flag("WEBCODEX_OAUTH2_ENABLED").unwrap_or(false);
-        let issuer = std::env::var("WEBCODEX_PUBLIC_URL")
+        // OAuth2-specific issuer takes precedence over the generic public URL.
+        let issuer = std::env::var("WEBCODEX_OAUTH2_ISSUER")
             .ok()
             .filter(|v| !v.trim().is_empty())
             .or_else(|| {
-                std::env::var("WEBCODEX_OAUTH2_ISSUER")
+                std::env::var("WEBCODEX_PUBLIC_URL")
                     .ok()
                     .filter(|v| !v.trim().is_empty())
             });
@@ -472,7 +473,7 @@ impl Config {
     }
 }
 
-fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     let max_len = a.len().max(b.len());
     let mut diff = a.len() ^ b.len();
     for i in 0..max_len {
@@ -690,7 +691,7 @@ mod tests {
     fn oauth2_config_from_env_parses_overrides() {
         let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("WEBCODEX_OAUTH2_ENABLED", "true");
-        std::env::set_var("WEBCODEX_PUBLIC_URL", "https://example.com");
+        std::env::set_var("WEBCODEX_OAUTH2_ISSUER", "https://example.com");
         std::env::set_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS", "1800");
         std::env::set_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "86400");
         std::env::set_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "600");
@@ -705,7 +706,7 @@ mod tests {
         assert!(!cfg.require_pkce);
 
         std::env::remove_var("WEBCODEX_OAUTH2_ENABLED");
-        std::env::remove_var("WEBCODEX_PUBLIC_URL");
+        std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
         std::env::remove_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
@@ -713,20 +714,20 @@ mod tests {
     }
 
     #[test]
-    fn oauth2_config_issuer_prefers_public_url_over_issuer_env() {
+    fn oauth2_config_issuer_prefers_oauth2_issuer_over_public_url() {
         let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
         std::env::set_var("WEBCODEX_PUBLIC_URL", "https://pub.example.com");
         std::env::set_var("WEBCODEX_OAUTH2_ISSUER", "https://issuer.example.com");
 
         let cfg = OAuth2Config::from_env();
-        assert_eq!(cfg.issuer.as_deref(), Some("https://pub.example.com"));
-
-        std::env::remove_var("WEBCODEX_PUBLIC_URL");
-        // Falls back to WEBCODEX_OAUTH2_ISSUER when PUBLIC_URL is absent.
-        let cfg = OAuth2Config::from_env();
         assert_eq!(cfg.issuer.as_deref(), Some("https://issuer.example.com"));
 
         std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
+        // Falls back to WEBCODEX_PUBLIC_URL when OAUTH2_ISSUER is absent.
+        let cfg = OAuth2Config::from_env();
+        assert_eq!(cfg.issuer.as_deref(), Some("https://pub.example.com"));
+
+        std::env::remove_var("WEBCODEX_PUBLIC_URL");
     }
 
     #[test]

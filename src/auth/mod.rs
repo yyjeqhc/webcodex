@@ -53,6 +53,7 @@ pub(crate) mod pat;
 // All items that were previously exported from `auth.rs` are re-exported here
 // so that existing `use crate::auth::*` imports continue to work.
 
+#[allow(unused_imports)]
 pub use principal::{AuthError, AuthMethod, Principal};
 
 pub use scopes::{
@@ -63,6 +64,7 @@ pub use scopes::{
 
 pub(crate) use scopes::{is_agent_scope, scopes_to_string, validate_agent_scopes, validate_scopes};
 
+#[allow(unused_imports)]
 pub(crate) use pat::{
     generate_account_credential, generate_agent_token, generate_api_token,
     generate_oauth_access_token, generate_oauth_authorization_code, generate_oauth_client_id,

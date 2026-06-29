@@ -135,12 +135,27 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 | Env var | Default | Description |
 | --- | --- | --- |
 | `WEBCODEX_OAUTH2_ENABLED` | `false` | Enable the OAuth2 subsystem |
-| `WEBCODEX_PUBLIC_URL` | — | Public issuer URL (also used for `/.well-known/*`) |
-| `WEBCODEX_OAUTH2_ISSUER` | — | Fallback issuer if `PUBLIC_URL` is not set |
+| `WEBCODEX_OAUTH2_ISSUER` | — | OAuth2-specific issuer URL (takes precedence) |
+| `WEBCODEX_PUBLIC_URL` | — | Fallback issuer URL if `OAUTH2_ISSUER` is not set |
 | `WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS` | `3600` | Access token TTL |
 | `WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS` | `2592000` | Refresh token TTL (30 days) |
 | `WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS` | `300` | Authorization code TTL (5 min) |
 | `WEBCODEX_OAUTH2_REQUIRE_PKCE` | `true` | Require PKCE S256 |
+
+## Security notes
+
+- **Single hash source**: `insert_oauth_client()` reads the client secret hash
+  exclusively from `OAuthClientRecord.client_secret_hash`. There is no
+  separate parameter — the caller must hash the secret before constructing the
+  record.
+- **Constant-time secret verification**: `verify_oauth_client_secret()` compares
+  the computed hash against the stored hash using constant-time comparison to
+  avoid timing side-channels.
+- **Atomic code consumption**: `consume_oauth_authorization_code_by_hash()` uses
+  a single conditional UPDATE to guarantee that an authorization code can only
+  be exchanged once. The older `mark_oauth_authorization_code_used()` is
+  retained for backward compatibility but does not enforce expiry or revocation
+  checks.
 
 ## What is NOT implemented yet
 

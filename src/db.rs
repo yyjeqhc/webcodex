@@ -1656,11 +1656,7 @@ impl Database {
 impl Database {
     // --- OAuth clients ---
 
-    pub fn insert_oauth_client(
-        &self,
-        record: &OAuthClientRecord,
-        client_secret_hash: &str,
-    ) -> anyhow::Result<()> {
+    pub fn insert_oauth_client(&self, record: &OAuthClientRecord) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO oauth_clients (
@@ -1670,7 +1666,7 @@ impl Database {
             params![
                 record.id,
                 record.client_id,
-                client_secret_hash,
+                record.client_secret_hash,
                 record.name,
                 record.owner_user_id,
                 record.redirect_uris,
@@ -1723,8 +1719,9 @@ impl Database {
     }
 
     /// Verify that `plaintext_secret` matches the stored hash for the given
-    /// client. Returns `true` if the hash matches, `false` otherwise. Does not
-    /// leak the hash or plaintext on mismatch.
+    /// client. Returns `true` if the hash matches, `false` otherwise. Uses
+    /// constant-time comparison to avoid timing leaks. Does not leak the hash
+    /// or plaintext on mismatch.
     pub fn verify_oauth_client_secret(
         &self,
         client_id: &str,
@@ -1735,7 +1732,10 @@ impl Database {
             return Ok(false);
         };
         let computed = crate::auth::hash_token(plaintext_secret);
-        Ok(computed == client.client_secret_hash)
+        Ok(crate::config::constant_time_eq(
+            computed.as_bytes(),
+            client.client_secret_hash.as_bytes(),
+        ))
     }
 
     // --- OAuth authorization codes ---
@@ -1797,6 +1797,67 @@ impl Database {
             params![id, ts],
         )?;
         Ok(())
+    }
+
+    /// Atomically consume an authorization code by its hash. The code is
+    /// consumed (used_at set) only if **all** of the following hold:
+    ///
+    /// - `code_hash` matches
+    /// - `revoked_at IS NULL`
+    /// - `used_at IS NULL`
+    /// - `expires_at > now`
+    ///
+    /// On success, returns the consumed record (with `used_at` set to `now`).
+    /// On failure (already used, expired, revoked, or unknown), returns
+    /// `Ok(None)`.
+    ///
+    /// This is the preferred helper for `/oauth/token` code exchange because it
+    /// guarantees single-use semantics in a single SQL statement. The older
+    /// `mark_oauth_authorization_code_used()` is retained for backward
+    /// compatibility but should not be used for new token exchange flows.
+    pub fn consume_oauth_authorization_code_by_hash(
+        &self,
+        code_hash: &str,
+        now: i64,
+    ) -> anyhow::Result<Option<OAuthAuthorizationCodeRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let changed = conn.execute(
+            "UPDATE oauth_authorization_codes
+             SET used_at = ?2
+             WHERE code_hash = ?1
+               AND revoked_at IS NULL
+               AND used_at IS NULL
+               AND expires_at > ?2",
+            params![code_hash, now],
+        )?;
+        if changed == 0 {
+            return Ok(None);
+        }
+        // The UPDATE succeeded; fetch the consumed record.
+        drop(conn);
+        self.get_oauth_authorization_code_by_hash_for_consume(code_hash)
+    }
+
+    /// Internal helper: fetch an authorization code by hash **including** used
+    /// and revoked rows. Only used after a successful consume to return the
+    /// record with `used_at` set. Not for general lookups.
+    fn get_oauth_authorization_code_by_hash_for_consume(
+        &self,
+        code_hash: &str,
+    ) -> anyhow::Result<Option<OAuthAuthorizationCodeRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, code_hash, client_id, user_id, redirect_uri, scopes,
+                    code_challenge, code_challenge_method, resource,
+                    created_at, expires_at, used_at, revoked_at
+             FROM oauth_authorization_codes
+             WHERE code_hash = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![code_hash], row_to_oauth_authorization_code)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
     }
 
     pub fn revoke_oauth_authorization_code(&self, id: &str, ts: i64) -> anyhow::Result<()> {
@@ -2587,7 +2648,7 @@ mod tests {
             created_at: now,
             revoked_at: None,
         };
-        db.insert_oauth_client(&record, &secret_hash).unwrap();
+        db.insert_oauth_client(&record).unwrap();
         (record, plaintext_secret)
     }
 
@@ -3036,5 +3097,170 @@ mod tests {
             .unwrap();
         assert_ne!(stored_ac_hash, plaintext_ac);
         assert_eq!(stored_ac_hash, ac_hash);
+    }
+
+    // -----------------------------------------------------------------------
+    // consume_oauth_authorization_code_by_hash tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn consume_authorization_code_succeeds_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_code = crate::auth::generate_oauth_authorization_code();
+        let code_hash = crate::auth::hash_token(&plaintext_code);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: code_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            resource: None,
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&record, &code_hash)
+            .unwrap();
+
+        // First consume succeeds.
+        let consumed = db
+            .consume_oauth_authorization_code_by_hash(&code_hash, now + 10)
+            .unwrap();
+        let consumed = consumed.expect("first consume should succeed");
+        assert_eq!(consumed.used_at, Some(now + 10));
+        assert_eq!(consumed.id, record.id);
+    }
+
+    #[test]
+    fn consume_authorization_code_second_consume_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_code = crate::auth::generate_oauth_authorization_code();
+        let code_hash = crate::auth::hash_token(&plaintext_code);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: code_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            resource: None,
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&record, &code_hash)
+            .unwrap();
+
+        // First consume succeeds.
+        db.consume_oauth_authorization_code_by_hash(&code_hash, now + 10)
+            .unwrap()
+            .expect("first consume should succeed");
+
+        // Second consume returns None.
+        let result = db
+            .consume_oauth_authorization_code_by_hash(&code_hash, now + 20)
+            .unwrap();
+        assert!(result.is_none(), "second consume should return None");
+    }
+
+    #[test]
+    fn consume_authorization_code_expired_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_code = crate::auth::generate_oauth_authorization_code();
+        let code_hash = crate::auth::hash_token(&plaintext_code);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: code_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            resource: None,
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&record, &code_hash)
+            .unwrap();
+
+        // Consume after expiration returns None.
+        let result = db
+            .consume_oauth_authorization_code_by_hash(&code_hash, now + 301)
+            .unwrap();
+        assert!(result.is_none(), "expired code should return None");
+    }
+
+    #[test]
+    fn consume_authorization_code_revoked_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+
+        let plaintext_code = crate::auth::generate_oauth_authorization_code();
+        let code_hash = crate::auth::hash_token(&plaintext_code);
+        let now = chrono::Utc::now().timestamp();
+        let record = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: code_hash.clone(),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            resource: None,
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&record, &code_hash)
+            .unwrap();
+
+        // Revoke, then consume returns None.
+        db.revoke_oauth_authorization_code(&record.id, now + 5)
+            .unwrap();
+        let result = db
+            .consume_oauth_authorization_code_by_hash(&code_hash, now + 10)
+            .unwrap();
+        assert!(result.is_none(), "revoked code should return None");
+    }
+
+    #[test]
+    fn consume_authorization_code_unknown_hash_returns_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let now = chrono::Utc::now().timestamp();
+
+        let result = db
+            .consume_oauth_authorization_code_by_hash("nonexistent-hash", now)
+            .unwrap();
+        assert!(result.is_none(), "unknown hash should return None");
     }
 }

@@ -268,3 +268,22 @@ configuration reference.
 No OAuth2 endpoints are exposed. No OAuth2 tokens are accepted by
 `AuthMiddleware`. The `OAuth2Verifier` remains a stub. Existing PAT, agent
 token, and account credential behavior is unchanged.
+
+### Phase 2a.1 — tighten storage helpers
+
+1. **Issuer precedence**: `WEBCODEX_OAUTH2_ISSUER` now takes priority over
+   `WEBCODEX_PUBLIC_URL`. The OAuth2-specific setting overrides the generic
+   public URL.
+2. **Single hash source**: `insert_oauth_client()` no longer accepts a
+   separate `client_secret_hash` parameter. The hash is read exclusively from
+   `OAuthClientRecord.client_secret_hash`, eliminating the dual-source risk.
+3. **Atomic code consumption**: new `consume_oauth_authorization_code_by_hash()`
+   helper atomically sets `used_at` only when the code is valid (not revoked,
+   not used, not expired). Preferred for `/oauth/token` exchange.
+4. **Constant-time secret verification**: `verify_oauth_client_secret()` now
+   uses constant-time comparison for the hash, preventing timing side-channels
+   in client authentication.
+5. **`OAuth2Config` doc fix**: comment no longer claims `Config { ... }`
+   literals are untouched (they now include the `oauth2` field).
+
+No endpoints, no AuthMiddleware changes, no handler migration.

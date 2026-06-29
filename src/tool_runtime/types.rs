@@ -282,6 +282,21 @@ pub enum ToolCall {
     /// counted but never extracted.
     ReadProjectArtifactMetadata { project: String, path: String },
 
+    /// Read one bounded binary content segment for a project artifact. Returns
+    /// base64 for the requested chunk plus full-file sha256 and MIME metadata.
+    ReadProjectArtifact {
+        project: String,
+        path: String,
+        #[serde(default)]
+        encoding: Option<String>,
+        #[serde(default)]
+        offset: Option<usize>,
+        #[serde(default)]
+        length: Option<usize>,
+        #[serde(default)]
+        max_bytes: Option<usize>,
+    },
+
     /// Replace a 1-based inclusive line range in a UTF-8 file via the owning
     /// agent. The original range may be guarded by sha256 and/or prefix checks.
     ReplaceLineRange {
@@ -404,6 +419,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "write_project_file",
     "save_project_artifact",
     "read_project_artifact_metadata",
+    "read_project_artifact",
     "replace_line_range",
     "insert_at_line",
     "delete_line_range",

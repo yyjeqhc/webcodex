@@ -103,6 +103,8 @@ fn tool_annotations(name: &str) -> Value {
             | "list_agents"
             | "runtime_status"
             | "read_file"
+            | "read_project_artifact_metadata"
+            | "read_project_artifact"
             | "list_project_files"
             | "search_project_text"
             | "git_status"
@@ -134,6 +136,8 @@ fn tool_annotations(name: &str) -> Value {
             | "list_agents"
             | "runtime_status"
             | "read_file"
+            | "read_project_artifact_metadata"
+            | "read_project_artifact"
             | "list_project_files"
             | "search_project_text"
             | "git_status"
@@ -280,6 +284,41 @@ fn output_schema_for_tool(name: &str) -> Value {
             (
                 "total_lines",
                 schema_type("integer", "Total line count, when available."),
+            ),
+        ]),
+        "read_project_artifact" => wrapped_output_schema(vec![
+            (
+                "path",
+                schema_type("string", "Project-relative artifact path."),
+            ),
+            (
+                "mime_type",
+                nullable_schema("string", "Detected or inferred MIME type."),
+            ),
+            (
+                "file_bytes",
+                schema_type("integer", "Total file size in bytes."),
+            ),
+            (
+                "sha256",
+                schema_type("string", "sha256 digest of the full artifact file."),
+            ),
+            ("offset", schema_type("integer", "Requested byte offset.")),
+            (
+                "bytes_returned",
+                schema_type("integer", "Number of bytes returned in this chunk."),
+            ),
+            (
+                "content_base64",
+                schema_type("string", "Base64-encoded content for this chunk only."),
+            ),
+            (
+                "next_offset",
+                schema_type("integer", "Offset to use for the next chunk."),
+            ),
+            (
+                "truncated",
+                schema_type("boolean", "True when more bytes remain after this chunk."),
             ),
         ]),
         "git_status" | "git_diff" => wrapped_output_schema(vec![
@@ -1011,6 +1050,40 @@ impl ToolRuntime {
                 annotations: tool_annotations("read_project_artifact_metadata"),
             },
             ToolSpec {
+                name: "read_project_artifact".to_string(),
+                description: "Chunked content read for a project artifact. Returns base64 for one small segment plus full-file sha256/MIME metadata; not a large-file transfer tool.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative artifact path.", true),
+                    (
+                        "encoding",
+                        "string",
+                        "Optional encoding; only base64 is supported (default base64).",
+                        false,
+                    ),
+                    (
+                        "offset",
+                        "integer",
+                        "Optional byte offset to start reading from; defaults to 0.",
+                        false,
+                    ),
+                    (
+                        "length",
+                        "integer",
+                        "Optional chunk length in bytes; defaults to 32768 and cannot exceed 65536.",
+                        false,
+                    ),
+                    (
+                        "max_bytes",
+                        "integer",
+                        "Compatibility alias/upper bound for length; cannot exceed 65536.",
+                        false,
+                    ),
+                ]),
+                output_schema: output_schema_for_tool("read_project_artifact"),
+                annotations: tool_annotations("read_project_artifact"),
+            },
+            ToolSpec {
                 name: "replace_line_range".to_string(),
                 description: "Preferred source-code edit tool for local changes with clear line numbers. Replaces a 1-based inclusive line range; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(vec![
@@ -1092,7 +1165,8 @@ impl ToolRuntime {
             "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
             "edit": pick(&[
                 "replace_in_file", "write_project_file", "save_project_artifact",
-                "read_project_artifact_metadata", "replace_line_range", "insert_at_line", "delete_line_range",
+                "read_project_artifact_metadata", "read_project_artifact",
+                "replace_line_range", "insert_at_line", "delete_line_range",
                 "apply_patch_checked"
             ]),
             "shell": pick(&["run_shell", "run_job", "cargo_fmt", "cargo_check", "cargo_test"]),

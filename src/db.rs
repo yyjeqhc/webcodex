@@ -2088,6 +2088,172 @@ impl Database {
         )?;
         Ok(())
     }
+
+    /// Internal helper: fetch a refresh token by hash **including** revoked and
+    /// expired rows. Used by `rotate_oauth_refresh_token` and the refresh_token
+    /// grant handler to distinguish "not found" from "revoked/expired" for
+    /// better error responses.
+    pub fn get_oauth_refresh_token_by_hash_for_rotate(
+        &self,
+        token_hash: &str,
+    ) -> anyhow::Result<Option<OAuthRefreshTokenRecord>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+             FROM oauth_refresh_tokens
+             WHERE token_hash = ?1",
+        )?;
+        let mut rows = stmt.query_map(params![token_hash], row_to_oauth_refresh_token)?;
+        match rows.next() {
+            Some(r) => Ok(Some(r?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Atomically rotate a refresh token: revoke the old token, insert a new
+    /// access token, and insert a new refresh token linked to the old one.
+    ///
+    /// Within a single SQLite transaction:
+    /// 1. Look up the old refresh token by hash (including revoked/expired).
+    /// 2. If not found → `Ok(RotateResult::NotFound)`.
+    /// 3. If revoked → `Ok(RotateResult::Revoked)`.
+    /// 4. If expired → `Ok(RotateResult::Expired)`.
+    /// 5. If `old.client_id != client_id` → `Ok(RotateResult::ClientMismatch)`.
+    /// 6. Revoke old token (`revoked_at = now`, `last_used_at = now`).
+    /// 7. Insert new access token.
+    /// 8. Insert new refresh token (`rotated_from_id = old.id`).
+    /// 9. Commit.
+    ///
+    /// Returns `Ok(RotateResult::Rotated(record))` on success, where `record`
+    /// is the old (now-revoked) refresh token. The caller can use its
+    /// `user_id`, `scopes`, `resource`, and `client_id` to construct the
+    /// success response.
+    pub fn rotate_oauth_refresh_token(
+        &self,
+        refresh_token_hash: &str,
+        client_id: &str,
+        now: i64,
+        access_token_record: &OAuthAccessTokenRecord,
+        new_refresh_token_record: &OAuthRefreshTokenRecord,
+    ) -> anyhow::Result<RotateResult> {
+        // Scope the transaction so the MutexGuard is dropped after commit.
+        {
+            let mut conn = self.conn.lock().unwrap();
+            let tx = conn.transaction()?;
+
+            // 1. Look up old refresh token (including revoked/expired).
+            let old = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, token_hash, client_id, user_id, scopes, resource,
+                            created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                     FROM oauth_refresh_tokens
+                     WHERE token_hash = ?1",
+                )?;
+                let mut rows =
+                    stmt.query_map(params![refresh_token_hash], row_to_oauth_refresh_token)?;
+                match rows.next() {
+                    Some(r) => r?,
+                    None => return Ok(RotateResult::NotFound),
+                }
+            }; // stmt and rows dropped here, releasing borrow on tx
+
+            // 2. Check revoked.
+            if old.revoked_at.is_some() {
+                return Ok(RotateResult::Revoked);
+            }
+
+            // 3. Check expired.
+            if old.expires_at <= now {
+                return Ok(RotateResult::Expired);
+            }
+
+            // 4. Check client_id match.
+            if old.client_id != client_id {
+                return Ok(RotateResult::ClientMismatch);
+            }
+
+            // 5. Revoke old token.
+            let changed = tx.execute(
+                "UPDATE oauth_refresh_tokens
+                 SET revoked_at = ?2, last_used_at = ?2
+                 WHERE id = ?1 AND revoked_at IS NULL AND expires_at > ?2",
+                params![old.id, now],
+            )?;
+            if changed == 0 {
+                // Race: token was revoked or expired between SELECT and UPDATE.
+                tx.commit()?;
+                return Ok(RotateResult::NotFound);
+            }
+
+            // 6. Insert new access token.
+            tx.execute(
+                "INSERT INTO oauth_access_tokens (
+                    id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    access_token_record.id,
+                    access_token_record.token_hash,
+                    access_token_record.client_id,
+                    access_token_record.user_id,
+                    access_token_record.scopes,
+                    access_token_record.resource,
+                    access_token_record.created_at,
+                    access_token_record.expires_at,
+                    access_token_record.revoked_at,
+                    access_token_record.last_used_at,
+                ],
+            )?;
+
+            // 7. Insert new refresh token.
+            tx.execute(
+                "INSERT INTO oauth_refresh_tokens (
+                    id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    new_refresh_token_record.id,
+                    new_refresh_token_record.token_hash,
+                    new_refresh_token_record.client_id,
+                    new_refresh_token_record.user_id,
+                    new_refresh_token_record.scopes,
+                    new_refresh_token_record.resource,
+                    new_refresh_token_record.created_at,
+                    new_refresh_token_record.expires_at,
+                    new_refresh_token_record.revoked_at,
+                    new_refresh_token_record.last_used_at,
+                    new_refresh_token_record.rotated_from_id,
+                ],
+            )?;
+
+            tx.commit()?;
+
+            // Save old record metadata before the block ends (old is moved
+            // into the RotateResult below).
+            let rotated = OAuthRefreshTokenRecord {
+                revoked_at: Some(now),
+                last_used_at: Some(now),
+                ..old
+            };
+            return Ok(RotateResult::Rotated(rotated));
+        } // MutexGuard dropped here (unreachable — all paths return above).
+    }
+}
+
+/// Result of a refresh token rotation attempt.
+#[derive(Debug)]
+pub enum RotateResult {
+    /// Rotation succeeded. Contains the old (now-revoked) refresh token.
+    Rotated(OAuthRefreshTokenRecord),
+    /// Token hash not found in the database.
+    NotFound,
+    /// Token was already revoked.
+    Revoked,
+    /// Token has expired.
+    Expired,
+    /// Token's client_id does not match the requesting client.
+    ClientMismatch,
 }
 
 #[cfg(test)]

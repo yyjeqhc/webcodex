@@ -1,6 +1,9 @@
 //! OAuth2 token endpoint — `POST /oauth/token`.
 //!
-//! Implements the `authorization_code` grant type with PKCE S256 support.
+//! Supports two grant types:
+//! - `authorization_code` with PKCE S256
+//! - `refresh_token` with rotation
+//!
 //! This is a **public** endpoint (no `AuthMiddleware`); clients authenticate
 //! via `client_id` + `client_secret` in the form body.
 //!
@@ -8,10 +11,9 @@
 //! - Authorization codes are consumed atomically (single-use).
 //! - Code consumption and token insertion happen in a single DB transaction
 //!   **only** when all validations pass.
-//! - Failed validations (client_id / redirect_uri / PKCE mismatch) consume
-//!   the code but do **not** mint or persist access/refresh tokens.
+//! - Refresh tokens are rotated: the old token is revoked and a new
+//!   access+refresh token pair is issued in a single transaction.
 //! - Client secret is verified with constant-time comparison.
-//! - PKCE S256 is enforced when `config.oauth2.require_pkce` is true.
 //! - Only `application/x-www-form-urlencoded` content type is accepted.
 //! - Request body size is bounded (16 KiB).
 //! - All responses include `Cache-Control: no-store` and `Pragma: no-cache`.
@@ -81,6 +83,8 @@ struct TokenRequest {
     client_id: Option<String>,
     client_secret: Option<String>,
     code_verifier: Option<String>,
+    refresh_token: Option<String>,
+    scope: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -201,43 +205,32 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
         }
     };
 
-    if grant_type != "authorization_code" {
+    // Validate grant_type before checking other parameters.
+    match grant_type {
+        "authorization_code" | "refresh_token" => {}
+        _ => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "unsupported_grant_type",
+                "only authorization_code and refresh_token grants are supported",
+            );
+            return;
+        }
+    }
+
+    // Reject scope parameter on refresh_token grant (not yet supported).
+    if grant_type == "refresh_token" && form.scope.is_some() {
         oauth_error(
             res,
             StatusCode::BAD_REQUEST,
-            "unsupported_grant_type",
-            "only authorization_code grant is supported",
+            "invalid_request",
+            "scope narrowing is not supported for refresh_token grant yet",
         );
         return;
     }
 
-    // --- Required parameters ---
-    let plaintext_code = match form.code.as_deref() {
-        Some(c) if !c.is_empty() => c,
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "missing code",
-            );
-            return;
-        }
-    };
-
-    let redirect_uri = match form.redirect_uri.as_deref() {
-        Some(r) if !r.is_empty() => r,
-        _ => {
-            oauth_error(
-                res,
-                StatusCode::BAD_REQUEST,
-                "invalid_request",
-                "missing redirect_uri",
-            );
-            return;
-        }
-    };
-
+    // --- Required parameters (common to both grants) ---
     let client_id = match form.client_id.as_deref() {
         Some(c) if !c.is_empty() => c,
         _ => {
@@ -275,7 +268,7 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
         return;
     };
 
-    // --- Client authentication (before code consumption) ---
+    // --- Client authentication (before any token operations) ---
     let secret_ok = match db.verify_oauth_client_secret(client_id, client_secret) {
         Ok(ok) => ok,
         Err(_) => {
@@ -315,9 +308,67 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
         }
     };
 
+    let now = chrono::Utc::now().timestamp();
+
+    // --- Dispatch by grant_type ---
+    match grant_type {
+        "authorization_code" => {
+            handle_authorization_code_grant(&config, &db, &client, &form, now, res).await;
+        }
+        "refresh_token" => {
+            handle_refresh_token_grant(&config, &db, &client, &form, now, res).await;
+        }
+        _ => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "unsupported_grant_type",
+                "only authorization_code and refresh_token grants are supported",
+            );
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// authorization_code grant
+// ---------------------------------------------------------------------------
+
+async fn handle_authorization_code_grant(
+    config: &crate::Config,
+    db: &crate::Database,
+    client: &crate::models::OAuthClientRecord,
+    form: &TokenRequest,
+    now: i64,
+    res: &mut Response,
+) {
+    let plaintext_code = match form.code.as_deref() {
+        Some(c) if !c.is_empty() => c,
+        _ => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "missing code",
+            );
+            return;
+        }
+    };
+
+    let redirect_uri = match form.redirect_uri.as_deref() {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "missing redirect_uri",
+            );
+            return;
+        }
+    };
+
     // --- Read authorization code metadata (without consuming) ---
     let code_hash = hash_token(plaintext_code);
-    let now = chrono::Utc::now().timestamp();
 
     let code_record = match db.get_oauth_authorization_code_by_hash(&code_hash) {
         Ok(Some(c)) => c,
@@ -344,7 +395,6 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
     // --- Pre-exchange validation (using metadata, code is NOT yet consumed) ---
 
     if code_record.client_id != client.client_id {
-        // Mismatch — consume the code to prevent replay, but do NOT mint tokens.
         let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
         oauth_error(
             res,
@@ -356,7 +406,6 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
     }
 
     if code_record.redirect_uri != redirect_uri {
-        // Mismatch — consume the code to prevent replay, but do NOT mint tokens.
         let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
         oauth_error(
             res,
@@ -370,7 +419,6 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
     // --- PKCE S256 (before code consumption) ---
     let require_pkce = config.oauth2.require_pkce;
     if let Some(ref challenge) = code_record.code_challenge {
-        // Code has a challenge — verifier is mandatory.
         let verifier = match form.code_verifier.as_deref() {
             Some(v) if !v.is_empty() => v,
             _ => {
@@ -385,7 +433,6 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
             }
         };
 
-        // Only S256 is supported.
         match code_record.code_challenge_method.as_deref() {
             Some("S256") => {}
             _ => {
@@ -411,7 +458,6 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
             return;
         }
     } else if require_pkce {
-        // No challenge on the record but PKCE is required.
         let _ = db.consume_oauth_authorization_code_by_hash(&code_hash, now);
         oauth_error(
             res,
@@ -422,7 +468,7 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
         return;
     }
 
-    // --- All validations passed — transactional exchange: consume code + insert tokens ---
+    // --- All validations passed — transactional exchange ---
     let access_token = generate_oauth_access_token();
     let refresh_token = generate_oauth_refresh_token();
     let at_hash = hash_token(&access_token);
@@ -495,6 +541,193 @@ pub(crate) async fn oauth_token(req: &mut Request, depot: &mut Depot, res: &mut 
 
     apply_oauth_no_store_headers(res);
     res.render(Json(body));
+}
+
+// ---------------------------------------------------------------------------
+// refresh_token grant
+// ---------------------------------------------------------------------------
+
+async fn handle_refresh_token_grant(
+    config: &crate::Config,
+    db: &crate::Database,
+    client: &crate::models::OAuthClientRecord,
+    form: &TokenRequest,
+    now: i64,
+    res: &mut Response,
+) {
+    let plaintext_rt = match form.refresh_token.as_deref() {
+        Some(r) if !r.is_empty() => r,
+        _ => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "missing refresh_token",
+            );
+            return;
+        }
+    };
+
+    let rt_hash = hash_token(plaintext_rt);
+    let at_expires_at = now + config.oauth2.access_token_ttl_secs;
+    let new_rt_expires_at = now + config.oauth2.refresh_token_ttl_secs;
+
+    // Generate tokens upfront — they'll be inserted inside the transaction.
+    let new_access_token = generate_oauth_access_token();
+    let new_refresh_token = generate_oauth_refresh_token();
+    let new_at_hash = hash_token(&new_access_token);
+    let new_rt_hash = hash_token(&new_refresh_token);
+
+    // We need user_id/scopes/resource from the old refresh token to
+    // construct the new records. The DB helper handles the lookup, but we
+    // need to pass the records in. We'll do a preliminary read to get
+    // metadata, then call the rotation helper.
+    //
+    // To avoid TOCTOU, the rotation helper re-validates everything inside
+    // its transaction. The metadata read here is only for constructing the
+    // records.
+    let old_rt_metadata = match db.get_oauth_refresh_token_by_hash(&rt_hash) {
+        Ok(Some(rt)) => rt,
+        Ok(None) => {
+            // Could be not found, revoked, or expired. Check the full table
+            // for a better error message.
+            match db.get_oauth_refresh_token_by_hash_for_rotate(&rt_hash) {
+                Ok(Some(rt)) => {
+                    if rt.revoked_at.is_some() {
+                        oauth_error(
+                            res,
+                            StatusCode::BAD_REQUEST,
+                            "invalid_grant",
+                            "refresh token has been revoked",
+                        );
+                    } else if rt.is_expired(now) {
+                        oauth_error(
+                            res,
+                            StatusCode::BAD_REQUEST,
+                            "invalid_grant",
+                            "refresh token has expired",
+                        );
+                    } else {
+                        oauth_error(
+                            res,
+                            StatusCode::BAD_REQUEST,
+                            "invalid_grant",
+                            "refresh token client_id mismatch",
+                        );
+                    }
+                }
+                _ => {
+                    oauth_error(
+                        res,
+                        StatusCode::BAD_REQUEST,
+                        "invalid_grant",
+                        "refresh token is invalid",
+                    );
+                }
+            }
+            return;
+        }
+        Err(_) => {
+            oauth_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                "internal error",
+            );
+            return;
+        }
+    };
+
+    let at_record = OAuthAccessTokenRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        token_hash: new_at_hash,
+        client_id: client.client_id.clone(),
+        user_id: old_rt_metadata.user_id.clone(),
+        scopes: old_rt_metadata.scopes.clone(),
+        resource: old_rt_metadata.resource.clone(),
+        created_at: now,
+        expires_at: at_expires_at,
+        revoked_at: None,
+        last_used_at: None,
+    };
+
+    let new_rt_record = OAuthRefreshTokenRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        token_hash: new_rt_hash,
+        client_id: client.client_id.clone(),
+        user_id: old_rt_metadata.user_id.clone(),
+        scopes: old_rt_metadata.scopes.clone(),
+        resource: old_rt_metadata.resource.clone(),
+        created_at: now,
+        expires_at: new_rt_expires_at,
+        revoked_at: None,
+        last_used_at: None,
+        rotated_from_id: Some(old_rt_metadata.id.clone()),
+    };
+
+    match db.rotate_oauth_refresh_token(
+        &rt_hash,
+        &client.client_id,
+        now,
+        &at_record,
+        &new_rt_record,
+    ) {
+        Ok(crate::RotateResult::Rotated(old_rt)) => {
+            let mut body = serde_json::json!({
+                "access_token": new_access_token,
+                "token_type": "Bearer",
+                "expires_in": config.oauth2.access_token_ttl_secs,
+                "refresh_token": new_refresh_token,
+            });
+
+            if !old_rt.scopes.is_empty() {
+                body["scope"] = serde_json::Value::String(old_rt.scopes.clone());
+            }
+
+            apply_oauth_no_store_headers(res);
+            res.render(Json(body));
+        }
+        Ok(crate::RotateResult::NotFound) => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "refresh token is invalid",
+            );
+        }
+        Ok(crate::RotateResult::Revoked) => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "refresh token has been revoked",
+            );
+        }
+        Ok(crate::RotateResult::Expired) => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "refresh token has expired",
+            );
+        }
+        Ok(crate::RotateResult::ClientMismatch) => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                "refresh token does not belong to this client",
+            );
+        }
+        Err(_) => {
+            oauth_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                "internal error",
+            );
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -627,6 +860,34 @@ mod tests {
         db.insert_oauth_authorization_code(&record, &record.code_hash)
             .unwrap();
         (record, plaintext_code)
+    }
+
+    /// Seed a refresh token directly into the database. Returns the record
+    /// and the plaintext token.
+    fn seed_refresh_token(
+        db: &crate::Database,
+        client: &OAuthClientRecord,
+        user: &UserRecord,
+        scopes: &str,
+    ) -> (crate::models::OAuthRefreshTokenRecord, String) {
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = crate::auth::generate_oauth_refresh_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: scopes.to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 2_592_000, // 30 days
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&record).unwrap();
+        (record, plaintext)
     }
 
     fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
@@ -1740,5 +2001,444 @@ mod tests {
         let (at_after, rt_after) = oauth_token_counts(&db);
         assert_eq!(at_before, at_after, "no access token on PKCE mismatch");
         assert_eq!(rt_before, rt_after, "no refresh token on PKCE mismatch");
+    }
+
+    // -----------------------------------------------------------------------
+    // refresh_token grant — success path
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn valid_refresh_token_grant_returns_new_tokens() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (old_rt, old_rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let (at_before, rt_before) = oauth_token_counts(&db);
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert!(json["access_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_oat_"));
+        assert!(json["refresh_token"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_ort_"));
+        assert_eq!(json["token_type"], "Bearer");
+        assert_eq!(json["expires_in"], 3600);
+        assert_eq!(json["scope"], "runtime:read");
+
+        // Old refresh token should be revoked.
+        let conn = db.conn_for_tests();
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_refresh_tokens WHERE id = ?1",
+                [&old_rt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(revoked_at.is_some(), "old refresh token should be revoked");
+
+        let last_used_at: Option<i64> = conn
+            .query_row(
+                "SELECT last_used_at FROM oauth_refresh_tokens WHERE id = ?1",
+                [&old_rt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            last_used_at.is_some(),
+            "old refresh token should have last_used_at set"
+        );
+
+        // New refresh token should have rotated_from_id.
+        let rotated_from: Option<String> = conn
+            .query_row(
+                "SELECT rotated_from_id FROM oauth_refresh_tokens WHERE rotated_from_id IS NOT NULL LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            rotated_from.as_deref(),
+            Some(old_rt.id.as_str()),
+            "new refresh token should reference old token"
+        );
+        drop(conn);
+
+        // Both new tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before + 1, at_after, "one new access token inserted");
+        assert_eq!(rt_before + 1, rt_after, "one new refresh token inserted");
+    }
+
+    #[tokio::test]
+    async fn refresh_token_new_tokens_stored_only_as_hashes() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (_, old_rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        let at = json["access_token"].as_str().unwrap();
+        let rt = json["refresh_token"].as_str().unwrap();
+
+        let conn = db.conn_for_tests();
+        let stored_at_hash: String = conn
+            .query_row(
+                "SELECT token_hash FROM oauth_access_tokens ORDER BY created_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(stored_at_hash, at);
+        assert_eq!(stored_at_hash, hash_token(at));
+
+        let stored_rt_hash: String = conn
+            .query_row(
+                "SELECT token_hash FROM oauth_refresh_tokens WHERE rotated_from_id IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_ne!(stored_rt_hash, rt);
+        assert_eq!(stored_rt_hash, hash_token(rt));
+    }
+
+    // -----------------------------------------------------------------------
+    // refresh_token grant — rotation / replay
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn refresh_token_cannot_be_reused_after_rotation() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (_, old_rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+
+        // First refresh succeeds.
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // Second refresh with same old token fails.
+        let (at_before, rt_before) = oauth_token_counts(&db);
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_grant");
+
+        // No additional tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before, at_after, "no extra access token on replay");
+        assert_eq!(rt_before, rt_after, "no extra refresh token on replay");
+    }
+
+    // -----------------------------------------------------------------------
+    // refresh_token grant — client authentication
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn refresh_token_wrong_secret_does_not_rotate() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, _) = seed_client(&db, &user, "Test App");
+        let (old_rt, old_rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let (at_before, rt_before) = oauth_token_counts(&db);
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", "wrong-secret"),
+        ]);
+        let resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+
+        // Old refresh token should NOT be revoked.
+        let conn = db.conn_for_tests();
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_refresh_tokens WHERE id = ?1",
+                [&old_rt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            revoked_at.is_none(),
+            "old refresh token should not be revoked on wrong secret"
+        );
+        drop(conn);
+
+        // No tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before, at_after, "no access token on wrong secret");
+        assert_eq!(rt_before, rt_after, "no refresh token on wrong secret");
+    }
+
+    #[tokio::test]
+    async fn refresh_token_unknown_client_returns_invalid_client() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", "wc_ort_dummy"),
+            ("client_id", "wc_client_nonexistent"),
+            ("client_secret", "some-secret"),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_client");
+    }
+
+    #[tokio::test]
+    async fn refresh_token_revoked_client_returns_invalid_client() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let now = chrono::Utc::now().timestamp();
+        db.revoke_oauth_client(&client.id, now).unwrap();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", "wc_ort_dummy"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_client");
+    }
+
+    // -----------------------------------------------------------------------
+    // refresh_token grant — grant validation
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn missing_refresh_token_returns_invalid_request() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn unknown_refresh_token_returns_invalid_grant() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", "wc_ort_nonexistent"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn expired_refresh_token_returns_invalid_grant() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+
+        // Create an already-expired refresh token.
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = crate::auth::generate_oauth_refresh_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            created_at: now - 600,
+            expires_at: now - 1, // already expired
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&record).unwrap();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn revoked_refresh_token_returns_invalid_grant() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (old_rt, old_rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        // Revoke the refresh token.
+        let now = chrono::Utc::now().timestamp();
+        db.revoke_oauth_refresh_token(&old_rt.id, now).unwrap();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_grant");
+    }
+
+    #[tokio::test]
+    async fn refresh_token_client_id_mismatch_returns_invalid_grant() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, _) = seed_client(&db, &user, "Test App");
+        let (_, old_rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        // Create a second client and try to use client1's refresh token.
+        let (client2, secret2) = seed_client(&db, &user, "Other App");
+
+        let (at_before, rt_before) = oauth_token_counts(&db);
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client2.client_id),
+            ("client_secret", &secret2),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_grant");
+
+        // No tokens should be inserted.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before, at_after, "no access token on client mismatch");
+        assert_eq!(rt_before, rt_after, "no refresh token on client mismatch");
+    }
+
+    // -----------------------------------------------------------------------
+    // refresh_token grant — scope rejection
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn refresh_token_scope_parameter_rejected() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (_, old_rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+            ("scope", "runtime:read"),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_request");
     }
 }

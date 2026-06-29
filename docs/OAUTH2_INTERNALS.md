@@ -7,8 +7,8 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2b-1.2** fixes a bug where failed post-consume validation still
-inserted access/refresh tokens into the database.
+**Phase 2b-2** adds `refresh_token` grant to `POST /oauth/token` with
+refresh token rotation.
 
 No OAuth2 tokens are accepted by `AuthMiddleware`. The GPT Actions / MCP /
 REST surface continues to accept only the existing token formats (PAT, agent
@@ -94,6 +94,49 @@ validation outcome.
 | `redirect_uri` mismatch | Yes | **No** |
 | PKCE mismatch | Yes | **No** |
 | Valid exchange | Yes | Yes (transactional) |
+
+### Phase 2b-2: refresh_token grant
+
+`POST /oauth/token` now supports `grant_type=refresh_token` with refresh
+token rotation (RFC 6749 §6).
+
+**Request parameters**:
+
+- `grant_type=refresh_token`
+- `refresh_token` — plaintext refresh token
+- `client_id` + `client_secret` — confidential client authentication
+
+The `scope` parameter is **not yet supported**; including it returns
+`invalid_request`.
+
+**Handler flow**:
+
+1. Client authentication (`client_secret` verified before any token
+   operations).
+2. Hash the plaintext refresh token and look up the record.
+3. Validate: token exists, not revoked, not expired, `client_id` matches.
+4. Call `rotate_oauth_refresh_token()` — a single SQLite transaction that:
+   - Revokes the old refresh token (`revoked_at = now`, `last_used_at = now`)
+   - Inserts a new access token
+   - Inserts a new refresh token (`rotated_from_id = old.id`)
+   - Commits
+5. Return the new access token and new refresh token.
+
+**Security invariants**:
+
+| Scenario | Old RT revoked? | New tokens inserted? |
+| --- | --- | --- |
+| Wrong `client_secret` | No | No |
+| Unknown refresh token | No | No |
+| Expired refresh token | No | No |
+| Revoked refresh token | No | No |
+| `client_id` mismatch | No | No |
+| Valid rotation | Yes | Yes (transactional) |
+
+- Refresh token plaintext is never stored; only SHA-256 hashes are persisted.
+- Old refresh tokens can only be used once (rotation revokes them).
+- New tokens inherit `user_id`, `scopes`, `resource`, and `client_id` from
+  the old refresh token.
 
 ## Design decisions
 
@@ -241,7 +284,6 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 - `/oauth/revoke` endpoint
 - `/oauth/userinfo` endpoint
 - `/.well-known/oauth-authorization-server` metadata
-- `refresh_token` grant
 - `client_credentials` grant
 - `OAuth2Verifier` real validation (still a stub)
 - OAuth2 tokens accepted by `AuthMiddleware`

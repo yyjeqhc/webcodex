@@ -40,7 +40,7 @@ pub(crate) use config::parse_env_file_line;
 pub use config::CodexConfig;
 pub use config::Config;
 pub use config::OAuth2Config;
-pub use db::Database;
+pub use db::{Database, RotateResult};
 pub use models::{
     ActionEventRecord, ActionSessionRecord, AgentModelProfileRecord, AgentSpecRecord, Channel,
     CodexGoalRecord, CommandAuditRecord, Message, MessageKind,

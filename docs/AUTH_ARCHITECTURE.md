@@ -344,6 +344,24 @@ See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
    authorization code (preventing replay), but no tokens are minted.
    Wrong `client_secret` is still rejected before code consumption.
 
-Not implemented: `/oauth/authorize`, `refresh_token` grant,
-`client_credentials` grant, `/oauth/revoke`, `/.well-known/*`,
-`OAuth2Verifier` real validation, MCP OAuth.
+### Phase 2b-2 — refresh_token grant
+
+See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
+
+1. **`grant_type=refresh_token`**: `POST /oauth/token` now supports refresh
+   token rotation (RFC 6749 §6). Old refresh tokens are revoked on use; new
+   access + refresh token pairs are issued in a single transaction.
+2. **Transactional rotation**: `rotate_oauth_refresh_token()` atomically
+   revokes the old token, inserts a new access token, and inserts a new
+   refresh token (with `rotated_from_id` linking to the old one).
+3. **Security**: invalid / expired / revoked / client-mismatch refresh tokens
+   return `invalid_grant` without inserting any tokens. Wrong `client_secret`
+   returns `invalid_client` without touching the refresh token.
+4. **Scope parameter**: including `scope` in a `refresh_token` request is
+   rejected with `invalid_request` (not yet supported).
+5. **Handler refactor**: `oauth_token` handler is split into
+   `handle_authorization_code_grant()` and `handle_refresh_token_grant()`.
+
+Not implemented: `/oauth/authorize`, `client_credentials` grant,
+`/oauth/revoke`, `/.well-known/*`, `OAuth2Verifier` real validation,
+MCP OAuth.

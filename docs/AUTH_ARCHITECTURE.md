@@ -24,9 +24,16 @@ HTTP request
               └─ Handler reads AuthContext → dispatches tool
 ```
 
-The QUIC agent transport uses the same `authenticate()` function via
-`authenticate_bearer()`, ensuring a single verification path for all
-transport surfaces.
+The QUIC agent transport uses `authenticate_bearer()`, which calls the same
+verifier chain but rejects account credentials (they are only valid on HTTP
+account-control endpoints):
+
+```
+QUIC agent transport
+  └─ authenticate_bearer(config, db, token)
+      ├─ authenticate(config, db, token)  // same verifier chain
+      └─ Reject if AuthKind::AccountCredential
+```
 
 ## Module structure
 
@@ -213,6 +220,14 @@ per-endpoint via `can_use_agent_endpoint()`.
 5. **`PatVerifier` is the actual primary verifier**: it handles bootstrap,
    PAT, agent tokens, and account credentials. The inline logic in
    `AuthMiddleware` was removed.
+
+### Phase 1c — cleanup
+
+1. **`authenticate_bearer()` rejects account credentials**: account
+   credentials (`wc_acct_*`) are only valid on HTTP account-control
+   endpoints. The QUIC/agent transport has no use for them, and accepting
+   them would silently update `last_used_at` before the caller rejects the
+   connection. `authenticate_bearer()` now filters them out explicitly.
 
 All existing behavior is preserved. No handler signatures changed. No
 external API surface changed. No database schema changes.

@@ -431,15 +431,16 @@ impl TokenVerifier for OAuth2Verifier {
 ///   The agent-transport path gate does NOT apply here: the QUIC listener is
 ///   inherently an agent-only transport, so an agent token reaching it is
 ///   already on an allowed surface.
-/// - **Account credential (`wc_acct_*`)**: yes — returns
-///   `AuthKind::AccountCredential`. Callers should enforce their own surface
-///   restrictions if needed.
+/// - **Account credential (`wc_acct_*`)**: **rejected** — returns `None`.
+///   Account credentials are only valid on HTTP account-control endpoints.
+///   The QUIC/agent transport has no use for them, and accepting them would
+///   silently update `last_used_at` before the caller rejects the connection.
 /// - **OAuth2**: not yet supported — the `OAuth2Verifier` stub always returns
 ///   "not recognized", so this falls through to `None`.
 ///
 /// Returns `None` for unknown/invalid tokens or when the token is recognized
-/// but rejected (disabled user, expired token). The caller MUST treat `None`
-/// as "reject the connection".
+/// but rejected (disabled user, expired token, account credential). The
+/// caller MUST treat `None` as "reject the connection".
 pub(crate) async fn authenticate_bearer(
     config: &Config,
     db: Option<&Arc<Database>>,
@@ -456,7 +457,14 @@ pub(crate) async fn authenticate_bearer(
     // OAuth2Verifier). Any error (disabled user, expired token) is treated
     // the same as "unknown" for the QUIC transport — the caller rejects
     // the connection either way.
-    authenticate(config, db, token).await.ok().flatten()
+    let ctx = authenticate(config, db, token).await.ok().flatten()?;
+    // Account credentials are not valid on the agent transport surface.
+    // Reject them here so they don't silently update last_used_at and then
+    // get rejected by the caller anyway.
+    if ctx.is_account_credential() {
+        return None;
+    }
+    Some(ctx)
 }
 
 /// Build the bootstrap `AuthContext` used when auth is disabled or the
@@ -1787,5 +1795,18 @@ mod tests {
         let (_tmp, db) = gate_test_db();
         let result = authenticate_bearer(&config, Some(&db), Some("wc_pat_bogus")).await;
         assert!(result.is_none(), "unknown token should return None");
+    }
+
+    #[tokio::test]
+    async fn authenticate_bearer_rejects_account_credential() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let credential = gate_mint_account_credential(&db, &user);
+        let result = authenticate_bearer(&config, Some(&db), Some(&credential)).await;
+        assert!(
+            result.is_none(),
+            "account credentials must be rejected on agent transport"
+        );
     }
 }

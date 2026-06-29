@@ -1708,6 +1708,133 @@ mod tests {
         assert!(test.error.unwrap().contains("NUL"));
     }
 
+    #[tokio::test]
+    async fn cargo_check_failure_includes_stderr_tail_or_guidance() {
+        let runtime = runtime_with_agent_project("cargo-checker");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "cargo-checker", None, caps).await;
+        let project = agent_test_project_id("cargo-checker");
+        let runtime_for_task = runtime.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .cargo_check(project, None, None, None, None, None, None, Some(60))
+                .await
+        });
+        let req = next_patch_agent_request(&runtime, "cargo-checker")
+            .await
+            .expect("cargo_check should enqueue a cargo command");
+        assert_eq!(req.command, "cargo check --all-targets");
+        complete_patch_agent_request(
+            &runtime,
+            "cargo-checker",
+            &req.request_id,
+            101,
+            "",
+            "error: simulated compile failure\n",
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(!result.success);
+        let error = result.error.as_deref().unwrap_or("");
+        assert!(error.contains("cargo command failed"));
+        assert!(error.contains("command was started"));
+        assert!(error.contains("stdout_tail/stderr_tail"));
+        assert!(error.contains("narrower cargo filter"));
+        assert_eq!(result.output["passed"], false);
+        assert!(result.output["stderr_tail"]
+            .as_str()
+            .unwrap_or("")
+            .contains("simulated compile failure"));
+    }
+
+    #[tokio::test]
+    async fn cargo_test_failure_includes_stderr_tail_or_guidance() {
+        let runtime = runtime_with_agent_project("cargo-tester");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "cargo-tester", None, caps).await;
+        let project = agent_test_project_id("cargo-tester");
+        let runtime_for_task = runtime.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .cargo_test(
+                    project,
+                    None,
+                    Some("failing".to_string()),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    Some(60),
+                )
+                .await
+        });
+        let req = next_patch_agent_request(&runtime, "cargo-tester")
+            .await
+            .expect("cargo_test should enqueue a cargo command");
+        assert_eq!(req.command, "cargo test 'failing'");
+        complete_patch_agent_request(
+            &runtime,
+            "cargo-tester",
+            &req.request_id,
+            101,
+            "test result: FAILED. 0 passed; 1 failed\ncargo-test-stdout-tail\n",
+            "",
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(!result.success);
+        let error = result.error.as_deref().unwrap_or("");
+        assert!(error.contains("cargo command failed"));
+        assert!(error.contains("command was started"));
+        assert!(error.contains("stdout_tail/stderr_tail"));
+        assert_eq!(result.output["passed"], false);
+        assert!(result.output["stdout_tail"]
+            .as_str()
+            .unwrap_or("")
+            .contains("cargo-test-stdout-tail"));
+    }
+
+    #[tokio::test]
+    async fn cargo_fmt_failure_includes_stderr_tail_or_guidance() {
+        let runtime = runtime_with_agent_project("cargo-formatter");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "cargo-formatter", None, caps).await;
+        let project = agent_test_project_id("cargo-formatter");
+        let runtime_for_task = runtime.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .cargo_fmt(project, None, Some(true), Some(60))
+                .await
+        });
+        let req = next_patch_agent_request(&runtime, "cargo-formatter")
+            .await
+            .expect("cargo_fmt should enqueue a cargo command");
+        assert_eq!(req.command, "cargo fmt -- --check");
+        complete_patch_agent_request(
+            &runtime,
+            "cargo-formatter",
+            &req.request_id,
+            1,
+            "Diff in src/lib.rs\n",
+            "",
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(!result.success);
+        let error = result.error.as_deref().unwrap_or("");
+        assert!(error.contains("cargo command failed"));
+        assert!(error.contains("command was started"));
+        assert!(error.contains("stdout_tail/stderr_tail"));
+        assert_eq!(result.output["passed"], false);
+        assert!(result.output["stdout_tail"].is_string());
+        assert!(result.output["stderr_tail"].is_string());
+    }
+
     #[test]
     fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
         assert!(KNOWN_TOOL_NAMES.contains(&"git_diff_hunks"));
@@ -2391,6 +2518,67 @@ index 1111111..2222222 100644
             .await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("unknown job"));
+    }
+
+    #[tokio::test]
+    async fn run_shell_failure_reports_command_started_and_output_tail() {
+        let runtime = runtime_with_agent_project("shell-failer");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "shell-failer", None, caps).await;
+        let project = agent_test_project_id("shell-failer");
+        let runtime_for_task = runtime.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .run_shell(
+                    project,
+                    "printf run-shell-out; printf run-shell-err >&2; exit 7".to_string(),
+                    Some(30),
+                    None,
+                )
+                .await
+        });
+        let req = next_patch_agent_request(&runtime, "shell-failer")
+            .await
+            .expect("run_shell should enqueue a shell command");
+        complete_patch_agent_request(
+            &runtime,
+            "shell-failer",
+            &req.request_id,
+            7,
+            "run-shell-out",
+            "run-shell-err",
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(!result.success);
+        let error = result.error.as_deref().unwrap_or("");
+        assert!(error.contains("Command exited with status 7"));
+        assert!(error.contains("No files were modified by WebCodex itself"));
+        assert!(error.contains("stdout_tail"));
+        assert!(error.contains("stderr_tail"));
+        assert!(error.contains("Retry guidance"));
+        assert_eq!(result.output["exit_code"], 7);
+        assert_eq!(result.output["stdout_tail"], "run-shell-out");
+        assert_eq!(result.output["stderr_tail"], "run-shell-err");
+    }
+
+    #[tokio::test]
+    async fn run_shell_rejection_reports_not_started_and_no_files_modified() {
+        let result = test_runtime()
+            .run_shell(
+                "agent:missing:missing".to_string(),
+                "printf should-not-run".to_string(),
+                Some(30),
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        let error = result.error.as_deref().unwrap_or("");
+        assert!(error.contains("Rejected before starting command"));
+        assert!(error.contains("No command was started"));
+        assert!(error.contains("No files were modified"));
+        assert!(error.contains("Retry guidance"));
     }
 
     #[tokio::test]
@@ -5954,8 +6142,32 @@ new file mode 100644\n\
             None,
         )
         .unwrap_err();
-        assert_eq!(err, "expected_old_sha256 mismatch");
+        assert!(err.contains("Rejected before write"));
+        assert!(err.contains("expected_old_sha256 mismatch"));
+        assert!(err.contains("No files were modified"));
+        assert!(err.contains("Retry guidance"));
         assert_eq!(original, "one\ntwo\nthree\n");
+    }
+
+    #[test]
+    fn line_edit_guard_failure_reports_no_files_modified_and_retry_guidance() {
+        let err = files::apply_line_edit_content(
+            "one\ntwo\nthree\n",
+            "src/example.rs",
+            files::LineEditOperation::Insert,
+            None,
+            None,
+            Some(2),
+            "inserted",
+            None,
+            Some("not-the-anchor"),
+        )
+        .unwrap_err();
+        assert!(err.contains("Rejected before write"));
+        assert!(err.contains("expected_anchor_prefix mismatch"));
+        assert!(err.contains("No files were modified"));
+        assert!(err.contains("Retry guidance"));
+        assert!(err.contains("read the file again"));
     }
 
     #[test]
@@ -6037,7 +6249,8 @@ new file mode 100644\n\
             Some("three"),
         )
         .unwrap_err();
-        assert_eq!(err, "expected_anchor_prefix mismatch");
+        assert!(err.contains("expected_anchor_prefix mismatch"));
+        assert!(err.contains("No files were modified"));
     }
 
     #[test]

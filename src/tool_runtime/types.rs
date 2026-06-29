@@ -691,6 +691,10 @@ pub struct RuntimeInfo {
 impl RuntimeInfo {
     /// Build `RuntimeInfo` from the process environment. Reads
     /// `WEBCODEX_TOKEN` (presence) and `WEBCODEX_PUBLIC_URL`.
+    // Kept for the server binary and tests; the agent-only binary builds this
+    // module without wiring runtime HTTP metadata, so it is intentionally idle
+    // in that compile unit.
+    #[allow(dead_code)]
     pub fn from_env() -> Self {
         Self::from_env_with_quic_config(&crate::config::QuicServerConfig::from_env())
     }

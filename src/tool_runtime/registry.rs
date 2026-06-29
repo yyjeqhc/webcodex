@@ -173,6 +173,22 @@ fn output_schema_for_tool(name: &str) -> Value {
             ),
             ("stdout", schema_type("string", "Captured stdout.")),
             ("stderr", schema_type("string", "Captured stderr.")),
+            (
+                "stdout_tail",
+                schema_type("string", "Bounded stdout tail on failure."),
+            ),
+            (
+                "stderr_tail",
+                schema_type("string", "Bounded stderr tail on failure."),
+            ),
+            (
+                "stdout_truncated",
+                schema_type("boolean", "Whether stdout_tail was truncated."),
+            ),
+            (
+                "stderr_truncated",
+                schema_type("boolean", "Whether stderr_tail was truncated."),
+            ),
         ]),
         "run_job" | "run_codex" => wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),

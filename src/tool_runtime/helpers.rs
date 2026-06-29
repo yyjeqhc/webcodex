@@ -200,6 +200,53 @@ pub(crate) fn bounded_tail(text: &str, max_chars: usize) -> (String, bool) {
     (tail, true)
 }
 
+pub(crate) const COMMAND_STDIO_TAIL_CHARS: usize = 12_000;
+
+pub(crate) fn command_rejected_message(
+    reason: impl AsRef<str>,
+    guidance: impl AsRef<str>,
+) -> String {
+    format!(
+        "Rejected before starting command: {}.\nNo command was started.\nNo files were modified.\nRetry guidance: {}",
+        reason.as_ref(),
+        guidance.as_ref()
+    )
+}
+
+pub(crate) fn command_failed_message(
+    exit_code: Option<i32>,
+    stdout_tail: &str,
+    stderr_tail: &str,
+) -> String {
+    let status = exit_code
+        .map(|code| code.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+    format!(
+        "Command exited with status {}.\nNo files were modified by WebCodex itself; command side effects, if any, are from the invoked command.\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: inspect stderr/stdout above, then fix the reported issue or use a narrower tool.",
+        status, stdout_tail, stderr_tail
+    )
+}
+
+pub(crate) fn command_timeout_message(
+    timeout_secs: u64,
+    stdout_tail: &str,
+    stderr_tail: &str,
+) -> String {
+    format!(
+        "Command timed out after {}s.\nCommand was started.\nOutput tails before timeout:\nstdout_tail:\n{}\nstderr_tail:\n{}\nRetry guidance: use run_job for longer commands or rerun with a narrower test filter.",
+        timeout_secs, stdout_tail, stderr_tail
+    )
+}
+
+pub(crate) fn looks_like_command_timeout(
+    exit_code: Option<i32>,
+    stderr: &str,
+    timeout_secs: u64,
+) -> bool {
+    exit_code == Some(-1)
+        && stderr.contains(&format!("Command timed out after {} seconds", timeout_secs))
+}
+
 pub(crate) fn is_safe_job_id(job_id: &str) -> bool {
     if job_id.is_empty() || job_id.len() > 80 || job_id.contains("..") {
         return false;

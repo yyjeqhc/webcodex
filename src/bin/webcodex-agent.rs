@@ -1993,6 +1993,9 @@ fn read_pipes(
     Ok((status, stdout, stderr))
 }
 
+// Test-only wrapper for callers that do not need prepared shell profiles; the
+// production request path uses `run_shell_with_profiles` directly.
+#[cfg(test)]
 fn run_shell(
     policy: &AgentPolicy,
     shell: &ShellConfig,

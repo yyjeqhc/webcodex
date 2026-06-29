@@ -190,6 +190,13 @@ pub(crate) const MAX_EXPECTED_PREFIX_BYTES: usize = 64 * 1024; // 64 KiB
 /// without coupling this module to that private constant.
 pub(crate) const RUN_HELPER_STDIN_BUDGET: usize = 15 * 1024 * 1024; // 15 MiB
 
+fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
+    format!(
+        "Rejected before write: {}.\nNo files were modified.\nRetry guidance: read the file again to refresh line numbers/context, then retry with updated guards.",
+        reason.as_ref()
+    )
+}
+
 /// Maximum decoded size for one binary project artifact imported through GPT
 /// Actions/runtime tools. Keep bounded because the current agent helper path
 /// carries base64 over stdin.
@@ -442,7 +449,7 @@ pub(crate) fn apply_line_edit_content(
                 LineEditOperation::Insert => "expected_anchor_sha256 mismatch",
                 _ => "expected_old_sha256 mismatch",
             };
-            return Err(label.to_string());
+            return Err(recoverable_write_rejection(label));
         }
     }
     if let Some(prefix) = expected_prefix {
@@ -451,7 +458,7 @@ pub(crate) fn apply_line_edit_content(
                 LineEditOperation::Insert => "expected_anchor_prefix mismatch",
                 _ => "expected_old_prefix mismatch",
             };
-            return Err(label.to_string());
+            return Err(recoverable_write_rejection(label));
         }
     }
     let new_sha256 = sha256_hex_bytes(new_content.as_bytes());
@@ -933,7 +940,7 @@ impl ToolRuntime {
             .await
         {
             Ok(v) => v,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => return ToolResult::err(recoverable_write_rejection(e)),
         };
         if let Some(err) = obj
             .get("error")
@@ -943,7 +950,7 @@ impl ToolRuntime {
             return ToolResult {
                 success: false,
                 output: obj,
-                error: Some(err),
+                error: Some(recoverable_write_rejection(err)),
             };
         }
         ToolResult::ok(obj)
@@ -1315,7 +1322,7 @@ impl ToolRuntime {
             .await
         {
             Ok(r) => r,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => return ToolResult::err(recoverable_write_rejection(e)),
         };
         let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
             Ok(Ok(resp)) => resp,
@@ -1329,12 +1336,12 @@ impl ToolRuntime {
             }
         };
         if let Some(e) = resp.error {
-            return ToolResult::err(e);
+            return ToolResult::err(recoverable_write_rejection(e));
         }
         if resp.exit_code != Some(0) {
-            return ToolResult::err(resp.stderr.unwrap_or_else(|| {
-                format!("agent line edit failed with code {:?}", resp.exit_code)
-            }));
+            return ToolResult::err(recoverable_write_rejection(resp.stderr.unwrap_or_else(
+                || format!("agent line edit failed with code {:?}", resp.exit_code),
+            )));
         }
         let stdout = resp.stdout.unwrap_or_default();
         let stdout = stdout.trim();
@@ -1356,7 +1363,7 @@ impl ToolRuntime {
             return ToolResult {
                 success: false,
                 output: obj,
-                error: Some(err),
+                error: Some(recoverable_write_rejection(err)),
             };
         }
         if obj.get("path").is_none() {

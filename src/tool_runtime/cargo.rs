@@ -1,10 +1,14 @@
 use serde_json::json;
 
-use super::helpers::{bounded_tail, shell_escape_simple, validate_project_relative_path};
+use super::helpers::{
+    bounded_tail, command_rejected_message, shell_escape_simple, validate_project_relative_path,
+};
 use super::types::ToolResult;
 use super::ToolRuntime;
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;
+const CARGO_FAILURE_GUIDANCE: &str =
+    "command was started; inspect stdout_tail/stderr_tail in output, then fix the reported issue or rerun with a narrower cargo filter.";
 
 fn validate_cwd(cwd: Option<String>) -> Result<Option<String>, String> {
     match cwd {
@@ -150,7 +154,12 @@ impl ToolRuntime {
     ) -> ToolResult {
         let cwd = match validate_cwd(cwd) {
             Ok(cwd) => cwd,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => {
+                return ToolResult::err(command_rejected_message(
+                    e,
+                    "choose an existing project-relative cwd, then retry.",
+                ))
+            }
         };
         let command = cargo_fmt_command(check.unwrap_or(false));
         self.run_cargo_command(project, cwd, command, timeout_secs.unwrap_or(120), None)
@@ -171,7 +180,12 @@ impl ToolRuntime {
     ) -> ToolResult {
         let cwd = match validate_cwd(cwd) {
             Ok(cwd) => cwd,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => {
+                return ToolResult::err(command_rejected_message(
+                    e,
+                    "choose an existing project-relative cwd, then retry.",
+                ))
+            }
         };
         let command = match cargo_check_command(
             all_targets,
@@ -181,7 +195,12 @@ impl ToolRuntime {
             package,
         ) {
             Ok(command) => command,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => {
+                return ToolResult::err(command_rejected_message(
+                    e,
+                    "fix the cargo argument format, then retry.",
+                ))
+            }
         };
         self.run_cargo_command(
             project,
@@ -209,7 +228,12 @@ impl ToolRuntime {
     ) -> ToolResult {
         let cwd = match validate_cwd(cwd) {
             Ok(cwd) => cwd,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => {
+                return ToolResult::err(command_rejected_message(
+                    e,
+                    "choose an existing project-relative cwd, then retry.",
+                ))
+            }
         };
         let command = match cargo_test_command(
             filter,
@@ -221,7 +245,12 @@ impl ToolRuntime {
             no_run,
         ) {
             Ok(command) => command,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => {
+                return ToolResult::err(command_rejected_message(
+                    e,
+                    "fix the cargo argument format, then retry.",
+                ))
+            }
         };
         self.run_cargo_command(
             project,
@@ -246,7 +275,12 @@ impl ToolRuntime {
             .await
         {
             Ok(output) => output,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => {
+                return ToolResult::err(command_rejected_message(
+                    e,
+                    "verify the project id/cwd and agent connectivity, then retry or use run_shell for custom diagnostics.",
+                ))
+            }
         };
         let (stdout_tail, stdout_truncated) = bounded_tail(&output.stdout, CARGO_STDIO_TAIL_CHARS);
         let (stderr_tail, stderr_truncated) = bounded_tail(&output.stderr, CARGO_STDIO_TAIL_CHARS);
@@ -282,7 +316,7 @@ impl ToolRuntime {
             ToolResult {
                 success: false,
                 output: payload,
-                error: Some("cargo command failed".to_string()),
+                error: Some(format!("cargo command failed; {}", CARGO_FAILURE_GUIDANCE)),
             }
         }
     }

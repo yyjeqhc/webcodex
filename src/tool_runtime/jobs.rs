@@ -2,8 +2,8 @@ use serde_json::{json, Value};
 use std::path::Path;
 
 use super::helpers::{
-    is_safe_job_id, normalize_local_status, read_json, read_lines_from, read_trim,
-    shell_escape_simple,
+    command_rejected_message, is_safe_job_id, normalize_local_status, read_json, read_lines_from,
+    read_trim, shell_escape_simple,
 };
 use super::types::{
     LocalJobKiller, LocalJobRecord, TerminateOutcome, ToolResult, ACTIVE_LOCAL_STATUSES,
@@ -323,13 +323,21 @@ impl ToolRuntime {
     ) -> ToolResult {
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => return ToolResult::err(command_rejected_message(
+                e,
+                "verify the project id with list_projects, then retry with a registered project.",
+            )),
         };
         let max_runtime = timeout_secs.unwrap_or(3600).clamp(1, 604800);
         if proj.is_agent() {
             let client_id = match proj.agent_client_id() {
                 Ok(id) => id.to_string(),
-                Err(e) => return ToolResult::err(e),
+                Err(e) => {
+                    return ToolResult::err(command_rejected_message(
+                        e,
+                        "refresh the agent project registry with list_projects, then retry.",
+                    ))
+                }
             };
             match self
                 .shell_clients
@@ -352,7 +360,10 @@ impl ToolRuntime {
                 .await
             {
                 Ok(job) => ToolResult::ok(json!({ "job_id": job.job_id })),
-                Err(e) => ToolResult::err(e),
+                Err(e) => ToolResult::err(command_rejected_message(
+                    e,
+                    "confirm the agent is connected and async jobs are allowed, then retry or use run_shell for short commands.",
+                )),
             }
         } else {
             let root = proj.root();

@@ -12,6 +12,7 @@ futures-util = "0.3"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+serde_urlencoded = "0.7"
 uuid = { version = "1", features = ["v4"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -37,6 +38,7 @@ webpki-roots = "0.26"
 
 [dev-dependencies]
 tempfile = "3"
+urlencoding = "2"
 salvo = { version = "0.93", features = ["test"] }
 # Self-signed cert generation for QUIC integration tests. Uses the `ring`
 # provider that is already in the dependency tree (via quinn-proto), so it

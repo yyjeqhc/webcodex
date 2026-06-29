@@ -287,3 +287,27 @@ token, and account credential behavior is unchanged.
    literals are untouched (they now include the `oauth2` field).
 
 No endpoints, no AuthMiddleware changes, no handler migration.
+
+### Phase 2b-1 — authorization code token exchange
+
+See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full endpoint reference.
+
+1. **`POST /oauth/token`**: first OAuth2 HTTP endpoint. Supports
+   `grant_type=authorization_code` with confidential client authentication
+   (`client_id` + `client_secret` in form body).
+2. **PKCE S256**: enforced when `config.oauth2.require_pkce` is true. The
+   `code_verifier` is SHA-256 hashed and compared against the stored
+   `code_challenge` using constant-time equality.
+3. **Atomic code consumption**: authorization codes are consumed via
+   `consume_oauth_authorization_code_by_hash()` — single-use, short-lived,
+   revoked codes rejected.
+4. **Token issuance**: opaque access tokens (`wc_oat_*`) and refresh tokens
+   (`wc_ort_*`) are generated, hashed, and stored. Plaintext is returned only
+   once in the JSON response.
+5. **Enable gate**: `POST /oauth/token` returns 503 when
+   `config.oauth2.enabled` is false.
+6. **Route**: mounted at `/oauth/token` (public, no `AuthMiddleware`).
+
+Not implemented: `/oauth/authorize`, `refresh_token` grant,
+`client_credentials` grant, `/oauth/revoke`, `/.well-known/*`,
+`OAuth2Verifier` real validation, MCP OAuth.

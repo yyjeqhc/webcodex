@@ -7,15 +7,39 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2a** implements only the internal infrastructure:
+**Phase 2b-1** adds the first OAuth2 HTTP endpoint:
 
-- OAuth2 configuration (`OAuth2Config`)
-- Database tables and CRUD helpers
-- Token/client generation and hashing utilities
+- `POST /oauth/token` — authorization code exchange with PKCE S256
+- Opaque access token and refresh token issuance
+- Atomic authorization code consumption
 
-No OAuth2 HTTP endpoints are exposed. No OAuth2 tokens are accepted by
-`AuthMiddleware`. The GPT Actions / MCP / REST surface continues to accept
-only the existing token formats (PAT, agent tokens, account credentials).
+No OAuth2 tokens are accepted by `AuthMiddleware`. The GPT Actions / MCP /
+REST surface continues to accept only the existing token formats (PAT, agent
+tokens, account credentials).
+
+### Phase 2b-1: `POST /oauth/token`
+
+The token endpoint implements RFC 6749 §4.1.3 (authorization code grant) with
+PKCE (RFC 7636) support:
+
+- **Grant type**: `authorization_code` only
+- **Client authentication**: `client_id` + `client_secret` in form body
+  (confidential client required)
+- **PKCE**: S256 method required when `config.oauth2.require_pkce` is true
+- **Form encoding**: `application/x-www-form-urlencoded`
+- **Authorization codes**: atomically consumed via
+  `consume_oauth_authorization_code_by_hash()` — single-use, short-lived
+- **Tokens**: opaque (`wc_oat_*`, `wc_ort_*`), only SHA-256 hashes stored
+- **Enable gate**: returns 503 when `config.oauth2.enabled` is false
+
+Error responses follow RFC 6749 §5.2 format:
+
+```json
+{
+  "error": "invalid_grant",
+  "error_description": "..."
+}
+```
 
 ## Design decisions
 

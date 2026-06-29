@@ -23,6 +23,7 @@ mod console_web;
 mod db;
 mod mcp;
 mod models;
+mod oauth_http;
 mod openapi;
 mod pairing_http;
 mod projects;
@@ -407,6 +408,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .push(api_router)
         .push(openapi_router)
         .push(console_router)
+        // OAuth2 token endpoint — public, no AuthMiddleware. Clients
+        // authenticate via client_id + client_secret in the form body.
+        .push(Router::with_path("oauth/token").post(oauth_http::oauth_token))
         .push(
             Router::with_path("mcp")
                 .hoop(AuthMiddleware)

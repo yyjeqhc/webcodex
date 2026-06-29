@@ -445,6 +445,29 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
         return Err("content is required for op=write".to_string());
     }
     match body.op.as_str() {
+        "read" => {
+            match (body.start_line, body.end_line) {
+                (Some(start), Some(end)) => {
+                    if start == 0 || end < start {
+                        return Err("invalid line range".to_string());
+                    }
+                }
+                (Some(_), None) => {
+                    return Err(
+                        "end_line is required when start_line is set for op=read".to_string()
+                    );
+                }
+                (None, Some(_)) => {
+                    return Err(
+                        "start_line is required when end_line is set for op=read".to_string()
+                    );
+                }
+                (None, None) => {}
+            }
+            if body.line.is_some() {
+                return Err("line is only allowed for op=insert_at_line".to_string());
+            }
+        }
         "replace_line_range" => {
             let start = body
                 .start_line
@@ -3296,6 +3319,90 @@ mod tests {
         capabilities
     }
 
+    fn file_request(op: &str) -> ShellFileOpRequest {
+        ShellFileOpRequest {
+            op: op.to_string(),
+            client_id: "oe".to_string(),
+            path: "src/auth/scopes.rs".to_string(),
+            cwd: Some("/root/git/webcodex".to_string()),
+            content: None,
+            max_bytes: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            wait_timeout_secs: 0,
+        }
+    }
+
+    #[test]
+    fn validate_file_request_allows_read_with_start_and_end_line() {
+        let mut req = file_request("read");
+        req.start_line = Some(10);
+        req.end_line = Some(20);
+
+        validate_file_request(&req).unwrap();
+    }
+
+    #[test]
+    fn validate_file_request_rejects_read_with_only_start_line() {
+        let mut req = file_request("read");
+        req.start_line = Some(10);
+
+        let err = validate_file_request(&req).unwrap_err();
+        assert_eq!(
+            err,
+            "end_line is required when start_line is set for op=read"
+        );
+    }
+
+    #[test]
+    fn validate_file_request_rejects_read_with_only_end_line() {
+        let mut req = file_request("read");
+        req.end_line = Some(20);
+
+        let err = validate_file_request(&req).unwrap_err();
+        assert_eq!(
+            err,
+            "start_line is required when end_line is set for op=read"
+        );
+    }
+
+    #[test]
+    fn validate_file_request_rejects_read_with_invalid_range() {
+        let mut req = file_request("read");
+        req.start_line = Some(20);
+        req.end_line = Some(10);
+
+        let err = validate_file_request(&req).unwrap_err();
+        assert_eq!(err, "invalid line range");
+
+        req.start_line = Some(0);
+        req.end_line = Some(10);
+        let err = validate_file_request(&req).unwrap_err();
+        assert_eq!(err, "invalid line range");
+    }
+
+    #[test]
+    fn validate_file_request_rejects_read_with_line_field() {
+        let mut req = file_request("read");
+        req.line = Some(10);
+
+        let err = validate_file_request(&req).unwrap_err();
+        assert_eq!(err, "line is only allowed for op=insert_at_line");
+    }
+
+    #[test]
+    fn validate_file_request_rejects_read_with_expected_prefix() {
+        let mut req = file_request("read");
+        req.expected_prefix = Some("pub fn".to_string());
+
+        let err = validate_file_request(&req).unwrap_err();
+        assert_eq!(err, "expected_prefix is only allowed for line edit ops");
+    }
+
     #[test]
     fn requested_by_from_auth_uses_bootstrap_username_or_anonymous() {
         let bootstrap = auth_context(None, true);
@@ -3791,6 +3898,36 @@ mod tests {
         assert_eq!(view.pending_requests, 1);
         assert!(view.capabilities.shell);
         assert!(view.capabilities.async_shell_jobs);
+    }
+
+    #[tokio::test]
+    async fn enqueue_file_op_allows_read_with_line_range() {
+        let registry = ShellClientRegistry::default();
+        register_quic_v2_client(&registry, "oe").await;
+
+        let mut req = file_request("read");
+        req.start_line = Some(7);
+        req.end_line = Some(12);
+        let (request_id, _rx) = registry
+            .enqueue_file_op(req, "tester".to_string())
+            .await
+            .unwrap();
+
+        let polled = registry
+            .poll(ShellAgentPollRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(polled.request_id, request_id);
+        assert_eq!(polled.kind, "file_read");
+        assert_eq!(polled.path.as_deref(), Some("src/auth/scopes.rs"));
+        assert_eq!(polled.start_line, Some(7));
+        assert_eq!(polled.end_line, Some(12));
+        assert_eq!(polled.line, None);
     }
 
     #[tokio::test]

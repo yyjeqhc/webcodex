@@ -1,7 +1,79 @@
+//! WebCodex authentication and authorization.
+//!
+//! This module implements the bearer-token authentication pipeline used by all
+//! protected API endpoints. It supports four credential types today (bootstrap,
+//! personal API token, agent token, account credential) and reserves extension
+//! points for OAuth2 in a future phase.
+//!
+//! ## Submodules
+//!
+//! - [`principal`] — the [`Principal`] identity abstraction and [`AuthMethod`]
+//!   / [`AuthError`] types.
+//! - [`scopes`] — scope constants, validation, and authorization helpers.
+//! - [`pat`] — PAT / agent token / account credential generation, hashing, and
+//!   validation utilities.
+//!
+//! ## Architecture
+//!
+//! The [`AuthMiddleware`] Salvo handler is the single entry point for HTTP
+//! authentication. It extracts a bearer token, validates it, and injects an
+//! [`AuthContext`] into the depot. Handlers extract `AuthContext` and pass it
+//! to the tool runtime for scope-based authorization.
+//!
+//! [`Principal`] is a higher-level abstraction derived from `AuthContext` that
+//! unifies the identity representation regardless of auth method. During this
+//! first refactoring phase both types coexist — `AuthContext` remains the
+//! depot-injected type so existing handlers are unaffected. See
+//! [`principal::Principal::from_auth_context`].
+//!
+//! ## Future: OAuth2
+//!
+//! The [`TokenVerifier`] trait is the extension point for future OAuth2 bearer
+//! token verification. Its only implementation today is [`PatVerifier`] which
+//! delegates to the existing PAT / bootstrap validation logic. An
+//! `OAuth2Verifier` will be added in a subsequent phase.
+
 use crate::{Config, Database};
 use salvo::prelude::*;
-use sha2::{Digest, Sha256};
 use std::sync::Arc;
+
+// ---------------------------------------------------------------------------
+// Submodules
+// ---------------------------------------------------------------------------
+
+pub mod principal;
+pub mod scopes;
+
+// `pat` is `pub(crate)` — its functions are internal utilities.
+pub(crate) mod pat;
+
+// ---------------------------------------------------------------------------
+// Re-exports — backward compatibility
+// ---------------------------------------------------------------------------
+// All items that were previously exported from `auth.rs` are re-exported here
+// so that existing `use crate::auth::*` imports continue to work.
+
+pub use principal::{AuthError, AuthMethod, Principal};
+
+pub use scopes::{
+    AGENT_SCOPES, KNOWN_SCOPES, SCOPE_ACCOUNT_MANAGE, SCOPE_ADMIN, SCOPE_AGENT_JOB_UPDATE,
+    SCOPE_AGENT_POLL, SCOPE_AGENT_REGISTER, SCOPE_AGENT_RESULT, SCOPE_JOB_RUN, SCOPE_PROJECT_READ,
+    SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
+};
+
+pub(crate) use scopes::{
+    is_agent_scope, require_scope, scopes_include, scopes_to_string, validate_agent_scopes,
+    validate_scopes,
+};
+
+pub(crate) use pat::{
+    generate_account_credential, generate_agent_token, generate_api_token, hash_token,
+    token_prefix, validate_allowed_client_id, validate_role, validate_username,
+};
+
+// ---------------------------------------------------------------------------
+// AuthKind — the low-level credential kind (preserved from Phase 2/3)
+// ---------------------------------------------------------------------------
 
 /// The kind of credential that produced an [`AuthContext`].
 ///
@@ -22,50 +94,9 @@ pub enum AuthKind {
     AccountCredential,
 }
 
-/// The set of scopes a Phase 2 personal API token may carry. Bootstrap auth is
-/// treated as having the `admin` scope (full access). Stored space-separated in
-/// the database; parsed into a list on read.
-pub const SCOPE_RUNTIME_READ: &str = "runtime:read";
-pub const SCOPE_PROJECT_READ: &str = "project:read";
-pub const SCOPE_PROJECT_WRITE: &str = "project:write";
-pub const SCOPE_JOB_RUN: &str = "job:run";
-pub const SCOPE_AGENT_REGISTER: &str = "agent:register";
-pub const SCOPE_ADMIN: &str = "admin";
-
-/// Phase 3 agent transport scopes. Agent tokens may only carry `agent:*`
-/// scopes and may only be used on agent transport endpoints. They are rejected
-/// by all normal runtime/project/admin/user-token-management endpoints.
-pub const SCOPE_AGENT_POLL: &str = "agent:poll";
-pub const SCOPE_AGENT_RESULT: &str = "agent:result";
-pub const SCOPE_AGENT_JOB_UPDATE: &str = "agent:job_update";
-pub const SCOPE_ACCOUNT_MANAGE: &str = "account:manage";
-
-/// The complete set of agent transport scopes, in canonical order.
-pub const AGENT_SCOPES: &[&str] = &[
-    SCOPE_AGENT_REGISTER,
-    SCOPE_AGENT_POLL,
-    SCOPE_AGENT_RESULT,
-    SCOPE_AGENT_JOB_UPDATE,
-];
-
-/// All scopes recognized by this phase. Unknown scopes are rejected at token
-/// creation time so the stored scope string stays clean.
-pub const KNOWN_SCOPES: &[&str] = &[
-    SCOPE_RUNTIME_READ,
-    SCOPE_PROJECT_READ,
-    SCOPE_PROJECT_WRITE,
-    SCOPE_JOB_RUN,
-    SCOPE_AGENT_REGISTER,
-    SCOPE_AGENT_POLL,
-    SCOPE_AGENT_RESULT,
-    SCOPE_AGENT_JOB_UPDATE,
-    SCOPE_ADMIN,
-];
-
-/// True when `scope` is one of the agent transport scopes.
-pub(crate) fn is_agent_scope(scope: &str) -> bool {
-    AGENT_SCOPES.contains(&scope)
-}
+// ---------------------------------------------------------------------------
+// AuthContext — the depot-injected auth state
+// ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -155,7 +186,21 @@ impl AuthContext {
             Err(format!("missing required scope: {}", scope))
         }
     }
+
+    /// Derive a [`Principal`] from this `AuthContext`.
+    ///
+    /// This is the bridge between the low-level depot-injected type and the
+    /// higher-level identity abstraction. Handlers that want to use
+    /// `Principal`-based authorization can call this once.
+    #[allow(dead_code)]
+    pub fn to_principal(&self) -> Principal {
+        Principal::from_auth_context(self)
+    }
 }
+
+// ---------------------------------------------------------------------------
+// Token extraction helpers
+// ---------------------------------------------------------------------------
 
 pub(crate) fn get_config(depot: &Depot) -> Option<Arc<Config>> {
     depot.obtain::<Arc<Config>>().ok().cloned()
@@ -187,21 +232,193 @@ pub(crate) fn bearer_or_allowed_query_token(req: &Request) -> Option<String> {
     })
 }
 
-/// Hash a plaintext token with SHA-256 and return a lowercase hex digest.
+// ---------------------------------------------------------------------------
+// TokenVerifier — the trait for bearer token verification
+// ---------------------------------------------------------------------------
+
+/// A `TokenVerifier` validates a bearer token and returns an [`AuthContext`] on
+/// success.
 ///
-/// This is the **single** place token hashing is performed; all token lookups
-/// go through [`Database::get_api_key_by_hash`] using this digest. The digest
-/// is compared by exact SQLite equality on the indexed `key_hash` column rather
-/// than a byte-wise comparison in Rust, so a timing leak of the hash does not
-/// reveal the secret. We do not currently use a keyed/HMAC hash (no server
-/// secret is configured for hashing); this is acceptable for self-hosted use
-/// and keeps the dependency surface small. Upgrading to a keyed hash is a
-/// drop-in change here if a `WEBCODEX_TOKEN_HASH_KEY` is added later.
-pub(crate) fn hash_token(token: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
+/// This trait is the extension point for plugging in alternative verification
+/// strategies (e.g. OAuth2 JWT validation). The current implementation is
+/// [`PatVerifier`], which mirrors the existing bootstrap + database lookup
+/// logic.
+///
+/// ## Design notes
+///
+/// The trait is `Send + Sync` so it can be stored in shared state (e.g. behind
+/// an `Arc`). Implementations receive `&Config` and `Option<&Database>` so
+/// they can perform the full validation chain (bootstrap token check, database
+/// lookup, etc.) without owning those resources.
+///
+/// ## Future: OAuth2
+///
+/// A future `OAuth2Verifier` will implement this trait by:
+/// 1. Decoding the JWT bearer token
+/// 2. Validating the signature against the OIDC provider's JWKS
+/// 3. Extracting claims (sub, scope, exp, etc.)
+/// 4. Mapping claims to an `AuthContext` with `AuthKind::ApiToken` or a new
+///    kind
+///
+/// The verifier will be composed with `PatVerifier` in a chain: try PAT first,
+/// fall back to OAuth2.
+#[async_trait]
+pub(crate) trait TokenVerifier: Send + Sync {
+    /// Attempt to verify the given bearer token.
+    ///
+    /// Returns `Ok(Some(AuthContext))` on success, `Ok(None)` when this
+    /// verifier does not recognize the token format (allowing a chained
+    /// verifier to try), and `Err` for hard failures.
+    async fn verify(
+        &self,
+        config: &Config,
+        db: Option<&Arc<Database>>,
+        token: &str,
+    ) -> Result<Option<AuthContext>, String>;
 }
+
+/// PAT / bootstrap verifier — the existing validation logic wrapped in the
+/// [`TokenVerifier`] trait.
+///
+/// This verifier handles:
+/// 1. Auth-disabled mode (returns bootstrap)
+/// 2. Bootstrap token match
+/// 3. Database lookup by SHA-256 hash for API keys and account credentials
+pub(crate) struct PatVerifier;
+
+#[async_trait]
+impl TokenVerifier for PatVerifier {
+    async fn verify(
+        &self,
+        config: &Config,
+        db: Option<&Arc<Database>>,
+        token: &str,
+    ) -> Result<Option<AuthContext>, String> {
+        // Auth disabled in development -> bootstrap (full access), identical to
+        // AuthMiddleware's `!config.is_auth_enabled()` branch.
+        if !config.is_auth_enabled() {
+            return Ok(Some(bootstrap_context()));
+        }
+
+        // Bootstrap token check (constant-time comparison).
+        if config.validate_token(token) {
+            return Ok(Some(bootstrap_context()));
+        }
+
+        // Database lookup.
+        let Some(db) = db else {
+            return Ok(None);
+        };
+        let token_hash = hash_token(token);
+
+        // API key lookup (personal API tokens and agent tokens).
+        if let Ok(Some(api_key)) = db.get_api_key_by_hash(&token_hash) {
+            let user = db
+                .get_user_by_id(&api_key.user_id)
+                .ok()
+                .flatten()
+                .ok_or_else(|| "user not found".to_string())?;
+
+            if user.is_disabled() {
+                return Err("user is disabled".to_string());
+            }
+
+            let now = chrono::Utc::now().timestamp();
+            if api_key.is_expired(now) {
+                return Err("token expired".to_string());
+            }
+
+            if let Err(e) = db.update_api_key_last_used(&api_key.id, now) {
+                tracing::warn!("failed to update api key last_used_at: {}", e);
+            }
+
+            let auth_kind = if api_key.is_agent_token() {
+                AuthKind::AgentToken
+            } else {
+                AuthKind::ApiToken
+            };
+
+            return Ok(Some(AuthContext {
+                kind: auth_kind,
+                user_id: Some(user.id.clone()),
+                username: Some(user.username.clone()),
+                api_key_id: Some(api_key.id.clone()),
+                api_key_name: Some(api_key.name.clone()),
+                role: Some(user.role.clone()),
+                scopes: api_key.scopes_vec(),
+                is_bootstrap: false,
+                token_kind: Some(api_key.kind().to_string()),
+                allowed_client_id: api_key.allowed_client_id.clone(),
+            }));
+        }
+
+        // Account credential lookup.
+        if let Ok(Some(account_credential)) = db.get_account_credential_by_hash(&token_hash) {
+            let user = db
+                .get_user_by_id(&account_credential.user_id)
+                .ok()
+                .flatten()
+                .ok_or_else(|| "user not found".to_string())?;
+
+            if user.is_disabled() {
+                return Err("user is disabled".to_string());
+            }
+
+            let now = chrono::Utc::now().timestamp();
+            if let Err(e) = db.update_account_credential_last_used(&account_credential.id, now) {
+                tracing::warn!("failed to update account credential last_used_at: {}", e);
+            }
+
+            return Ok(Some(AuthContext {
+                kind: AuthKind::AccountCredential,
+                user_id: Some(user.id.clone()),
+                username: Some(user.username.clone()),
+                api_key_id: None,
+                api_key_name: None,
+                role: Some(user.role.clone()),
+                scopes: vec![SCOPE_ACCOUNT_MANAGE.to_string()],
+                is_bootstrap: false,
+                token_kind: Some("account".to_string()),
+                allowed_client_id: None,
+            }));
+        }
+
+        // Token not recognized by any verifier.
+        Ok(None)
+    }
+}
+
+/// OAuth2 bearer token verifier — **stub / placeholder** for future use.
+///
+/// This verifier will validate OAuth2 JWT tokens against an OIDC provider.
+/// It is not wired up yet; the `verify` implementation always returns
+/// `Ok(None)` (token not recognized), allowing `PatVerifier` to handle all
+/// tokens in the current phase.
+///
+/// When implemented, this verifier will:
+/// 1. Decode the JWT header to determine the signing algorithm
+/// 2. Fetch the JWKS from the configured OIDC provider
+/// 3. Validate the signature, expiry, audience, and issuer claims
+/// 4. Map the `sub` and `scope` claims to an `AuthContext`
+pub(crate) struct OAuth2Verifier;
+
+#[async_trait]
+impl TokenVerifier for OAuth2Verifier {
+    async fn verify(
+        &self,
+        _config: &Config,
+        _db: Option<&Arc<Database>>,
+        _token: &str,
+    ) -> Result<Option<AuthContext>, String> {
+        // Stub: always returns "not recognized" so PatVerifier handles everything.
+        // A real implementation will validate JWT, check JWKS, etc.
+        Ok(None)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Standalone authentication function (used by QUIC agent transport)
+// ---------------------------------------------------------------------------
 
 /// Authenticate a bearer token *outside* the HTTP request path, reusing the
 /// exact same validation as [`AuthMiddleware`]. Used by the QUIC agent
@@ -287,165 +504,9 @@ fn bootstrap_context() -> AuthContext {
     }
 }
 
-/// Random component length (hex characters) for generated personal API tokens.
-/// Two uuid v4 simple values concatenated = 64 hex chars = 256 bits of entropy.
-const TOKEN_RANDOM_HEX_LEN: usize = 64;
-
-/// Generate a fresh personal API token. Format: `wc_pat_<random>` where
-/// `<random>` is 256 bits of hex-encoded randomness. The plaintext token is
-/// returned **only** here (at creation time) and is never persisted; only its
-/// SHA-256 hash is stored.
-pub(crate) fn generate_api_token() -> String {
-    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
-    while random.len() < TOKEN_RANDOM_HEX_LEN {
-        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
-    }
-    random.truncate(TOKEN_RANDOM_HEX_LEN);
-    format!("wc_pat_{}", random)
-}
-
-/// Generate a fresh Phase 3 agent token. Format: `wc_agent_<random>` where
-/// `<random>` is 256 bits of hex-encoded randomness. The distinct `wc_agent_`
-/// prefix makes an agent token immediately recognizable in `token_prefix`
-/// displays and logs so operators can tell it apart from a personal API token.
-/// The plaintext token is returned **only** here (at creation time) and is
-/// never persisted; only its SHA-256 hash is stored.
-pub(crate) fn generate_agent_token() -> String {
-    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
-    while random.len() < TOKEN_RANDOM_HEX_LEN {
-        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
-    }
-    random.truncate(TOKEN_RANDOM_HEX_LEN);
-    format!("wc_agent_{}", random)
-}
-
-pub(crate) fn generate_account_credential() -> String {
-    let mut random = String::with_capacity(TOKEN_RANDOM_HEX_LEN);
-    while random.len() < TOKEN_RANDOM_HEX_LEN {
-        random.push_str(&uuid::Uuid::new_v4().simple().to_string());
-    }
-    random.truncate(TOKEN_RANDOM_HEX_LEN);
-    format!("wc_acct_{}", random)
-}
-
-/// Return a short, display-safe prefix of a token (the first 16 characters,
-/// including the `wc_pat_` / `wc_agent_` kind marker). Used for listing tokens
-/// without revealing the secret.
-pub(crate) fn token_prefix(token: &str) -> String {
-    let end = token.len().min(16);
-    token[..end].to_string()
-}
-
-/// Validate an `allowed_client_id` for an agent token. Applies the same safe-id
-/// rules as `client_id`: non-empty, bounded length, ASCII alphanumeric, `-`,
-/// `_`, and `.` only. Returns the trimmed value on success.
-pub(crate) fn validate_allowed_client_id(value: &str) -> Result<String, String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Err("allowed_client_id cannot be empty".to_string());
-    }
-    if value.chars().count() > 80 {
-        return Err("allowed_client_id is too long; maximum is 80 characters".to_string());
-    }
-    if !value
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
-    {
-        return Err(
-            "allowed_client_id may only contain ASCII letters, digits, '-', '_', and '.'"
-                .to_string(),
-        );
-    }
-    Ok(value.to_string())
-}
-
-/// Validate and normalize a list of agent transport scopes. Returns an error
-/// if any scope is not an `agent:*` scope. Rejects duplicates and unknown
-/// scopes.
-pub(crate) fn validate_agent_scopes(scopes: &[String]) -> Result<Vec<String>, String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::with_capacity(scopes.len());
-    for raw in scopes {
-        let s = raw.trim();
-        if s.is_empty() {
-            continue;
-        }
-        if !is_agent_scope(s) {
-            return Err(format!(
-                "agent tokens may only carry agent:* scopes; got '{}'",
-                s
-            ));
-        }
-        if !seen.insert(s.to_string()) {
-            continue;
-        }
-        out.push(s.to_string());
-    }
-    Ok(out)
-}
-
-/// Validate a username against the Phase 2 rules: non-empty, bounded length,
-/// only lowercase ASCII letters, digits, `_`, and `-`. No slash, no `..`, no
-/// whitespace, no uppercase. Returns the trimmed username on success.
-pub(crate) fn validate_username(username: &str) -> Result<String, String> {
-    let username = username.trim();
-    if username.is_empty() {
-        return Err("username cannot be empty".to_string());
-    }
-    if username.chars().count() > 64 {
-        return Err("username is too long; maximum is 64 characters".to_string());
-    }
-    if username.contains("..") {
-        return Err("username cannot contain '..'".to_string());
-    }
-    for ch in username.chars() {
-        let ok = ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '_' || ch == '-';
-        if !ok {
-            return Err(format!(
-                "username contains an invalid character '{}'; only lowercase letters, digits, '_' and '-' are allowed",
-                ch
-            ));
-        }
-    }
-    Ok(username.to_string())
-}
-
-/// Validate a role string. Must be `"admin"` or `"user"`.
-pub(crate) fn validate_role(role: &str) -> Result<String, String> {
-    let role = role.trim();
-    match role {
-        "admin" | "user" => Ok(role.to_string()),
-        _ => Err(format!("role must be 'admin' or 'user', got '{}'", role)),
-    }
-}
-
-/// Validate and normalize a list of scopes. Returns the cleaned scope list.
-/// Rejects duplicates and unknown scopes.
-pub(crate) fn validate_scopes(scopes: &[String]) -> Result<Vec<String>, String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut out = Vec::with_capacity(scopes.len());
-    for raw in scopes {
-        let s = raw.trim();
-        if s.is_empty() {
-            continue;
-        }
-        if !KNOWN_SCOPES.contains(&s) {
-            return Err(format!("unknown scope '{}'", s));
-        }
-        if !seen.insert(s.to_string()) {
-            continue;
-        }
-        out.push(s.to_string());
-    }
-    Ok(out)
-}
-
-/// Serialize a scope list into the space-separated storage form.
-pub(crate) fn scopes_to_string(scopes: &[String]) -> String {
-    scopes.join(" ")
-}
-
-pub(crate) struct AuthMiddleware;
+// ---------------------------------------------------------------------------
+// Path gating helpers
+// ---------------------------------------------------------------------------
 
 /// The exact set of authenticated paths an agent token (kind="agent") may use.
 /// Any other authenticated path must reject agent tokens with a 403. This is
@@ -481,6 +542,12 @@ pub(crate) const ACCOUNT_CONTROL_PATHS: &[&str] = &[
 pub(crate) fn is_account_control_path(path: &str) -> bool {
     ACCOUNT_CONTROL_PATHS.contains(&path)
 }
+
+// ---------------------------------------------------------------------------
+// AuthMiddleware — the Salvo handler
+// ---------------------------------------------------------------------------
+
+pub(crate) struct AuthMiddleware;
 
 #[async_trait]
 impl Handler for AuthMiddleware {
@@ -672,12 +739,20 @@ impl Handler for AuthMiddleware {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Error helper
+// ---------------------------------------------------------------------------
+
 pub(crate) fn json_error(status: StatusCode, msg: impl Into<String>) -> Json<serde_json::Value> {
     Json(serde_json::json!({
         "status": status.as_u16(),
         "error": msg.into(),
     }))
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
@@ -790,56 +865,6 @@ mod tests {
         let ctx = bootstrap_ctx();
         assert!(ctx.require_scope(SCOPE_AGENT_REGISTER).is_ok());
         assert!(ctx.require_scope(SCOPE_RUNTIME_READ).is_ok());
-    }
-
-    #[test]
-    fn validate_allowed_client_id_accepts_valid_ids() {
-        assert_eq!(
-            validate_allowed_client_id("alice-laptop").unwrap(),
-            "alice-laptop"
-        );
-        assert_eq!(
-            validate_allowed_client_id("my_agent.1").unwrap(),
-            "my_agent.1"
-        );
-    }
-
-    #[test]
-    fn validate_allowed_client_id_rejects_invalid_ids() {
-        assert!(validate_allowed_client_id("").is_err());
-        assert!(validate_allowed_client_id("bad/client").is_err());
-        assert!(validate_allowed_client_id("bad client").is_err());
-        assert!(validate_allowed_client_id("bad\x00client").is_err());
-        assert!(validate_allowed_client_id(&"x".repeat(81)).is_err());
-        // Uppercase ASCII letters are allowed, matching the existing client_id
-        // validation rules (validate_id uses is_ascii_alphanumeric).
-        assert!(validate_allowed_client_id("UPPER").is_ok());
-    }
-
-    #[test]
-    fn validate_agent_scopes_rejects_non_agent_scopes() {
-        assert!(validate_agent_scopes(&["agent:register".to_string()]).is_ok());
-        assert!(validate_agent_scopes(
-            &["agent:register".to_string(), "runtime:read".to_string(),]
-        )
-        .is_err());
-        assert!(validate_agent_scopes(&["admin".to_string()]).is_err());
-    }
-
-    #[test]
-    fn generate_agent_token_uses_wc_agent_prefix() {
-        let token = generate_agent_token();
-        assert!(token.starts_with("wc_agent_"));
-        assert!(token.len() > "wc_agent_".len() + 32);
-    }
-
-    #[test]
-    fn token_prefix_for_agent_token_shows_prefix() {
-        let token = generate_agent_token();
-        let prefix = token_prefix(&token);
-        assert!(prefix.starts_with("wc_agent_"));
-        assert_ne!(prefix, token);
-        assert_eq!(prefix.len(), 16);
     }
 
     #[test]
@@ -1197,16 +1222,6 @@ mod tests {
     }
 
     #[test]
-    fn generate_account_credential_uses_expected_format() {
-        let token = generate_account_credential();
-        assert!(token.starts_with("wc_acct_"));
-        assert_eq!(token.len(), "wc_acct_".len() + 64);
-        assert!(token["wc_acct_".len()..]
-            .chars()
-            .all(|c| c.is_ascii_hexdigit()));
-    }
-
-    #[test]
     fn account_control_path_allowlist_is_exact() {
         assert!(is_account_control_path("/api/users/me"));
         assert!(is_account_control_path("/api/tokens/list"));
@@ -1384,6 +1399,127 @@ mod tests {
             ct.to_str().unwrap().contains("application/json"),
             "unauthorized response must be JSON, got: {:?}",
             ct
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Principal integration tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn auth_context_to_principal_preserves_identity() {
+        let ctx = user_ctx("alice");
+        let p = ctx.to_principal();
+        assert_eq!(p.username.as_deref(), Some("alice"));
+        assert_eq!(p.method, AuthMethod::Pat);
+        assert!(p.has_scope(SCOPE_RUNTIME_READ));
+    }
+
+    #[test]
+    fn auth_context_to_principal_bootstrap() {
+        let ctx = bootstrap_ctx();
+        let p = ctx.to_principal();
+        assert!(p.is_bootstrap());
+        assert!(p.is_admin());
+    }
+
+    #[test]
+    fn auth_context_to_principal_agent() {
+        let ctx = agent_ctx(
+            "bob",
+            "bob-phone",
+            vec![
+                SCOPE_AGENT_REGISTER.to_string(),
+                SCOPE_AGENT_POLL.to_string(),
+            ],
+        );
+        let p = ctx.to_principal();
+        assert!(p.is_agent_token());
+        assert_eq!(p.method, AuthMethod::AgentToken);
+        assert!(p.can_use_agent_endpoint("bob-phone"));
+        assert!(!p.can_use_agent_endpoint("other"));
+    }
+
+    // -----------------------------------------------------------------------
+    // TokenVerifier trait tests
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn pat_verifier_bootstrap_when_auth_disabled() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: None, // auth disabled
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let verifier = PatVerifier;
+        let result = verifier.verify(&config, None, "anything").await.unwrap();
+        let ctx = result.expect("should return bootstrap context");
+        assert!(ctx.is_bootstrap);
+        assert_eq!(ctx.kind, AuthKind::Bootstrap);
+    }
+
+    #[tokio::test]
+    async fn pat_verifier_bootstrap_token() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let verifier = PatVerifier;
+        let result = verifier.verify(&config, None, "secret").await.unwrap();
+        let ctx = result.expect("should return bootstrap context");
+        assert!(ctx.is_bootstrap);
+    }
+
+    #[tokio::test]
+    async fn pat_verifier_rejects_unknown_token_without_db() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let verifier = PatVerifier;
+        let result = verifier
+            .verify(&config, None, "wc_pat_bogus")
+            .await
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "unknown token without DB should return None"
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_always_returns_none() {
+        let config = crate::Config {
+            addr: "127.0.0.1:0".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+        };
+        let verifier = OAuth2Verifier;
+        let result = verifier
+            .verify(&config, None, "some-oauth2-jwt")
+            .await
+            .unwrap();
+        assert!(
+            result.is_none(),
+            "stub OAuth2 verifier should always return None"
         );
     }
 }

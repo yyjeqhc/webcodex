@@ -1,10 +1,9 @@
-//! OAuth2 token endpoint — `POST /oauth/token`.
+//! OAuth2 token and revocation endpoints.
 //!
-//! Supports two grant types:
-//! - `authorization_code` with PKCE S256
-//! - `refresh_token` with rotation
+//! - `POST /oauth/token` — token endpoint (authorization_code, refresh_token)
+//! - `POST /oauth/revoke` — token revocation endpoint (RFC 7009)
 //!
-//! This is a **public** endpoint (no `AuthMiddleware`); clients authenticate
+//! Both are **public** endpoints (no `AuthMiddleware`); clients authenticate
 //! via `client_id` + `client_secret` in the form body.
 //!
 //! Security properties:
@@ -13,6 +12,8 @@
 //!   **only** when all validations pass.
 //! - Refresh tokens are rotated: the old token is revoked and a new
 //!   access+refresh token pair is issued in a single transaction.
+//! - Revocation is idempotent: unknown, already-revoked, and other-client
+//!   tokens all return HTTP 200 without disclosing token state.
 //! - Client secret is verified with constant-time comparison.
 //! - Only `application/x-www-form-urlencoded` content type is accepted.
 //! - Request body size is bounded (16 KiB).
@@ -85,6 +86,14 @@ struct TokenRequest {
     code_verifier: Option<String>,
     refresh_token: Option<String>,
     scope: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize)]
+struct RevokeRequest {
+    token: Option<String>,
+    token_type_hint: Option<String>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
 }
 
 // ---------------------------------------------------------------------------
@@ -731,6 +740,228 @@ async fn handle_refresh_token_grant(
 }
 
 // ---------------------------------------------------------------------------
+// Revoke handler
+// ---------------------------------------------------------------------------
+
+#[handler]
+pub(crate) async fn oauth_revoke(req: &mut Request, depot: &mut Depot, res: &mut Response) {
+    // --- Config ---
+    let Some(config) = crate::auth::get_config(depot) else {
+        oauth_error(
+            res,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "no config",
+        );
+        return;
+    };
+
+    // --- OAuth2 enable gate ---
+    if !config.oauth2.enabled {
+        oauth_error(
+            res,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "server_error",
+            "OAuth2 is not enabled",
+        );
+        return;
+    }
+
+    // --- Content-Type enforcement (same as /oauth/token) ---
+    let content_type_ok = req
+        .headers()
+        .get(CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .map(|ct| {
+            ct.eq_ignore_ascii_case("application/x-www-form-urlencoded")
+                || ct
+                    .to_ascii_lowercase()
+                    .starts_with("application/x-www-form-urlencoded;")
+        })
+        .unwrap_or(false);
+
+    if !content_type_ok {
+        oauth_error(
+            res,
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "invalid_request",
+            "content-type must be application/x-www-form-urlencoded",
+        );
+        return;
+    }
+
+    // --- Body size limit (Content-Length pre-check) ---
+    if let Some(cl) = req.headers().get("content-length") {
+        if let Ok(len) = cl.to_str().unwrap_or("").parse::<usize>() {
+            if len > MAX_OAUTH_TOKEN_FORM_BYTES {
+                oauth_error(
+                    res,
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "invalid_request",
+                    "request body too large",
+                );
+                return;
+            }
+        }
+    }
+
+    // --- Parse form body ---
+    let body = match req.payload().await {
+        Ok(bytes) => bytes,
+        Err(e) => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("failed to read request body: {}", e),
+            );
+            return;
+        }
+    };
+
+    // --- Body size limit (actual body check) ---
+    if body.len() > MAX_OAUTH_TOKEN_FORM_BYTES {
+        oauth_error(
+            res,
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "invalid_request",
+            "request body too large",
+        );
+        return;
+    }
+
+    let form: RevokeRequest = match serde_urlencoded::from_bytes(&body) {
+        Ok(f) => f,
+        Err(e) => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                &format!("invalid form body: {}", e),
+            );
+            return;
+        }
+    };
+
+    // --- Validate required parameters ---
+    let plaintext_token = match form.token.as_deref() {
+        Some(t) if !t.is_empty() => t,
+        _ => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "missing token",
+            );
+            return;
+        }
+    };
+
+    let client_id = match form.client_id.as_deref() {
+        Some(c) if !c.is_empty() => c,
+        _ => {
+            oauth_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "missing client_id",
+            );
+            return;
+        }
+    };
+
+    let client_secret = match form.client_secret.as_deref() {
+        Some(s) if !s.is_empty() => s,
+        _ => {
+            oauth_error(
+                res,
+                StatusCode::UNAUTHORIZED,
+                "invalid_client",
+                "missing client_secret",
+            );
+            return;
+        }
+    };
+
+    // --- DB ---
+    let Some(db) = crate::auth::get_db(depot) else {
+        oauth_error(
+            res,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "DB not available",
+        );
+        return;
+    };
+
+    // --- Client authentication ---
+    let secret_ok = match db.verify_oauth_client_secret(client_id, client_secret) {
+        Ok(ok) => ok,
+        Err(_) => {
+            oauth_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                "internal error",
+            );
+            return;
+        }
+    };
+
+    if !secret_ok {
+        oauth_error(
+            res,
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            "client authentication failed",
+        );
+        return;
+    }
+
+    // Also verify the client is not revoked.
+    if db
+        .get_oauth_client_by_client_id(client_id)
+        .ok()
+        .flatten()
+        .is_none()
+    {
+        oauth_error(
+            res,
+            StatusCode::UNAUTHORIZED,
+            "invalid_client",
+            "client authentication failed",
+        );
+        return;
+    }
+
+    // --- Revoke ---
+    let token_hash = hash_token(plaintext_token);
+    let now = chrono::Utc::now().timestamp();
+
+    let hint = form.token_type_hint.as_deref().unwrap_or("");
+
+    // Per RFC 7009: if hint is provided and recognized, try only that type.
+    // If hint is missing or unrecognized, try both.
+    match hint {
+        "access_token" => {
+            let _ = db.revoke_oauth_access_token_by_hash_for_client(&token_hash, client_id, now);
+        }
+        "refresh_token" => {
+            let _ = db.revoke_oauth_refresh_token_by_hash_for_client(&token_hash, client_id, now);
+        }
+        _ => {
+            // No hint or unrecognized hint — try both.
+            let _ = db.revoke_oauth_access_token_by_hash_for_client(&token_hash, client_id, now);
+            let _ = db.revoke_oauth_refresh_token_by_hash_for_client(&token_hash, client_id, now);
+        }
+    }
+
+    // Always return 200 — idempotent, no token state disclosure.
+    apply_oauth_no_store_headers(res);
+    res.render(Json(serde_json::json!({})));
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -890,11 +1121,39 @@ mod tests {
         (record, plaintext)
     }
 
+    /// Seed an access token directly into the database. Returns the record
+    /// and the plaintext token.
+    fn seed_access_token(
+        db: &crate::Database,
+        client: &OAuthClientRecord,
+        user: &UserRecord,
+        scopes: &str,
+    ) -> (crate::models::OAuthAccessTokenRecord, String) {
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = crate::auth::generate_oauth_access_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: scopes.to_string(),
+            resource: None,
+            created_at: now,
+            expires_at: now + 3600, // 1 hour
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+        (record, plaintext)
+    }
+
     fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
         Router::new()
             .hoop(salvo::prelude::affix_state::inject(config))
             .hoop(salvo::prelude::affix_state::inject(db))
             .push(Router::with_path("oauth/token").post(oauth_token))
+            .push(Router::with_path("oauth/revoke").post(oauth_revoke))
     }
 
     fn form_body(pairs: &[(&str, &str)]) -> String {
@@ -2440,5 +2699,643 @@ mod tests {
         assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
         let json: serde_json::Value = resp.take_json().await.unwrap();
         assert_eq!(json["error"], "invalid_request");
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — success path
+    // -----------------------------------------------------------------------
+
+    fn post_revoke(url: &str, body: String) -> salvo::test::RequestBuilder {
+        TestClient::post(url)
+            .add_header("content-type", "application/x-www-form-urlencoded", true)
+            .body(body)
+    }
+
+    #[tokio::test]
+    async fn revoke_access_token_success() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (at, at_plaintext) = seed_access_token(&db, &client, &user, "runtime:read");
+        let (rt, _rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("token", &at_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        // Response must not disclose token state.
+        assert_eq!(json, serde_json::json!({}));
+
+        // Access token should be revoked.
+        let conn = db.conn_for_tests();
+        let at_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(at_revoked.is_some(), "access token should be revoked");
+
+        // Refresh token should NOT be affected.
+        let rt_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_refresh_tokens WHERE id = ?1",
+                [&rt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(rt_revoked.is_none(), "refresh token should not be affected");
+    }
+
+    #[tokio::test]
+    async fn revoke_refresh_token_success() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (at, _at_plaintext) = seed_access_token(&db, &client, &user, "runtime:read");
+        let (rt, rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("token", &rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // Refresh token should be revoked.
+        let conn = db.conn_for_tests();
+        let rt_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_refresh_tokens WHERE id = ?1",
+                [&rt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(rt_revoked.is_some(), "refresh token should be revoked");
+
+        // Access token should NOT be affected.
+        let at_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(at_revoked.is_none(), "access token should not be affected");
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — idempotent
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn revoke_token_is_idempotent() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (at, at_plaintext) = seed_access_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+
+        // First revoke.
+        let body = form_body(&[
+            ("token", &at_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // Second revoke — same token.
+        let body = form_body(&[
+            ("token", &at_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // revoked_at should still be Some.
+        let conn = db.conn_for_tests();
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(revoked_at.is_some(), "token should still be revoked");
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — unknown token
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn revoke_unknown_token_returns_200() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+
+        let (at_before, rt_before) = oauth_token_counts(&db);
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("token", "wc_oat_nonexistent"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // No tokens should be inserted or modified.
+        let (at_after, rt_after) = oauth_token_counts(&db);
+        assert_eq!(at_before, at_after, "no access tokens added");
+        assert_eq!(rt_before, rt_after, "no refresh tokens added");
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — wrong client
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn revoke_token_belonging_to_other_client_returns_200_but_does_not_revoke() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client_a, _secret_a) = seed_client(&db, &user, "App A");
+        let (client_b, secret_b) = seed_client(&db, &user, "App B");
+        let (at, at_plaintext) = seed_access_token(&db, &client_a, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        // Client B tries to revoke client A's token.
+        let body = form_body(&[
+            ("token", &at_plaintext),
+            ("client_id", &client_b.client_id),
+            ("client_secret", &secret_b),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // Client A's token should NOT be revoked.
+        let conn = db.conn_for_tests();
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            revoked_at.is_none(),
+            "token belonging to other client should not be revoked"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — client authentication errors
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn revoke_wrong_client_secret_returns_invalid_client_and_does_not_revoke() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, _secret) = seed_client(&db, &user, "Test App");
+        let (at, at_plaintext) = seed_access_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("token", &at_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", "wrong-secret"),
+        ]);
+        let mut resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_client");
+
+        // Token should NOT be revoked.
+        let conn = db.conn_for_tests();
+        let revoked_at: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            revoked_at.is_none(),
+            "token should not be revoked on wrong secret"
+        );
+    }
+
+    #[tokio::test]
+    async fn revoke_unknown_client_returns_invalid_client() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("token", "wc_oat_dummy"),
+            ("client_id", "wc_client_nonexistent"),
+            ("client_secret", "some-secret"),
+        ]);
+        let mut resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_client");
+    }
+
+    #[tokio::test]
+    async fn revoke_revoked_client_returns_invalid_client() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let now = chrono::Utc::now().timestamp();
+        db.revoke_oauth_client(&client.id, now).unwrap();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("token", "wc_oat_dummy"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_client");
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — request validation
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn revoke_missing_token_returns_invalid_request() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[("client_id", &client.client_id), ("client_secret", &secret)]);
+        let mut resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn revoke_missing_client_id_returns_invalid_request() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[("token", "wc_oat_dummy"), ("client_secret", "some-secret")]);
+        let mut resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn revoke_missing_client_secret_returns_invalid_client() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, _secret) = seed_client(&db, &user, "Test App");
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[("token", "wc_oat_dummy"), ("client_id", &client.client_id)]);
+        let mut resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_client");
+    }
+
+    #[tokio::test]
+    async fn revoke_json_content_type_rejected() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[("token", "wc_oat_dummy")]);
+        let mut resp = TestClient::post("http://localhost/oauth/revoke")
+            .add_header("content-type", "application/json", true)
+            .body(body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::UNSUPPORTED_MEDIA_TYPE));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn revoke_missing_content_type_rejected() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[("token", "wc_oat_dummy")]);
+        let mut resp = TestClient::post("http://localhost/oauth/revoke")
+            .body(body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::UNSUPPORTED_MEDIA_TYPE));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_request");
+    }
+
+    #[tokio::test]
+    async fn revoke_oversized_body_rejected() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+
+        let service = Service::new(build_router(config, db));
+        let big_value = "x".repeat(17 * 1024);
+        let body = format!("token={}", big_value);
+        let mut resp = TestClient::post("http://localhost/oauth/revoke")
+            .add_header("content-type", "application/x-www-form-urlencoded", true)
+            .body(body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::PAYLOAD_TOO_LARGE));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(json["error"], "invalid_request");
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — token_type_hint
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn revoke_access_token_hint_only_revokes_access_token() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (at, at_plaintext) = seed_access_token(&db, &client, &user, "runtime:read");
+        let (rt, _rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("token", &at_plaintext),
+            ("token_type_hint", "access_token"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        let conn = db.conn_for_tests();
+        let at_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(at_revoked.is_some(), "access token should be revoked");
+
+        let rt_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_refresh_tokens WHERE id = ?1",
+                [&rt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(rt_revoked.is_none(), "refresh token should not be affected");
+    }
+
+    #[tokio::test]
+    async fn revoke_refresh_token_hint_only_revokes_refresh_token() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (at, _at_plaintext) = seed_access_token(&db, &client, &user, "runtime:read");
+        let (rt, rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("token", &rt_plaintext),
+            ("token_type_hint", "refresh_token"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        let conn = db.conn_for_tests();
+        let rt_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_refresh_tokens WHERE id = ?1",
+                [&rt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(rt_revoked.is_some(), "refresh token should be revoked");
+
+        let at_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(at_revoked.is_none(), "access token should not be affected");
+    }
+
+    #[tokio::test]
+    async fn revoke_unknown_hint_attempts_both() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        // Seed a refresh token and try to revoke it with an unknown hint.
+        let (rt, rt_plaintext) = seed_refresh_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("token", &rt_plaintext),
+            ("token_type_hint", "unknown_type"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        // Refresh token should be revoked (both types are tried).
+        let conn = db.conn_for_tests();
+        let rt_revoked: Option<i64> = conn
+            .query_row(
+                "SELECT revoked_at FROM oauth_refresh_tokens WHERE id = ?1",
+                [&rt.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            rt_revoked.is_some(),
+            "refresh token should be revoked with unknown hint"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — no-store headers
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn revoke_success_has_no_store_headers() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (_, at_plaintext) = seed_access_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("token", &at_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let cc = resp
+            .headers()
+            .get("cache-control")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(cc, "no-store");
+        let pragma = resp.headers().get("pragma").unwrap().to_str().unwrap();
+        assert_eq!(pragma, "no-cache");
+    }
+
+    #[tokio::test]
+    async fn revoke_error_has_no_store_headers() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+
+        let service = Service::new(build_router(config, db));
+        let body = form_body(&[
+            ("token", "wc_oat_dummy"),
+            ("client_id", "wc_client_nonexistent"),
+            ("client_secret", "some-secret"),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let cc = resp
+            .headers()
+            .get("cache-control")
+            .unwrap()
+            .to_str()
+            .unwrap();
+        assert_eq!(cc, "no-store");
+        let pragma = resp.headers().get("pragma").unwrap().to_str().unwrap();
+        assert_eq!(pragma, "no-cache");
+    }
+
+    // -----------------------------------------------------------------------
+    // POST /oauth/revoke — last_used_at not updated
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn revoke_does_not_update_last_used_at() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (at, at_plaintext) = seed_access_token(&db, &client, &user, "runtime:read");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("token", &at_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let resp = post_revoke("http://localhost/oauth/revoke", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        let conn = db.conn_for_tests();
+        let last_used_at: Option<i64> = conn
+            .query_row(
+                "SELECT last_used_at FROM oauth_access_tokens WHERE id = ?1",
+                [&at.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(
+            last_used_at.is_none(),
+            "revoke should not update last_used_at"
+        );
     }
 }

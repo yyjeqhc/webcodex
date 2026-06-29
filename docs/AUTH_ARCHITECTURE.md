@@ -363,5 +363,25 @@ See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
    `handle_authorization_code_grant()` and `handle_refresh_token_grant()`.
 
 Not implemented: `/oauth/authorize`, `client_credentials` grant,
-`/oauth/revoke`, `/.well-known/*`, `OAuth2Verifier` real validation,
-MCP OAuth.
+`/.well-known/*`, `OAuth2Verifier` real validation, MCP OAuth.
+
+### Phase 2b-3 — token revocation endpoint
+
+See [OAUTH2_INTERNALS.md](OAUTH2_INTERNALS.md) for the full reference.
+
+1. **`POST /oauth/revoke`**: implements RFC 7009 token revocation. Clients
+   can revoke access tokens and refresh tokens by submitting the plaintext
+   token along with `client_id` + `client_secret`.
+2. **`token_type_hint`**: advisory per RFC 7009 §2.1. `access_token` tries
+   only the access token table; `refresh_token` tries only the refresh token
+   table; missing or unknown hints try both.
+3. **Idempotent**: revoking an already-revoked, nonexistent, or other-client
+   token returns HTTP 200 with `{}` — no token state is disclosed.
+4. **Client ownership**: tokens can only be revoked by the client that owns
+   them. The SQL `WHERE client_id = ?` clause ensures this.
+5. **`last_used_at` not updated**: revocation is not a "use"; only
+   `revoked_at` is set (via `COALESCE` for idempotency).
+6. **Token records not deleted**: only `revoked_at` is set; the row remains.
+
+Not implemented: `/oauth/authorize`, `client_credentials` grant,
+`/.well-known/*`, `OAuth2Verifier` real validation, MCP OAuth.

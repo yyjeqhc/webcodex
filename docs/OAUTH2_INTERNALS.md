@@ -7,8 +7,11 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2b-2** adds `refresh_token` grant to `POST /oauth/token` with
-refresh token rotation.
+**Phase 2b-3** adds `POST /oauth/revoke` token revocation endpoint (RFC 7009).
+
+No OAuth2 tokens are accepted by `AuthMiddleware`. The GPT Actions / MCP /
+REST surface continues to accept only the existing token formats (PAT, agent
+tokens, account credentials).
 
 No OAuth2 tokens are accepted by `AuthMiddleware`. The GPT Actions / MCP /
 REST surface continues to accept only the existing token formats (PAT, agent
@@ -137,6 +140,57 @@ The `scope` parameter is **not yet supported**; including it returns
 - Old refresh tokens can only be used once (rotation revokes them).
 - New tokens inherit `user_id`, `scopes`, `resource`, and `client_id` from
   the old refresh token.
+
+### Phase 2b-3: `POST /oauth/revoke`
+
+The token revocation endpoint implements RFC 7009. Clients can revoke access
+tokens and refresh tokens.
+
+**Request parameters** (form body):
+
+- `token` — the plaintext token to revoke (required)
+- `token_type_hint` — `access_token` or `refresh_token` (optional)
+- `client_id` — OAuth2 client ID (required)
+- `client_secret` — OAuth2 client secret (required)
+
+**Handler flow**:
+
+1. Config check, OAuth2 enable gate.
+2. Content-Type enforcement (same as `/oauth/token`).
+3. Body size limit (16 KiB).
+4. Parse form body.
+5. Validate `token`, `client_id`, `client_secret`.
+6. Client authentication (`verify_oauth_client_secret` +
+   `get_oauth_client_by_client_id`).
+7. Hash the plaintext token.
+8. Dispatch by `token_type_hint`:
+   - `access_token` → try `revoke_oauth_access_token_by_hash_for_client`
+   - `refresh_token` → try `revoke_oauth_refresh_token_by_hash_for_client`
+   - missing / unknown → try both
+9. Return HTTP 200 with `{}`.
+
+**Security invariants**:
+
+| Scenario | Token revoked? | HTTP status | Response |
+| --- | --- | --- | --- |
+| Token belongs to this client | Yes (idempotent) | 200 | `{}` |
+| Token does not exist | No-op | 200 | `{}` |
+| Token belongs to other client | No-op | 200 | `{}` |
+| Token already revoked | No-op (COALESCE) | 200 | `{}` |
+| Wrong `client_secret` | No | 401 | `invalid_client` |
+| Unknown client | No | 401 | `invalid_client` |
+| Revoked client | No | 401 | `invalid_client` |
+
+**Design choices**:
+
+- `token_type_hint` is advisory per RFC 7009 §2.1. Unknown hints are treated
+  as "no hint" (try both token types) rather than returning an error.
+- The SQL uses `COALESCE(revoked_at, ?now)` so repeated revocations are
+  idempotent — `revoked_at` is only set once.
+- `last_used_at` is **not** updated on revocation; revocation is not a "use".
+- Token records are never deleted; only `revoked_at` is set.
+- The response `{}` does not disclose whether the token existed, which client
+  it belongs to, or what type it is — preventing token enumeration.
 
 ## Design decisions
 
@@ -281,7 +335,6 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 ## What is NOT implemented yet
 
 - `/oauth/authorize` endpoint
-- `/oauth/revoke` endpoint
 - `/oauth/userinfo` endpoint
 - `/.well-known/oauth-authorization-server` metadata
 - `client_credentials` grant

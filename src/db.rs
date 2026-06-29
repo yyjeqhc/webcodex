@@ -2024,6 +2024,26 @@ impl Database {
         Ok(())
     }
 
+    /// Revoke an access token by its hash, but only if it belongs to the given
+    /// `client_id`. Returns `true` if a row was updated (i.e. the token was
+    /// found for this client and marked revoked — or was already revoked).
+    ///
+    /// This does **not** update `last_used_at`; revocation is not a "use".
+    pub fn revoke_oauth_access_token_by_hash_for_client(
+        &self,
+        token_hash: &str,
+        client_id: &str,
+        ts: i64,
+    ) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE oauth_access_tokens SET revoked_at = COALESCE(revoked_at, ?3) \
+             WHERE token_hash = ?1 AND client_id = ?2",
+            params![token_hash, client_id, ts],
+        )?;
+        Ok(updated > 0)
+    }
+
     // --- OAuth refresh tokens ---
 
     pub fn insert_oauth_refresh_token(
@@ -2087,6 +2107,26 @@ impl Database {
             params![id, ts],
         )?;
         Ok(())
+    }
+
+    /// Revoke a refresh token by its hash, but only if it belongs to the given
+    /// `client_id`. Returns `true` if a row was updated (i.e. the token was
+    /// found for this client and marked revoked — or was already revoked).
+    ///
+    /// This does **not** update `last_used_at`; revocation is not a "use".
+    pub fn revoke_oauth_refresh_token_by_hash_for_client(
+        &self,
+        token_hash: &str,
+        client_id: &str,
+        ts: i64,
+    ) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let updated = conn.execute(
+            "UPDATE oauth_refresh_tokens SET revoked_at = COALESCE(revoked_at, ?3) \
+             WHERE token_hash = ?1 AND client_id = ?2",
+            params![token_hash, client_id, ts],
+        )?;
+        Ok(updated > 0)
     }
 
     /// Internal helper: fetch a refresh token by hash **including** revoked and

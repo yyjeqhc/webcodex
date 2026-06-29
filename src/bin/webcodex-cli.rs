@@ -334,6 +334,7 @@ fn doctor_usage() -> &'static str {
        --user-token-file PATH    Read user API token for runtime/project checks\n\
        --agent-token-file PATH   Read agent token for boundary checks\n\
        --agent-config PATH       Local agent.toml for shell-profile/project diagnostics\n\
+       --profile NAME            Client config profile for agent config/token defaults\n\
        --project ID              Restrict the remote shell roundtrip to this project id\n\
        --quic                    Run QUIC transport diagnostics\n\
        --server-only             With --quic, only check API + QUIC UDP/TLS/ALPN handshake\n\
@@ -347,9 +348,13 @@ fn doctor_usage() -> &'static str {
        --strict                  Exit non-zero if any check fails\n\
        -h, --help                Print help and exit\n\n\
      Doctor is non-destructive and never prints tokens or response bodies from\n\
-     non-JSON/HTML errors. With --agent-config it parses agent.toml locally and\n\
-     checks projects_dir, project paths, and shell_profile resolution without\n\
-     contacting the server. It never prints init_script bodies or env values.\n"
+     non-JSON/HTML errors. With --profile, missing agent config and token paths\n\
+     are derived under /etc/webcodex/clients/<profile> for root or\n\
+     ~/.config/webcodex/clients/<profile> for non-root users. Explicit path\n\
+     flags override profile-derived defaults. With --agent-config it parses\n\
+     agent.toml locally and checks projects_dir, project paths, and\n\
+     shell_profile resolution without contacting the server. It never prints\n\
+     init_script bodies or env values.\n"
 }
 
 fn server_usage() -> &'static str {
@@ -417,12 +422,37 @@ fn agent_usage() -> &'static str {
        status               Check systemd status and safe agent metadata\n"
 }
 
-fn agent_install_service_usage() -> &'static str {
-    "Usage: webcodex-cli agent install-service --config PATH [--bin PATH] [OPTIONS]\n\n\
+fn agent_init_usage() -> &'static str {
+    "Usage: webcodex-cli agent init --server-url URL [--token TOKEN|--token-file PATH] --client-id ID --owner USER [OPTIONS]\n\n\
      Options:\n\
-       --config PATH              Agent config path [default: /etc/webcodex/agent.toml]\n\
+       --server-url URL           WebCodex server URL\n\
+       --token TOKEN              Agent token for generated config\n\
+       --token-file PATH          Read agent token from file\n\
+       --client-id ID             Stable agent client id\n\
+       --profile NAME             Client config profile [default: client-id when deriving defaults]\n\
+       --owner USER               Owner username\n\
+       --display-name NAME        Human-readable agent name\n\
+       --transport NAME           websocket (default), polling, quic, or auto\n\
+       --poll-interval-ms N       Polling interval, default 1000\n\
+       --projects-dir PATH        Project config directory [default: profile projects.d]\n\
+       --allowed-root PATH        Allowed project/root path; repeatable\n\
+       --allow-cwd-anywhere BOOL  Allow cwd outside allowed_roots; default false\n\
+       --output PATH|-            Output config path, or '-' for stdout [default: profile agent.toml]\n\
+       --overwrite                Replace an existing output file\n\
+       -h, --help                 Print help and exit\n\n\
+     With --profile, missing output/projects-dir paths are derived under\n\
+     /etc/webcodex/clients/<profile> for root or\n\
+     ~/.config/webcodex/clients/<profile> for non-root users. Explicit path\n\
+     flags override profile-derived defaults.\n"
+}
+
+fn agent_install_service_usage() -> &'static str {
+    "Usage: webcodex-cli agent install-service [--config PATH] [--bin PATH] [OPTIONS]\n\n\
+     Options:\n\
+       --profile NAME             Client config profile for config/service defaults\n\
+       --config PATH              Agent config path [default: /etc/webcodex/agent.toml, or profile agent.toml]\n\
        --bin PATH                 webcodex-agent binary path; defaults to webcodex-agent from PATH when safely discoverable\n\
-       --service-file PATH        systemd unit path [default: /etc/systemd/system/webcodex-agent.service]\n\
+       --service-file PATH        systemd unit path [default: /etc/systemd/system/webcodex-agent.service, or webcodex-agent-<profile>.service]\n\
        --working-directory PATH   WorkingDirectory= [default: /root]\n\
        --user USER                Optional systemd User=\n\
        --group GROUP              Optional systemd Group=\n\
@@ -431,20 +461,28 @@ fn agent_install_service_usage() -> &'static str {
        --output -                 Print the unit instead of writing it\n\
        --json                     Print a machine-readable summary\n\
        -h, --help                 Print help and exit\n\n\
-     The unit runs: webcodex-agent --config <config>. Tokens are never inlined.\n"
+     With --profile, missing config/service paths are derived under\n\
+     /etc/webcodex/clients/<profile> for root or\n\
+     ~/.config/webcodex/clients/<profile> for non-root users. Explicit path\n\
+     flags override profile-derived defaults. The unit runs:\n\
+     webcodex-agent --config <config>. Tokens are never inlined.\n"
 }
 
 fn agent_status_usage() -> &'static str {
     "Usage: webcodex-cli agent status [OPTIONS]\n\n\
      Options:\n\
-       --config PATH              Agent config path [default: /etc/webcodex/agent.toml]\n\
+       --profile NAME             Client config profile for config/token defaults\n\
+       --config PATH              Agent config path [default: /etc/webcodex/agent.toml, or profile agent.toml]\n\
        --server-url URL           Override server URL for runtime checks\n\
        --user-token-file PATH     Read user API token for /api/runtime/status\n\
        --agent-token-file PATH    Read agent token for boundary check\n\
        --json                     Print a machine-readable summary\n\
        -h, --help                 Print help and exit\n\n\
-     Status prints safe metadata only: no tokens, Authorization headers, full\n\
-     agent.toml, env files, or secrets.\n"
+     With --profile, missing config and token paths are derived under\n\
+     /etc/webcodex/clients/<profile> for root or\n\
+     ~/.config/webcodex/clients/<profile> for non-root users. Explicit path\n\
+     flags override profile-derived defaults. Status prints safe metadata only:\n\
+     no tokens, Authorization headers, full agent.toml, env files, or secrets.\n"
 }
 
 fn cli_action<I, S>(args: I) -> CliAction
@@ -703,14 +741,23 @@ fn parse_agent_subcommand(args: &[String]) -> CliAction {
         };
     }
     match args[0].as_str() {
-        "init" => match parse_cli_agent_init(&args[1..]) {
-            Ok(opts) => CliAction::AgentInit(opts),
-            Err(e) => CliAction::Exit {
-                code: 2,
-                stdout: String::new(),
-                stderr: format!("{}\n", e),
-            },
-        },
+        "init" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: agent_init_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_cli_agent_init(&args[1..]) {
+                Ok(opts) => CliAction::AgentInit(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
         "install-service" => {
             if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
                 return CliAction::Exit {
@@ -957,9 +1004,10 @@ fn parse_server_init(args: &[String]) -> Result<ServerInitOptions, String> {
 }
 
 fn parse_agent_install_service(args: &[String]) -> Result<AgentInstallServiceOptions, String> {
-    let mut config = PathBuf::from("/etc/webcodex/agent.toml");
+    let mut profile: Option<String> = None;
+    let mut config: Option<PathBuf> = None;
     let mut bin: Option<PathBuf> = None;
-    let mut service_file = PathBuf::from("/etc/systemd/system/webcodex-agent.service");
+    let mut service_file: Option<PathBuf> = None;
     let mut working_directory = PathBuf::from("/root");
     let mut user = None;
     let mut group = None;
@@ -970,9 +1018,10 @@ fn parse_agent_install_service(args: &[String]) -> Result<AgentInstallServiceOpt
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--config" => config = PathBuf::from(next_value(&mut iter, arg)?),
+            "--profile" => profile = Some(next_value(&mut iter, arg)?),
+            "--config" => config = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--bin" => bin = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--service-file" => service_file = PathBuf::from(next_value(&mut iter, arg)?),
+            "--service-file" => service_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--working-directory" => working_directory = PathBuf::from(next_value(&mut iter, arg)?),
             "--user" => user = Some(next_value(&mut iter, arg)?),
             "--group" => group = Some(next_value(&mut iter, arg)?),
@@ -989,6 +1038,22 @@ fn parse_agent_install_service(args: &[String]) -> Result<AgentInstallServiceOpt
             _ => return Err(format!("unknown agent install-service flag: {}", arg)),
         }
     }
+    let profile = profile
+        .as_deref()
+        .map(validate_client_profile)
+        .transpose()?;
+    let config = config.unwrap_or_else(|| {
+        profile
+            .as_deref()
+            .map(client_profile_agent_config)
+            .unwrap_or_else(|| PathBuf::from("/etc/webcodex/agent.toml"))
+    });
+    let service_file = service_file.unwrap_or_else(|| {
+        profile
+            .as_deref()
+            .map(client_profile_service_file)
+            .unwrap_or_else(|| PathBuf::from("/etc/systemd/system/webcodex-agent.service"))
+    });
     let bin = match bin.or_else(|| discover_named_binary_absolute("webcodex-agent")) {
         Some(path) => path,
         None => {
@@ -1024,8 +1089,10 @@ fn parse_agent_install_service(args: &[String]) -> Result<AgentInstallServiceOpt
 }
 
 fn parse_agent_status(args: &[String]) -> Result<AgentStatusOptions, String> {
+    let mut profile: Option<String> = None;
+    let mut config: Option<PathBuf> = None;
     let mut opts = AgentStatusOptions {
-        config: PathBuf::from("/etc/webcodex/agent.toml"),
+        config: PathBuf::new(),
         server_url: None,
         user_token_file: None,
         agent_token_file: None,
@@ -1034,7 +1101,8 @@ fn parse_agent_status(args: &[String]) -> Result<AgentStatusOptions, String> {
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
-            "--config" => opts.config = PathBuf::from(next_value(&mut iter, arg)?),
+            "--profile" => profile = Some(next_value(&mut iter, arg)?),
+            "--config" => config = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--server-url" => opts.server_url = Some(next_value(&mut iter, arg)?),
             "--user-token-file" => {
                 opts.user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
@@ -1045,6 +1113,21 @@ fn parse_agent_status(args: &[String]) -> Result<AgentStatusOptions, String> {
             "--json" => opts.json = true,
             _ => return Err(format!("unknown agent status flag: {}", arg)),
         }
+    }
+    if let Some(profile) = profile
+        .as_deref()
+        .map(validate_client_profile)
+        .transpose()?
+    {
+        opts.config = config.unwrap_or_else(|| client_profile_agent_config(&profile));
+        opts.user_token_file = opts
+            .user_token_file
+            .or_else(|| Some(client_profile_user_token_file(&profile)));
+        opts.agent_token_file = opts
+            .agent_token_file
+            .or_else(|| Some(client_profile_agent_token_file(&profile)));
+    } else {
+        opts.config = config.unwrap_or_else(|| PathBuf::from("/etc/webcodex/agent.toml"));
     }
     if opts.config.as_os_str().is_empty() {
         return Err("--config cannot be empty".to_string());
@@ -1231,8 +1314,35 @@ fn client_output_dir_for_profile(base_dir: &Path, profile: &str) -> PathBuf {
     base_dir.join("clients").join(profile)
 }
 
-fn default_client_output_dir_for_profile(profile: &str) -> PathBuf {
+fn client_profile_dir(profile: &str) -> PathBuf {
     client_output_dir_for_profile(&default_client_base_dir(), profile)
+}
+
+fn default_client_output_dir_for_profile(profile: &str) -> PathBuf {
+    client_profile_dir(profile)
+}
+
+fn client_profile_agent_config(profile: &str) -> PathBuf {
+    client_profile_dir(profile).join("agent.toml")
+}
+
+fn client_profile_projects_dir(profile: &str) -> PathBuf {
+    client_profile_dir(profile).join("projects.d")
+}
+
+fn client_profile_user_token_file(profile: &str) -> PathBuf {
+    client_profile_dir(profile).join("webcodex-user-token")
+}
+
+fn client_profile_agent_token_file(profile: &str) -> PathBuf {
+    client_profile_dir(profile).join("webcodex-agent-token")
+}
+
+fn client_profile_service_file(profile: &str) -> PathBuf {
+    PathBuf::from(format!(
+        "/etc/systemd/system/webcodex-agent-{}.service",
+        profile
+    ))
 }
 
 fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {
@@ -1350,12 +1460,14 @@ fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
         quic_timeout_secs: 10,
         ..DoctorOptions::default()
     };
+    let mut profile: Option<String> = None;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--server-url" => opts.server_url = Some(next_value(&mut iter, arg)?),
             "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--profile" => profile = Some(next_value(&mut iter, arg)?),
             "--user-token-file" => {
                 opts.user_token_file = Some(PathBuf::from(next_value(&mut iter, arg)?))
             }
@@ -1383,6 +1495,21 @@ fn parse_doctor(args: &[String]) -> Result<DoctorOptions, String> {
             "--strict" => opts.strict = true,
             _ => return Err(format!("unknown doctor flag: {}", arg)),
         }
+    }
+    if let Some(profile) = profile
+        .as_deref()
+        .map(validate_client_profile)
+        .transpose()?
+    {
+        opts.agent_config = opts
+            .agent_config
+            .or_else(|| Some(client_profile_agent_config(&profile)));
+        opts.user_token_file = opts
+            .user_token_file
+            .or_else(|| Some(client_profile_user_token_file(&profile)));
+        opts.agent_token_file = opts
+            .agent_token_file
+            .or_else(|| Some(client_profile_agent_token_file(&profile)));
     }
     if let Some(url) = &opts.server_url {
         if url.trim().is_empty() {
@@ -1413,12 +1540,15 @@ fn parse_cli_agent_init(args: &[String]) -> Result<AgentInitOptions, String> {
         display_name: None,
         transport: TRANSPORT_WEBSOCKET.to_string(),
         poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
-        projects_dir: PathBuf::from(DEFAULT_INIT_PROJECTS_DIR),
+        projects_dir: PathBuf::new(),
         output: PathBuf::new(),
         allowed_roots: Vec::new(),
         allow_cwd_anywhere: false,
         overwrite: false,
     };
+    let mut profile: Option<String> = None;
+    let mut output_explicit = false;
+    let mut projects_dir_explicit = false;
     let mut iter = args.iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
@@ -1426,6 +1556,7 @@ fn parse_cli_agent_init(args: &[String]) -> Result<AgentInitOptions, String> {
             "--token" => opts.token = Some(next_value(&mut iter, arg)?),
             "--token-file" => opts.token_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--client-id" => opts.client_id = next_value(&mut iter, arg)?,
+            "--profile" => profile = Some(next_value(&mut iter, arg)?),
             "--owner" => opts.owner = next_value(&mut iter, arg)?,
             "--display-name" => opts.display_name = Some(next_value(&mut iter, arg)?),
             "--transport" => opts.transport = next_value(&mut iter, arg)?,
@@ -1435,17 +1566,45 @@ fn parse_cli_agent_init(args: &[String]) -> Result<AgentInitOptions, String> {
                     .parse::<u64>()
                     .map_err(|_| "--poll-interval-ms must be an integer".to_string())?;
             }
-            "--projects-dir" => opts.projects_dir = PathBuf::from(next_value(&mut iter, arg)?),
+            "--projects-dir" => {
+                opts.projects_dir = PathBuf::from(next_value(&mut iter, arg)?);
+                projects_dir_explicit = true;
+            }
             "--allowed-root" => opts
                 .allowed_roots
                 .push(PathBuf::from(next_value(&mut iter, arg)?)),
             "--allow-cwd-anywhere" => {
                 opts.allow_cwd_anywhere = agent_init::parse_bool(&next_value(&mut iter, arg)?)?;
             }
-            "--output" => opts.output = PathBuf::from(next_value(&mut iter, arg)?),
+            "--output" => {
+                opts.output = PathBuf::from(next_value(&mut iter, arg)?);
+                output_explicit = true;
+            }
             "--overwrite" => opts.overwrite = true,
             "--help" | "-h" => return Err(usage().to_string()),
             _ => return Err(format!("unknown agent init flag: {}", arg)),
+        }
+    }
+    if let Some(profile) = profile
+        .as_deref()
+        .map(validate_client_profile)
+        .transpose()?
+    {
+        if !output_explicit {
+            opts.output = client_profile_agent_config(&profile);
+        }
+        if !projects_dir_explicit {
+            opts.projects_dir = client_profile_projects_dir(&profile);
+        }
+    } else {
+        if !output_explicit && opts.output.as_os_str().is_empty() {
+            let profile = validate_client_profile(&opts.client_id)?;
+            opts.output = client_profile_agent_config(&profile);
+            if !projects_dir_explicit {
+                opts.projects_dir = client_profile_projects_dir(&profile);
+            }
+        } else if !projects_dir_explicit {
+            opts.projects_dir = PathBuf::from(DEFAULT_INIT_PROJECTS_DIR);
         }
     }
     agent_init::validate_agent_init_options(&opts)?;
@@ -5743,6 +5902,244 @@ mod tests {
         assert!(help.contains("/etc/webcodex/clients/<profile>"));
         assert!(help.contains("~/.config/webcodex/clients/<profile>"));
         assert!(help.contains("Explicit --output-dir overrides"));
+    }
+
+    #[test]
+    fn agent_init_defaults_to_client_id_profile_paths() {
+        let opts = parse_cli_agent_init(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--token",
+            "agent_fake_token",
+            "--client-id",
+            "special-container",
+            "--owner",
+            "alice",
+        ]))
+        .unwrap();
+        assert_eq!(
+            opts.output,
+            client_profile_agent_config("special-container")
+        );
+        assert_eq!(
+            opts.projects_dir,
+            client_profile_projects_dir("special-container")
+        );
+    }
+
+    #[test]
+    fn agent_init_profile_overrides_client_id_profile_paths() {
+        let opts = parse_cli_agent_init(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--token",
+            "agent_fake_token",
+            "--client-id",
+            "special-container",
+            "--profile",
+            "special",
+            "--owner",
+            "alice",
+        ]))
+        .unwrap();
+        assert_eq!(opts.output, client_profile_agent_config("special"));
+        assert_eq!(opts.projects_dir, client_profile_projects_dir("special"));
+    }
+
+    #[test]
+    fn agent_init_explicit_output_and_projects_dir_win() {
+        let opts = parse_cli_agent_init(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--token",
+            "agent_fake_token",
+            "--client-id",
+            "special-container",
+            "--profile",
+            "special",
+            "--owner",
+            "alice",
+            "--output",
+            "/tmp/a.toml",
+            "--projects-dir",
+            "/tmp/projects.d",
+        ]))
+        .unwrap();
+        assert_eq!(opts.output, PathBuf::from("/tmp/a.toml"));
+        assert_eq!(opts.projects_dir, PathBuf::from("/tmp/projects.d"));
+    }
+
+    #[test]
+    fn agent_init_explicit_output_without_profile_preserves_legacy_projects_dir() {
+        let opts = parse_cli_agent_init(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--token",
+            "agent_fake_token",
+            "--client-id",
+            "client id with spaces",
+            "--owner",
+            "alice",
+            "--output",
+            "/tmp/a.toml",
+        ]))
+        .unwrap();
+        assert_eq!(opts.output, PathBuf::from("/tmp/a.toml"));
+        assert_eq!(opts.projects_dir, PathBuf::from(DEFAULT_INIT_PROJECTS_DIR));
+    }
+
+    #[test]
+    fn agent_init_rejects_unsafe_profile() {
+        let err = parse_cli_agent_init(&args(&[
+            "--server-url",
+            "https://example.test",
+            "--token",
+            "agent_fake_token",
+            "--client-id",
+            "special-container",
+            "--profile",
+            "../x",
+            "--owner",
+            "alice",
+        ]))
+        .unwrap_err();
+        assert_eq!(err, CLIENT_PROFILE_ERROR);
+    }
+
+    #[test]
+    fn agent_status_profile_derives_config_and_token_paths() {
+        let opts = parse_agent_status(&args(&["--profile", "special"])).unwrap();
+        assert_eq!(opts.config, client_profile_agent_config("special"));
+        assert_eq!(
+            opts.user_token_file,
+            Some(client_profile_user_token_file("special"))
+        );
+        assert_eq!(
+            opts.agent_token_file,
+            Some(client_profile_agent_token_file("special"))
+        );
+    }
+
+    #[test]
+    fn agent_status_explicit_paths_win_and_no_profile_keeps_legacy_default() {
+        let opts = parse_agent_status(&args(&[
+            "--profile",
+            "special",
+            "--config",
+            "/tmp/agent.toml",
+            "--user-token-file",
+            "/tmp/user-token",
+            "--agent-token-file",
+            "/tmp/agent-token",
+        ]))
+        .unwrap();
+        assert_eq!(opts.config, PathBuf::from("/tmp/agent.toml"));
+        assert_eq!(opts.user_token_file, Some(PathBuf::from("/tmp/user-token")));
+        assert_eq!(
+            opts.agent_token_file,
+            Some(PathBuf::from("/tmp/agent-token"))
+        );
+
+        let legacy = parse_agent_status(&args(&[])).unwrap();
+        assert_eq!(legacy.config, PathBuf::from("/etc/webcodex/agent.toml"));
+        assert_eq!(legacy.user_token_file, None);
+        assert_eq!(legacy.agent_token_file, None);
+    }
+
+    #[test]
+    fn agent_install_service_profile_derives_config_and_service_file() {
+        let opts = parse_agent_install_service(&args(&[
+            "--profile",
+            "special",
+            "--bin",
+            "/opt/webcodex/bin/webcodex-agent",
+            "--dry-run",
+        ]))
+        .unwrap();
+        assert_eq!(opts.config, client_profile_agent_config("special"));
+        assert_eq!(opts.service_file, client_profile_service_file("special"));
+        let unit = render_agent_systemd_unit(&opts);
+        assert!(unit.contains(
+            "ExecStart=/opt/webcodex/bin/webcodex-agent --config /etc/webcodex/clients/special/agent.toml"
+        ));
+    }
+
+    #[test]
+    fn agent_install_service_explicit_paths_win_and_rejects_unsafe_profile() {
+        let opts = parse_agent_install_service(&args(&[
+            "--profile",
+            "special",
+            "--config",
+            "/tmp/agent.toml",
+            "--service-file",
+            "/tmp/webcodex-agent.service",
+            "--bin",
+            "/opt/webcodex/bin/webcodex-agent",
+        ]))
+        .unwrap();
+        assert_eq!(opts.config, PathBuf::from("/tmp/agent.toml"));
+        assert_eq!(
+            opts.service_file,
+            PathBuf::from("/tmp/webcodex-agent.service")
+        );
+
+        let err = parse_agent_install_service(&args(&[
+            "--profile",
+            "../x",
+            "--bin",
+            "/opt/webcodex/bin/webcodex-agent",
+        ]))
+        .unwrap_err();
+        assert_eq!(err, CLIENT_PROFILE_ERROR);
+    }
+
+    #[test]
+    fn doctor_profile_derives_agent_config_and_token_paths() {
+        let opts = parse_doctor(&args(&["--profile", "special"])).unwrap();
+        assert_eq!(
+            opts.agent_config,
+            Some(client_profile_agent_config("special"))
+        );
+        assert_eq!(
+            opts.user_token_file,
+            Some(client_profile_user_token_file("special"))
+        );
+        assert_eq!(
+            opts.agent_token_file,
+            Some(client_profile_agent_token_file("special"))
+        );
+    }
+
+    #[test]
+    fn doctor_explicit_paths_win_and_no_profile_keeps_legacy_behavior() {
+        let opts = parse_doctor(&args(&[
+            "--profile",
+            "special",
+            "--agent-config",
+            "/tmp/agent.toml",
+            "--user-token-file",
+            "/tmp/user-token",
+            "--agent-token-file",
+            "/tmp/agent-token",
+        ]))
+        .unwrap();
+        assert_eq!(opts.agent_config, Some(PathBuf::from("/tmp/agent.toml")));
+        assert_eq!(opts.user_token_file, Some(PathBuf::from("/tmp/user-token")));
+        assert_eq!(
+            opts.agent_token_file,
+            Some(PathBuf::from("/tmp/agent-token"))
+        );
+
+        let legacy = parse_doctor(&args(&[])).unwrap();
+        assert_eq!(legacy.agent_config, None);
+        assert_eq!(legacy.user_token_file, None);
+        assert_eq!(legacy.agent_token_file, None);
+    }
+
+    #[test]
+    fn doctor_rejects_unsafe_profile() {
+        let err = parse_doctor(&args(&["--profile", "a/b"])).unwrap_err();
+        assert_eq!(err, CLIENT_PROFILE_ERROR);
     }
 
     #[test]

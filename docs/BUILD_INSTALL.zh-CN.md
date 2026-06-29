@@ -30,8 +30,8 @@ webcodex-cli
 | 用户创建 agent token | `webcodex-cli agent-token create-local --server ... --user ... --credential ... --client-id ...` |
 | 创建 pairing code | `webcodex-cli pairing create --server-url ... --username ... --client-id ...` |
 | 客户端 enrollment | `webcodex-cli client enroll --server-url ... --pairing-code ... --client-id ...` |
-| 前台运行 agent | `webcodex-agent --config ...` |
-| 安装 agent service | `webcodex-cli agent install-service --config ... --bin ...` |
+| 前台运行 agent | `webcodex-agent --profile ...` |
+| 安装 agent service | `webcodex-cli agent install-service --profile ... --bin ...` |
 | Doctor 检查 | `webcodex-cli doctor --server-url ... --user-token-file ... --strict` |
 
 账户管理命令使用 `users create` 和 `--server-url`；本地 token 创建命令使用 `--server`。这是当前 CLI surface 的实际差异，示例中会按这个差异书写。
@@ -128,15 +128,17 @@ sudo webcodex-cli client enroll \
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/clients/special/agent.toml \
+  --profile special \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
+sudo systemctl enable --now webcodex-agent-special
+webcodex-cli agent status \
+  --profile special \
+  --server-url https://your-domain.example
 webcodex-cli doctor --strict \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
+  --profile special \
+  --server-url https://your-domain.example
 ```
 
 GPT Actions 应使用生成的 client-side user-token file。GPT Actions 需要 public HTTPS URL；WebCodex CLI 不会自动配置 reverse proxies 或 tunnels。
@@ -146,7 +148,7 @@ GPT Actions 应使用生成的 client-side user-token file。GPT Actions 需要 
 `client enroll` 会写入 `agent.toml`。systemd service 使用 `webcodex-cli agent install-service`；前台测试可运行：
 
 ```bash
-webcodex-agent --config ~/.config/webcodex/agent.toml
+webcodex-agent --profile special
 ```
 
 `webcodex-agent init` 仍保留为兼容入口。

@@ -37,6 +37,8 @@ use agent_init::{
 };
 
 const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
+const CLIENT_PROFILE_ERROR: &str =
+    "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 const PROJECT_SCAN_CACHE_MS: u64 = 5000;
 const SHELL_PROFILE_PREPARE_TIMEOUT_SECS: u64 = 30;
@@ -535,7 +537,12 @@ fn usage() -> &'static str {
        -h, --help                 Print help and exit\n\
        -V, --version              Print version and exit\n\
        -c, --config PATH          Agent config path for normal runtime\n\
+       --profile NAME             Client config profile for default config path\n\
        --once                     Poll once, then exit (polling transport)\n\n\
+     With --profile, the default config path is derived under\n\
+     /etc/webcodex/clients/<profile> for root or\n\
+     ~/.config/webcodex/clients/<profile> for non-root users. Explicit\n\
+     --config overrides the profile-derived default.\n\n\
      Init options:\n\
        --server-url URL           WebCodex server URL\n\
        --token TOKEN              Agent token for generated config\n\
@@ -571,6 +578,62 @@ fn usage() -> &'static str {
 
 fn parse_args() -> Result<AgentCliAction, String> {
     parse_agent_args(std::env::args().skip(1))
+}
+
+fn default_client_base_dir() -> PathBuf {
+    if is_effective_root() {
+        PathBuf::from("/etc/webcodex")
+    } else {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        home.join(".config/webcodex")
+    }
+}
+
+#[cfg(unix)]
+fn is_effective_root() -> bool {
+    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
+        for line in status.lines() {
+            if let Some(rest) = line.strip_prefix("Uid:") {
+                let mut parts = rest.split_whitespace();
+                let _real = parts.next();
+                if let Some(effective) = parts.next() {
+                    return effective == "0";
+                }
+            }
+        }
+    }
+    std::env::var("USER").is_ok_and(|u| u == "root")
+}
+
+#[cfg(not(unix))]
+fn is_effective_root() -> bool {
+    false
+}
+
+fn validate_client_profile(profile: &str) -> Result<String, String> {
+    let trimmed = profile.trim();
+    if trimmed.is_empty()
+        || trimmed == "."
+        || trimmed == ".."
+        || trimmed.len() > 80
+        || trimmed.contains('/')
+        || trimmed.contains('\\')
+        || !trimmed
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+    {
+        return Err(CLIENT_PROFILE_ERROR.to_string());
+    }
+    Ok(trimmed.to_string())
+}
+
+fn client_profile_agent_config(profile: &str) -> PathBuf {
+    default_client_base_dir()
+        .join("clients")
+        .join(profile)
+        .join("agent.toml")
 }
 
 fn parse_agent_args<I, S>(args: I) -> Result<AgentCliAction, String>
@@ -615,6 +678,8 @@ where
     let mut config_path = std::env::var("WEBCODEX_AGENT_CONFIG")
         .map(PathBuf::from)
         .unwrap_or_else(|_| default_config_path());
+    let mut config_explicit = false;
+    let mut profile: Option<String> = None;
     let mut once = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
@@ -639,8 +704,24 @@ where
                     return Err("--config requires a path".to_string());
                 };
                 config_path = PathBuf::from(path);
+                config_explicit = true;
+            }
+            "--profile" => {
+                let Some(value) = args.next() else {
+                    return Err("--profile requires a value".to_string());
+                };
+                profile = Some(value);
             }
             _ => return Err(format!("unknown argument: {}\n{}", arg, usage())),
+        }
+    }
+    if let Some(profile) = profile
+        .as_deref()
+        .map(validate_client_profile)
+        .transpose()?
+    {
+        if !config_explicit {
+            config_path = client_profile_agent_config(&profile);
         }
     }
     Ok(AgentCliAction::Run { config_path, once })
@@ -5128,6 +5209,37 @@ transport = "auto"
                 once: true,
             }
         );
+    }
+
+    #[test]
+    fn agent_cli_profile_derives_default_config_path() {
+        let action = parse_agent_args(["--profile", "special"]).unwrap();
+        assert_eq!(
+            action,
+            AgentCliAction::Run {
+                config_path: client_profile_agent_config("special"),
+                once: false,
+            }
+        );
+    }
+
+    #[test]
+    fn agent_cli_explicit_config_overrides_profile() {
+        let action =
+            parse_agent_args(["--profile", "special", "--config", "/tmp/agent.toml"]).unwrap();
+        assert_eq!(
+            action,
+            AgentCliAction::Run {
+                config_path: PathBuf::from("/tmp/agent.toml"),
+                once: false,
+            }
+        );
+    }
+
+    #[test]
+    fn agent_cli_rejects_unsafe_profile() {
+        let err = parse_agent_args(["--profile", "../x"]).unwrap_err();
+        assert_eq!(err, CLIENT_PROFILE_ERROR);
     }
 
     #[test]

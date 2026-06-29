@@ -144,17 +144,16 @@ webcodex-cli client enroll \
   --allowed-root /home/friend/git
 
 webcodex-cli agent install-service \
-  --config /etc/webcodex/clients/special/agent.toml \
+  --profile special \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
+sudo systemctl enable --now webcodex-agent-special
 
 webcodex-cli doctor \
+  --profile special \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token \
   --strict
 ```
 
@@ -225,21 +224,19 @@ server {
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/clients/special/agent.toml \
+  --profile special \
   --bin /opt/webcodex/bin/webcodex-agent
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
+sudo systemctl enable --now webcodex-agent-special
 webcodex-cli agent status \
-  --config /etc/webcodex/clients/special/agent.toml \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
+  --profile special \
+  --server-url https://your-domain.example
 ```
 
 前台测试可直接启动 agent：
 
 ```bash
-webcodex-agent --config ~/.config/webcodex/agent.toml
+webcodex-agent --profile special
 ```
 
 `webcodex-agent init` 仍保留为兼容入口。

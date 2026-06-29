@@ -1,7 +1,7 @@
 # Agent-side project file, intended to live under the agent's projects_dir.
 #
 # Copy to <projects_dir>/webcodex.toml (e.g.
-# /etc/webcodex/projects.d/webcodex.toml) and edit the path.
+# /etc/webcodex/clients/special/projects.d/webcodex.toml) and edit the path.
 #
 # At registration the agent reports this to the server, which exposes it as the
 # runtime id agent:<client_id>:webcodex. The server never needs the matching

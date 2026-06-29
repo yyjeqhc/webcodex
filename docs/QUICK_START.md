@@ -211,23 +211,19 @@ If you use Python, Conda, Node, or Codex CLI, put their required `PATH` entries 
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/clients/alice-laptop/agent.toml \
+  --profile alice-laptop \
   --bin "$(command -v webcodex-agent)"
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
+sudo systemctl enable --now webcodex-agent-alice-laptop
 
 webcodex-cli agent status \
-  --config /etc/webcodex/clients/alice-laptop/agent.toml \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/alice-laptop/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/alice-laptop/webcodex-agent-token
+  --profile alice-laptop \
+  --server-url https://your-domain.example
 
 webcodex-cli doctor --strict \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/alice-laptop/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/alice-laptop/webcodex-agent-token \
-  --agent-config /etc/webcodex/clients/alice-laptop/agent.toml
+  --profile alice-laptop \
+  --server-url https://your-domain.example
 ```
 
 Use `--overwrite` with `agent install-service` only when replacing an existing unit.
@@ -293,17 +289,15 @@ Use absolute paths in `agent.toml`; do not rely on `$HOME` expansion inside TOML
 Foreground mode is the simplest no-service mode. It prints logs directly and exits when you press `Ctrl-C`:
 
 ```bash
-webcodex-agent --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml"
+webcodex-agent --profile alice-laptop
 ```
 
 In another terminal, check status:
 
 ```bash
 webcodex-cli agent status \
-  --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
-  --server-url https://your-domain.example \
-  --user-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token" \
-  --agent-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-agent-token"
+  --profile alice-laptop \
+  --server-url https://your-domain.example
 ```
 
 ### 4.4 Or start in the background with nohup
@@ -312,7 +306,7 @@ Use this after the foreground run works and you want the agent to keep running a
 
 ```bash
 mkdir -p "$HOME/.local/state/webcodex"
-nohup webcodex-agent --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
+nohup webcodex-agent --profile alice-laptop \
   >> "$HOME/.local/state/webcodex/agent.log" 2>&1 &
 
 echo $! > "$HOME/.local/state/webcodex/agent.pid"
@@ -324,10 +318,8 @@ Check logs and status:
 tail -f "$HOME/.local/state/webcodex/agent.log"
 
 webcodex-cli agent status \
-  --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
-  --server-url https://your-domain.example \
-  --user-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token" \
-  --agent-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-agent-token"
+  --profile alice-laptop \
+  --server-url https://your-domain.example
 ```
 
 Stop the background agent:

@@ -211,23 +211,19 @@ RUSTUP_HOME = "/home/alice/.rustup"
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/clients/alice-laptop/agent.toml \
+  --profile alice-laptop \
   --bin "$(command -v webcodex-agent)"
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
+sudo systemctl enable --now webcodex-agent-alice-laptop
 
 webcodex-cli agent status \
-  --config /etc/webcodex/clients/alice-laptop/agent.toml \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/alice-laptop/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/alice-laptop/webcodex-agent-token
+  --profile alice-laptop \
+  --server-url https://your-domain.example
 
 webcodex-cli doctor --strict \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/alice-laptop/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/alice-laptop/webcodex-agent-token \
-  --agent-config /etc/webcodex/clients/alice-laptop/agent.toml
+  --profile alice-laptop \
+  --server-url https://your-domain.example
 ```
 
 只有替换已有 unit 时才给 `agent install-service` 加 `--overwrite`。
@@ -293,17 +289,15 @@ RUSTUP_HOME = "/home/alice/.rustup"
 前台模式是最简单的 no-service 模式。它会直接打印日志，按 `Ctrl-C` 即可退出：
 
 ```bash
-webcodex-agent --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml"
+webcodex-agent --profile alice-laptop
 ```
 
 另开一个终端检查状态：
 
 ```bash
 webcodex-cli agent status \
-  --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
-  --server-url https://your-domain.example \
-  --user-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token" \
-  --agent-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-agent-token"
+  --profile alice-laptop \
+  --server-url https://your-domain.example
 ```
 
 ### 4.4 或使用 nohup 后台启动
@@ -312,7 +306,7 @@ webcodex-cli agent status \
 
 ```bash
 mkdir -p "$HOME/.local/state/webcodex"
-nohup webcodex-agent --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
+nohup webcodex-agent --profile alice-laptop \
   >> "$HOME/.local/state/webcodex/agent.log" 2>&1 &
 
 echo $! > "$HOME/.local/state/webcodex/agent.pid"
@@ -324,10 +318,8 @@ echo $! > "$HOME/.local/state/webcodex/agent.pid"
 tail -f "$HOME/.local/state/webcodex/agent.log"
 
 webcodex-cli agent status \
-  --config "$HOME/.config/webcodex/clients/alice-laptop/agent.toml" \
-  --server-url https://your-domain.example \
-  --user-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-user-token" \
-  --agent-token-file "$HOME/.config/webcodex/clients/alice-laptop/webcodex-agent-token"
+  --profile alice-laptop \
+  --server-url https://your-domain.example
 ```
 
 停止后台 agent：

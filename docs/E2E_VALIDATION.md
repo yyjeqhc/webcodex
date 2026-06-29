@@ -40,9 +40,9 @@ webcodex-cli server install-service
 webcodex-cli server status
 webcodex-cli pairing create --server-url URL --username alice --client-id alice-laptop
 webcodex-cli client enroll --server-url URL --pairing-code CODE --client-id alice-laptop
-webcodex-cli agent install-service --config /etc/webcodex/clients/special/agent.toml --bin /opt/webcodex/bin/webcodex-agent
-webcodex-cli agent status --config /etc/webcodex/clients/special/agent.toml --server-url URL --user-token-file PATH --agent-token-file PATH
-webcodex-cli doctor --strict --server-url URL --user-token-file PATH --agent-token-file PATH
+webcodex-cli agent install-service --profile special --bin /opt/webcodex/bin/webcodex-agent
+webcodex-cli agent status --profile special --server-url URL
+webcodex-cli doctor --strict --profile special --server-url URL
 ```
 
 `pairing create` is server/admin-side. `client enroll`, `agent install-service`, and `agent status` are client-side for the machine running `webcodex-agent`. Do not copy server tokens to the client; copy only the short-lived pairing code.

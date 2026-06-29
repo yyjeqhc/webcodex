@@ -16,8 +16,8 @@ Server:
 Client:
 
 - `webcodex-agent --version` prints a version.
-- `webcodex-cli agent status --config /etc/webcodex/clients/special/agent.toml` can read the local agent config.
-- `webcodex-cli doctor --strict --server-url https://your-domain.example --user-token-file /etc/webcodex/clients/special/webcodex-user-token --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token` passes.
+- `webcodex-cli agent status --profile special` can read the local agent config.
+- `webcodex-cli doctor --strict --profile special --server-url https://your-domain.example` passes.
 - `listAgents` / `runtime_status` shows the agent online.
 
 ## Common issues

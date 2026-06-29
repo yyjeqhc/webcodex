@@ -30,8 +30,8 @@ The examples in this guide were checked against the current binary help output f
 | User-created agent token | `webcodex-cli agent-token create-local --server ... --user ... --credential ... --client-id ...` |
 | Pairing code | `webcodex-cli pairing create --server-url ... --username ... --client-id ...` |
 | Client enrollment | `webcodex-cli client enroll --server-url ... --pairing-code ... --client-id ...` |
-| Agent foreground run | `webcodex-agent --config ...` |
-| Agent service | `webcodex-cli agent install-service --config ... --bin ...` |
+| Agent foreground run | `webcodex-agent --profile ...` |
+| Agent service | `webcodex-cli agent install-service --profile ... --bin ...` |
 | Doctor | `webcodex-cli doctor --server-url ... --user-token-file ... --strict` |
 
 The account-management command uses `users create` and `--server-url`; local token creation commands use `--server`. That difference comes from the current CLI surface and is intentionally reflected in the examples.
@@ -128,20 +128,17 @@ Client enroll creates the `wc_pat_*` user token, `wc_agent_*` agent token, and `
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --config /etc/webcodex/clients/special/agent.toml \
+  --profile special \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent
+sudo systemctl enable --now webcodex-agent-special
 webcodex-cli agent status \
-  --config /etc/webcodex/clients/special/agent.toml \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
+  --profile special \
+  --server-url https://your-domain.example
 webcodex-cli doctor --strict \
-  --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
+  --profile special \
+  --server-url https://your-domain.example
 ```
 
 GPT Actions should use the generated client-side user-token file. GPT Actions require a public HTTPS URL; WebCodex CLI does not automate reverse proxies or tunnels.
@@ -160,7 +157,7 @@ webcodex-cli setup single-user
 Client enroll writes `agent.toml`. For a systemd service, use `webcodex-cli agent install-service`; for a foreground test, run:
 
 ```bash
-webcodex-agent --config ~/.config/webcodex/agent.toml
+webcodex-agent --profile special
 ```
 
 `webcodex-agent init` remains available as a compatibility entry point.

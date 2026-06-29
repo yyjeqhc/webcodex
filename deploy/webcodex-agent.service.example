@@ -1,8 +1,8 @@
 # systemd unit for the WebCodex agent.
 #
-# Copy to /etc/systemd/system/webcodex-agent.service, then:
+# Copy to /etc/systemd/system/webcodex-agent-special.service, then:
 #   sudo systemctl daemon-reload
-#   sudo systemctl enable --now webcodex-agent
+#   sudo systemctl enable --now webcodex-agent-special
 #
 # The agent owns local machine knowledge (project id/path/policy/capabilities)
 # and registers it with the server at startup. The server is a zero-project-
@@ -22,7 +22,7 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-ExecStart=/opt/webcodex/webcodex-agent --config /etc/webcodex/agent.toml
+ExecStart=/opt/webcodex/webcodex-agent --config /etc/webcodex/clients/special/agent.toml
 Restart=always
 RestartSec=5
 

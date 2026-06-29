@@ -472,3 +472,29 @@ contract.
    scope, resource, PKCE, creation, expiry, unused, and unrevoked metadata.
 7. **Metadata gate**: `/.well-known/oauth-authorization-server` remains
    unexposed until `/oauth/authorize` is implemented and tested.
+
+### Phase 2e-1a — authorization helper groundwork
+
+Phase 2e-1a adds only pure internal helpers for the future authorization
+endpoint. It does not mount `/oauth/authorize`, issue authorization codes,
+insert `oauth_authorization_codes`, expose authorization server metadata, or
+change `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, `AuthMiddleware`,
+MCP security schemes, or GPT Action configuration.
+
+1. **Request parsing type**: `OAuthAuthorizeRequest` represents the future
+   authorize query fields: `response_type`, `client_id`, `redirect_uri`,
+   `scope`, `state`, `code_challenge`, `code_challenge_method`, and
+   `resource`.
+2. **Error type**: `OAuthAuthorizeError` distinguishes direct
+   pre-redirect-trust errors from errors that can later be mapped to OAuth
+   redirect errors after client and redirect URI validation.
+3. **Global OAuth scopes**: `oauth_scopes_supported()` exposes the canonical
+   non-agent, non-admin OAuth scope registry already advertised by protected
+   resource metadata.
+4. **Scope normalization**: `normalize_oauth_scopes()` validates explicit
+   requested scopes against both `client.allowed_scopes` and the global OAuth
+   registry, deduplicates, and orders output canonically. Empty or
+   whitespace-only requested scope defaults to the client/global intersection.
+5. **Delegation boundary**: `agent:*` and `admin` are not OAuth delegation
+   scopes; they are rejected when explicitly requested and filtered out of the
+   default intersection.

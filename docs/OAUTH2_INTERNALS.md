@@ -7,11 +7,36 @@ WebCodex. For the user-facing authentication model, see
 
 ## Current phase
 
-**Phase 2e-0** documents the design contract for the future
-`GET /oauth/authorize` endpoint. The endpoint is still not implemented. See
+**Phase 2e-1a** adds pure internal groundwork for the future
+`GET /oauth/authorize` endpoint. The endpoint is still not implemented: no
+route is mounted, no authorization code is issued, and authorization-server
+metadata remains gated. See
 [OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md) for the full request
 contract, state machine, security invariants, storage contract, test plan, and
 authorization-server metadata gate.
+
+### Phase 2e-1a: authorization request helpers
+
+Phase 2e-1a introduces internal helper code only:
+
+- `OAuthAuthorizeRequest` and `OAuthAuthorizeError` model future authorize
+  request parsing and the direct-vs-redirectable error boundary.
+- `parse_authorize_query()` parses the known authorize query parameters,
+  rejects duplicate known parameters as `invalid_request`, requires
+  `response_type`, `client_id`, `redirect_uri`, `code_challenge`, and
+  `code_challenge_method`, preserves parsed `state`, and keeps `resource` for
+  later rejection by the future handler.
+- `oauth_scopes_supported()` exposes the canonical global OAuth scope registry
+  reused by protected resource metadata.
+- `normalize_oauth_scopes()` defaults absent or whitespace-only requested
+  scopes to the `client.allowed_scopes`/global OAuth intersection, rejects an
+  empty result as `invalid_scope`, validates explicit requests against both
+  sets, deduplicates, and returns scopes in canonical global order.
+
+The global OAuth scope registry contains only delegable OAuth scopes:
+`runtime:read`, `project:read`, `project:write`, `job:run`, and
+`account:manage`. Agent scopes (`agent:*`) and `admin` are excluded from OAuth
+delegation.
 
 ### Phase 2e-0: authorization endpoint contract
 

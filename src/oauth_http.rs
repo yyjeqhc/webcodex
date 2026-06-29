@@ -75,6 +75,98 @@ pub(crate) fn verify_pkce_s256(verifier: &str, challenge: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Authorization endpoint request helpers
+// ---------------------------------------------------------------------------
+
+/// Parsed query shape for the future `GET /oauth/authorize` endpoint.
+///
+/// This is intentionally a pure internal data type for now. Phase 2e-1a does
+/// not mount an authorize route or issue authorization codes.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct OAuthAuthorizeRequest {
+    pub response_type: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub scope: Option<String>,
+    pub state: Option<String>,
+    pub code_challenge: String,
+    pub code_challenge_method: String,
+    pub resource: Option<String>,
+}
+
+/// Internal authorization endpoint validation errors.
+///
+/// `InvalidRequest` is for direct errors before the client/redirect trust
+/// boundary is established. Redirectable variants are for errors that can be
+/// mapped to OAuth redirect errors after the client and redirect URI are
+/// trusted.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum OAuthAuthorizeError {
+    InvalidRequest(&'static str),
+    UnauthorizedClient(&'static str),
+    UnsupportedResponseType,
+    InvalidScope(&'static str),
+    InvalidRequestRedirectable(&'static str),
+    UnsupportedResource,
+}
+
+/// Parse a future `/oauth/authorize` query string without performing runtime
+/// validation, DB lookups, redirects, or authorization code issuance.
+///
+/// Duplicate known parameters are rejected because they make the OAuth request
+/// ambiguous. Unknown parameters are ignored for forward compatibility.
+#[allow(dead_code)]
+pub(crate) fn parse_authorize_query(
+    query: &str,
+) -> Result<OAuthAuthorizeRequest, OAuthAuthorizeError> {
+    let mut response_type = None;
+    let mut client_id = None;
+    let mut redirect_uri = None;
+    let mut scope = None;
+    let mut state = None;
+    let mut code_challenge = None;
+    let mut code_challenge_method = None;
+    let mut resource = None;
+
+    for (key, value) in url::form_urlencoded::parse(query.as_bytes()) {
+        let slot = match key.as_ref() {
+            "response_type" => &mut response_type,
+            "client_id" => &mut client_id,
+            "redirect_uri" => &mut redirect_uri,
+            "scope" => &mut scope,
+            "state" => &mut state,
+            "code_challenge" => &mut code_challenge,
+            "code_challenge_method" => &mut code_challenge_method,
+            "resource" => &mut resource,
+            _ => continue,
+        };
+
+        if slot.replace(value.into_owned()).is_some() {
+            return Err(OAuthAuthorizeError::InvalidRequest("duplicate parameter"));
+        }
+    }
+
+    Ok(OAuthAuthorizeRequest {
+        response_type: response_type
+            .ok_or(OAuthAuthorizeError::InvalidRequest("missing response_type"))?,
+        client_id: client_id.ok_or(OAuthAuthorizeError::InvalidRequest("missing client_id"))?,
+        redirect_uri: redirect_uri
+            .ok_or(OAuthAuthorizeError::InvalidRequest("missing redirect_uri"))?,
+        scope,
+        state,
+        code_challenge: code_challenge.ok_or(OAuthAuthorizeError::InvalidRequest(
+            "missing code_challenge",
+        ))?,
+        code_challenge_method: code_challenge_method.ok_or(OAuthAuthorizeError::InvalidRequest(
+            "missing code_challenge_method",
+        ))?,
+        resource,
+    })
+}
+
+// ---------------------------------------------------------------------------
 // Form body
 // ---------------------------------------------------------------------------
 
@@ -979,6 +1071,59 @@ const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
     scopes::SCOPE_ACCOUNT_MANAGE,
 ];
 
+/// Return the canonical global OAuth scope registry.
+///
+/// The order is stable and is used for authorization-time normalization.
+pub(crate) fn oauth_scopes_supported() -> &'static [&'static str] {
+    OAUTH_SCOPES_SUPPORTED
+}
+
+/// Normalize authorize-time OAuth scopes against a registered client's allowed
+/// scopes and the global OAuth scope registry.
+///
+/// If `requested` is absent or ASCII-whitespace-only, default to the
+/// intersection of `client_allowed` and the global OAuth scope registry. When
+/// `requested` is present, every requested scope must be both globally
+/// supported and allowed by the client. Output is deduplicated and ordered by
+/// the global registry.
+#[allow(dead_code)]
+pub(crate) fn normalize_oauth_scopes(
+    requested: Option<&str>,
+    client_allowed: &str,
+) -> Result<String, OAuthAuthorizeError> {
+    let client_allowed: std::collections::HashSet<&str> =
+        client_allowed.split_ascii_whitespace().collect();
+
+    let normalized = match requested {
+        Some(raw) if raw.split_ascii_whitespace().next().is_some() => {
+            let mut requested_scopes = std::collections::HashSet::new();
+            for scope in raw.split_ascii_whitespace() {
+                if !oauth_scopes_supported().contains(&scope) || !client_allowed.contains(scope) {
+                    return Err(OAuthAuthorizeError::InvalidScope("invalid scope"));
+                }
+                requested_scopes.insert(scope);
+            }
+
+            oauth_scopes_supported()
+                .iter()
+                .copied()
+                .filter(|scope| requested_scopes.contains(scope))
+                .collect::<Vec<_>>()
+        }
+        _ => oauth_scopes_supported()
+            .iter()
+            .copied()
+            .filter(|scope| client_allowed.contains(scope))
+            .collect::<Vec<_>>(),
+    };
+
+    if normalized.is_empty() {
+        return Err(OAuthAuthorizeError::InvalidScope("empty scope"));
+    }
+
+    Ok(normalized.join(" "))
+}
+
 /// Return protected resource metadata (RFC 9728 §3.1).
 ///
 /// This is a **public** endpoint — no authentication required. Returns 404
@@ -1008,7 +1153,7 @@ pub(crate) async fn oauth_metadata(depot: &mut Depot, res: &mut Response) {
         "resource": resource,
         "authorization_servers": [resource],
         "bearer_methods_supported": ["header"],
-        "scopes_supported": OAUTH_SCOPES_SUPPORTED,
+        "scopes_supported": oauth_scopes_supported(),
         "resource_name": "WebCodex",
     });
 
@@ -1074,6 +1219,191 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let db = crate::Database::open(&tmp.path().join("oauth.db")).unwrap();
         (tmp, Arc::new(db))
+    }
+
+    fn authorize_query_without(missing: &str) -> String {
+        [
+            ("response_type", "code"),
+            ("client_id", "client-1"),
+            ("redirect_uri", "https://client.example/cb"),
+            ("scope", "runtime:read"),
+            ("state", "keep+this value"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+        ]
+        .into_iter()
+        .filter(|(key, _)| *key != missing)
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                urlencoding::encode(key),
+                urlencoding::encode(value)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&")
+    }
+
+    fn valid_authorize_query() -> String {
+        authorize_query_without("")
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_defaults_to_client_global_intersection() {
+        let normalized =
+            normalize_oauth_scopes(None, "project:write runtime:read agent:poll admin").unwrap();
+
+        assert_eq!(normalized, "runtime:read project:write");
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_default_rejects_empty_intersection() {
+        let err = normalize_oauth_scopes(None, "agent:poll admin unknown").unwrap_err();
+
+        assert_eq!(err, OAuthAuthorizeError::InvalidScope("empty scope"));
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_requested_subset_success() {
+        let normalized = normalize_oauth_scopes(
+            Some("project:write runtime:read"),
+            "runtime:read project:read project:write",
+        )
+        .unwrap();
+
+        assert_eq!(normalized, "runtime:read project:write");
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_deduplicates_and_orders() {
+        let normalized = normalize_oauth_scopes(
+            Some("project:write runtime:read runtime:read"),
+            "runtime:read project:read project:write",
+        )
+        .unwrap();
+
+        assert_eq!(normalized, "runtime:read project:write");
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_rejects_unknown_scope() {
+        let err = normalize_oauth_scopes(Some("unknown"), "runtime:read unknown").unwrap_err();
+
+        assert_eq!(err, OAuthAuthorizeError::InvalidScope("invalid scope"));
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_rejects_scope_not_allowed_by_client() {
+        let err = normalize_oauth_scopes(Some("runtime:read"), "project:read").unwrap_err();
+
+        assert_eq!(err, OAuthAuthorizeError::InvalidScope("invalid scope"));
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_rejects_agent_scope() {
+        let err = normalize_oauth_scopes(Some("agent:poll"), "agent:poll").unwrap_err();
+
+        assert_eq!(err, OAuthAuthorizeError::InvalidScope("invalid scope"));
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_rejects_admin_scope() {
+        let err = normalize_oauth_scopes(Some("admin"), "admin").unwrap_err();
+
+        assert_eq!(err, OAuthAuthorizeError::InvalidScope("invalid scope"));
+    }
+
+    #[test]
+    fn normalize_oauth_scopes_treats_empty_requested_as_default() {
+        let normalized =
+            normalize_oauth_scopes(Some(" \t\n"), "project:write runtime:read admin").unwrap();
+
+        assert_eq!(normalized, "runtime:read project:write");
+    }
+
+    #[test]
+    fn parse_authorize_query_requires_response_type() {
+        let err = parse_authorize_query(&authorize_query_without("response_type")).unwrap_err();
+
+        assert_eq!(
+            err,
+            OAuthAuthorizeError::InvalidRequest("missing response_type")
+        );
+    }
+
+    #[test]
+    fn parse_authorize_query_requires_client_id() {
+        let err = parse_authorize_query(&authorize_query_without("client_id")).unwrap_err();
+
+        assert_eq!(
+            err,
+            OAuthAuthorizeError::InvalidRequest("missing client_id")
+        );
+    }
+
+    #[test]
+    fn parse_authorize_query_requires_redirect_uri() {
+        let err = parse_authorize_query(&authorize_query_without("redirect_uri")).unwrap_err();
+
+        assert_eq!(
+            err,
+            OAuthAuthorizeError::InvalidRequest("missing redirect_uri")
+        );
+    }
+
+    #[test]
+    fn parse_authorize_query_requires_code_challenge() {
+        let err = parse_authorize_query(&authorize_query_without("code_challenge")).unwrap_err();
+
+        assert_eq!(
+            err,
+            OAuthAuthorizeError::InvalidRequest("missing code_challenge")
+        );
+    }
+
+    #[test]
+    fn parse_authorize_query_requires_code_challenge_method() {
+        let err =
+            parse_authorize_query(&authorize_query_without("code_challenge_method")).unwrap_err();
+
+        assert_eq!(
+            err,
+            OAuthAuthorizeError::InvalidRequest("missing code_challenge_method")
+        );
+    }
+
+    #[test]
+    fn parse_authorize_query_preserves_state() {
+        let parsed = parse_authorize_query(&valid_authorize_query()).unwrap();
+
+        assert_eq!(parsed.state.as_deref(), Some("keep+this value"));
+    }
+
+    #[test]
+    fn parse_authorize_query_keeps_resource_for_later_rejection() {
+        let query = format!(
+            "{}&resource={}",
+            valid_authorize_query(),
+            urlencoding::encode("https://api.example/resource")
+        );
+
+        let parsed = parse_authorize_query(&query).unwrap();
+
+        assert_eq!(
+            parsed.resource.as_deref(),
+            Some("https://api.example/resource")
+        );
+    }
+
+    #[test]
+    fn parse_authorize_query_rejects_duplicate_parameters() {
+        let query = format!("{}&client_id=client-2", valid_authorize_query());
+        let err = parse_authorize_query(&query).unwrap_err();
+
+        assert_eq!(
+            err,
+            OAuthAuthorizeError::InvalidRequest("duplicate parameter")
+        );
     }
 
     fn seed_user(db: &crate::Database, username: &str) -> UserRecord {

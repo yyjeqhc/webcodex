@@ -2,12 +2,34 @@
 
 ## Status
 
-Phase 2e-0 design only. `/oauth/authorize` is not implemented yet.
+Phase 2e-1a helper groundwork. `/oauth/authorize` is not implemented yet.
 
 This document is the implementation contract for Phase 2e-1. It describes the
 request contract, state machine, security invariants, storage shape, and test
-plan for the future authorization endpoint without adding the route in this
+plan for the future authorization endpoint. Phase 2e-1a adds only internal
+request parsing, authorization error, OAuth scope registry, and scope
+normalization helpers plus unit tests; it does not add the route in this
 phase.
+
+Implemented in Phase 2e-1a:
+
+- Internal `OAuthAuthorizeRequest` and `OAuthAuthorizeError` helpers.
+- Pure `parse_authorize_query()` helper with required-parameter and duplicate
+  known-parameter checks.
+- Reusable global OAuth scope registry helper used by protected resource
+  metadata.
+- `normalize_oauth_scopes()` with canonical ordering, deduplication, default
+  client/global intersection, and explicit exclusion of `agent:*` and `admin`
+  from OAuth delegation.
+
+Still not implemented:
+
+- `GET /oauth/authorize` route mounting.
+- Authorization code generation or insertion into
+  `oauth_authorization_codes`.
+- Authorization server metadata
+  (`/.well-known/oauth-authorization-server` or
+  `/.well-known/openid-configuration`).
 
 ## Goals
 

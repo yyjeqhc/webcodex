@@ -3739,6 +3739,10 @@ async fn run_doctor(opts: DoctorOptions) -> Result<(String, bool), String> {
     let user_token = read_optional_token(&opts.user_token_file, "--user-token-file")?;
     let agent_token = read_optional_token(&opts.agent_token_file, "--agent-token-file")?;
     let preferred_token = user_token.as_deref().or(general_token.as_deref());
+    let local_build = local_cli_build_metadata();
+    if opts.server_url.is_none() || preferred_token.is_none() {
+        checks.push(doctor_revision_check(&local_build, None));
+    }
 
     if let Some(server_url) = opts.server_url.as_deref() {
         match http_post_json_status(
@@ -3770,6 +3774,10 @@ async fn run_doctor(opts: DoctorOptions) -> Result<(String, bool), String> {
                         online.map(|v| v.to_string()).unwrap_or_else(|| "unknown".to_string())
                     ),
                 ));
+                if preferred_token.is_some() {
+                    let remote_build = runtime_build_metadata(Some(output));
+                    checks.push(doctor_revision_check(&local_build, Some(&remote_build)));
+                }
             }
             Ok((status, content_type, Some(_))) => checks.push(DoctorCheck::fail(
                 "runtime status",
@@ -4411,6 +4419,163 @@ struct HttpStatusSummary {
     output: Option<Value>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeBuildMetadata {
+    version: Option<String>,
+    git_commit: Option<String>,
+    git_dirty: Option<bool>,
+    built_at: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum RevisionComparison {
+    Match,
+    Mismatch { local: String, remote: String },
+    Unknown { reason: String },
+}
+
+fn known_build_commit(value: Option<&str>) -> Option<String> {
+    let value = value?.trim();
+    if value.is_empty() || value.eq_ignore_ascii_case("unknown") {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+fn compare_build_commits(local: Option<&str>, remote: Option<&str>) -> RevisionComparison {
+    let local = match known_build_commit(local) {
+        Some(commit) => commit,
+        None => {
+            return RevisionComparison::Unknown {
+                reason: "local CLI did not report build.git_commit".to_string(),
+            }
+        }
+    };
+    let remote = match known_build_commit(remote) {
+        Some(commit) => commit,
+        None => {
+            return RevisionComparison::Unknown {
+                reason: "server runtime did not report build.git_commit".to_string(),
+            }
+        }
+    };
+    if local == remote || local.starts_with(&remote) || remote.starts_with(&local) {
+        RevisionComparison::Match
+    } else {
+        RevisionComparison::Mismatch { local, remote }
+    }
+}
+
+fn runtime_build_metadata(output: Option<&Value>) -> RuntimeBuildMetadata {
+    let version = output
+        .and_then(|v| v.get("version"))
+        .and_then(Value::as_str)
+        .map(str::to_string);
+    let build = output.and_then(|v| v.get("build"));
+    RuntimeBuildMetadata {
+        version,
+        git_commit: build
+            .and_then(|v| v.get("git_commit"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        git_dirty: build
+            .and_then(|v| v.get("git_dirty"))
+            .and_then(Value::as_bool),
+        built_at: build
+            .and_then(|v| v.get("built_at"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+    }
+}
+
+fn local_cli_build_metadata() -> RuntimeBuildMetadata {
+    let info = build_info::current();
+    RuntimeBuildMetadata {
+        version: Some(info.version.to_string()),
+        git_commit: info.git_commit.map(str::to_string),
+        git_dirty: info.git_dirty,
+        built_at: info.built_at.map(str::to_string),
+    }
+}
+
+fn render_build_metadata_block(label: &str, build: &RuntimeBuildMetadata) -> String {
+    let mut out = String::new();
+    out.push_str(label);
+    out.push_str(":\n");
+    out.push_str(&format!(
+        "  version:    {}\n",
+        build.version.as_deref().unwrap_or("unknown")
+    ));
+    out.push_str(&format!(
+        "  commit:     {}\n",
+        build.git_commit.as_deref().unwrap_or("unknown")
+    ));
+    out.push_str(&format!(
+        "  dirty:      {}\n",
+        build
+            .git_dirty
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    out.push_str(&format!(
+        "  built_at:   {}\n",
+        build.built_at.as_deref().unwrap_or("unknown")
+    ));
+    out
+}
+
+fn server_status_revision_check(comparison: &RevisionComparison) -> String {
+    match comparison {
+        RevisionComparison::Match => {
+            "ok: local CLI and server runtime are built from the same commit".to_string()
+        }
+        RevisionComparison::Mismatch { local, remote } => format!(
+            "warning: local CLI commit {} differs from server runtime commit {}; deploy/update one side before debugging old behavior",
+            local, remote
+        ),
+        RevisionComparison::Unknown { reason } => format!(
+            "unknown: {}; server may be older than build metadata support",
+            reason
+        ),
+    }
+}
+
+fn doctor_revision_check(
+    local: &RuntimeBuildMetadata,
+    remote: Option<&RuntimeBuildMetadata>,
+) -> DoctorCheck {
+    let Some(remote) = remote else {
+        return DoctorCheck::warn(
+            "cli/server revision",
+            "not checked; pass --server-url with --user-token-file or --token-file to read runtime_status",
+        );
+    };
+    match compare_build_commits(local.git_commit.as_deref(), remote.git_commit.as_deref()) {
+        RevisionComparison::Match => DoctorCheck::pass(
+            "cli/server revision",
+            format!(
+                "local CLI and server runtime commit match ({})",
+                local.git_commit.as_deref().unwrap_or("unknown")
+            ),
+        ),
+        RevisionComparison::Mismatch { local, remote } => DoctorCheck::warn(
+            "cli/server revision",
+            format!(
+                "local CLI commit {} differs from server runtime commit {}; deploy/update one side before debugging old behavior",
+                local, remote
+            ),
+        ),
+        RevisionComparison::Unknown { reason } => DoctorCheck::warn(
+            "cli/server revision",
+            format!(
+                "{}; server may be older than build metadata support",
+                reason
+            ),
+        ),
+    }
+}
+
 async fn fetch_runtime_status(url: &str, token: Option<&str>) -> Result<HttpStatusSummary, String> {
     let endpoint = format!("{}/api/runtime/status", url.trim_end_matches('/'));
     let client = reqwest::Client::builder()
@@ -4760,6 +4925,12 @@ async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> 
     let agents_online_count = output
         .and_then(|v| v.pointer("/agents/online_count"))
         .and_then(Value::as_u64);
+    let server_build = runtime_build_metadata(output);
+    let local_build = local_cli_build_metadata();
+    let revision_comparison = compare_build_commits(
+        local_build.git_commit.as_deref(),
+        server_build.git_commit.as_deref(),
+    );
     if opts.json {
         let summary = json!({
             "http_reachable": http.reachable,
@@ -4778,6 +4949,19 @@ async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> 
             "agents": {
                 "online_count": agents_online_count,
             },
+            "server_build": {
+                "version": server_build.version,
+                "git_commit": server_build.git_commit,
+                "git_dirty": server_build.git_dirty,
+                "built_at": server_build.built_at,
+            },
+            "local_cli_build": {
+                "version": local_build.version,
+                "git_commit": local_build.git_commit,
+                "git_dirty": local_build.git_dirty,
+                "built_at": local_build.built_at,
+            },
+            "revision_check": server_status_revision_check(&revision_comparison),
         });
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }
@@ -4829,6 +5013,19 @@ async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> 
         agents_online_count
             .map(|v| v.to_string())
             .unwrap_or_else(|| "unknown".to_string())
+    ));
+    out.push('\n');
+    out.push_str(&render_build_metadata_block("Server build", &server_build));
+    out.push('\n');
+    out.push_str(&render_build_metadata_block(
+        "Local CLI build",
+        &local_build,
+    ));
+    out.push('\n');
+    out.push_str("Revision check:\n");
+    out.push_str(&format!(
+        "  {}\n",
+        server_status_revision_check(&revision_comparison)
     ));
     Ok(out)
 }
@@ -5020,6 +5217,157 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn build_metadata(commit: Option<&str>) -> RuntimeBuildMetadata {
+        RuntimeBuildMetadata {
+            version: Some("0.1.0".to_string()),
+            git_commit: commit.map(str::to_string),
+            git_dirty: Some(false),
+            built_at: Some("1782739890".to_string()),
+        }
+    }
+
+    #[test]
+    fn build_revision_compare_matches_same_commit() {
+        assert_eq!(
+            compare_build_commits(Some("81f322d5b580"), Some("81f322d5b580")),
+            RevisionComparison::Match
+        );
+    }
+
+    #[test]
+    fn build_revision_compare_matches_prefix_commit() {
+        assert_eq!(
+            compare_build_commits(Some("81f322d5b580"), Some("81f322d")),
+            RevisionComparison::Match
+        );
+        assert_eq!(
+            compare_build_commits(Some("81f322d"), Some("81f322d5b580")),
+            RevisionComparison::Match
+        );
+    }
+
+    #[test]
+    fn build_revision_compare_reports_mismatch() {
+        assert_eq!(
+            compare_build_commits(Some("81f322d5b580"), Some("fd156ba92fc7")),
+            RevisionComparison::Mismatch {
+                local: "81f322d5b580".to_string(),
+                remote: "fd156ba92fc7".to_string(),
+            }
+        );
+    }
+
+    #[test]
+    fn build_revision_compare_reports_unknown() {
+        assert!(matches!(
+            compare_build_commits(Some("81f322d5b580"), Some("unknown")),
+            RevisionComparison::Unknown { reason } if reason.contains("server runtime did not report")
+        ));
+        assert!(matches!(
+            compare_build_commits(Some(""), Some("81f322d5b580")),
+            RevisionComparison::Unknown { reason } if reason.contains("local CLI did not report")
+        ));
+    }
+
+    #[test]
+    fn server_status_includes_remote_build_metadata() {
+        let output = json!({
+            "version": "0.1.0",
+            "build": {
+                "git_commit": "81f322d5b580",
+                "git_dirty": false,
+                "built_at": "1782739890"
+            }
+        });
+        let build = runtime_build_metadata(Some(&output));
+        let rendered = render_build_metadata_block("Server build", &build);
+        assert!(rendered.contains("Server build:"));
+        assert!(rendered.contains("version:    0.1.0"));
+        assert!(rendered.contains("commit:     81f322d5b580"));
+        assert!(rendered.contains("dirty:      false"));
+        assert!(rendered.contains("built_at:   1782739890"));
+    }
+
+    #[test]
+    fn server_status_reports_revision_match() {
+        let local = build_metadata(Some("81f322d5b580"));
+        let remote = build_metadata(Some("81f322d"));
+        let comparison =
+            compare_build_commits(local.git_commit.as_deref(), remote.git_commit.as_deref());
+        assert_eq!(comparison, RevisionComparison::Match);
+        assert!(server_status_revision_check(&comparison).starts_with("ok:"));
+    }
+
+    #[test]
+    fn server_status_reports_revision_mismatch() {
+        let comparison = compare_build_commits(Some("81f322d5b580"), Some("fd156ba92fc7"));
+        let detail = server_status_revision_check(&comparison);
+        assert!(detail.starts_with("warning:"));
+        assert!(detail.contains("local CLI commit 81f322d5b580"));
+        assert!(detail.contains("server runtime commit fd156ba92fc7"));
+        assert!(detail.contains("deploy/update one side before debugging old behavior"));
+    }
+
+    #[test]
+    fn server_status_handles_missing_remote_build_metadata() {
+        let output = json!({"version":"0.1.0"});
+        let remote = runtime_build_metadata(Some(&output));
+        let comparison = compare_build_commits(Some("81f322d5b580"), remote.git_commit.as_deref());
+        let detail = server_status_revision_check(&comparison);
+        assert!(detail.starts_with("unknown:"));
+        assert!(detail.contains("server runtime did not report build.git_commit"));
+        assert!(detail.contains("server may be older than build metadata support"));
+    }
+
+    #[test]
+    fn doctor_revision_check_passes_when_commits_match() {
+        let local = build_metadata(Some("81f322d5b580"));
+        let remote = build_metadata(Some("81f322d"));
+        let check = doctor_revision_check(&local, Some(&remote));
+        assert_eq!(check.status, "PASS");
+        assert_eq!(check.name, "cli/server revision");
+        assert!(check
+            .detail
+            .contains("local CLI and server runtime commit match"));
+    }
+
+    #[test]
+    fn doctor_revision_check_warns_when_commits_differ() {
+        let local = build_metadata(Some("81f322d5b580"));
+        let remote = build_metadata(Some("fd156ba92fc7"));
+        let check = doctor_revision_check(&local, Some(&remote));
+        assert_eq!(check.status, "WARN");
+        assert!(check.detail.contains("local CLI commit 81f322d5b580"));
+        assert!(check.detail.contains("server runtime commit fd156ba92fc7"));
+        assert!(check
+            .detail
+            .contains("deploy/update one side before debugging old behavior"));
+    }
+
+    #[test]
+    fn doctor_revision_check_warns_when_server_build_missing() {
+        let local = build_metadata(Some("81f322d5b580"));
+        let remote = build_metadata(None);
+        let check = doctor_revision_check(&local, Some(&remote));
+        assert_eq!(check.status, "WARN");
+        assert!(check
+            .detail
+            .contains("server runtime did not report build.git_commit"));
+        assert!(check
+            .detail
+            .contains("server may be older than build metadata support"));
+    }
+
+    #[test]
+    fn doctor_revision_check_skips_without_runtime_status_credentials() {
+        let local = build_metadata(Some("81f322d5b580"));
+        let check = doctor_revision_check(&local, None);
+        assert_eq!(check.status, "WARN");
+        assert_eq!(check.name, "cli/server revision");
+        assert!(check.detail.contains("not checked; pass --server-url"));
+        assert!(check.detail.contains("--user-token-file or --token-file"));
     }
 
     #[test]

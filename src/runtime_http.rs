@@ -2991,6 +2991,27 @@ mod tests {
     }
 
     #[test]
+    fn extract_tool_call_collects_flattened_anchor_edit_fields() {
+        let old_key = concat!("old_", "text");
+        let guard_key = concat!("expected_old_", "sha256");
+        let mut body = serde_json::Map::new();
+        body.insert("tool".to_string(), json!("replace_exact_block"));
+        body.insert("project".to_string(), json!("demo"));
+        body.insert("path".to_string(), json!("x.tmp"));
+        body.insert(old_key.to_string(), json!("old\n"));
+        body.insert("new_text".to_string(), json!("new\n"));
+        body.insert(guard_key.to_string(), json!("whole-file-sha"));
+        let (tool, params) = extract_tool_call(&Value::Object(body)).unwrap();
+
+        assert_eq!(tool, "replace_exact_block");
+        assert_eq!(params["project"], "demo");
+        assert_eq!(params["path"], "x.tmp");
+        assert_eq!(params[old_key], "old\n");
+        assert_eq!(params["new_text"], "new\n");
+        assert_eq!(params[guard_key], "whole-file-sha");
+    }
+
+    #[test]
     fn extract_tool_call_no_argument_tool_keeps_null_params() {
         let (tool, params) = extract_tool_call(&json!({"tool": "list_tools"})).unwrap();
 

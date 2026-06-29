@@ -1063,6 +1063,10 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
+                "old_text": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
                 "new_text": {
                     "type": "string",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
@@ -2495,6 +2499,7 @@ mod tests {
             "end_line",
             "line",
             "text",
+            "old_text",
             "new_text",
             "content_base64",
             "mime_type",

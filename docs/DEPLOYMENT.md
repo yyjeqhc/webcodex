@@ -20,7 +20,7 @@ WEBCODEX_ADDR=127.0.0.1:8080
 WEBCODEX_DATA=/var/lib/webcodex
 ```
 
-`WEBCODEX_PUBLIC_URL=https://your-domain.example` is optional at server init time. Configure it when you have the public HTTPS URL you want runtime status/OpenAPI to report.
+`WEBCODEX_PUBLIC_URL=https://your-domain.example` is optional at `server init` time because you may not know the final HTTPS domain yet. Configure it before connecting GPT Actions, MCP clients, remote agents, or any user-facing OpenAPI flow; otherwise runtime status and OpenAPI server URLs may point at the wrong address.
 
 Use the bootstrap token only for initial setup/admin work. Day-to-day GPT Actions and MCP calls should use a user API token. Agents should use agent tokens.
 
@@ -43,7 +43,15 @@ sudo webcodex-cli server init \
   --env-file /etc/webcodex/webcodex.env
 ```
 
-`server init` creates only `WEBCODEX_TOKEN`. It does not create `wc_pat_...` user API tokens or `wc_agent_...` agent tokens.
+`server init` creates the env file and writes the bootstrap admin token into `WEBCODEX_TOKEN`. It also writes the server listen address and data directory settings. It does not create `wc_pat_...` user API tokens or `wc_agent_...` agent tokens.
+
+For one-off admin CLI commands, either pass `--env-file /etc/webcodex/webcodex.env` when the command supports it, pass `--token "$WEBCODEX_TOKEN"` explicitly, or load the env file into the current shell:
+
+```bash
+set -a
+. /etc/webcodex/webcodex.env
+set +a
+```
 
 Install and start the systemd service:
 
@@ -96,7 +104,7 @@ Client:
 
 ## Account credential onboarding flow
 
-For deployments that do not use pairing, use the account credential flow. The sg4 smoke-test commands are in [smoke-test-sg4.md](smoke-test-sg4.md); replace `https://sg4.yyjeqhc.cn` with your own public URL.
+For deployments that do not use pairing, use the account credential flow below. Environment-specific smoke records are kept separately in [smoke-test-sg4.md](smoke-test-sg4.md); the commands in this section use `https://your-domain.example` placeholders.
 
 1. Start the server with `WEBCODEX_TOKEN` in the server env file. This is the bootstrap/root/admin credential only.
 2. Create a user with `webcodex-cli users create --issue-credential` and give the returned `wc_acct_xxx` to that user once. The binary help for this path uses `users create` plus `--server-url`, while `token create-local` and `agent-token create-local` use `--server`.
@@ -166,7 +174,52 @@ The static console bundle contains no secrets. Runtime data is fetched by the br
 
 ## Public HTTPS URL
 
-GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup.
+GPT Actions require a public HTTPS URL. WebCodex CLI does not automate reverse proxy or tunnel setup, so configure one before importing `/openapi.json` into ChatGPT.
+
+Set the same public URL in the server env file:
+
+```text
+WEBCODEX_PUBLIC_URL=https://your-domain.example
+```
+
+Minimal Nginx example:
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.example;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.example;
+
+    ssl_certificate /etc/letsencrypt/live/your-domain.example/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.example/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location /api/agents/ws {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+    }
+}
+```
+
+Keep WebCodex listening on `127.0.0.1:8080` behind the proxy. The QUIC agent transport is separate from this HTTPS path; see [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) before opening UDP 8443.
 
 ## Agent configuration
 

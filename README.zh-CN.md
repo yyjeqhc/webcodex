@@ -71,7 +71,7 @@ registered project directory
 
 ## 快速开始
 
-这是从零到可用私有项目 runtime 的最短路径。生产部署细节、service 文件、反向代理配置以及完整 sg4 smoke 记录见 [docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md) / [English](docs/DEPLOYMENT.md) 和 [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md)。
+这个本地 demo 在一台机器上运行，不需要 `sudo`、`/etc`、systemd、HTTPS、Nginx 或 QUIC，适合第一次评估。真正部署服务、HTTPS、远程 agent 和 GPT Actions 时，请继续看 [docs/QUICK_START.zh-CN.md](docs/QUICK_START.zh-CN.md) 和 [docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md)。
 
 ### 1. 安装
 
@@ -81,24 +81,37 @@ npm install -g @yyjeqhc/webcodex
 
 也可以从项目 release artifacts 下载平台二进制文件。
 
-### 2. 启动服务器
+### 2. 启动本地 server
 
 ```bash
+mkdir -p .webcodex/data .webcodex/projects.d
+
 webcodex-cli server init \
   --listen 127.0.0.1:8080 \
-  --data-dir /var/lib/webcodex \
-  --env-file /etc/webcodex/webcodex.env
+  --data-dir "$PWD/.webcodex/data" \
+  --env-file "$PWD/.webcodex/server.env" \
+  --public-url http://127.0.0.1:8080
 
-WEBCODEX_ENV_FILE=/etc/webcodex/webcodex.env webcodex
+set -a
+. "$PWD/.webcodex/server.env"
+set +a
+
+WEBCODEX_ENV_FILE="$PWD/.webcodex/server.env" webcodex
 ```
 
-在连接 GPT Actions 或远程 agent 之前，请先把服务器放到你自己的 HTTPS 域名后面。
+保持这个 server 进程运行。`server init` 会创建 `.webcodex/server.env`，其中包含 bootstrap/admin `WEBCODEX_TOKEN`。不要把这个 token 用于 GPT Actions、MCP 或 agent。
 
-### 3. 创建用户和账户凭据
+### 3. 创建本地用户、PAT 和 agent token
+
+在同一目录下另开一个终端：
 
 ```bash
+set -a
+. "$PWD/.webcodex/server.env"
+set +a
+
 webcodex-cli users create \
-  --server-url https://your-domain.example \
+  --server-url http://127.0.0.1:8080 \
   --token "$WEBCODEX_TOKEN" \
   --username alice \
   --display-name "Alice" \
@@ -106,88 +119,75 @@ webcodex-cli users create \
   --issue-credential
 ```
 
-这会签发一次性的 `wc_acct_xxx` 账户凭据，用于本地创建 token。它不是 GPT/MCP token，也不是 agent token。
-
-### 4. 用户为 GPT Actions、MCP 和 runtime API 创建 PAT
+复制返回的 `wc_acct_xxx` account credential，然后创建 PAT 和 agent token：
 
 ```bash
+export WEBCODEX_ACCOUNT_CREDENTIAL=<上一条命令返回的 wc_acct_xxx>
+
 webcodex-cli token create-local \
-  --server https://your-domain.example \
+  --server http://127.0.0.1:8080 \
   --user alice \
   --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
-  --name gpt-action \
+  --name local-demo \
   --scopes runtime:read,project:read,project:write,job:run
-```
 
-把生成的 `wc_pat_xxx` 作为 GPT Actions 和 MCP 客户端中的 bearer/API-key 值。
-
-### 5. 用户创建 agent token
-
-```bash
 webcodex-cli agent-token create-local \
-  --server https://your-domain.example \
+  --server http://127.0.0.1:8080 \
   --user alice \
   --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
-  --client-id alice-laptop \
-  --name alice-laptop
+  --client-id local-dev \
+  --name local-dev
 ```
 
-生成的 `wc_agent_xxx` 只用于 `webcodex-agent`。
+把返回的 `wc_pat_xxx` 保存为 `WEBCODEX_PAT`，把返回的 `wc_agent_xxx` 保存为 `WEBCODEX_AGENT_TOKEN`。
 
-### 6. 初始化 agent
+### 4. 注册当前 repo 并启动本地 agent
 
 ```bash
+export WEBCODEX_AGENT_TOKEN=<上一步返回的 wc_agent_xxx>
+
 webcodex-agent init \
-  --server-url https://your-domain.example \
+  --server-url http://127.0.0.1:8080 \
   --token "$WEBCODEX_AGENT_TOKEN" \
-  --client-id alice-laptop \
+  --client-id local-dev \
   --owner alice \
-  --display-name "Alice Laptop" \
-  --transport websocket \
-  --projects-dir ~/.config/webcodex/projects.d \
-  --allowed-root ~/git \
-  --output ~/.config/webcodex/agent.toml \
+  --display-name "Local Dev" \
+  --transport auto \
+  --projects-dir "$PWD/.webcodex/projects.d" \
+  --allowed-root "$PWD" \
+  --output "$PWD/.webcodex/agent.toml" \
   --overwrite
-```
 
-### 7. 注册项目
-
-在 agent 机器上创建 `~/.config/webcodex/projects.d/my-repo.toml`：
-
-```toml
-id = "my-repo"
-path = "/home/alice/git/my-repo"
-name = "My Repo"
+cat > "$PWD/.webcodex/projects.d/webcodex.toml" <<EOF
+id = "webcodex"
+path = "$PWD"
+name = "WebCodex"
 kind = "repo"
 allow_patch = true
 
 [hooks]
 status = ["git status --short"]
-check = ["cargo check --all-targets"]
+EOF
+
+webcodex-agent --config "$PWD/.webcodex/agent.toml"
 ```
 
-然后启动 agent：
+`auto` 只会在配置了 `[quic]` 时尝试 QUIC。这个本地 demo 没有 `[quic]` section，因此 agent 会从 WebSocket fallback 启动。
+
+### 5. 测试 runtime API
+
+第三个终端中运行：
 
 ```bash
-webcodex-agent --config ~/.config/webcodex/agent.toml
-```
+export WEBCODEX_PAT=<第 3 步返回的 wc_pat_xxx>
 
-runtime 项目 id 使用这种格式：
-
-```text
-agent:<client_id>:<project_id>
-```
-
-例如：`agent:alice-laptop:my-repo`。
-
-### 8. 测试 runtime tool list
-
-```bash
 curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
   -H 'Content-Type: application/json' \
-  https://your-domain.example/api/tools/list \
+  http://127.0.0.1:8080/api/tools/list \
   -d '{}'
 ```
+
+这个 demo 的 project id 是 `agent:local-dev:webcodex`。service 模式、no-service 后台模式、HTTPS、GPT Actions、MCP 和 QUIC 见 [docs/QUICK_START.zh-CN.md](docs/QUICK_START.zh-CN.md) 和 [docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md)。
 
 ## 创建自己的 GPT
 

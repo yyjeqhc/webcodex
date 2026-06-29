@@ -7,7 +7,7 @@
 ## 推荐保留的主文档
 
 1. [../README.md](../README.md) / [../README.zh-CN.md](../README.zh-CN.md) — 产品概览、GPT/MCP 入口、快速开始、凭据摘要和文档地图。
-2. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) — 第一次 server 部署、第一次 client enrollment、service 模式、非 service 后台模式，以及 PATH/shell-profile 处理。
+2. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) — 第一次 server 部署、第一次 client enrollment、service 模式、非 service 前台/后台模式，以及 PATH/shell-profile 处理。
 3. [DEPLOYMENT.md](DEPLOYMENT.md) / [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) — 生产部署、server bootstrap、agent service、账户凭据、enrollment 和运维流程。
 4. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) — 创建 GPT Action、导入 OpenAPI、配置 `wc_pat_xxx` 认证并使用 runtime tools。
 5. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) — MCP endpoint、`wc_pat_xxx` 认证、客户端配置示例和排障。

@@ -2,7 +2,14 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-这份文档给出第一次部署 WebCodex server 和第一次部署 client agent 的最短可用路径。它比 README 更偏操作，比 [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) 更短。
+这份文档是 README 中无 sudo 本地 demo 之后的第一次可部署路径。它同时覆盖长期运行的 service 模式和不使用 service 的 agent 模式，但比 [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) 更短。
+
+| 需求 | 使用 |
+| --- | --- |
+| 单机本地评估，不需要 `sudo`、HTTPS 或 service | README 快速开始 |
+| 第一次部署 server 和长期运行的 systemd agent | 下方第 1-3 节 |
+| 临时 agent、容器或没有 systemd 的机器 | 下方第 4 节 |
+| 生产加固、Nginx、QUIC、GPT Actions、MCP 细节 | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) |
 
 下面的命令形态已对照当前 `webcodex-cli`、`webcodex-agent` 和 `webcodex` 的二进制 help 输出检查。
 
@@ -34,7 +41,15 @@ sudo webcodex-cli server init \
   --public-url https://your-domain.example
 ```
 
-这只会写入 bootstrap/admin `WEBCODEX_TOKEN`，不会创建 `wc_pat_xxx` user token 或 `wc_agent_xxx` agent token。
+这会创建 `/etc/webcodex/webcodex.env`，并写入 bootstrap/admin `WEBCODEX_TOKEN`、`WEBCODEX_ADDR`、`WEBCODEX_DATA` 和 `WEBCODEX_PUBLIC_URL`。它不会创建 `wc_pat_xxx` user token 或 `wc_agent_xxx` agent token。
+
+在同一个 shell 中运行 admin 命令时，命令支持的话优先使用 `--env-file /etc/webcodex/webcodex.env`；也可以先加载 env 文件：
+
+```bash
+set -a
+. /etc/webcodex/webcodex.env
+set +a
+```
 
 ### 1.2 放到 HTTPS 后面
 
@@ -44,7 +59,7 @@ sudo webcodex-cli server init \
 https://your-domain.example  ->  http://127.0.0.1:8080
 ```
 
-GPT Actions 和 MCP 需要公网 HTTPS URL。WebCodex CLI 不会自动配置 DNS、TLS、反向代理或 tunnel。
+GPT Actions 和 MCP 需要公网 HTTPS URL。WebCodex CLI 不会自动配置 DNS、TLS、反向代理或 tunnel。[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md#public-https-url) 中包含最小 Nginx 配置。
 
 ### 1.3 安装并启动 server service
 
@@ -87,7 +102,7 @@ webcodex-cli doctor --quic --server-only \
   --strict
 ```
 
-如果暂时不启用 QUIC，可以先用 WebSocket。agent 可使用 `--transport websocket` 或 `transport = "websocket"`。
+如果暂时不启用 QUIC，保留 `--transport auto` 且不添加 `[quic]` section；agent 会从 WebSocket fallback 启动，之后添加 `[quic]` section 后即可优先尝试 QUIC。
 
 ## 2. 邀请或 enroll 第一个客户端
 
@@ -217,9 +232,9 @@ webcodex-cli doctor --strict \
 
 只有替换已有 unit 时才给 `agent install-service` 加 `--overwrite`。
 
-## 4. 第一次客户端部署：不使用 service，后台进程模式
+## 4. 第一次客户端部署：不使用 service，前台或后台模式
 
-这个模式适合快速测试、容器、临时 client，或不能使用 systemd 的主机。长期生产 agent 更建议用 service 模式。
+这个模式适合快速测试、容器、临时 client，或不能使用 systemd 的主机。长期生产 agent 更建议用 service 模式；no-service 模式更方便观察日志和手动停止。
 
 ### 4.1 Enroll 到用户配置目录
 
@@ -252,22 +267,7 @@ EOF
 
 把 `path` 改成真实用户和仓库路径。
 
-### 4.2 配置后台启动环境
-
-为后台进程创建一个小的环境文件：
-
-```bash
-mkdir -p "$HOME/.config/webcodex" "$HOME/.local/state/webcodex"
-cat > "$HOME/.config/webcodex/agent.env" <<'EOF'
-WEBCODEX_AGENT_CONFIG=$HOME/.config/webcodex/agent.toml
-PATH=$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
-EOF
-chmod 600 "$HOME/.config/webcodex/agent.env"
-```
-
-这个环境只控制 `webcodex-agent` 后台进程如何启动。项目命令环境仍应配置在 `agent.toml` 的 `[shell.profiles.*]` 中。
-
-### 4.3 在 agent.toml 中添加 shell profile
+### 4.2 在 agent.toml 中添加 shell profile
 
 在 `$HOME/.config/webcodex/agent.toml` 中添加或调整：
 
@@ -286,15 +286,32 @@ CARGO_HOME = "/home/alice/.cargo"
 RUSTUP_HOME = "/home/alice/.rustup"
 ```
 
-`agent.toml` 中建议使用绝对路径，不要依赖 TOML 字符串中的 `$HOME` 展开。
+`agent.toml` 中建议使用绝对路径，不要依赖 TOML 字符串中的 `$HOME` 展开。项目命令环境应配置在 `[shell.profiles.*]` 中，而不是依赖交互 shell 的 `.bashrc`。
 
-### 4.4 后台启动
+### 4.3 前台启动，方便检查
+
+前台模式是最简单的 no-service 模式。它会直接打印日志，按 `Ctrl-C` 即可退出：
 
 ```bash
-set -a
-. "$HOME/.config/webcodex/agent.env"
-set +a
+webcodex-agent --config "$HOME/.config/webcodex/agent.toml"
+```
 
+另开一个终端检查状态：
+
+```bash
+webcodex-cli agent status \
+  --config "$HOME/.config/webcodex/agent.toml" \
+  --server-url https://your-domain.example \
+  --user-token-file "$HOME/.config/webcodex/webcodex-user-token" \
+  --agent-token-file "$HOME/.config/webcodex/webcodex-agent-token"
+```
+
+### 4.4 或使用 nohup 后台启动
+
+前台运行确认没问题后，如果希望关闭终端后 agent 继续运行，可以用：
+
+```bash
+mkdir -p "$HOME/.local/state/webcodex"
 nohup webcodex-agent --config "$HOME/.config/webcodex/agent.toml" \
   >> "$HOME/.local/state/webcodex/agent.log" 2>&1 &
 
@@ -340,7 +357,7 @@ curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
 | --- | --- | --- |
 | Server systemd service | 生产服务器 | 推荐。重启后自动恢复。 |
 | Agent systemd service | 长期运行的可信 client 或服务器侧 worker | 推荐用于稳定机器。注意配置 shell profiles，因为 systemd 不读 `.bashrc`。 |
-| Agent no-service background process | 临时 client、容器、smoke test 或无 systemd 主机 | 用 `nohup` 启动；保留 log 和 pid 文件；重启后需手动恢复。 |
+| Agent no-service 前台/后台模式 | 临时 client、容器、smoke test 或无 systemd 主机 | 先用前台模式观察日志；确认后可用 `nohup` 让它在终端关闭后继续运行。 |
 
 ## 7. 下一步文档
 

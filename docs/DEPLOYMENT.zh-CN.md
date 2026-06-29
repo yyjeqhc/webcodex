@@ -20,7 +20,7 @@ WEBCODEX_ADDR=127.0.0.1:8080
 WEBCODEX_DATA=/var/lib/webcodex
 ```
 
-`WEBCODEX_PUBLIC_URL=https://your-domain.example` 在 server init 阶段是可选的。拿到最终对外 HTTPS URL 后再配置它，用于 runtime status 和 OpenAPI 返回正确的 public URL。
+`WEBCODEX_PUBLIC_URL=https://your-domain.example` 在 `server init` 阶段是可选的，因为这时你可能还不知道最终 HTTPS 域名。但在连接 GPT Actions、MCP 客户端、远程 agent 或任何面向用户的 OpenAPI flow 之前必须配置它；否则 runtime status 和 OpenAPI server URL 可能会指向错误地址。
 
 `WEBCODEX_TOKEN` 只用于初始设置和管理操作。日常 GPT Actions 与 MCP 调用应使用用户 API token；agent 应使用 agent token。
 
@@ -43,7 +43,15 @@ sudo webcodex-cli server init \
   --env-file /etc/webcodex/webcodex.env
 ```
 
-`server init` 只创建 `WEBCODEX_TOKEN`。它不会创建 `wc_pat_...` 用户 API token，也不会创建 `wc_agent_...` agent token。
+`server init` 会创建 env 文件，并把 bootstrap admin token 写入 `WEBCODEX_TOKEN`。它也会写入 server listen address 和 data directory 设置。它不会创建 `wc_pat_...` 用户 API token，也不会创建 `wc_agent_...` agent token。
+
+运行一次性 admin CLI 命令时，可以在命令支持时传入 `--env-file /etc/webcodex/webcodex.env`，也可以显式传入 `--token "$WEBCODEX_TOKEN"`，或者先把 env 文件加载到当前 shell：
+
+```bash
+set -a
+. /etc/webcodex/webcodex.env
+set +a
+```
 
 安装并启动 systemd service：
 
@@ -96,7 +104,7 @@ Client：
 
 ## 账户凭据开通流程
 
-如果部署不使用 pairing，可以使用 account credential flow。sg4 smoke-test 命令见 [smoke-test-sg4.md](smoke-test-sg4.md)；把 `https://sg4.yyjeqhc.cn` 替换成你自己的 public URL。
+如果部署不使用 pairing，可以使用下面的 account credential flow。环境特定 smoke 记录单独放在 [smoke-test-sg4.md](smoke-test-sg4.md)；本节命令统一使用 `https://your-domain.example` 占位符。
 
 1. 使用 server env file 中的 `WEBCODEX_TOKEN` 启动服务器。它只是 bootstrap/root/admin 凭据。
 2. 管理员运行 `webcodex-cli users create --issue-credential` 创建用户，并把返回的 `wc_acct_xxx` 一次性发给该用户。这个路径的二进制帮助使用 `users create` 和 `--server-url`；`token create-local` 与 `agent-token create-local` 使用 `--server`。
@@ -166,7 +174,52 @@ https://your-domain.example/console
 
 ## Public HTTPS URL
 
-GPT Actions 需要 public HTTPS URL。WebCodex CLI 不会自动配置 reverse proxy 或 tunnel。
+GPT Actions 需要 public HTTPS URL。WebCodex CLI 不会自动配置 reverse proxy 或 tunnel，所以在把 `/openapi.json` 导入 ChatGPT 之前需要先配置好对外 HTTPS。
+
+在 server env 文件中设置同一个 public URL：
+
+```text
+WEBCODEX_PUBLIC_URL=https://your-domain.example
+```
+
+最小 Nginx 示例：
+
+```nginx
+server {
+    listen 80;
+    server_name your-domain.example;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name your-domain.example;
+
+    ssl_certificate /etc/letsencrypt/live/your-domain.example/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/your-domain.example/privkey.pem;
+
+    location / {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto https;
+    }
+
+    location /api/agents/ws {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto https;
+        proxy_read_timeout 3600s;
+    }
+}
+```
+
+建议让 WebCodex 继续在 proxy 后面监听 `127.0.0.1:8080`。QUIC agent transport 与这个 HTTPS path 是分开的；打开 UDP 8443 前请先看 [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md)。
 
 ## Agent 配置
 

@@ -71,7 +71,7 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 
 ## Quick start
 
-This is the shortest path from zero to a working private project runtime. For production deployment details, service files, reverse proxy setup, and the full sg4 smoke record, see [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) / [简体中文](docs/DEPLOYMENT.zh-CN.md) and [docs/smoke-test-sg4.md](docs/smoke-test-sg4.md).
+This local demo runs on one machine without `sudo`, `/etc`, systemd, HTTPS, Nginx, or QUIC. It is meant for evaluation. For a real deployment with services, HTTPS, remote agents, and GPT Actions, use [docs/QUICK_START.md](docs/QUICK_START.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### 1. Install
 
@@ -81,24 +81,37 @@ npm install -g @yyjeqhc/webcodex
 
 Or download platform binaries from the project release artifacts.
 
-### 2. Start a server
+### 2. Start a local server
 
 ```bash
+mkdir -p .webcodex/data .webcodex/projects.d
+
 webcodex-cli server init \
   --listen 127.0.0.1:8080 \
-  --data-dir /var/lib/webcodex \
-  --env-file /etc/webcodex/webcodex.env
+  --data-dir "$PWD/.webcodex/data" \
+  --env-file "$PWD/.webcodex/server.env" \
+  --public-url http://127.0.0.1:8080
 
-WEBCODEX_ENV_FILE=/etc/webcodex/webcodex.env webcodex
+set -a
+. "$PWD/.webcodex/server.env"
+set +a
+
+WEBCODEX_ENV_FILE="$PWD/.webcodex/server.env" webcodex
 ```
 
-Put the server behind your own HTTPS domain before connecting GPT Actions or remote agents.
+Keep that server process running. `server init` created `.webcodex/server.env`, including the bootstrap/admin `WEBCODEX_TOKEN`. Do not use this token for GPT Actions, MCP, or agents.
 
-### 3. Create a user and account credential
+### 3. Create local user, PAT, and agent token
+
+In another terminal from the same directory:
 
 ```bash
+set -a
+. "$PWD/.webcodex/server.env"
+set +a
+
 webcodex-cli users create \
-  --server-url https://your-domain.example \
+  --server-url http://127.0.0.1:8080 \
   --token "$WEBCODEX_TOKEN" \
   --username alice \
   --display-name "Alice" \
@@ -106,88 +119,75 @@ webcodex-cli users create \
   --issue-credential
 ```
 
-This issues a one-time `wc_acct_xxx` account credential for local token creation. It is not a GPT/MCP token and it is not an agent token.
-
-### 4. User creates a PAT for GPT Actions, MCP, and runtime APIs
+Copy the returned `wc_acct_xxx` account credential, then create a PAT and an agent token:
 
 ```bash
+export WEBCODEX_ACCOUNT_CREDENTIAL=<wc_acct_xxx from the previous command>
+
 webcodex-cli token create-local \
-  --server https://your-domain.example \
+  --server http://127.0.0.1:8080 \
   --user alice \
   --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
-  --name gpt-action \
+  --name local-demo \
   --scopes runtime:read,project:read,project:write,job:run
-```
 
-Use the generated `wc_pat_xxx` as the bearer/API-key value in GPT Actions and MCP clients.
-
-### 5. User creates an agent token
-
-```bash
 webcodex-cli agent-token create-local \
-  --server https://your-domain.example \
+  --server http://127.0.0.1:8080 \
   --user alice \
   --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
-  --client-id alice-laptop \
-  --name alice-laptop
+  --client-id local-dev \
+  --name local-dev
 ```
 
-Use the generated `wc_agent_xxx` only for `webcodex-agent`.
+Save the returned `wc_pat_xxx` as `WEBCODEX_PAT` and the returned `wc_agent_xxx` as `WEBCODEX_AGENT_TOKEN`.
 
-### 6. Initialize the agent
+### 4. Register this repo and start a local agent
 
 ```bash
+export WEBCODEX_AGENT_TOKEN=<wc_agent_xxx from the previous step>
+
 webcodex-agent init \
-  --server-url https://your-domain.example \
+  --server-url http://127.0.0.1:8080 \
   --token "$WEBCODEX_AGENT_TOKEN" \
-  --client-id alice-laptop \
+  --client-id local-dev \
   --owner alice \
-  --display-name "Alice Laptop" \
-  --transport websocket \
-  --projects-dir ~/.config/webcodex/projects.d \
-  --allowed-root ~/git \
-  --output ~/.config/webcodex/agent.toml \
+  --display-name "Local Dev" \
+  --transport auto \
+  --projects-dir "$PWD/.webcodex/projects.d" \
+  --allowed-root "$PWD" \
+  --output "$PWD/.webcodex/agent.toml" \
   --overwrite
-```
 
-### 7. Register a project
-
-Create `~/.config/webcodex/projects.d/my-repo.toml` on the agent machine:
-
-```toml
-id = "my-repo"
-path = "/home/alice/git/my-repo"
-name = "My Repo"
+cat > "$PWD/.webcodex/projects.d/webcodex.toml" <<EOF
+id = "webcodex"
+path = "$PWD"
+name = "WebCodex"
 kind = "repo"
 allow_patch = true
 
 [hooks]
 status = ["git status --short"]
-check = ["cargo check --all-targets"]
+EOF
+
+webcodex-agent --config "$PWD/.webcodex/agent.toml"
 ```
 
-Then start the agent:
+`auto` tries QUIC only when `[quic]` is configured. This local demo has no `[quic]` section, so the agent starts on the WebSocket fallback.
+
+### 5. Test the runtime API
+
+In a third terminal:
 
 ```bash
-webcodex-agent --config ~/.config/webcodex/agent.toml
-```
+export WEBCODEX_PAT=<wc_pat_xxx from step 3>
 
-Runtime project ids use this form:
-
-```text
-agent:<client_id>:<project_id>
-```
-
-For example: `agent:alice-laptop:my-repo`.
-
-### 8. Test the runtime tool list
-
-```bash
 curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
   -H 'Content-Type: application/json' \
-  https://your-domain.example/api/tools/list \
+  http://127.0.0.1:8080/api/tools/list \
   -d '{}'
 ```
+
+The demo project id is `agent:local-dev:webcodex`. For service mode, no-service background mode, HTTPS, GPT Actions, MCP, and QUIC, continue with [docs/QUICK_START.md](docs/QUICK_START.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ## Create your own GPT
 

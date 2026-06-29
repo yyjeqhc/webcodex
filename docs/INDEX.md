@@ -7,7 +7,7 @@ Start with the product README ([English](../README.md), [简体中文](../README
 ## Recommended primary docs
 
 1. [../README.md](../README.md) / [../README.zh-CN.md](../README.zh-CN.md) — product overview, GPT/MCP entry points, quick start, credential summary, and doc map.
-2. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) — first server deployment, first client enrollment, service mode, no-service background mode, and PATH/shell-profile handling.
+2. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) — first server deployment, first client enrollment, service mode, no-service foreground/background modes, and PATH/shell-profile handling.
 3. [DEPLOYMENT.md](DEPLOYMENT.md) / [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) — production server bootstrap, agent service installation, account credential onboarding, enrollment, and operations guide.
 4. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) — create a GPT Action, import OpenAPI, configure `wc_pat_xxx` auth, and use runtime tools.
 5. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) — MCP endpoint, `wc_pat_xxx` auth, example client config, and troubleshooting.

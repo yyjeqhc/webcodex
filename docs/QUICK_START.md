@@ -2,7 +2,14 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-This guide is the shortest deployable path for a first WebCodex server and a first client agent. It is intentionally more operational than the README and less exhaustive than [DEPLOYMENT.md](DEPLOYMENT.md).
+This guide is the first deployable setup path after the no-sudo local demo in the README. It covers both long-running service mode and no-service agent mode, but stays shorter than [DEPLOYMENT.md](DEPLOYMENT.md).
+
+| Need | Use |
+| --- | --- |
+| One-machine local evaluation, no `sudo`, no HTTPS, no service | README Quick start |
+| First server and long-running agent with systemd services | Sections 1-3 below |
+| Temporary agent, container, or machine without systemd | Section 4 below |
+| Production hardening, Nginx, QUIC, GPT Actions, MCP details | [DEPLOYMENT.md](DEPLOYMENT.md) |
 
 The command shapes below were checked against the current binary help output for `webcodex-cli`, `webcodex-agent`, and `webcodex`.
 
@@ -34,7 +41,15 @@ sudo webcodex-cli server init \
   --public-url https://your-domain.example
 ```
 
-This writes only the bootstrap/admin `WEBCODEX_TOKEN`. It does not create `wc_pat_xxx` user tokens or `wc_agent_xxx` agent tokens.
+This creates `/etc/webcodex/webcodex.env` and writes the bootstrap/admin `WEBCODEX_TOKEN`, `WEBCODEX_ADDR`, `WEBCODEX_DATA`, and `WEBCODEX_PUBLIC_URL`. It does not create `wc_pat_xxx` user tokens or `wc_agent_xxx` agent tokens.
+
+For admin commands in the same shell, use `--env-file /etc/webcodex/webcodex.env` when available, or load the env file first:
+
+```bash
+set -a
+. /etc/webcodex/webcodex.env
+set +a
+```
 
 ### 1.2 Put the server behind HTTPS
 
@@ -44,7 +59,7 @@ Configure your reverse proxy so the public URL reaches the local HTTP server:
 https://your-domain.example  ->  http://127.0.0.1:8080
 ```
 
-GPT Actions and MCP require a public HTTPS URL. WebCodex CLI does not automate DNS, TLS, reverse proxy, or tunnel setup.
+GPT Actions and MCP require a public HTTPS URL. WebCodex CLI does not automate DNS, TLS, reverse proxy, or tunnel setup. A minimal Nginx configuration is included in [DEPLOYMENT.md](DEPLOYMENT.md#public-https-url).
 
 ### 1.3 Install and start the server service
 
@@ -87,7 +102,7 @@ webcodex-cli doctor --quic --server-only \
   --strict
 ```
 
-If QUIC is not ready, use WebSocket first. Agents can still use `--transport websocket` or `transport = "websocket"`.
+If QUIC is not ready, keep `--transport auto` without a `[quic]` section; the agent starts on the WebSocket fallback and can later use QUIC when the `[quic]` section is added.
 
 ## 2. Invite or enroll a first client
 
@@ -217,9 +232,9 @@ webcodex-cli doctor --strict \
 
 Use `--overwrite` with `agent install-service` only when replacing an existing unit.
 
-## 4. First client deployment: no service, background process
+## 4. First client deployment: no service, foreground or background
 
-This is useful for quick tests, containers, temporary clients, or hosts where you do not want systemd. Service mode is preferred for long-running production agents.
+This is useful for quick tests, containers, temporary clients, or hosts where you do not want systemd. Service mode is preferred for long-running production agents; no-service mode is easier to inspect and stop manually.
 
 ### 4.1 Enroll into a user config directory
 
@@ -252,22 +267,7 @@ EOF
 
 Edit the `path` to match the actual user and repository.
 
-### 4.2 Configure environment for background startup
-
-Create a small environment file for the process launch:
-
-```bash
-mkdir -p "$HOME/.config/webcodex" "$HOME/.local/state/webcodex"
-cat > "$HOME/.config/webcodex/agent.env" <<'EOF'
-WEBCODEX_AGENT_CONFIG=$HOME/.config/webcodex/agent.toml
-PATH=$HOME/.cargo/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin
-EOF
-chmod 600 "$HOME/.config/webcodex/agent.env"
-```
-
-This environment controls how the background `webcodex-agent` process is launched. Project command environments should still be configured in `[shell.profiles.*]` inside `agent.toml`.
-
-### 4.3 Add a shell profile to agent.toml
+### 4.2 Add a shell profile to agent.toml
 
 Add or adjust this in `$HOME/.config/webcodex/agent.toml`:
 
@@ -286,15 +286,32 @@ CARGO_HOME = "/home/alice/.cargo"
 RUSTUP_HOME = "/home/alice/.rustup"
 ```
 
-Use absolute paths in `agent.toml`; do not rely on `$HOME` expansion inside TOML strings.
+Use absolute paths in `agent.toml`; do not rely on `$HOME` expansion inside TOML strings. Project command environments should be configured in `[shell.profiles.*]`, not in your interactive `.bashrc`.
 
-### 4.4 Start in the background
+### 4.3 Start in the foreground for inspection
+
+Foreground mode is the simplest no-service mode. It prints logs directly and exits when you press `Ctrl-C`:
 
 ```bash
-set -a
-. "$HOME/.config/webcodex/agent.env"
-set +a
+webcodex-agent --config "$HOME/.config/webcodex/agent.toml"
+```
 
+In another terminal, check status:
+
+```bash
+webcodex-cli agent status \
+  --config "$HOME/.config/webcodex/agent.toml" \
+  --server-url https://your-domain.example \
+  --user-token-file "$HOME/.config/webcodex/webcodex-user-token" \
+  --agent-token-file "$HOME/.config/webcodex/webcodex-agent-token"
+```
+
+### 4.4 Or start in the background with nohup
+
+Use this after the foreground run works and you want the agent to keep running after the terminal closes:
+
+```bash
+mkdir -p "$HOME/.local/state/webcodex"
 nohup webcodex-agent --config "$HOME/.config/webcodex/agent.toml" \
   >> "$HOME/.local/state/webcodex/agent.log" 2>&1 &
 
@@ -340,7 +357,7 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
 | --- | --- | --- |
 | Server systemd service | Production server | Recommended. Keeps server running after reboot. |
 | Agent systemd service | Long-running trusted client or server-side worker | Recommended for stable machines. Configure shell profiles because systemd does not read `.bashrc`. |
-| Agent no-service background process | Temporary client, container, smoke test, or machine without systemd | Start with `nohup`; keep a log and pid file; restart manually after reboot. |
+| Agent no-service foreground/background | Temporary client, container, smoke test, or machine without systemd | Start in the foreground first for logs; use `nohup` when you want it to continue after the terminal closes. |
 
 ## 7. Next docs
 

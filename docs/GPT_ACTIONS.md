@@ -59,7 +59,7 @@ A GPT Action configured with `wc_acct_xxx` will not be able to call runtime tool
 
 ```bash
 webcodex-cli token create-local \
-  --server https://sg4.yyjeqhc.cn \
+  --server https://your-domain.example \
   --user alice \
   --credential "$WEBCODEX_ACCOUNT_CREDENTIAL" \
   --name gpt-action \

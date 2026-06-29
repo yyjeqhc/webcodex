@@ -44,17 +44,19 @@ QUIC agent transport
 Two OAuth2 surfaces intentionally sit **outside** the shared `AuthMiddleware`
 pipeline and do their own authentication:
 
-- `GET /oauth/authorize` accepts either a first-party Bearer token
-  (Bootstrap / PAT → direct authorization-code issuance, backward compatible)
-  or a short-lived `webcodex_authorize_session` cookie (browser consent flow).
-  No Bearer and no session → minimal HTML login page. OAuth2 access tokens,
-  agent tokens, and account credentials presented as Bearer are rejected
-  (403); the handler reuses `authenticate()` + `is_authorize_identity_allowed()`
-  so the first-party identity boundary is identical to the pre-session era.
+- `GET /oauth/authorize` accepts either a first-party Bearer **PAT**
+  (with a concrete `user_id` → direct authorization-code issuance, backward
+  compatible) or a short-lived `webcodex_authorize_session` cookie (browser
+  consent flow). No Bearer and no session → minimal HTML login page. OAuth2
+  access tokens, agent tokens, account credentials, and bootstrap (which has
+  no `user_id`) presented as Bearer are rejected (403); the handler reuses
+  `authenticate()` + `is_authorize_identity_allowed()` so the first-party
+  identity boundary is identical to the pre-session era.
 - `POST /oauth/authorize/login` and `POST /oauth/authorize/consent` do their
   own token/session validation (route policy `Public`). The login form
-  authenticates a PAT/bootstrap token via the shared verifier chain and sets
-  an opaque `HttpOnly; SameSite=Lax` session cookie; only the SHA-256 hash of
+  authenticates a PAT via the shared verifier chain and sets an opaque
+  `HttpOnly; SameSite=Lax` session cookie; bootstrap is rejected because it
+  has no `user_id` to bind an authorization code to. Only the SHA-256 hash of
   the session id is kept in an in-process session store. The consent endpoint
   requires a valid session and revalidates client/redirect/scope/PKCE from
   scratch.
@@ -212,7 +214,7 @@ are not limited by delegated OAuth scopes. `AgentToken` and
 | Variant | Meaning |
 | --- | --- |
 | `Public` | Public OAuth/discovery endpoint |
-| `FirstPartyOnly` | Authenticated first-party route such as `/oauth/authorize` |
+| `FirstPartyOnly` | Authenticated first-party route (e.g. `/api/oauth/clients/*`); `/oauth/authorize` is also tagged `FirstPartyOnly` for audit, but the route is not behind `AuthMiddleware` — the handler self-validates |
 | `AgentSurface` | Agent/account transport surface not OAuth-delegable |
 | `Require(scope)` | Simple path-level delegated scope requirement |
 | `BodyAware(policy)` | Handler must inspect the parsed request body |
@@ -701,10 +703,9 @@ It also returns no delegated OAuth scope for `/oauth/authorize`; that route is a
 first-party identity boundary controlled by the existing Bootstrap / ApiToken
 allowlist, not by OAuth delegated scopes.
 
-When Phase 2f-1 enables enforcement, the check must run only for
+Route-level enforcement (Phase 2f-1) applies this policy only to
 `AuthKind::OAuth2Token`. Bootstrap and ApiToken authentication are first-party
-WebCodex credentials and must remain unrestricted by delegated OAuth scopes.
+WebCodex credentials and remain unrestricted by delegated OAuth scopes.
 AgentToken and AccountCredential surfaces remain governed by the existing
-surface gates. Unknown routes currently return `None`; Phase 2f-1 must audit all
-authenticated routes before treating `None` as an enforcement bypass. Resource
-or audience binding remains unimplemented.
+surface gates. Unknown routes fail closed for OAuth2 tokens (HTTP 403).
+Resource or audience binding remains unimplemented.

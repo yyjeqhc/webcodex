@@ -37,16 +37,19 @@ enforcement, or existing PAT behavior:
   token, and authorization code owned by that client.
 - **`GET /oauth/authorize`** is no longer behind `AuthMiddleware`. The handler
   accepts either:
-  1. a first-party Bearer token (Bootstrap / PAT) → direct authorization-code
-     issuance (backward compatible, identical validation + redirect behavior),
-     or
+  1. a first-party Bearer **PAT** (with a concrete `user_id`) → direct
+     authorization-code issuance (backward compatible, identical validation +
+     redirect behavior), or
   2. a valid `webcodex_authorize_session` cookie → consent page, or
   3. neither → minimal HTML login page.
-  OAuth2 access tokens, agent tokens, and account credentials presented as
-  Bearer are rejected with 403; no code is issued.
+  OAuth2 access tokens, agent tokens, account credentials, and bootstrap
+  (which has no `user_id`) presented as Bearer are rejected with 403; no code
+  is issued.
 - **`POST /oauth/authorize/login`** — accepts `application/x-www-form-urlencoded`
-  `token` (PAT or bootstrap) + `return_to`. Reuses the shared `authenticate()`
-  verifier chain, then narrows to Bootstrap/ApiToken only. On success sets a
+  `token` (PAT) + `return_to`. Reuses the shared `authenticate()`
+  verifier chain, then narrows to Bootstrap/ApiToken only. Bootstrap is
+  further rejected because it has no `user_id` to bind an authorization code
+  to, so **only a PAT can complete the authorize login**. On success sets a
   short-lived (10 min) `HttpOnly; SameSite=Lax; Secure-when-https` session
   cookie carrying an opaque `wc_authsess_*` id; only the SHA-256 hash of the
   id is kept in the in-memory session store. The PAT/bootstrap plaintext is
@@ -62,6 +65,20 @@ Route policy additions (`src/auth/scopes.rs`):
 `/api/oauth/clients/{create,list,revoke}` → `FirstPartyOnly`;
 `/oauth/authorize/{login,consent}` → `Public` (handlers do their own
 token/session validation).
+
+**Bootstrap identity summary** (current behavior):
+
+| Surface | Bootstrap/PAT | OAuth2Token/AgentToken/AccountCredential |
+| --- | --- | --- |
+| Client management create/list/revoke | Allowed (behind `AuthMiddleware`, `FirstPartyOnly`) | Rejected |
+| Authorize browser login (`/oauth/authorize/login`) | PAT required (bootstrap rejected — no `user_id`) | Rejected |
+| Bearer direct `/oauth/authorize` | PAT with `user_id` required (bootstrap rejected — no `user_id`) | Rejected |
+
+Authorization codes must bind to a concrete resource owner (`user_id`).
+Bootstrap is a server-wide admin token with no identity row of its own, so it
+cannot drive the authorize login or direct authorize issuance. Bootstrap/PAT
+may still **create** OAuth clients via the management API; when bootstrap
+creates a client, the client is attributed to the first registered user.
 
 Not implemented in this phase: dynamic client registration, OIDC, JWKS/JWT,
 `userinfo_endpoint`, `client_credentials` grant, device code flow,
@@ -501,9 +518,9 @@ by `AuthMiddleware`.
 
 **What is NOT covered**:
 
-- Route-level OAuth scope enforcement is not implemented. The `scopes` field
-  from the access token is populated in `AuthContext` but no handler checks
-  it yet.
+- Route-level OAuth scope enforcement was added in Phase 2f-1 (see above).
+  At the Phase 2c-1 boundary the `scopes` field was populated in
+  `AuthContext` but no handler checked it yet.
 - `resource` (audience) binding is not enforced.
 
 ### Phase 2c-1.1: forbid `last_used_at` updates on rejected surfaces
@@ -669,7 +686,6 @@ settings have sensible defaults; OAuth2 is **disabled by default**.
 - `/oauth/userinfo` endpoint
 - `/.well-known/openid-configuration` metadata
 - `client_credentials` grant
-- Route-level OAuth scope enforcement
 - MCP OAuth (resource indicator / audience binding)
 - JWT/JWKS/OIDC
 - Handler migration to `Principal`
@@ -701,14 +717,14 @@ required OAuth scope because it is a first-party authorization endpoint guarded
 by `AuthMiddleware` and the existing `AuthKind::Bootstrap` / `AuthKind::ApiToken`
 allowlist, not by delegated OAuth scopes.
 
-Future route-level enforcement must apply this policy only to
+Route-level enforcement (Phase 2f-1) applies this policy only to
 `AuthKind::OAuth2Token`. Bootstrap auth, personal API tokens, and other
-first-party WebCodex credentials must not be constrained by OAuth delegated
+first-party WebCodex credentials are not constrained by OAuth delegated
 scopes. Agent token and account credential surfaces continue to use the existing
 surface gates; OAuth2 access tokens remain non-delegable on agent transport
 surfaces.
 
-Unknown routes currently return `None`. Before Phase 2f-1 wires this helper into
-`AuthMiddleware` or route guards, every authenticated route must be audited so
-that unknown `None` is not accidentally treated as an authorization bypass.
-Resource/audience binding is still not implemented.
+Unknown routes returned `None` at the Phase 2f-0 boundary. Phase 2f-1 has
+since wired this helper into `AuthMiddleware` and treats unknown routes as
+fail-closed for `AuthKind::OAuth2Token` (HTTP 403). Resource/audience binding
+is still not implemented.

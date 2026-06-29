@@ -177,6 +177,11 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         | (_, "/oauth/revoke")
         | ("POST", "/oauth/authorize/login")
         | ("POST", "/oauth/authorize/consent") => OAuthRouteScopePolicy::Public,
+        // `/oauth/authorize` is NOT mounted behind `AuthMiddleware` (the
+        // handler does its own Bearer PAT / session cookie validation), so
+        // this `FirstPartyOnly` entry is audit/documentation only — it
+        // records the intended identity boundary but is never enforced by the
+        // middleware for this route.
         (_, "/oauth/authorize") => OAuthRouteScopePolicy::FirstPartyOnly,
 
         // First-party OAuth client management API. Only Bootstrap / ApiToken

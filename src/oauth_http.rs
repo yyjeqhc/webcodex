@@ -332,9 +332,9 @@ const AUTHORIZE_SESSION_COOKIE: &str = "webcodex_authorize_session";
 const AUTHORIZE_SESSION_TTL_SECS: i64 = 600;
 
 /// In-memory first-party authorize session store. Holds short-lived sessions
-/// created when a user submits a PAT/bootstrap token at the authorize login
-/// page. The session cookie carries an opaque random id; only its SHA-256
-/// hash is used as the map key so the plaintext id is never stored.
+/// created when a user submits a PAT at the authorize login page. The session
+/// cookie carries an opaque random id; only its SHA-256 hash is used as the
+/// map key so the plaintext id is never stored.
 #[derive(Default)]
 pub(crate) struct AuthorizeSessionStore {
     inner: std::sync::Mutex<std::collections::HashMap<String, AuthorizeSession>>,
@@ -497,7 +497,7 @@ fn authorize_login_html(return_to: &str, error: Option<&str>) -> String {
 </head>
 <body>
 <h1>WebCodex Authorization</h1>
-<p>Sign in with a WebCodex token (PAT or bootstrap token) to continue.</p>
+<p>Sign in with a WebCodex PAT to continue.</p>
 {error_html}
 <form method="post" action="/oauth/authorize/login">
   <input type="hidden" name="return_to" value="{return_to}">
@@ -681,7 +681,9 @@ pub(crate) async fn oauth_authorize_login(
 
     // Reuse the shared verifier chain (PatVerifier -> OAuth2Verifier). This
     // accepts PAT (wc_pat_*), bootstrap, agent, account credentials, and
-    // OAuth2 access tokens. We then narrow to Bootstrap / ApiToken only.
+    // OAuth2 access tokens. We then narrow to Bootstrap / ApiToken only;
+    // bootstrap is further rejected below because it has no user_id, so only
+    // a PAT can complete the authorize login.
     let ctx = match crate::auth::authenticate(&config, db.as_ref(), &token).await {
         Ok(Some(ctx)) => ctx,
         _ => {
@@ -706,11 +708,11 @@ pub(crate) async fn oauth_authorize_login(
     }
 
     let Some(user_id) = ctx.user_id.clone() else {
-        // Bootstrap has no user_id. For the authorize flow we need a concrete
-        // resource owner, so bootstrap login is mapped to a synthetic owner.
-        // (Bootstrap is a server-wide admin token; in practice OAuth clients
-        // are created by a real user. We still allow bootstrap to drive the
-        // browser flow for local dev by using a stable sentinel owner id.)
+        // Bootstrap has no user_id. Authorization codes must bind to a
+        // concrete resource owner, so bootstrap cannot drive the browser
+        // authorize login flow. Bootstrap/PAT may still *create* OAuth
+        // clients via the management API, but the authorize login requires a
+        // PAT that carries a real user_id.
         res.status_code(StatusCode::UNAUTHORIZED);
         res.render(Text::Html(authorize_login_html(
             &return_to_owned,
@@ -1091,20 +1093,23 @@ pub(crate) async fn oauth_clients_create(req: &mut Request, depot: &mut Depot, r
         })));
         return;
     }
+    // Trim each redirect URI, validate the trimmed value, and dedup the
+    // trimmed values so whitespace-padded duplicates collapse and the stored
+    // record contains no leading/trailing whitespace.
+    let mut seen = std::collections::HashSet::new();
+    let mut trimmed_uris: Vec<String> = Vec::new();
     for uri in &redirect_uris {
-        if let Err(msg) = validate_redirect_uri(uri) {
+        let trimmed = uri.trim().to_string();
+        if let Err(msg) = validate_redirect_uri(&trimmed) {
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(Json(serde_json::json!({"error": msg})));
             return;
         }
+        if seen.insert(trimmed.clone()) {
+            trimmed_uris.push(trimmed);
+        }
     }
-    // Dedup redirect URIs preserving order.
-    let mut seen = std::collections::HashSet::new();
-    let redirect_uris: Vec<String> = redirect_uris
-        .into_iter()
-        .filter(|u| seen.insert(u.clone()))
-        .collect();
-    let redirect_uris_str = redirect_uris.join("\n");
+    let redirect_uris_str = trimmed_uris.join("\n");
 
     let allowed_scopes = match normalize_client_allowed_scopes(body.allowed_scopes.as_deref()) {
         Ok(s) => s,
@@ -1264,11 +1269,42 @@ pub(crate) async fn oauth_clients_revoke(req: &mut Request, depot: &mut Depot, r
     }
 
     let now = chrono::Utc::now().timestamp();
-    // Revoke the client (idempotent), then cascade to all tokens/codes.
-    let _ = db.revoke_oauth_client_by_client_id(&client_id, now);
-    let _ = db.revoke_oauth_access_tokens_for_client(&client_id, now);
-    let _ = db.revoke_oauth_refresh_tokens_for_client(&client_id, now);
-    let _ = db.revoke_oauth_authorization_codes_for_client(&client_id, now);
+    // Revoke the client (idempotent — a missing client_id is a no-op that
+    // still returns success), then cascade to all tokens/codes. Each step
+    // must succeed; a DB failure returns 500 rather than silently leaving
+    // partial revocation state.
+    if let Err(e) = db.revoke_oauth_client_by_client_id(&client_id, now) {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({
+            "error": "failed to revoke client",
+            "detail": e.to_string()
+        })));
+        return;
+    }
+    if let Err(e) = db.revoke_oauth_access_tokens_for_client(&client_id, now) {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({
+            "error": "failed to revoke client",
+            "detail": e.to_string()
+        })));
+        return;
+    }
+    if let Err(e) = db.revoke_oauth_refresh_tokens_for_client(&client_id, now) {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({
+            "error": "failed to revoke client",
+            "detail": e.to_string()
+        })));
+        return;
+    }
+    if let Err(e) = db.revoke_oauth_authorization_codes_for_client(&client_id, now) {
+        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
+        res.render(Json(serde_json::json!({
+            "error": "failed to revoke client",
+            "detail": e.to_string()
+        })));
+        return;
+    }
 
     apply_oauth_no_store_headers(res);
     res.render(Json(serde_json::json!({"success": true})));
@@ -1282,12 +1318,18 @@ fn is_authorize_identity_allowed(ctx: &AuthContext) -> bool {
     matches!(ctx.kind, AuthKind::Bootstrap | AuthKind::ApiToken)
 }
 
-/// Authorization endpoint for Phase 2e-1c.
+/// Authorization endpoint.
 ///
-/// The route is protected by `AuthMiddleware` in `main.rs`. This handler
-/// validates the request, client, redirect URI, PKCE, scope, and unsupported
-/// resource semantics, then issues a hash-stored authorization code and
-/// redirects back to the validated redirect URI.
+/// `/oauth/authorize` is mounted **without** `AuthMiddleware`. The handler
+/// accepts either:
+/// 1. a first-party Bearer PAT (with a concrete `user_id`) → direct
+///    authorization-code issuance, or
+/// 2. a short-lived `webcodex_authorize_session` cookie → consent page, or
+/// 3. neither → minimal HTML login page.
+///
+/// The handler itself validates token/session/client/redirect/scope/PKCE.
+/// OAuth2 access tokens, agent tokens, account credentials, and bootstrap
+/// (which has no `user_id`) are rejected; no code is issued for them.
 #[handler]
 pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(config) = crate::auth::get_config(depot) else {
@@ -1336,9 +1378,9 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
 
     let query = req.uri().query().unwrap_or("").to_string();
 
-    // Path 1: Bearer token (first-party direct issuance). Backward
-    // compatible with the pre-session behavior where Bootstrap / ApiToken
-    // Bearer callers go straight to code issuance.
+    // Path 1: Bearer token (first-party direct issuance). A PAT (ApiToken)
+    // with a concrete user_id goes straight to code issuance. Bootstrap is
+    // rejected because it has no user_id to bind the authorization code to.
     if let Some(token) = crate::auth::bearer_token(req) {
         match crate::auth::authenticate(&config, Some(&db), &token).await {
             Ok(Some(ctx)) if is_authorize_identity_allowed(&ctx) && ctx.user_id.is_some() => {
@@ -1347,8 +1389,8 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
                 return;
             }
             Ok(Some(_)) => {
-                // OAuth2Token / AgentToken / AccountCredential / bootstrap
-                // without user_id: not a valid authorize identity.
+                // OAuth2Token / AgentToken / AccountCredential, or bootstrap
+                // (no user_id): not a valid authorize identity.
                 oauth_authorize_direct_error(
                     res,
                     StatusCode::FORBIDDEN,
@@ -1389,8 +1431,9 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
 
 /// First-party direct issuance path: validate the authorize query against the
 /// registered client and, on success, issue a hashed authorization code bound
-/// to `user_id` and redirect with the plaintext code. Used by the Bearer
-/// Bootstrap / ApiToken path of [`oauth_authorize`].
+/// to `user_id` and redirect with the plaintext code. Used by the Bearer PAT
+/// path of [`oauth_authorize`] (bootstrap is rejected upstream because it has
+/// no `user_id`).
 async fn authorize_issue_with_context(
     res: &mut Response,
     config: &crate::Config,
@@ -6914,6 +6957,63 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth_client_create_trims_redirect_uris_before_storing() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let service = Service::new(build_router(config, db.clone()));
+
+        // redirect_uris with leading/trailing whitespace, plus a trim-duplicate.
+        let body = serde_json::json!({
+            "name": "Trimmed",
+            "redirect_uris": [
+                "  https://example.com/callback  ",
+                "https://example.com/callback",
+                "\thttp://127.0.0.1:3000/cb\t",
+            ],
+        })
+        .to_string();
+        let mut resp =
+            authorized_post_json("http://localhost/api/oauth/clients/create", body, &token)
+                .send(&service)
+                .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        let client_id = body["client"]["client_id"].as_str().unwrap();
+        let returned: Vec<String> = body["client"]["redirect_uris"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap().to_string())
+            .collect();
+        // The trim-duplicate must collapse; whitespace must be stripped.
+        assert_eq!(
+            returned,
+            vec![
+                "https://example.com/callback".to_string(),
+                "http://127.0.0.1:3000/cb".to_string(),
+            ]
+        );
+
+        // Verify the stored record has trimmed, deduped values.
+        let stored: String = {
+            let conn = db.conn_for_tests();
+            conn.query_row(
+                "SELECT redirect_uris FROM oauth_clients WHERE client_id = ?1",
+                rusqlite::params![client_id],
+                |row| row.get(0),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            stored,
+            "https://example.com/callback\nhttp://127.0.0.1:3000/cb"
+        );
+    }
+
+    #[tokio::test]
     async fn oauth_client_create_defaults_to_full_delegable_scopes() {
         let config = test_config(oauth2_enabled());
         let (_tmp, db) = test_db();
@@ -7278,6 +7378,41 @@ mod tests {
             .send(&service)
             .await;
         assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+    }
+
+    #[tokio::test]
+    async fn oauth_authorize_login_rejects_bootstrap_without_user_id() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let return_to = return_to_for(&client, "https://example.com/callback");
+        // Bootstrap is a valid first-party token but has no user_id, so the
+        // authorize login must reject it — an authorization code must bind to
+        // a concrete resource owner.
+        let body = form_body(&[
+            ("return_to", return_to.as_str()),
+            ("token", "bootstrap-token"),
+        ]);
+
+        let mut resp = post_form("http://localhost/oauth/authorize/login", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+        let text = resp.take_string().await.unwrap_or_default();
+        assert!(
+            text.contains("bootstrap login is not supported"),
+            "expected bootstrap rejection message, got: {}",
+            text
+        );
+        // No session cookie set on failure.
+        assert!(set_cookie_value(&resp, AUTHORIZE_SESSION_COOKIE).is_none());
     }
 
     #[tokio::test]

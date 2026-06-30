@@ -53,14 +53,20 @@ The recommended flow is to issue a user account credential once, then have the u
 
 ## Runtime surface
 
-MCP and GPT Actions share the same `ToolRuntime`. A tool call made through MCP reaches the same runtime, agent registry, project ids, and safety boundaries as a GPT Action call.
+MCP and GPT Actions share the same `ToolRuntime`. A tool call made through MCP
+reaches the same runtime, agent registry, project ids, and safety boundaries as
+a GPT Action call. `tools/call` goes through the lightweight `ToolKernel`
+facade, which centralizes metadata-backed OAuth checks, session event recording,
+`ToolCall` parsing, and dispatch to the existing runtime handlers. This is
+preparation for later provider work, not an external MCP host or provider
+marketplace.
 
 Runtime tool discovery includes annotations derived from `ToolMetadata`, a
-lightweight precursor to ToolKernel/ToolProvider. The metadata centralizes
-risk, OAuth scope, read-only/destructive/open-world hints, project requirement,
-and path hint facts without changing dispatch or tool behavior. Future external
-MCP providers must generate equivalent metadata before their tools can be
-listed or called.
+lightweight precursor to ToolProvider. The metadata centralizes risk, OAuth
+scope, read-only/destructive/open-world hints, project requirement, and path
+hint facts without changing dispatch or tool behavior. Future external MCP
+providers must generate equivalent metadata before their tools can be listed or
+called.
 
 Typical MCP tools include:
 

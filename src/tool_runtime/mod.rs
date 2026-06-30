@@ -9,6 +9,7 @@ pub(crate) mod files;
 mod git;
 mod helpers;
 mod jobs;
+pub(crate) mod kernel;
 pub(crate) mod metadata;
 mod patch;
 mod projects;

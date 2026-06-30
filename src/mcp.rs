@@ -1,7 +1,9 @@
 use crate::auth::AuthContext;
 use crate::json_error;
-use crate::tool_runtime::sessions::SessionTransport;
-use crate::tool_runtime::{ToolCall, ToolRuntime};
+use crate::tool_runtime::kernel::{
+    ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
+};
+use crate::tool_runtime::ToolRuntime;
 use salvo::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -205,37 +207,34 @@ async fn handle_mcp_request(
                     ));
                 }
             };
-            if let Some(outcome) = enforce_mcp_oauth_tool_scope(auth, &params.name) {
-                return outcome;
-            }
             let session_id = strip_reserved_session_id(&mut params.arguments);
-            let session_event = runtime.sessions.record_tool_call_started(
-                session_id.as_deref(),
-                SessionTransport::Mcp,
-                &params.name,
-                &params.arguments,
-            );
-            let call = match ToolCall::from_tool_name(&params.name, params.arguments) {
-                Ok(call) => call,
-                Err(e) => {
-                    runtime.sessions.record_tool_call_finished(
-                        session_event,
-                        false,
-                        &Value::Null,
-                        Some(&e),
-                        Some("invalid_arguments"),
-                    );
-                    return McpOutcome::BadRequest(rpc_error(id, -32602, e));
+            let outcome = runtime
+                .call_tool_with_context(
+                    KernelToolCallRequest {
+                        tool_name: params.name.clone(),
+                        arguments: params.arguments,
+                    },
+                    ToolCallContext {
+                        transport: ToolTransport::Mcp,
+                        session_id: session_id.as_deref(),
+                        auth,
+                        record_oauth_scope_denials: false,
+                    },
+                )
+                .await;
+            let result = match outcome.error_status {
+                Some(ToolCallErrorStatus::InsufficientScope {
+                    required_scope,
+                    description,
+                }) => return oauth_forbidden(required_scope, description),
+                Some(ToolCallErrorStatus::InvalidArguments { message }) => {
+                    return McpOutcome::BadRequest(rpc_error(id, -32602, message));
                 }
+                None => outcome
+                    .result
+                    .expect("tool kernel outcome without error must include result"),
             };
-            let result = runtime.dispatch_with_auth(call, auth).await;
-            runtime.sessions.record_tool_call_finished(
-                session_event,
-                result.success,
-                &result.output,
-                result.error.as_deref(),
-                None,
-            );
+            debug_assert_eq!(outcome.success, result.success);
             let text = serde_json::to_string_pretty(&json!({
                 "success": result.success,
                 "output": result.output.clone(),
@@ -281,34 +280,6 @@ fn require_mcp_oauth_scope(auth: Option<&AuthContext>, scope: &'static str) -> O
         Some(scope),
         format!("missing required scope: {}", scope),
     ))
-}
-
-fn enforce_mcp_oauth_tool_scope(auth: Option<&AuthContext>, tool_name: &str) -> Option<McpOutcome> {
-    let auth = auth?;
-    if !auth.is_oauth_token() {
-        return None;
-    }
-
-    match crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name) {
-        crate::auth::scopes::OAuthToolScopePolicy::Require(scope) => {
-            if auth.has_scope(scope) {
-                None
-            } else {
-                Some(oauth_forbidden(
-                    Some(scope),
-                    format!("missing required scope: {}", scope),
-                ))
-            }
-        }
-        crate::auth::scopes::OAuthToolScopePolicy::FirstPartyOnly => Some(oauth_forbidden(
-            None,
-            "OAuth2 access tokens cannot call first-party-only tools",
-        )),
-        crate::auth::scopes::OAuthToolScopePolicy::Unknown => Some(oauth_forbidden(
-            None,
-            "OAuth2 access tokens cannot call unknown runtime tools",
-        )),
-    }
 }
 
 fn strip_reserved_session_id(arguments: &mut Value) -> Option<String> {

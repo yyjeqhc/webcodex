@@ -1,6 +1,8 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::json_error;
-use crate::tool_runtime::sessions::SessionTransport;
+use crate::tool_runtime::kernel::{
+    ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
+};
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use base64::{engine::general_purpose, Engine as _};
 use salvo::prelude::*;
@@ -9,50 +11,6 @@ use serde_json::Map;
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
-
-fn enforce_oauth_runtime_tool_scope(
-    auth: Option<&crate::auth::AuthContext>,
-    tool_name: &str,
-    res: &mut Response,
-) -> bool {
-    let Some(auth) = auth else {
-        return true;
-    };
-    if !auth.is_oauth_token() {
-        return true;
-    }
-
-    match crate::auth::scopes::oauth_scope_policy_for_runtime_tool(tool_name) {
-        crate::auth::scopes::OAuthToolScopePolicy::Require(scope) => {
-            if auth.has_scope(scope) {
-                true
-            } else {
-                crate::auth::render_oauth_insufficient_scope(
-                    res,
-                    Some(scope),
-                    format!("missing required scope: {}", scope),
-                );
-                false
-            }
-        }
-        crate::auth::scopes::OAuthToolScopePolicy::FirstPartyOnly => {
-            crate::auth::render_oauth_insufficient_scope(
-                res,
-                None,
-                "OAuth2 access tokens cannot call first-party-only tools",
-            );
-            false
-        }
-        crate::auth::scopes::OAuthToolScopePolicy::Unknown => {
-            crate::auth::render_oauth_insufficient_scope(
-                res,
-                None,
-                "OAuth2 access tokens cannot call unknown runtime tools",
-            );
-            false
-        }
-    }
-}
 
 /// Generic runtime tool call body. `tool` is required; `params` carries the
 /// tool-specific arguments. `arguments` is accepted as a compatibility alias
@@ -533,48 +491,40 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
         }
     };
     let session_id = extract_top_level_session_id(&body);
-    let session_event = runtime.sessions.record_tool_call_started(
-        session_id.as_deref(),
-        SessionTransport::Api,
-        &tool,
-        &params,
-    );
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    if !enforce_oauth_runtime_tool_scope(auth.as_ref(), &tool, res) {
-        runtime.sessions.record_tool_call_finished(
-            session_event,
-            false,
-            &Value::Null,
-            Some("missing required OAuth scope"),
-            Some("insufficient_scope"),
-        );
-        return;
-    }
-    let call = match ToolCall::from_tool_name(&tool, params) {
-        Ok(call) => call,
-        Err(e) => {
-            runtime.sessions.record_tool_call_finished(
-                session_event,
-                false,
-                &Value::Null,
-                Some(&e),
-                Some("invalid_arguments"),
-            );
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(StatusCode::BAD_REQUEST, e));
-            return;
+    let outcome = runtime
+        .call_tool_with_context(
+            KernelToolCallRequest {
+                tool_name: tool.clone(),
+                arguments: params,
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: session_id.as_deref(),
+                auth: auth.as_ref(),
+                record_oauth_scope_denials: true,
+            },
+        )
+        .await;
+    match outcome.error_status {
+        Some(ToolCallErrorStatus::InsufficientScope {
+            required_scope,
+            description,
+        }) => {
+            crate::auth::render_oauth_insufficient_scope(res, required_scope, description);
         }
-    };
-    let project = tool_project(&call);
-    let result = runtime.dispatch_with_auth(call, auth.as_ref()).await;
-    runtime.sessions.record_tool_call_finished(
-        session_event,
-        result.success,
-        &result.output,
-        result.error.as_deref(),
-        None,
-    );
-    render_result(res, &audit, &tool, project, result);
+        Some(ToolCallErrorStatus::InvalidArguments { message }) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(StatusCode::BAD_REQUEST, message));
+        }
+        None => {
+            let result = outcome
+                .result
+                .expect("tool kernel outcome without error must include result");
+            debug_assert_eq!(outcome.success, result.success);
+            render_result(res, &audit, &tool, outcome.project, result);
+        }
+    }
 }
 
 /// Extract `(tool, params)` from a raw `callRuntimeTool` request body.
@@ -1869,31 +1819,6 @@ pub async fn job_tail(req: &mut Request, depot: &mut Depot, res: &mut Response) 
         )
         .await;
     render_result(res, &audit, "job_tail", None, result);
-}
-
-fn tool_project(call: &ToolCall) -> Option<String> {
-    match call {
-        ToolCall::RunShell { project, .. }
-        | ToolCall::ApplyPatch { project, .. }
-        | ToolCall::ApplyPatchChecked { project, .. }
-        | ToolCall::DeleteProjectFiles { project, .. }
-        | ToolCall::GitRestorePaths { project, .. }
-        | ToolCall::DiscardUntracked { project, .. }
-        | ToolCall::ValidatePatch { project, .. }
-        | ToolCall::ReplaceInFile { project, .. }
-        | ToolCall::WriteProjectFile { project, .. }
-        | ToolCall::SaveProjectArtifact { project, .. }
-        | ToolCall::ReadProjectArtifactMetadata { project, .. }
-        | ToolCall::GitStatus { project }
-        | ToolCall::GitDiff { project, .. }
-        | ToolCall::GitDiffSummary { project }
-        | ToolCall::ReadFile { project, .. }
-        | ToolCall::ListProjectFiles { project, .. }
-        | ToolCall::SearchProjectText { project, .. }
-        | ToolCall::RunJob { project, .. }
-        | ToolCall::RunCodex { project, .. } => Some(project.clone()),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
@@ -3287,6 +3212,59 @@ mod tests {
         assert_eq!(event["status"], "error");
         assert_eq!(event["error_kind"], "runtime_error");
         assert!(event["error_message_summary"].as_str().unwrap().len() <= 243);
+    }
+
+    #[tokio::test]
+    async fn api_tools_call_still_distinguishes_top_level_session_id_from_params_session_id() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session", "params": {"title": "tracking"}}))
+            .send(&service)
+            .await;
+        let tracking_body: Value = resp.take_json().await.unwrap();
+        let tracking_session_id = tracking_body["output"]["session_id"].as_str().unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session", "params": {"title": "business"}}))
+            .send(&service)
+            .await;
+        let business_body: Value = resp.take_json().await.unwrap();
+        let business_session_id = business_body["output"]["session_id"].as_str().unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "session_summary",
+                "session_id": tracking_session_id,
+                "params": {"session_id": business_session_id}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["session_id"], business_session_id);
+        assert_eq!(body["output"]["title"], "business");
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "session_summary",
+                "params": {"session_id": tracking_session_id}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let tracking_summary: Value = resp.take_json().await.unwrap();
+        assert_eq!(
+            tracking_summary["output"]["events"][0]["tool_name"],
+            "session_summary"
+        );
+        assert_eq!(
+            tracking_summary["output"]["events"][0]["input_summary"]["session_id"],
+            business_session_id
+        );
     }
 
     #[tokio::test]

@@ -134,6 +134,12 @@ begin from `ToolMetadata`. This is the metadata-only foundation for a later
 ToolKernel/ToolProvider design; it does not change runtime dispatch, OAuth grant
 management, or the existing tool API.
 
+`callRuntimeTool` now enters the same lightweight `ToolKernel` facade used by
+MCP `tools/call`. The facade performs metadata-backed OAuth scope checks,
+session event recording, `ToolCall` parsing, and dispatch to the existing
+`ToolRuntime` handlers. It is not a provider system; concrete tool handlers and
+schemas remain unchanged.
+
 ## Session tracking
 
 `start_session` and `session_summary` are runtime tools for task tracking

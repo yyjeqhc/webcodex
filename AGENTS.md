@@ -145,6 +145,16 @@ If adding or renaming a runtime tool, update **all** of:
 - Do **not** expose legacy `/api/codex` routes in GPT Action OpenAPI.
 - Do **not** expose agent token management or pairing endpoints in GPT Action OpenAPI.
 
+### GPT Action / OpenAPI Product Rules
+
+- Prefer **non-consequential** labels for read-only, discovery, onboarding, and bounded local project setup actions.
+- `registerProject` and `createProject` are **non-consequential** onboarding actions when constrained by agent policy, allowed roots, and non-overwrite defaults.
+- Keep **destructive actions consequential**: shell/job execution, raw writes, patch application, delete/restore/discard, imports, and generic dispatch.
+- `callRuntimeTool` is advanced/generic; prefer dedicated actions when available.
+- GPT Actions should prefer **flattened top-level fields** over `params` / `arguments`.
+- Use `recording_session_id` for generic wrapper recorder metadata.
+- Use `session_id` as tool business input.
+
 ---
 
 ## 7. Session Invariants

@@ -419,6 +419,13 @@ fn output_schema_for_tool(name: &str) -> Value {
                 "created_at",
                 schema_type("integer", "Unix timestamp in seconds."),
             ),
+            (
+                "project_instructions",
+                nullable_schema(
+                    "object",
+                    "Best-effort project-local instruction files loaded at session start (e.g. AGENTS.md). null when no project was provided. Project-local guidance only; does not override system/platform/WebCodex safety policy.",
+                ),
+            ),
         ]),
         "session_summary" => wrapped_output_schema(vec![
             ("session_id", schema_type("string", "Opaque session id.")),
@@ -452,6 +459,13 @@ fn output_schema_for_tool(name: &str) -> Value {
                 array_schema(
                     open_object_schema("Bounded session event."),
                     "Recent events.",
+                ),
+            ),
+            (
+                "project_instructions",
+                nullable_schema(
+                    "object",
+                    "Summary-only projection of project-local instructions loaded at session start (no content bodies). Present when the session was created with a project. Project-local guidance only; does not override system/platform/WebCodex safety policy.",
                 ),
             ),
         ]),

@@ -11,6 +11,7 @@ use super::helpers::{
 };
 use super::types::ToolResult;
 use super::ToolRuntime;
+use crate::projects::ProjectConfig;
 use crate::shell_protocol::{ShellFileOpRequest, ShellRunRequest};
 
 #[cfg(test)]
@@ -97,6 +98,45 @@ pub(crate) fn effective_read_file_range(
     let eff_limit = limit.unwrap_or(2000).clamp(1, 2000);
     let eff_end = eff_start.saturating_add(eff_limit).saturating_sub(1);
     (eff_start, eff_limit, eff_end)
+}
+
+/// Parse the stdout of a best-effort agent `file_read` for an instruction
+/// candidate. Recognizes the `webcodex.file_read_range.v1` JSON envelope
+/// (which carries the true `total_lines` of the file) and falls back to
+/// treating stdout as raw text (where the returned line count is a lower
+/// bound on the true total). Returns `None` for empty/unusable output so the
+/// caller skips to the next candidate.
+fn parse_instruction_agent_stdout(stdout: String) -> Option<(String, usize)> {
+    let trimmed = stdout.trim();
+    if !trimmed.is_empty() {
+        if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+            if value.get("format").and_then(|format| format.as_str())
+                == Some("webcodex.file_read_range.v1")
+            {
+                let content = value.get("content").and_then(|c| c.as_str())?.to_string();
+                let total_lines = value
+                    .get("total_lines")
+                    .and_then(|t| t.as_u64())
+                    .unwrap_or(0) as usize;
+                if content_is_empty_instruction(&content) {
+                    return None;
+                }
+                return Some((content, total_lines));
+            }
+        }
+    }
+    if content_is_empty_instruction(&stdout) {
+        return None;
+    }
+    let total_lines = stdout.lines().count();
+    Some((stdout, total_lines))
+}
+
+/// True when an instruction body carries no meaningful content (empty or
+/// whitespace-only). Empty instruction files are skipped so a later candidate
+/// can win.
+fn content_is_empty_instruction(content: &str) -> bool {
+    content.trim().is_empty()
 }
 
 fn add_line_number_fields<T: AsRef<str>>(output: &mut Value, start_line: usize, texts: &[T]) {
@@ -2094,8 +2134,114 @@ impl ToolRuntime {
     }
 
     // -------------------------------------------------------------------------
-    // Phase A read-only console tools
+    // Project instructions auto-load (best-effort, session-start guidance)
     // -------------------------------------------------------------------------
+
+    /// Best-effort load of project-local instruction files
+    /// (`project_instructions::INSTRUCTION_CANDIDATE_PATHS`) for a resolved
+    /// project. Candidates are tried in fixed order; the first candidate that
+    /// reads successfully wins, bounding agent round-trips. Any read failure
+    /// (agent not connected, file missing, timeout, decode error) is swallowed
+    /// and the next candidate is tried. Returns an empty (`loaded=false`)
+    /// snapshot when no candidate could be read.
+    ///
+    /// This never records session events (the session does not exist yet) and
+    /// never fails `start_session`.
+    pub(crate) async fn load_project_instructions(
+        &self,
+        config: &ProjectConfig,
+    ) -> super::project_instructions::ProjectInstructionsSnapshot {
+        use super::project_instructions::{
+            ProjectInstructionsSnapshot, INSTRUCTION_CANDIDATE_PATHS,
+        };
+        for candidate in INSTRUCTION_CANDIDATE_PATHS {
+            if let Some((content, total_lines)) =
+                self.read_instruction_candidate(config, candidate).await
+            {
+                return ProjectInstructionsSnapshot::from_single_file(
+                    candidate,
+                    content,
+                    total_lines,
+                );
+            }
+        }
+        ProjectInstructionsSnapshot::empty()
+    }
+
+    /// Read a single instruction candidate from a resolved project. Returns
+    /// `(content, total_lines)` on success or `None` on any failure.
+    ///
+    /// For agent projects the read is routed to the owning agent via the
+    /// `file_read` op with a short best-effort timeout. For server-configured
+    /// (local) projects the file is read directly from the resolved root.
+    async fn read_instruction_candidate(
+        &self,
+        config: &ProjectConfig,
+        path: &str,
+    ) -> Option<(String, usize)> {
+        use super::project_instructions::MAX_LINES_PER_FILE;
+        // Request one extra line so a returned line count strictly greater
+        // than the per-file cap reliably signals line truncation regardless of
+        // the agent response format (JSON sentinel vs plain-text fallback).
+        let read_limit = MAX_LINES_PER_FILE + 1;
+        const WAIT_TIMEOUT: u64 = 6;
+
+        if config.is_agent() {
+            let client_id = config.agent_client_id().ok()?;
+            let (request_id, rx) = self
+                .shell_clients
+                .enqueue_file_op(
+                    ShellFileOpRequest {
+                        op: "read".to_string(),
+                        client_id: client_id.to_string(),
+                        path: path.to_string(),
+                        cwd: Some(config.path.clone()),
+                        content: None,
+                        max_bytes: Some(512 * 1024),
+                        old_text: None,
+                        pattern: None,
+                        expected_sha256: None,
+                        expected_prefix: None,
+                        start_line: Some(1),
+                        end_line: Some(read_limit),
+                        line: None,
+                        create_dirs: false,
+                        wait_timeout_secs: WAIT_TIMEOUT,
+                    },
+                    "project_instructions".to_string(),
+                )
+                .await
+                .ok()?;
+            match tokio::time::timeout(Duration::from_secs(WAIT_TIMEOUT + 2), rx).await {
+                Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
+                    parse_instruction_agent_stdout(resp.stdout.unwrap_or_default())
+                }
+                _ => {
+                    self.shell_clients.cancel_request(&request_id).await;
+                    None
+                }
+            }
+        } else {
+            // Server-configured (local) project: read directly. The root lives
+            // on the server host, so the true total line count is exact.
+            let root = config.root();
+            let file_path = root.join(path);
+            let canonical_root = root.canonicalize().ok()?;
+            let canonical = file_path.canonicalize().ok()?;
+            if !canonical.starts_with(&canonical_root) {
+                return None;
+            }
+            if !canonical.is_file() {
+                return None;
+            }
+            let content = std::fs::read_to_string(&canonical).ok()?;
+            let total_lines = content.lines().count();
+            if content_is_empty_instruction(&content) {
+                return None;
+            }
+            Some((content, total_lines))
+        }
+    }
 
     /// `list_project_files`: bounded, project-relative file listing routed to
     /// the owning registered agent via the `file_list` op. The server never

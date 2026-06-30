@@ -1,4 +1,4 @@
-#![recursion_limit = "256"]
+#![recursion_limit = "512"]
 
 use salvo::cors::Cors;
 use salvo::prelude::*;

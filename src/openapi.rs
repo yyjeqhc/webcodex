@@ -908,11 +908,11 @@ fn is_consequential_operation(operation_id: &str) -> bool {
         | "getRuntimeJobLog"
         | "getRuntimeJobTail"
         | "listRuntimeJobs"
-        | "validateProjectPatch" => false,
+        | "validateProjectPatch"
+        | "registerProject"
+        | "createProject" => false,
 
-        "registerProject"
-        | "createProject"
-        | "runCodexTask"
+        "runCodexTask"
         | "applyProjectPatch"
         | "applyProjectPatchChecked"
         | "writeProjectFile"
@@ -2003,10 +2003,10 @@ mod tests {
             "getRuntimeJobTail",
             "listRuntimeJobs",
             "validateProjectPatch",
-        ];
-        let consequential = [
             "registerProject",
             "createProject",
+        ];
+        let consequential = [
             "runCodexTask",
             "applyProjectPatch",
             "applyProjectPatchChecked",

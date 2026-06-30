@@ -1,4 +1,7 @@
 use super::metadata::{tool_metadata, ToolPathHint, ToolRisk};
+use super::project_instructions::{
+    ProjectInstructionsSnapshot, ProjectInstructionsSummarySnapshot,
+};
 use super::types::SessionMode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -49,6 +52,19 @@ struct SessionRecord {
     created_at: i64,
     updated_at: i64,
     events: VecDeque<SessionEvent>,
+    project_instructions: Option<ProjectInstructionsSnapshot>,
+}
+
+/// Options for creating a new session. Using a struct keeps the
+/// `start_session*` family stable as new session-creation inputs (such as
+/// project instructions) are added.
+#[derive(Debug, Clone)]
+pub(crate) struct SessionCreateOptions {
+    pub(crate) project: Option<String>,
+    pub(crate) title: Option<String>,
+    pub(crate) mode: SessionMode,
+    pub(crate) guards: SessionGuards,
+    pub(crate) project_instructions: Option<ProjectInstructionsSnapshot>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -160,6 +176,8 @@ pub(crate) struct SessionSummary {
     pub(crate) updated_at: i64,
     pub(crate) counts: SessionCounts,
     pub(crate) events: Vec<SessionEvent>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) project_instructions: Option<ProjectInstructionsSummarySnapshot>,
 }
 
 impl Default for SessionStore {
@@ -202,18 +220,33 @@ impl SessionStore {
         mode: SessionMode,
         guards: SessionGuards,
     ) -> SessionSummary {
-        let session_id = format!("{SESSION_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
-        let now = now_ts();
-        let guards = SessionGuards::effective(mode, guards);
-        let record = SessionRecord {
-            session_id: session_id.clone(),
+        self.start_session_with_options(SessionCreateOptions {
             project,
             title,
             mode,
             guards,
+            project_instructions: None,
+        })
+    }
+
+    /// Create a new session from a full options struct. This is the single
+    /// entry point that stores session-creation inputs (including project
+    /// instructions) on the `SessionRecord`. `start_session_with_guards`
+    /// delegates here with `project_instructions: None`.
+    pub(crate) fn start_session_with_options(&self, opts: SessionCreateOptions) -> SessionSummary {
+        let session_id = format!("{SESSION_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
+        let now = now_ts();
+        let guards = SessionGuards::effective(opts.mode, opts.guards);
+        let record = SessionRecord {
+            session_id: session_id.clone(),
+            project: opts.project,
+            title: opts.title,
+            mode: opts.mode,
+            guards,
             created_at: now,
             updated_at: now,
             events: VecDeque::new(),
+            project_instructions: opts.project_instructions,
         };
         let mut inner = self.inner.lock().expect("session store mutex poisoned");
         inner.sessions.insert(session_id.clone(), record);
@@ -512,6 +545,10 @@ impl SessionStoreInner {
                 .count(),
         };
         let skip = record.events.len().saturating_sub(limit);
+        let project_instructions = record
+            .project_instructions
+            .as_ref()
+            .map(|snapshot| snapshot.to_summary());
         Some(SessionSummary {
             session_id: record.session_id.clone(),
             project: record.project.clone(),
@@ -522,6 +559,7 @@ impl SessionStoreInner {
             updated_at: record.updated_at,
             counts,
             events: record.events.iter().skip(skip).cloned().collect(),
+            project_instructions,
         })
     }
 }

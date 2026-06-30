@@ -225,10 +225,16 @@ fn add_session_telemetry_hint(result: &mut ToolResult, session_id: &str, event_i
         "session_recorded".to_string(),
         Value::Bool(event_id.is_some()),
     );
-    output.insert(
-        "session_id".to_string(),
-        Value::String(session_id.to_string()),
-    );
+    // Preserve an existing business `session_id` in the tool output (e.g.
+    // session_summary's required business input) instead of overwriting it
+    // with the recorder session id. Only synthesize one when the tool output
+    // does not already carry one.
+    if !output.contains_key("session_id") {
+        output.insert(
+            "session_id".to_string(),
+            Value::String(session_id.to_string()),
+        );
+    }
     if let Some(event_id) = event_id {
         output.insert("session_event_id".to_string(), Value::String(event_id));
     }

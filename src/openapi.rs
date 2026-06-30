@@ -984,7 +984,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form `params`/`arguments` objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. Omit all arguments for argument-less tools like list_tools.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. Omit all arguments for argument-less tools like list_tools.",
             "properties": {
                 "tool": {
                     "type": "string",

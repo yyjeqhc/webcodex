@@ -197,7 +197,7 @@ impl ToolRuntime {
         };
 
         let project = tool_project(&call);
-        let result = self
+        let mut result = self
             .dispatch_with_auth_transport_options(
                 call,
                 context.auth,
@@ -205,13 +205,22 @@ impl ToolRuntime {
                 context.session_id.is_none(),
             )
             .await;
-        self.sessions.record_tool_call_finished(
+        let outer_event_id = self.sessions.record_tool_call_finished(
             session_event,
             result.success,
             &result.output,
             result.error.as_deref(),
             None,
         );
+        // When a `recording_session_id` (context.session_id) recorded this
+        // generic wrapper call into the tracking session, surface the recorder
+        // telemetry hint. This is the only telemetry path for tools like
+        // session_summary whose `session_id` is business input rather than a
+        // recorder session, so the inner dispatch does not emit it. The hint
+        // preserves any existing business `output.session_id`.
+        if let Some(session_id) = context.session_id {
+            super::add_session_telemetry_hint(&mut result, session_id, outer_event_id);
+        }
         ToolCallOutcome {
             success: result.success,
             result: Some(result),

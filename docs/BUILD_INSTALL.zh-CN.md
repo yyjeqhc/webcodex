@@ -122,7 +122,7 @@ sudo webcodex-cli client enroll \
   --allowed-root /home/friend/git
 ```
 
-`client enroll` 会在本地创建 `wc_pat_*` user token、`wc_agent_*` agent token 和 `/etc/webcodex/clients/special/agent.toml`，Unix 上权限为 `0600`。`/etc/webcodex/webcodex.env` 只属于 server 侧；多用户或多个 client 共用一台机器时，client-side token/config 文件应隔离在 `/etc/webcodex/clients/<profile>/` 下。
+`client enroll` 会在本地创建 `wc_pat_*` user token、`wc_agent_*` agent token 和 `/etc/webcodex/clients/workstation/agent.toml`，Unix 上权限为 `0600`。`/etc/webcodex/webcodex.env` 只属于 server 侧；多用户或多个 client 共用一台机器时，client-side token/config 文件应隔离在 `/etc/webcodex/clients/<profile>/` 下。
 
 8. 安装并启动 agent service，然后验证：
 
@@ -132,7 +132,7 @@ sudo webcodex-cli agent install-service \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent-special
+sudo systemctl enable --now webcodex-agent-workstation
 webcodex-cli agent status \
   --profile workstation \
   --server-url https://your-domain.example

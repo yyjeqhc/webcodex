@@ -1,6 +1,6 @@
 # Example config for webcodex-agent.
 # Copy to /etc/webcodex/clients/workstation/agent.toml and edit token/client_id/server_url.
-# Prefer generating this file with: webcodex-cli agent init --profile special
+# Prefer generating this file with: webcodex-cli agent init --profile workstation
 # The compatibility command webcodex-agent init still works.
 
 server_url = "https://webcodex.example.com"

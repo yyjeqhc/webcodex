@@ -1572,80 +1572,65 @@ mod tests {
         )
     }
 
+    const SAMPLE_PROJECT: &str = "agent:oe:private-drop";
+    const UNIT_TOOL_FIXTURES: &[&str] = &[
+        "list_tools",
+        "list_projects",
+        "list_agents",
+        "runtime_status",
+    ];
+
     fn sample_tool_args(name: &str) -> Value {
-        match name {
-            "list_tools" | "list_projects" | "list_agents" | "runtime_status" => Value::Null,
-            "start_session" => json!({}),
-            "session_summary" => json!({"session_id": "wc_sess_existing"}),
-            "run_shell" => json!({"project": "agent:oe:private-drop", "command": "true"}),
-            "apply_patch" => {
-                json!({"project": "agent:oe:private-drop", "patch": "diff --git a/a b/a\n"})
-            }
-            "apply_patch_checked" => {
-                json!({"project": "agent:oe:private-drop", "patch": "diff --git a/a b/a\n"})
-            }
-            "delete_project_files" | "git_restore_paths" | "discard_untracked" => {
-                json!({"project": "agent:oe:private-drop", "paths": ["old.txt"]})
-            }
-            "validate_patch" => {
-                json!({"project": "agent:oe:private-drop", "patch": "diff --git a/a b/a\n"})
-            }
-            "replace_in_file" => {
-                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "old": "a", "new": "b"})
-            }
-            "replace_exact_block" => {
-                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "old_text": "a", "new_text": "b"})
-            }
-            "insert_before_pattern" | "insert_after_pattern" => {
-                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "pattern": "fn main", "text": "// hi\n"})
-            }
-            "write_project_file" => {
-                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "content": "fn main() {}\n"})
-            }
-            "save_project_artifact" => {
-                json!({"project": "agent:oe:private-drop", "path": "artifact.bin", "content_base64": "AA=="})
-            }
-            "read_project_artifact_metadata" => {
-                json!({"project": "agent:oe:private-drop", "path": "artifact.bin"})
-            }
-            "read_project_artifact" => {
-                json!({"project": "agent:oe:private-drop", "path": "artifact.bin"})
-            }
-            "replace_line_range" => {
-                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "start_line": 1, "end_line": 1, "new_text": "fn main() {}\n"})
-            }
-            "insert_at_line" => {
-                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "line": 1, "text": "fn main() {}\n"})
-            }
-            "delete_line_range" => {
-                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "start_line": 1, "end_line": 1})
-            }
-            "git_status" | "git_diff_summary" | "show_changes" => {
-                json!({"project": "agent:oe:private-drop"})
-            }
-            "git_diff" => json!({"project": "agent:oe:private-drop"}),
-            "git_diff_hunks" => json!({"project": "agent:oe:private-drop"}),
-            "cargo_fmt" | "cargo_check" | "cargo_test" => {
-                json!({"project": "agent:oe:private-drop"})
-            }
-            "read_file" => json!({"project": "agent:oe:private-drop", "path": "src/lib.rs"}),
-            "run_job" => json!({"project": "agent:oe:private-drop", "command": "true"}),
-            "run_codex" => json!({"project": "agent:oe:private-drop", "prompt": "summarize"}),
-            "job_status" => json!({"job_id": "job_123"}),
-            "job_log" => json!({"job_id": "job_123"}),
-            "list_project_files" => json!({"project": "agent:oe:private-drop"}),
-            "search_project_text" => {
-                json!({"project": "agent:oe:private-drop", "pattern": "ToolCall"})
-            }
-            "list_jobs" => json!({}),
-            "job_tail" => json!({"job_id": "job_123"}),
-            "register_project" => {
-                json!({"client_id": "oe", "id": "private-drop", "name": "Private Drop", "path": "/root/git/private-drop"})
-            }
-            "create_project" => {
-                json!({"client_id": "oe", "id": "scratch", "name": "Scratch", "path": "/root/git/scratch"})
-            }
-            other => panic!("missing sample tool arguments for {other}"),
+        let runtime = test_runtime();
+        let spec = runtime
+            .tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == name)
+            .unwrap_or_else(|| panic!("missing tool spec for {name}"));
+        sample_tool_args_for_spec(&spec)
+    }
+
+    fn sample_tool_args_for_spec(spec: &ToolSpec) -> Value {
+        let required = spec.input_schema["required"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{} schema should list required fields", spec.name));
+        if required.is_empty() && UNIT_TOOL_FIXTURES.contains(&spec.name.as_str()) {
+            return Value::Null;
+        }
+
+        let args = required
+            .iter()
+            .map(|field| {
+                let field = field
+                    .as_str()
+                    .unwrap_or_else(|| panic!("{} required field should be a string", spec.name));
+                (field.to_string(), sample_field_value(field))
+            })
+            .collect();
+        Value::Object(args)
+    }
+
+    fn sample_field_value(field: &str) -> Value {
+        match field {
+            "project" => json!(SAMPLE_PROJECT),
+            "command" => json!("true"),
+            "patch" => json!("diff --git a/a b/a\n"),
+            "paths" => json!(["old.txt"]),
+            "path" => json!("src/lib.rs"),
+            "old" | "old_text" => json!("a"),
+            "new" | "new_text" => json!("b"),
+            "pattern" => json!("fn main"),
+            "text" => json!("// hi\n"),
+            "content" => json!("fn main() {}\n"),
+            "content_base64" => json!("AA=="),
+            "start_line" | "end_line" | "line" => json!(1),
+            "prompt" => json!("summarize"),
+            "job_id" => json!("job_123"),
+            "session_id" => json!("wc_sess_existing"),
+            "client_id" => json!("oe"),
+            "id" => json!("private-drop"),
+            "name" => json!("Private Drop"),
+            other => panic!("missing sample value for required field {other}"),
         }
     }
 

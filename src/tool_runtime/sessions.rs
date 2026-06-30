@@ -19,6 +19,16 @@ const MAX_SUMMARY_STRING_CHARS: usize = 240;
 const MAX_INPUT_STRING_CHARS: usize = 120;
 const MAX_INPUT_OBJECT_KEYS: usize = 16;
 const MAX_INPUT_ARRAY_ITEMS: usize = 8;
+pub(crate) const MESSAGE_ID_PREFIX: &str = "wc_msg_";
+pub(crate) const DEFAULT_MAX_MESSAGES_PER_SESSION: usize = 200;
+pub(crate) const DEFAULT_MESSAGE_LIST_LIMIT: usize = 50;
+pub(crate) const MAX_MESSAGE_LIST_LIMIT: usize = 100;
+pub(crate) const MAX_MESSAGE_CHARS: usize = 8000;
+pub(crate) const MAX_MESSAGE_TAGS: usize = 16;
+pub(crate) const MAX_MESSAGE_TAG_CHARS: usize = 64;
+pub(crate) const MAX_MESSAGE_RESOLUTION_CHARS: usize = 8000;
+const MAX_MESSAGE_SUMMARY_CHARS: usize = 240;
+const SUMMARY_MESSAGE_GROUP_LIMIT: usize = 5;
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionStore {
@@ -52,6 +62,7 @@ struct SessionRecord {
     created_at: i64,
     updated_at: i64,
     events: VecDeque<SessionEvent>,
+    messages: VecDeque<SessionMessage>,
     project_instructions: Option<ProjectInstructionsSnapshot>,
 }
 
@@ -153,6 +164,122 @@ pub(crate) struct SessionEvent {
     pub(crate) input_summary: Option<Value>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionMessageKind {
+    Note,
+    Proposal,
+    Question,
+    Answer,
+    Decision,
+    Risk,
+    Progress,
+    Guidance,
+    Todo,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionMessageStatus {
+    Open,
+    Resolved,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum SessionMessagePriority {
+    Low,
+    Normal,
+    High,
+}
+
+impl Default for SessionMessagePriority {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionMessage {
+    pub(crate) message_id: String,
+    pub(crate) session_id: String,
+    pub(crate) created_at: i64,
+    pub(crate) kind: SessionMessageKind,
+    pub(crate) status: SessionMessageStatus,
+    pub(crate) priority: SessionMessagePriority,
+    pub(crate) message: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) reply_to: Option<String>,
+    pub(crate) resolved_at: Option<i64>,
+    pub(crate) resolution: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PostSessionMessageInput {
+    pub(crate) session_id: String,
+    pub(crate) kind: SessionMessageKind,
+    pub(crate) message: String,
+    pub(crate) tags: Vec<String>,
+    pub(crate) reply_to: Option<String>,
+    pub(crate) priority: SessionMessagePriority,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ListSessionMessagesFilter {
+    pub(crate) kind: Option<SessionMessageKind>,
+    pub(crate) status: Option<SessionMessageStatus>,
+    pub(crate) limit: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionMessagesSummary {
+    pub(crate) total: usize,
+    pub(crate) open: usize,
+    pub(crate) resolved: usize,
+    pub(crate) pending_guidance: usize,
+    pub(crate) open_questions: usize,
+    pub(crate) open_risks: usize,
+    pub(crate) open_todos: usize,
+    pub(crate) recent_progress: Vec<SessionMessage>,
+    pub(crate) guidance: usize,
+    pub(crate) progress: usize,
+    pub(crate) risk: usize,
+    pub(crate) todo: usize,
+    pub(crate) question: usize,
+    pub(crate) decision: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionDiscussionCounts {
+    pub(crate) total: usize,
+    pub(crate) open: usize,
+    pub(crate) resolved: usize,
+    pub(crate) guidance: usize,
+    pub(crate) progress: usize,
+    pub(crate) risk: usize,
+    pub(crate) todo: usize,
+    pub(crate) question: usize,
+    pub(crate) decision: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionDiscussionSummary {
+    pub(crate) counts: SessionDiscussionCounts,
+    pub(crate) open_guidance: Vec<SessionMessage>,
+    pub(crate) open_questions: Vec<SessionMessage>,
+    pub(crate) open_risks: Vec<SessionMessage>,
+    pub(crate) open_todos: Vec<SessionMessage>,
+    pub(crate) recent_progress: Vec<SessionMessage>,
+    pub(crate) recent_decisions: Vec<SessionMessage>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SessionMessageError {
+    UnknownSession,
+    UnknownMessage,
+    InvalidInput(String),
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct SessionCounts {
     pub(crate) tool_calls: usize,
@@ -176,6 +303,7 @@ pub(crate) struct SessionSummary {
     pub(crate) updated_at: i64,
     pub(crate) counts: SessionCounts,
     pub(crate) events: Vec<SessionEvent>,
+    pub(crate) messages: SessionMessagesSummary,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) project_instructions: Option<ProjectInstructionsSummarySnapshot>,
 }
@@ -245,6 +373,7 @@ impl SessionStore {
             guards,
             created_at: now,
             updated_at: now,
+            messages: VecDeque::new(),
             events: VecDeque::new(),
             project_instructions: opts.project_instructions,
         };
@@ -471,6 +600,122 @@ impl SessionStore {
         Some(event_id)
     }
 
+    pub(crate) fn post_message(
+        &self,
+        input: PostSessionMessageInput,
+    ) -> Result<SessionMessage, SessionMessageError> {
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.touch(&input.session_id);
+        let Some(record) = inner.sessions.get_mut(&input.session_id) else {
+            return Err(SessionMessageError::UnknownSession);
+        };
+        let message = validate_message_text(input.message)?;
+        let tags = validate_message_tags(input.tags)?;
+        if let Some(reply_to) = input.reply_to.as_deref() {
+            let found = record
+                .messages
+                .iter()
+                .any(|message| message.message_id == reply_to);
+            if !found {
+                return Err(SessionMessageError::UnknownMessage);
+            }
+        }
+        let now = now_ts();
+        let message = SessionMessage {
+            message_id: format!("{MESSAGE_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+            session_id: input.session_id.clone(),
+            created_at: now,
+            kind: input.kind,
+            status: SessionMessageStatus::Open,
+            priority: input.priority,
+            message,
+            tags,
+            reply_to: input.reply_to,
+            resolved_at: None,
+            resolution: None,
+        };
+        record.updated_at = now;
+        record.messages.push_back(message.clone());
+        while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
+            record.messages.pop_front();
+        }
+        Ok(message)
+    }
+
+    pub(crate) fn list_messages(
+        &self,
+        session_id: &str,
+        filter: ListSessionMessagesFilter,
+    ) -> Result<Vec<SessionMessage>, SessionMessageError> {
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.touch(session_id);
+        let Some(record) = inner.sessions.get(session_id) else {
+            return Err(SessionMessageError::UnknownSession);
+        };
+        let limit = filter
+            .limit
+            .unwrap_or(DEFAULT_MESSAGE_LIST_LIMIT)
+            .clamp(0, MAX_MESSAGE_LIST_LIMIT);
+        Ok(record
+            .messages
+            .iter()
+            .filter(|message| filter.kind.is_none_or(|kind| message.kind == kind))
+            .filter(|message| filter.status.is_none_or(|status| message.status == status))
+            .rev()
+            .take(limit)
+            .cloned()
+            .collect())
+    }
+
+    pub(crate) fn resolve_message(
+        &self,
+        session_id: &str,
+        message_id: &str,
+        resolution: Option<String>,
+    ) -> Result<SessionMessage, SessionMessageError> {
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.touch(session_id);
+        let Some(record) = inner.sessions.get_mut(session_id) else {
+            return Err(SessionMessageError::UnknownSession);
+        };
+        let Some(message) = record
+            .messages
+            .iter_mut()
+            .find(|message| message.message_id == message_id)
+        else {
+            return Err(SessionMessageError::UnknownMessage);
+        };
+        let resolution = match resolution {
+            Some(value) => Some(validate_resolution_text(value)?),
+            None => None,
+        };
+        if message.status == SessionMessageStatus::Open {
+            message.status = SessionMessageStatus::Resolved;
+            message.resolved_at = Some(now_ts());
+        }
+        if resolution.is_some() {
+            message.resolution = resolution;
+        }
+        record.updated_at = now_ts();
+        Ok(message.clone())
+    }
+
+    pub(crate) fn discussion_summary(
+        &self,
+        session_id: &str,
+        limit: Option<usize>,
+    ) -> Result<SessionDiscussionSummary, SessionMessageError> {
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.touch(session_id);
+        let Some(record) = inner.sessions.get(session_id) else {
+            return Err(SessionMessageError::UnknownSession);
+        };
+        let limit = limit
+            .unwrap_or(DEFAULT_MESSAGE_LIST_LIMIT)
+            .clamp(0, MAX_MESSAGE_LIST_LIMIT);
+        Ok(build_discussion_summary(record, limit))
+    }
+
     fn push_event(&self, event: SessionEvent) {
         let mut inner = self.inner.lock().expect("session store mutex poisoned");
         let max_events_per_session = inner.max_events_per_session;
@@ -560,8 +805,182 @@ impl SessionStoreInner {
             counts,
             events: record.events.iter().skip(skip).cloned().collect(),
             project_instructions,
+            messages: build_messages_summary(record),
         })
     }
+}
+
+fn validate_message_text(value: String) -> Result<String, SessionMessageError> {
+    let value = value.trim().to_string();
+    if value.is_empty() {
+        return Err(SessionMessageError::InvalidInput(
+            "message must not be empty".to_string(),
+        ));
+    }
+    if value.chars().count() > MAX_MESSAGE_CHARS {
+        return Err(SessionMessageError::InvalidInput(format!(
+            "message exceeds {MAX_MESSAGE_CHARS} chars"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_resolution_text(value: String) -> Result<String, SessionMessageError> {
+    let value = value.trim().to_string();
+    if value.chars().count() > MAX_MESSAGE_RESOLUTION_CHARS {
+        return Err(SessionMessageError::InvalidInput(format!(
+            "resolution exceeds {MAX_MESSAGE_RESOLUTION_CHARS} chars"
+        )));
+    }
+    Ok(value)
+}
+
+fn validate_message_tags(values: Vec<String>) -> Result<Vec<String>, SessionMessageError> {
+    if values.len() > MAX_MESSAGE_TAGS {
+        return Err(SessionMessageError::InvalidInput(format!(
+            "tags exceed {MAX_MESSAGE_TAGS} items"
+        )));
+    }
+    let mut tags = Vec::new();
+    for value in values {
+        let value = value.trim().to_string();
+        if value.is_empty() {
+            continue;
+        }
+        if value.chars().count() > MAX_MESSAGE_TAG_CHARS {
+            return Err(SessionMessageError::InvalidInput(format!(
+                "tag exceeds {MAX_MESSAGE_TAG_CHARS} chars"
+            )));
+        }
+        if !tags.iter().any(|tag| tag == &value) {
+            tags.push(value);
+        }
+    }
+    Ok(tags)
+}
+
+fn build_messages_summary(record: &SessionRecord) -> SessionMessagesSummary {
+    let total = record.messages.len();
+    let open = record
+        .messages
+        .iter()
+        .filter(|message| message.status == SessionMessageStatus::Open)
+        .count();
+    SessionMessagesSummary {
+        total,
+        open,
+        resolved: total.saturating_sub(open),
+        pending_guidance: count_open_kind(record, SessionMessageKind::Guidance),
+        open_questions: count_open_kind(record, SessionMessageKind::Question),
+        open_risks: count_open_kind(record, SessionMessageKind::Risk),
+        open_todos: count_open_kind(record, SessionMessageKind::Todo),
+        recent_progress: take_recent_kind(
+            record,
+            SessionMessageKind::Progress,
+            None,
+            SUMMARY_MESSAGE_GROUP_LIMIT,
+        ),
+        guidance: count_kind(record, SessionMessageKind::Guidance),
+        progress: count_kind(record, SessionMessageKind::Progress),
+        risk: count_kind(record, SessionMessageKind::Risk),
+        todo: count_kind(record, SessionMessageKind::Todo),
+        question: count_kind(record, SessionMessageKind::Question),
+        decision: count_kind(record, SessionMessageKind::Decision),
+    }
+}
+
+fn build_discussion_counts(record: &SessionRecord) -> SessionDiscussionCounts {
+    let total = record.messages.len();
+    let open = record
+        .messages
+        .iter()
+        .filter(|message| message.status == SessionMessageStatus::Open)
+        .count();
+    SessionDiscussionCounts {
+        total,
+        open,
+        resolved: total.saturating_sub(open),
+        guidance: count_kind(record, SessionMessageKind::Guidance),
+        progress: count_kind(record, SessionMessageKind::Progress),
+        risk: count_kind(record, SessionMessageKind::Risk),
+        todo: count_kind(record, SessionMessageKind::Todo),
+        question: count_kind(record, SessionMessageKind::Question),
+        decision: count_kind(record, SessionMessageKind::Decision),
+    }
+}
+
+fn build_discussion_summary(record: &SessionRecord, limit: usize) -> SessionDiscussionSummary {
+    SessionDiscussionSummary {
+        counts: build_discussion_counts(record),
+        open_guidance: take_recent_kind(
+            record,
+            SessionMessageKind::Guidance,
+            Some(SessionMessageStatus::Open),
+            limit.min(SUMMARY_MESSAGE_GROUP_LIMIT),
+        ),
+        open_questions: take_recent_kind(
+            record,
+            SessionMessageKind::Question,
+            Some(SessionMessageStatus::Open),
+            limit.min(SUMMARY_MESSAGE_GROUP_LIMIT),
+        ),
+        open_risks: take_recent_kind(
+            record,
+            SessionMessageKind::Risk,
+            Some(SessionMessageStatus::Open),
+            limit.min(SUMMARY_MESSAGE_GROUP_LIMIT),
+        ),
+        open_todos: take_recent_kind(
+            record,
+            SessionMessageKind::Todo,
+            Some(SessionMessageStatus::Open),
+            limit.min(SUMMARY_MESSAGE_GROUP_LIMIT),
+        ),
+        recent_progress: take_recent_kind(record, SessionMessageKind::Progress, None, limit),
+        recent_decisions: take_recent_kind(record, SessionMessageKind::Decision, None, limit),
+    }
+}
+
+fn count_kind(record: &SessionRecord, kind: SessionMessageKind) -> usize {
+    record
+        .messages
+        .iter()
+        .filter(|message| message.kind == kind)
+        .count()
+}
+
+fn count_open_kind(record: &SessionRecord, kind: SessionMessageKind) -> usize {
+    record
+        .messages
+        .iter()
+        .filter(|message| message.kind == kind && message.status == SessionMessageStatus::Open)
+        .count()
+}
+
+fn take_recent_kind(
+    record: &SessionRecord,
+    kind: SessionMessageKind,
+    status: Option<SessionMessageStatus>,
+    limit: usize,
+) -> Vec<SessionMessage> {
+    record
+        .messages
+        .iter()
+        .rev()
+        .filter(|message| message.kind == kind)
+        .filter(|message| status.is_none_or(|status| message.status == status))
+        .take(limit)
+        .cloned()
+        .map(bound_message_for_summary)
+        .collect()
+}
+
+fn bound_message_for_summary(mut message: SessionMessage) -> SessionMessage {
+    message.message = bound_chars(&message.message, MAX_MESSAGE_SUMMARY_CHARS);
+    if let Some(resolution) = message.resolution.as_mut() {
+        *resolution = bound_chars(resolution, MAX_MESSAGE_SUMMARY_CHARS);
+    }
+    message
 }
 
 pub(crate) fn is_valid_session_id(session_id: &str) -> bool {
@@ -869,5 +1288,177 @@ mod tests {
             summary.events[0].input_summary.as_ref().unwrap()["command"],
             "[redacted]"
         );
+    }
+
+    fn post_message(
+        store: &SessionStore,
+        session_id: &str,
+        kind: SessionMessageKind,
+        message: &str,
+    ) -> SessionMessage {
+        store
+            .post_message(PostSessionMessageInput {
+                session_id: session_id.to_string(),
+                kind,
+                message: message.to_string(),
+                tags: Vec::new(),
+                reply_to: None,
+                priority: SessionMessagePriority::Normal,
+            })
+            .unwrap()
+    }
+
+    #[test]
+    fn post_session_message_creates_message() {
+        let store = SessionStore::default();
+        let session = store.start_session(None, None);
+        let message = store
+            .post_message(PostSessionMessageInput {
+                session_id: session.session_id.clone(),
+                kind: SessionMessageKind::Guidance,
+                message: "Keep this behind callRuntimeTool.".to_string(),
+                tags: vec!["openapi".to_string(), "constraint".to_string()],
+                reply_to: None,
+                priority: SessionMessagePriority::High,
+            })
+            .unwrap();
+
+        assert!(message.message_id.starts_with(MESSAGE_ID_PREFIX));
+        assert_eq!(message.session_id, session.session_id);
+        assert_eq!(message.kind, SessionMessageKind::Guidance);
+        assert_eq!(message.status, SessionMessageStatus::Open);
+        assert_eq!(message.priority, SessionMessagePriority::High);
+        assert_eq!(message.message, "Keep this behind callRuntimeTool.");
+        assert_eq!(message.tags, vec!["openapi", "constraint"]);
+    }
+
+    #[test]
+    fn list_session_messages_filters_and_clamps_limit() {
+        let store = SessionStore::default();
+        let session = store.start_session(None, None);
+        post_message(
+            &store,
+            &session.session_id,
+            SessionMessageKind::Guidance,
+            "g1",
+        );
+        post_message(
+            &store,
+            &session.session_id,
+            SessionMessageKind::Progress,
+            "p1",
+        );
+        post_message(&store, &session.session_id, SessionMessageKind::Risk, "r1");
+
+        let guidance = store
+            .list_messages(
+                &session.session_id,
+                ListSessionMessagesFilter {
+                    kind: Some(SessionMessageKind::Guidance),
+                    status: None,
+                    limit: None,
+                },
+            )
+            .unwrap();
+        assert_eq!(guidance.len(), 1);
+        assert_eq!(guidance[0].kind, SessionMessageKind::Guidance);
+
+        let open = store
+            .list_messages(
+                &session.session_id,
+                ListSessionMessagesFilter {
+                    kind: None,
+                    status: Some(SessionMessageStatus::Open),
+                    limit: Some(usize::MAX),
+                },
+            )
+            .unwrap();
+        assert_eq!(open.len(), 3);
+        assert_eq!(open[0].message, "r1");
+    }
+
+    #[test]
+    fn resolve_session_message_is_idempotent() {
+        let store = SessionStore::default();
+        let session = store.start_session(None, None);
+        let message = post_message(
+            &store,
+            &session.session_id,
+            SessionMessageKind::Todo,
+            "fix it",
+        );
+
+        let resolved = store
+            .resolve_message(
+                &session.session_id,
+                &message.message_id,
+                Some("Done".to_string()),
+            )
+            .unwrap();
+        assert_eq!(resolved.status, SessionMessageStatus::Resolved);
+        assert!(resolved.resolved_at.is_some());
+        assert_eq!(resolved.resolution.as_deref(), Some("Done"));
+
+        let resolved_again = store
+            .resolve_message(&session.session_id, &message.message_id, None)
+            .unwrap();
+        assert_eq!(resolved_again.status, SessionMessageStatus::Resolved);
+        assert_eq!(resolved_again.resolution.as_deref(), Some("Done"));
+    }
+
+    #[test]
+    fn session_message_unknown_errors_are_explicit() {
+        let store = SessionStore::default();
+        let session = store.start_session(None, None);
+        let unknown_session = store.post_message(PostSessionMessageInput {
+            session_id: "wc_sess_missing".to_string(),
+            kind: SessionMessageKind::Note,
+            message: "hello".to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: SessionMessagePriority::Normal,
+        });
+        assert!(matches!(
+            unknown_session,
+            Err(SessionMessageError::UnknownSession)
+        ));
+
+        let unknown_message = store.resolve_message(&session.session_id, "wc_msg_missing", None);
+        assert!(matches!(
+            unknown_message,
+            Err(SessionMessageError::UnknownMessage)
+        ));
+    }
+
+    #[test]
+    fn session_summary_includes_bounded_message_summary() {
+        let store = SessionStore::default();
+        let session = store.start_session(None, None);
+        post_message(
+            &store,
+            &session.session_id,
+            SessionMessageKind::Guidance,
+            "g1",
+        );
+        post_message(
+            &store,
+            &session.session_id,
+            SessionMessageKind::Progress,
+            "p1",
+        );
+        post_message(&store, &session.session_id, SessionMessageKind::Risk, "r1");
+        post_message(&store, &session.session_id, SessionMessageKind::Todo, "t1");
+
+        let summary = store.summary(&session.session_id, Some(50)).unwrap();
+        assert_eq!(summary.messages.total, 4);
+        assert_eq!(summary.messages.open, 4);
+        assert_eq!(summary.messages.pending_guidance, 1);
+        assert_eq!(summary.messages.open_risks, 1);
+        assert_eq!(summary.messages.open_todos, 1);
+        assert_eq!(summary.messages.recent_progress.len(), 1);
+        assert!(serde_json::to_value(summary)
+            .unwrap()
+            .get("messages")
+            .is_some());
     }
 }

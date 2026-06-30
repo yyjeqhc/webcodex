@@ -203,6 +203,35 @@ fn session_guard_denied_result(
     )
 }
 
+fn session_message_error_result(
+    session_id: &str,
+    message_id: Option<&str>,
+    error: sessions::SessionMessageError,
+) -> ToolResult {
+    match error {
+        sessions::SessionMessageError::UnknownSession => unknown_session_result(session_id),
+        sessions::SessionMessageError::UnknownMessage => ToolResult::err_with_output(
+            match message_id {
+                Some(message_id) => format!("unknown_message_id: {}", message_id),
+                None => "unknown_message_id".to_string(),
+            },
+            json!({
+                "error_kind": "unknown_message_id",
+                "session_id": session_id,
+                "message_id": message_id,
+            }),
+        ),
+        sessions::SessionMessageError::InvalidInput(message) => ToolResult::err_with_output(
+            message.clone(),
+            json!({
+                "error_kind": "invalid_session_message",
+                "session_id": session_id,
+                "error": message,
+            }),
+        ),
+    }
+}
+
 fn current_session_unavailable_result(message: impl Into<String>) -> ToolResult {
     ToolResult::err_with_output(
         message.into(),
@@ -581,6 +610,10 @@ impl ToolRuntime {
             ToolCall::ListTools
             | ToolCall::StartSession { .. }
             | ToolCall::SessionSummary { .. }
+            | ToolCall::PostSessionMessage { .. }
+            | ToolCall::ListSessionMessages { .. }
+            | ToolCall::ResolveSessionMessage { .. }
+            | ToolCall::SessionDiscussionSummary { .. }
             | ToolCall::BindCurrentSession { .. }
             | ToolCall::CurrentSession { .. }
             | ToolCall::UnbindCurrentSession { .. }
@@ -882,7 +915,88 @@ impl ToolRuntime {
                         serde_json::to_value(summary)
                             .unwrap_or_else(|_| json!({"session_id": session_id, "events": []})),
                     ),
-                    None => ToolResult::err(format!("unknown session_id: {}", session_id)),
+                    None => unknown_session_result(&session_id),
+                }
+            }
+
+            ToolCall::PostSessionMessage {
+                session_id,
+                kind,
+                message,
+                tags,
+                reply_to,
+                priority,
+            } => match self
+                .sessions
+                .post_message(sessions::PostSessionMessageInput {
+                    session_id: session_id.clone(),
+                    kind,
+                    message,
+                    tags,
+                    reply_to,
+                    priority,
+                }) {
+                Ok(message) => ToolResult::ok(json!({
+                    "success": true,
+                    "session_id": session_id,
+                    "message_id": message.message_id,
+                    "message": message,
+                })),
+                Err(err) => session_message_error_result(&session_id, None, err),
+            },
+
+            ToolCall::ListSessionMessages {
+                session_id,
+                kind,
+                status,
+                limit,
+            } => match self.sessions.list_messages(
+                &session_id,
+                sessions::ListSessionMessagesFilter {
+                    kind,
+                    status,
+                    limit,
+                },
+            ) {
+                Ok(messages) => ToolResult::ok(json!({
+                    "success": true,
+                    "session_id": session_id,
+                    "messages": messages,
+                })),
+                Err(err) => session_message_error_result(&session_id, None, err),
+            },
+
+            ToolCall::ResolveSessionMessage {
+                session_id,
+                message_id,
+                resolution,
+            } => match self
+                .sessions
+                .resolve_message(&session_id, &message_id, resolution)
+            {
+                Ok(message) => ToolResult::ok(json!({
+                    "success": true,
+                    "session_id": session_id,
+                    "message_id": message.message_id,
+                    "message": message,
+                })),
+                Err(err) => session_message_error_result(&session_id, Some(&message_id), err),
+            },
+
+            ToolCall::SessionDiscussionSummary { session_id, limit } => {
+                match self.sessions.discussion_summary(&session_id, limit) {
+                    Ok(summary) => ToolResult::ok(json!({
+                        "success": true,
+                        "session_id": session_id,
+                        "counts": summary.counts,
+                        "open_guidance": summary.open_guidance,
+                        "open_questions": summary.open_questions,
+                        "open_risks": summary.open_risks,
+                        "open_todos": summary.open_todos,
+                        "recent_progress": summary.recent_progress,
+                        "recent_decisions": summary.recent_decisions,
+                    })),
+                    Err(err) => session_message_error_result(&session_id, None, err),
                 }
             }
 

@@ -1,3 +1,4 @@
+use super::sessions::{SessionMessageKind, SessionMessagePriority, SessionMessageStatus};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -59,6 +60,47 @@ pub enum ToolCall {
 
     /// Return a bounded structured summary of recorded session events.
     SessionSummary {
+        session_id: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Post a bounded session-local message for collaboration, progress,
+    /// guidance, or design discussion. This is session metadata only.
+    PostSessionMessage {
+        session_id: String,
+        kind: SessionMessageKind,
+        message: String,
+        #[serde(default)]
+        tags: Vec<String>,
+        #[serde(default)]
+        reply_to: Option<String>,
+        #[serde(default)]
+        priority: SessionMessagePriority,
+    },
+
+    /// List session-local messages in stable newest-first order.
+    ListSessionMessages {
+        session_id: String,
+        #[serde(default)]
+        kind: Option<SessionMessageKind>,
+        #[serde(default)]
+        status: Option<SessionMessageStatus>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
+    /// Mark a session-local message resolved. Idempotent for already resolved
+    /// messages.
+    ResolveSessionMessage {
+        session_id: String,
+        message_id: String,
+        #[serde(default)]
+        resolution: Option<String>,
+    },
+
+    /// Return a bounded structured aggregate of session-local discussion.
+    SessionDiscussionSummary {
         session_id: String,
         #[serde(default)]
         limit: Option<usize>,
@@ -594,6 +636,10 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "list_tools",
     "start_session",
     "session_summary",
+    "post_session_message",
+    "list_session_messages",
+    "resolve_session_message",
+    "session_discussion_summary",
     "bind_current_session",
     "current_session",
     "unbind_current_session",
@@ -688,6 +734,10 @@ impl ToolCall {
             Self::ListTools => "list_tools",
             Self::StartSession { .. } => "start_session",
             Self::SessionSummary { .. } => "session_summary",
+            Self::PostSessionMessage { .. } => "post_session_message",
+            Self::ListSessionMessages { .. } => "list_session_messages",
+            Self::ResolveSessionMessage { .. } => "resolve_session_message",
+            Self::SessionDiscussionSummary { .. } => "session_discussion_summary",
             Self::BindCurrentSession { .. } => "bind_current_session",
             Self::CurrentSession { .. } => "current_session",
             Self::UnbindCurrentSession { .. } => "unbind_current_session",
@@ -1176,6 +1226,45 @@ impl ToolCall {
                 "end_line": end_line,
                 "expected_old_sha256_present": expected_old_sha256.as_ref().is_some_and(|v| !v.is_empty()),
                 "expected_old_prefix_present": expected_old_prefix.as_ref().is_some_and(|v| !v.is_empty()),
+            }),
+            Self::PostSessionMessage {
+                session_id,
+                kind,
+                tags,
+                reply_to,
+                priority,
+                ..
+            } => serde_json::json!({
+                "session_id": session_id,
+                "kind": kind,
+                "message_present": true,
+                "tags_count": tags.len(),
+                "reply_to": reply_to,
+                "priority": priority,
+            }),
+            Self::ListSessionMessages {
+                session_id,
+                kind,
+                status,
+                limit,
+            } => serde_json::json!({
+                "session_id": session_id,
+                "kind": kind,
+                "status": status,
+                "limit": limit,
+            }),
+            Self::ResolveSessionMessage {
+                session_id,
+                message_id,
+                resolution,
+            } => serde_json::json!({
+                "session_id": session_id,
+                "message_id": message_id,
+                "resolution_present": resolution.as_ref().is_some_and(|v| !v.is_empty()),
+            }),
+            Self::SessionDiscussionSummary { session_id, limit } => serde_json::json!({
+                "session_id": session_id,
+                "limit": limit,
             }),
             _ => serde_json::json!({}),
         }

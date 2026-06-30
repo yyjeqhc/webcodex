@@ -3553,6 +3553,131 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_tools_call_message_tool_keeps_business_session_id_with_recording_session_id() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session", "title": "tracking"}))
+            .send(&service)
+            .await;
+        let tracking_body: Value = resp.take_json().await.unwrap();
+        let tracking_session_id = tracking_body["output"]["session_id"].as_str().unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session", "title": "business"}))
+            .send(&service)
+            .await;
+        let business_body: Value = resp.take_json().await.unwrap();
+        let business_session_id = business_body["output"]["session_id"].as_str().unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "post_session_message",
+                "session_id": business_session_id,
+                "recording_session_id": tracking_session_id,
+                "kind": "guidance",
+                "message": "Keep this behind callRuntimeTool.",
+                "tags": ["openapi", "constraint"],
+                "priority": "normal"
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["session_id"], business_session_id);
+        assert!(body["output"]["message_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("wc_msg_")));
+        assert_eq!(body["output"]["session_recorded"], true);
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "list_session_messages",
+                "session_id": business_session_id,
+                "kind": "guidance"
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let business_messages: Value = resp.take_json().await.unwrap();
+        assert_eq!(
+            business_messages["output"]["session_id"],
+            business_session_id
+        );
+        assert_eq!(
+            business_messages["output"]["messages"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "session_summary",
+                "session_id": tracking_session_id
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let tracking_summary: Value = resp.take_json().await.unwrap();
+        assert_eq!(
+            tracking_summary["output"]["events"][0]["tool_name"],
+            "post_session_message"
+        );
+        assert_eq!(
+            tracking_summary["output"]["events"][0]["input_summary"]["session_id"],
+            business_session_id
+        );
+    }
+
+    #[tokio::test]
+    async fn read_only_session_allows_post_session_message_metadata() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "start_session",
+                "title": "readonly message board",
+                "mode": "read_only"
+            }))
+            .send(&service)
+            .await;
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+        assert_eq!(start_body["output"]["mode"], "read_only");
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "post_session_message",
+                "session_id": session_id,
+                "kind": "progress",
+                "message": "Read-only sessions may still record collaboration metadata."
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["message"]["kind"], "progress");
+        assert!(body["output"].get("changed_paths").is_none());
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "session_summary", "session_id": session_id}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let summary: Value = resp.take_json().await.unwrap();
+        assert_eq!(summary["output"]["messages"]["total"], 1);
+        assert_eq!(summary["output"]["counts"]["tool_calls"], 0);
+    }
+
+    #[tokio::test]
     async fn session_summary_bounds_event_limit() {
         let (_tmp, service) = phase2_service();
         let mut resp = TestClient::post("http://localhost/api/tools/call")

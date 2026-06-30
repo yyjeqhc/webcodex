@@ -753,6 +753,18 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "limit": 20
                             }
                         },
+                        "postSessionMessage": {
+                            "summary": "Post session-local guidance while recording the wrapper call separately",
+                            "value": {
+                                "tool": "post_session_message",
+                                "session_id": "wc_sess_business",
+                                "recording_session_id": "wc_sess_recorder",
+                                "kind": "guidance",
+                                "message": "Keep new capabilities behind callRuntimeTool; do not add dedicated OpenAPI operations.",
+                                "tags": ["openapi", "constraint"],
+                                "priority": "normal"
+                            }
+                        },
                         "showChanges": {
                             "summary": "Summarize current worktree changes with optional session activity",
                             "value": {
@@ -988,15 +1000,48 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, bind_current_session, current_session, unbind_current_session, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, show_changes, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, bind_current_session, current_session, unbind_current_session, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, show_changes, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
                 "recording_session_id": {
                     "type": "string",
-                    "description": "Optional recorder metadata for the generic wrapper call. Pass a wc_sess_* id from start_session to record this call and enforce that session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id."
+                    "description": "Optional recorder metadata for the generic wrapper call. Pass a wc_sess_* id from start_session to record this call and enforce that recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id or post_session_message.session_id."
                 },
                 "session_id": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. For session_summary this is the required session id to read; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
+                    "description": "Flattened tool-specific argument. For session_summary and message-board tools this is the required business session id to read or update; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
+                },
+                "kind": {
+                    "type": "string",
+                    "description": "Flattened message-board argument. One of note, proposal, question, answer, decision, risk, progress, guidance, todo. Used only when `params` and `arguments` are absent."
+                },
+                "message": {
+                    "type": "string",
+                    "description": "Flattened post_session_message body. Used only when `params` and `arguments` are absent."
+                },
+                "tags": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flattened post_session_message tags. Used only when `params` and `arguments` are absent."
+                },
+                "reply_to": {
+                    "type": "string",
+                    "description": "Flattened post_session_message reply target wc_msg_* id. Used only when `params` and `arguments` are absent."
+                },
+                "priority": {
+                    "type": "string",
+                    "description": "Flattened post_session_message priority: low, normal, or high. Used only when `params` and `arguments` are absent."
+                },
+                "status": {
+                    "type": "string",
+                    "description": "Flattened list_session_messages status filter: open or resolved. Used only when `params` and `arguments` are absent."
+                },
+                "message_id": {
+                    "type": "string",
+                    "description": "Flattened resolve_session_message wc_msg_* id. Used only when `params` and `arguments` are absent."
+                },
+                "resolution": {
+                    "type": "string",
+                    "description": "Flattened resolve_session_message resolution note. Used only when `params` and `arguments` are absent."
                 },
                 "params": {
                     "type": "object",

@@ -105,6 +105,127 @@ fn session_guards_schema(description: &str) -> Value {
     })
 }
 
+fn session_message_kind_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": [
+            "note", "proposal", "question", "answer", "decision", "risk",
+            "progress", "guidance", "todo"
+        ],
+        "description": description,
+    })
+}
+
+fn session_message_status_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": ["open", "resolved"],
+        "description": description,
+    })
+}
+
+fn session_message_priority_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": ["low", "normal", "high"],
+        "description": description,
+    })
+}
+
+fn post_session_message_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id whose session-local message board receives this message. This is business input, not recorder metadata."
+            },
+            "kind": session_message_kind_schema("Message kind."),
+            "message": {
+                "type": "string",
+                "maxLength": 8000,
+                "description": "Non-empty message body. Guidance is session-local context and never overrides system/platform/WebCodex safety policy."
+            },
+            "tags": {
+                "type": "array",
+                "items": { "type": "string", "maxLength": 64 },
+                "maxItems": 16,
+                "description": "Optional tags for filtering or review."
+            },
+            "reply_to": {
+                "anyOf": [{ "type": "string" }, { "type": "null" }],
+                "description": "Optional message id in the same session."
+            },
+            "priority": session_message_priority_schema("Optional priority; defaults to normal.")
+        },
+        "required": ["session_id", "kind", "message"],
+        "additionalProperties": false,
+    })
+}
+
+fn list_session_messages_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id whose session-local message board is listed."
+            },
+            "kind": session_message_kind_schema("Optional kind filter."),
+            "status": session_message_status_schema("Optional status filter."),
+            "limit": {
+                "type": "integer",
+                "maximum": 100,
+                "description": "Maximum messages to return. Defaults to 50 and is clamped to 100. Results are newest-first by created_at."
+            }
+        },
+        "required": ["session_id"],
+        "additionalProperties": false,
+    })
+}
+
+fn resolve_session_message_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id containing the message."
+            },
+            "message_id": {
+                "type": "string",
+                "description": "wc_msg_* id returned by post_session_message."
+            },
+            "resolution": {
+                "type": "string",
+                "maxLength": 8000,
+                "description": "Optional resolution note."
+            }
+        },
+        "required": ["session_id", "message_id"],
+        "additionalProperties": false,
+    })
+}
+
+fn session_discussion_summary_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id whose message board should be summarized."
+            },
+            "limit": {
+                "type": "integer",
+                "maximum": 100,
+                "description": "Maximum recent progress/decision messages to return. Defaults to 50 and is clamped to 100."
+            }
+        },
+        "required": ["session_id"],
+        "additionalProperties": false,
+    })
+}
+
 fn start_session_input_schema() -> Value {
     json!({
         "type": "object",
@@ -462,11 +583,64 @@ fn output_schema_for_tool(name: &str) -> Value {
                 ),
             ),
             (
+                "messages",
+                open_object_schema("Bounded session message-board summary: counts plus at most five recent progress messages; never the full message queue."),
+            ),
+            (
                 "project_instructions",
                 nullable_schema(
                     "object",
                     "Summary-only projection of project-local instructions loaded at session start (no content bodies). Present when the session was created with a project. Project-local guidance only; does not override system/platform/WebCodex safety policy.",
                 ),
+            ),
+        ]),
+        "post_session_message" => wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success.")),
+            ("session_id", schema_type("string", "Business session id whose message board was updated.")),
+            ("message_id", schema_type("string", "Created wc_msg_* message id.")),
+            ("message", open_object_schema("Created session message.")),
+        ]),
+        "list_session_messages" => wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success.")),
+            ("session_id", schema_type("string", "Business session id whose messages were listed.")),
+            (
+                "messages",
+                array_schema(open_object_schema("Session message."), "Newest-first messages matching the filters."),
+            ),
+        ]),
+        "resolve_session_message" => wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success.")),
+            ("session_id", schema_type("string", "Business session id containing the message.")),
+            ("message_id", schema_type("string", "Resolved wc_msg_* message id.")),
+            ("message", open_object_schema("Resolved session message.")),
+        ]),
+        "session_discussion_summary" => wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success.")),
+            ("session_id", schema_type("string", "Business session id being summarized.")),
+            ("counts", open_object_schema("Structured message counts.")),
+            (
+                "open_guidance",
+                array_schema(open_object_schema("Open guidance message."), "Bounded newest-first open guidance."),
+            ),
+            (
+                "open_questions",
+                array_schema(open_object_schema("Open question message."), "Bounded newest-first open questions."),
+            ),
+            (
+                "open_risks",
+                array_schema(open_object_schema("Open risk message."), "Bounded newest-first open risks."),
+            ),
+            (
+                "open_todos",
+                array_schema(open_object_schema("Open todo message."), "Bounded newest-first open todos."),
+            ),
+            (
+                "recent_progress",
+                array_schema(open_object_schema("Recent progress message."), "Bounded newest-first progress messages."),
+            ),
+            (
+                "recent_decisions",
+                array_schema(open_object_schema("Recent decision message."), "Bounded newest-first decision messages."),
             ),
         ]),
         "bind_current_session" => wrapped_output_schema(vec![
@@ -917,6 +1091,34 @@ impl ToolRuntime {
                 ]),
                 output_schema: output_schema_for_tool("session_summary"),
                 annotations: tool_annotations("session_summary"),
+            },
+            ToolSpec {
+                name: "post_session_message".to_string(),
+                description: "Post a bounded session-local message for collaboration, progress, user guidance, or design discussion. Metadata-only; does not modify project files. Guidance never overrides system/platform/WebCodex safety policy.".to_string(),
+                input_schema: post_session_message_input_schema(),
+                output_schema: output_schema_for_tool("post_session_message"),
+                annotations: tool_annotations("post_session_message"),
+            },
+            ToolSpec {
+                name: "list_session_messages".to_string(),
+                description: "List bounded session-local messages in stable newest-first order, optionally filtered by kind and status.".to_string(),
+                input_schema: list_session_messages_input_schema(),
+                output_schema: output_schema_for_tool("list_session_messages"),
+                annotations: tool_annotations("list_session_messages"),
+            },
+            ToolSpec {
+                name: "resolve_session_message".to_string(),
+                description: "Mark a session-local message resolved. Idempotent when the message is already resolved; metadata-only and never modifies project files.".to_string(),
+                input_schema: resolve_session_message_input_schema(),
+                output_schema: output_schema_for_tool("resolve_session_message"),
+                annotations: tool_annotations("resolve_session_message"),
+            },
+            ToolSpec {
+                name: "session_discussion_summary".to_string(),
+                description: "Return a bounded structured aggregate of session-local discussion. Does not call an LLM or generate natural-language summaries.".to_string(),
+                input_schema: session_discussion_summary_input_schema(),
+                output_schema: output_schema_for_tool("session_discussion_summary"),
+                annotations: tool_annotations("session_discussion_summary"),
             },
             ToolSpec {
                 name: "bind_current_session".to_string(),
@@ -1660,6 +1862,8 @@ impl ToolRuntime {
             ]),
             "runtime": pick(&[
                 "list_tools", "start_session", "session_summary",
+                "post_session_message", "list_session_messages",
+                "resolve_session_message", "session_discussion_summary",
                 "bind_current_session", "current_session", "unbind_current_session",
                 "list_projects", "list_agents", "runtime_status"
             ]),

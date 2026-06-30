@@ -588,6 +588,22 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
+                "post_session_message",
+                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+            ),
+            (
+                "list_session_messages",
+                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+            ),
+            (
+                "resolve_session_message",
+                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+            ),
+            (
+                "session_discussion_summary",
+                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+            ),
+            (
                 "bind_current_session",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
@@ -632,6 +648,10 @@ mod tests {
             "list_tools",
             "start_session",
             "session_summary",
+            "post_session_message",
+            "list_session_messages",
+            "resolve_session_message",
+            "session_discussion_summary",
             "bind_current_session",
             "current_session",
             "unbind_current_session",

@@ -1,5 +1,6 @@
 use crate::auth::AuthContext;
 use crate::json_error;
+use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use salvo::prelude::*;
 use serde::Deserialize;
@@ -194,7 +195,7 @@ async fn handle_mcp_request(
             }),
         ),
         "tools/call" => {
-            let params: McpToolCallParams = match serde_json::from_value(request.params) {
+            let mut params: McpToolCallParams = match serde_json::from_value(request.params) {
                 Ok(params) => params,
                 Err(e) => {
                     return McpOutcome::BadRequest(rpc_error(
@@ -207,13 +208,34 @@ async fn handle_mcp_request(
             if let Some(outcome) = enforce_mcp_oauth_tool_scope(auth, &params.name) {
                 return outcome;
             }
+            let session_id = strip_reserved_session_id(&mut params.arguments);
+            let session_event = runtime.sessions.record_tool_call_started(
+                session_id.as_deref(),
+                SessionTransport::Mcp,
+                &params.name,
+                &params.arguments,
+            );
             let call = match ToolCall::from_tool_name(&params.name, params.arguments) {
                 Ok(call) => call,
                 Err(e) => {
+                    runtime.sessions.record_tool_call_finished(
+                        session_event,
+                        false,
+                        &Value::Null,
+                        Some(&e),
+                        Some("invalid_arguments"),
+                    );
                     return McpOutcome::BadRequest(rpc_error(id, -32602, e));
                 }
             };
             let result = runtime.dispatch_with_auth(call, auth).await;
+            runtime.sessions.record_tool_call_finished(
+                session_event,
+                result.success,
+                &result.output,
+                result.error.as_deref(),
+                None,
+            );
             let text = serde_json::to_string_pretty(&json!({
                 "success": result.success,
                 "output": result.output.clone(),
@@ -287,6 +309,15 @@ fn enforce_mcp_oauth_tool_scope(auth: Option<&AuthContext>, tool_name: &str) -> 
             "OAuth2 access tokens cannot call unknown runtime tools",
         )),
     }
+}
+
+fn strip_reserved_session_id(arguments: &mut Value) -> Option<String> {
+    arguments
+        .as_object_mut()
+        .and_then(|obj| obj.remove("_session_id"))
+        .and_then(|value| value.as_str().map(str::to_string))
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 fn oauth_forbidden(
@@ -439,6 +470,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_tools_exposed_in_registry_and_mcp() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let registry_names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
+        assert!(registry_names.contains(&"start_session"));
+        assert!(registry_names.contains(&"session_summary"));
+
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(31)), json!({})),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(v) => v,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        let names: Vec<String> = value["result"]["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(names.iter().any(|name| name == "start_session"));
+        assert!(names.iter().any(|name| name == "session_summary"));
+    }
+
+    #[tokio::test]
     async fn mcp_tools_call_list_projects_returns_content_blocks() {
         let runtime = test_runtime();
         let outcome = handle_mcp_request(
@@ -463,6 +522,92 @@ mod tests {
         // No server-side project config is normal; without registered agents,
         // list_projects succeeds with an empty project array.
         assert_eq!(value["result"]["isError"], false);
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_call_strips_reserved_session_id_before_dispatch() {
+        let runtime = test_runtime();
+        let session = runtime
+            .sessions
+            .start_session(Some("demo".to_string()), Some("mcp strip".to_string()));
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(Value::from(32)),
+                json!({
+                    "name": "list_projects",
+                    "arguments": {
+                        "_session_id": &session.session_id
+                    }
+                }),
+            ),
+            None,
+        )
+        .await;
+        match outcome {
+            McpOutcome::Ok(_) => {}
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(10))
+            .unwrap();
+        assert_eq!(summary.counts.tool_calls, 1);
+        let started = summary
+            .events
+            .iter()
+            .find(|event| event.kind == "tool_call_started")
+            .unwrap();
+        assert_eq!(started.transport, "mcp");
+        assert_eq!(started.tool_name, "list_projects");
+        assert!(
+            !serde_json::to_string(&started.input_summary)
+                .unwrap()
+                .contains("_session_id"),
+            "_session_id must be stripped before recording/dispatch"
+        );
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_call_records_event_with_session_id() {
+        let runtime = test_runtime();
+        let session = runtime.sessions.start_session(None, None);
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(Value::from(33)),
+                json!({
+                    "name": "list_projects",
+                    "arguments": {
+                        "_session_id": &session.session_id
+                    }
+                }),
+            ),
+            None,
+        )
+        .await;
+        match outcome {
+            McpOutcome::Ok(value) => {
+                assert_eq!(value["result"]["structuredContent"]["success"], true);
+            }
+            other => panic!("expected Ok, got {:?}", other),
+        }
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(10))
+            .unwrap();
+        assert_eq!(summary.counts.tool_calls, 1);
+        assert_eq!(summary.counts.succeeded, 1);
+        let finished = summary
+            .events
+            .iter()
+            .find(|event| event.kind == "tool_call_finished")
+            .unwrap();
+        assert_eq!(finished.transport, "mcp");
+        assert_eq!(finished.status.as_deref(), Some("success"));
+        assert_eq!(finished.risk_class, "read_only");
     }
 
     #[tokio::test]

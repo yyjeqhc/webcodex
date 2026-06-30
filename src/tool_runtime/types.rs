@@ -19,6 +19,23 @@ pub enum ToolCall {
     /// List registered tool runtime tools.
     ListTools,
 
+    /// Start an in-memory task tracking session. The session id is opaque and
+    /// may be passed as REST `session_id` or MCP `_session_id` metadata on
+    /// later tool calls.
+    StartSession {
+        #[serde(default)]
+        project: Option<String>,
+        #[serde(default)]
+        title: Option<String>,
+    },
+
+    /// Return a bounded structured summary of recorded session events.
+    SessionSummary {
+        session_id: String,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
     /// Execute a shell command in a project directory (sync, short-lived).
     RunShell {
         project: String,
@@ -448,6 +465,8 @@ pub enum ToolCall {
 /// raw serde variant error.
 pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "list_tools",
+    "start_session",
+    "session_summary",
     "run_shell",
     "apply_patch",
     "apply_patch_checked",

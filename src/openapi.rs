@@ -720,14 +720,25 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced generic entry point for any runtime tool. Prefer dedicated actions when available. Use listRuntimeTools to discover tool names. Arguments may be sent in params, arguments, or flattened top-level fields when GPT Actions rejects params/arguments.",
+                    "Advanced generic entry point for any runtime tool. Prefer dedicated actions. Use listRuntimeTools for names. Send arguments in params, arguments, or flattened fields. Pass top-level session_id from start_session to record this call in the in-memory recorder.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
+                        "trackedSession": {
+                            "summary": "Start a session and pass session_id on later calls",
+                            "value": {
+                                "tool": "start_session",
+                                "params": {
+                                    "project": "webcodex",
+                                    "title": "implement show_changes follow-up"
+                                }
+                            }
+                        },
                         "gitStatus": {
                             "summary": "Call git_status via the generic entry point",
                             "value": {
                                 "tool": "git_status",
+                                "session_id": "wc_sess_example",
                                 "params": {
                                     "project": "webcodex"
                                 }
@@ -957,11 +968,15 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. GPT Actions may pass tool-specific arguments as top-level fields when params/arguments are not accepted by the Action schema; those flattened fields are used only when `params` and `arguments` are absent. Omit all arguments for argument-less tools like list_tools.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. `session_id` is reserved top-level recorder metadata returned by start_session and is never forwarded to the concrete tool. GPT Actions may pass tool-specific arguments as top-level fields when params/arguments are not accepted by the Action schema; those flattened fields are used only when `params` and `arguments` are absent. Omit all arguments for argument-less tools like list_tools.",
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, show_changes, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, show_changes, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": "Reserved recorder metadata. Pass the wc_sess_* value returned by start_session to record this call. It is stripped before concrete tool dispatch and is not a tool argument."
                 },
                 "params": {
                     "type": "object",

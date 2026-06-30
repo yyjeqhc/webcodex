@@ -57,7 +57,7 @@ MCP and GPT Actions share the same `ToolRuntime`. A tool call made through MCP r
 
 Typical MCP tools include:
 
-- Discovery and health: `list_tools`, `runtime_status`, `list_projects`, `list_agents`.
+- Discovery, health, and task tracking: `list_tools`, `start_session`, `session_summary`, `runtime_status`, `list_projects`, `list_agents`.
 - Read-only project inspection: `show_changes`, `list_project_files`, `read_file`, `search_project_text`, `git_status`, `git_diff`, `git_diff_summary`, `git_diff_hunks`.
 - Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`.
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
@@ -71,6 +71,31 @@ Use `show_changes` near the end of a task to summarize the current worktree,
 check for untracked smoke/tmp/test files, review `git diff --stat`, and request
 optional bounded hunks with `include_diff=true`. It is read-only, requires
 `project:read`, and never cleans, stages, commits, or restores files.
+
+`start_session` and `session_summary` are the current task tracking foundation.
+They create and read bounded in-memory recorder state only; they do not modify a
+workspace and are not a complete audit log. Sessions are lost when the server
+restarts. To group MCP tool calls, pass the session id as reserved metadata in
+`tools/call` arguments:
+
+```json
+{
+  "name": "read_file",
+  "arguments": {
+    "_session_id": "wc_sess_example",
+    "project": "agent:special-container:webcodex",
+    "path": "src/mcp.rs",
+    "start_line": 1,
+    "limit": 20
+  }
+}
+```
+
+WebCodex strips `_session_id` before dispatching the concrete tool, so it is
+not forwarded to the tool parser, agent, or workspace files. The summary records
+bounded/redacted start and finish events, including tool name, transport,
+project id when supplied, risk class, status, duration, inferred write-like
+paths, and returned `job_id` when available.
 
 Use agent-backed project ids such as:
 

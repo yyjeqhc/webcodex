@@ -276,8 +276,10 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
     match tool_name {
-        "list_tools" | "runtime_status" | "job_status" | "job_log" | "list_jobs" | "job_tail"
-        | "list_agents" => OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+        "list_tools" | "start_session" | "session_summary" | "runtime_status" | "job_status"
+        | "job_log" | "list_jobs" | "job_tail" | "list_agents" => {
+            OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ)
+        }
 
         "list_projects"
         | "read_file"
@@ -609,6 +611,14 @@ mod tests {
         for (tool, policy) in [
             (
                 "list_tools",
+                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+            ),
+            (
+                "start_session",
+                OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
+            ),
+            (
+                "session_summary",
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (

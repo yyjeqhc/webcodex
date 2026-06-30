@@ -1,5 +1,6 @@
 use crate::action_audit::{ActionAudit, ActionAuditRecord};
 use crate::json_error;
+use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::{ToolCall, ToolRuntime};
 use base64::{engine::general_purpose, Engine as _};
 use salvo::prelude::*;
@@ -531,13 +532,34 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     };
+    let session_id = extract_top_level_session_id(&body);
+    let session_event = runtime.sessions.record_tool_call_started(
+        session_id.as_deref(),
+        SessionTransport::Api,
+        &tool,
+        &params,
+    );
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     if !enforce_oauth_runtime_tool_scope(auth.as_ref(), &tool, res) {
+        runtime.sessions.record_tool_call_finished(
+            session_event,
+            false,
+            &Value::Null,
+            Some("missing required OAuth scope"),
+            Some("insufficient_scope"),
+        );
         return;
     }
     let call = match ToolCall::from_tool_name(&tool, params) {
         Ok(call) => call,
         Err(e) => {
+            runtime.sessions.record_tool_call_finished(
+                session_event,
+                false,
+                &Value::Null,
+                Some(&e),
+                Some("invalid_arguments"),
+            );
             res.status_code(StatusCode::BAD_REQUEST);
             res.render(json_error(StatusCode::BAD_REQUEST, e));
             return;
@@ -545,6 +567,13 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
     };
     let project = tool_project(&call);
     let result = runtime.dispatch_with_auth(call, auth.as_ref()).await;
+    runtime.sessions.record_tool_call_finished(
+        session_event,
+        result.success,
+        &result.output,
+        result.error.as_deref(),
+        None,
+    );
     render_result(res, &audit, &tool, project, result);
 }
 
@@ -556,13 +585,14 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
 /// - `{"tool":"git_diff_summary","params":{"project":"agent:c:p"}}`
 /// - `{"tool":"git_diff_summary","arguments":{"project":"agent:c:p"}}`
 /// - `{"tool":"git_diff_summary","project":"agent:c:p"}`
+/// - `{"tool":"git_diff_summary","session_id":"wc_sess_...","params":{...}}`
 ///
 /// When both `params` and `arguments` are present, `params` wins; `arguments`
 /// is only a compatibility alias. When neither is present, every top-level
-/// field except `tool` is collected into the params object for GPT Action
-/// compatibility. Returns a human-readable error string (never including the
-/// raw body) when the body is not a JSON object or `tool` is missing/not a
-/// non-empty string.
+/// field except `tool` and reserved metadata like `session_id` is collected
+/// into the params object for GPT Action compatibility. Returns a
+/// human-readable error string (never including the raw body) when the body is
+/// not a JSON object or `tool` is missing/not a non-empty string.
 fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     let obj = body
         .as_object()
@@ -587,7 +617,7 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     } else {
         let mut flattened = serde_json::Map::new();
         for (key, value) in obj {
-            if key != "tool" {
+            if key != "tool" && key != "session_id" {
                 flattened.insert(key.clone(), value.clone());
             }
         }
@@ -598,6 +628,15 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
         }
     };
     Ok((tool, params))
+}
+
+fn extract_top_level_session_id(body: &Value) -> Option<String> {
+    body.as_object()
+        .and_then(|obj| obj.get("session_id"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
 }
 
 #[handler]
@@ -3109,6 +3148,183 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_session_returns_session_id() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "start_session",
+                "params": {
+                    "project": "agent:special-container:webcodex",
+                    "title": "implement show_changes follow-up"
+                }
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["output"]["success"], true);
+        assert!(body["output"]["session_id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("wc_sess_")));
+        assert_eq!(
+            body["output"]["project"],
+            "agent:special-container:webcodex"
+        );
+        assert_eq!(body["output"]["title"], "implement show_changes follow-up");
+        assert!(body["output"]["created_at"].is_i64());
+    }
+
+    #[tokio::test]
+    async fn session_summary_empty_session() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session", "params": {"title": "empty"}}))
+            .send(&service)
+            .await;
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "session_summary",
+                "params": {"session_id": session_id, "limit": 50}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["session_id"], session_id);
+        assert_eq!(body["output"]["counts"]["tool_calls"], 0);
+        assert_eq!(body["output"]["counts"]["succeeded"], 0);
+        assert_eq!(body["output"]["counts"]["failed"], 0);
+        assert!(body["output"]["events"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn api_tools_call_records_success_event_with_session_id() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session", "params": {"project": "demo"}}))
+            .send(&service)
+            .await;
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "list_projects",
+                "session_id": session_id,
+                "params": {}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let _: Value = resp.take_json().await.unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "session_summary", "params": {"session_id": session_id}}))
+            .send(&service)
+            .await;
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["counts"]["tool_calls"], 1);
+        assert_eq!(body["output"]["counts"]["succeeded"], 1);
+        assert_eq!(body["output"]["counts"]["failed"], 0);
+        let events = body["output"]["events"].as_array().unwrap();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["kind"], "tool_call_started");
+        assert_eq!(events[1]["kind"], "tool_call_finished");
+        assert_eq!(events[1]["transport"], "api");
+        assert_eq!(events[1]["tool_name"], "list_projects");
+        assert_eq!(events[1]["risk_class"], "read_only");
+        assert_eq!(events[1]["status"], "success");
+        assert!(events[1]["duration_ms"].is_u64());
+    }
+
+    #[tokio::test]
+    async fn api_tools_call_records_failure_event_with_session_id() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session", "params": {"project": "demo"}}))
+            .send(&service)
+            .await;
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "read_file",
+                "session_id": session_id,
+                "params": {"project": "demo", "path": "missing.txt"}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let _: Value = resp.take_json().await.unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "session_summary", "params": {"session_id": session_id}}))
+            .send(&service)
+            .await;
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["counts"]["tool_calls"], 1);
+        assert_eq!(body["output"]["counts"]["failed"], 1);
+        let event = &body["output"]["events"].as_array().unwrap()[1];
+        assert_eq!(event["tool_name"], "read_file");
+        assert_eq!(event["status"], "error");
+        assert_eq!(event["error_kind"], "runtime_error");
+        assert!(event["error_message_summary"].as_str().unwrap().len() <= 243);
+    }
+
+    #[tokio::test]
+    async fn session_summary_bounds_event_limit() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session"}))
+            .send(&service)
+            .await;
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+
+        for _ in 0..3 {
+            let mut resp = TestClient::post("http://localhost/api/tools/call")
+                .bearer_auth("secret")
+                .json(&json!({
+                    "tool": "list_projects",
+                    "session_id": session_id,
+                    "params": {}
+                }))
+                .send(&service)
+                .await;
+            let _: Value = resp.take_json().await.unwrap();
+        }
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "session_summary",
+                "params": {"session_id": session_id, "limit": 1}
+            }))
+            .send(&service)
+            .await;
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["counts"]["tool_calls"], 3);
+        let events = body["output"]["events"].as_array().unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0]["kind"], "tool_call_finished");
+    }
+
+    #[tokio::test]
     async fn http_tools_call_params_wins_over_arguments() {
         // When both params and arguments are present, params wins. Use a tool
         // whose params shape we can distinguish: git_diff_summary takes a
@@ -3359,6 +3575,38 @@ mod tests {
         let (_tmp, service, token) = phase2_oauth_service("project:read");
         let (status, body, challenge) =
             oauth_tools_call(&service, &token, "runtime_status", Value::Null).await;
+        assert_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_RUNTIME_READ),
+        );
+    }
+
+    #[tokio::test]
+    async fn session_tools_oauth_scope_policy() {
+        let (_tmp, service, token) = phase2_oauth_service("runtime:read");
+        let (status, body, _) = oauth_tools_call(
+            &service,
+            &token,
+            "start_session",
+            json!({"project": "demo", "title": "oauth"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+        let session_id = body["output"]["session_id"].as_str().unwrap();
+        let (status, body, _) = oauth_tools_call(
+            &service,
+            &token,
+            "session_summary",
+            json!({"session_id": session_id}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
+
+        let (_tmp, service, token) = phase2_oauth_service("project:read");
+        let (status, body, challenge) =
+            oauth_tools_call(&service, &token, "start_session", json!({})).await;
         assert_oauth_scope_rejected(
             status,
             &body,

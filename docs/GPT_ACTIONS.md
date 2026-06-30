@@ -107,15 +107,17 @@ Use `webcodex-cli` for those management tasks.
 
 ## Recommended flow
 
-1. `getRuntimeStatus` — verify runtime health and redacted agent policy summaries.
-2. `getRuntimeStatus`, or `callRuntimeTool` with `list_agents` — confirm an online agent and its redacted policy summary or `agent_instance_id`.
-3. `listProjects` — choose an `agent:<client_id>:<project_id>`.
-4. `callRuntimeTool` with `show_changes`, plus `getProjectGitStatus`, `listProjectFiles`, `readProjectFile`, and `searchProjectText` — inspect before editing.
-5. For scoped source edits with known line numbers, use `callRuntimeTool` with the structured line edit tools: `replace_line_range`, `insert_at_line`, and `delete_line_range`.
-6. For broader multi-file edits, use `validateProjectPatch` first, then `applyProjectPatchChecked` only when the patch is intentional.
-7. Use `writeProjectFile` only for new files or deliberate small whole-file overwrites; use `replaceProjectFileText` only for short exact substring changes.
-8. `runProjectShellCommand` or `startProjectShellJob` — execute only bounded commands in registered projects after file edits are complete.
-9. `runCodexTask` — optional advanced path when Codex CLI is installed and configured on the agent machine.
+1. Optional: call `callRuntimeTool` with `start_session` and keep the returned `wc_sess_*` id for this task.
+2. `getRuntimeStatus` — verify runtime health and redacted agent policy summaries.
+3. `getRuntimeStatus`, or `callRuntimeTool` with `list_agents` — confirm an online agent and its redacted policy summary or `agent_instance_id`.
+4. `listProjects` — choose an `agent:<client_id>:<project_id>`.
+5. `callRuntimeTool` with `show_changes`, plus `getProjectGitStatus`, `listProjectFiles`, `readProjectFile`, and `searchProjectText` — inspect before editing.
+6. For scoped source edits with known line numbers, use `callRuntimeTool` with the structured line edit tools: `replace_line_range`, `insert_at_line`, and `delete_line_range`.
+7. For broader multi-file edits, use `validateProjectPatch` first, then `applyProjectPatchChecked` only when the patch is intentional.
+8. Use `writeProjectFile` only for new files or deliberate small whole-file overwrites; use `replaceProjectFileText` only for short exact substring changes.
+9. `runProjectShellCommand` or `startProjectShellJob` — execute only bounded commands in registered projects after file edits are complete.
+10. Call `callRuntimeTool` with `session_summary` to inspect recorded tool calls, then use `show_changes` for the current worktree state.
+11. `runCodexTask` — optional advanced path when Codex CLI is installed and configured on the agent machine.
 
 `runCodexTask` does not launch a new agent. It asks the already connected agent to run the Codex CLI in a project.
 
@@ -125,6 +127,57 @@ untracked files, `git diff --stat`, optional bounded hunks, simple warnings for
 untracked smoke/tmp/test/anchor files, and suggested next actions. Use it before
 summarizing a task or committing. It requires `project:read` and never modifies,
 cleans, stages, commits, or restores the worktree.
+
+## Session tracking
+
+`start_session` and `session_summary` are runtime tools for task tracking
+foundation work. They let a caller group later `/api/tools/call` invocations
+under an opaque `wc_sess_*` id and ask which tools ran, which succeeded or
+failed, which project id was supplied, which write-like paths were inferred,
+and which job-like calls returned a `job_id`.
+
+Start a session through the generic Action:
+
+```json
+{
+  "tool": "start_session",
+  "params": {
+    "project": "agent:special-container:webcodex",
+    "title": "implement show_changes follow-up"
+  }
+}
+```
+
+Pass the returned id as top-level metadata on later generic calls:
+
+```json
+{
+  "tool": "read_file",
+  "session_id": "wc_sess_example",
+  "params": {
+    "project": "agent:special-container:webcodex",
+    "path": "src/mcp.rs",
+    "start_line": 1,
+    "limit": 20
+  }
+}
+```
+
+Then summarize it:
+
+```json
+{
+  "tool": "session_summary",
+  "params": {
+    "session_id": "wc_sess_example",
+    "limit": 50
+  }
+}
+```
+
+The recorder is in-memory and bounded; server restart loses sessions. It does
+not automatically modify a workspace, does not scan diffs, and is not a
+complete audit log. Inputs and errors are redacted and bounded before storage.
 
 ## Observability
 

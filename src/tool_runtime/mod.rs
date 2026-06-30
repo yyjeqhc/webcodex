@@ -12,6 +12,7 @@ mod jobs;
 mod patch;
 mod projects;
 mod registry;
+pub(crate) mod sessions;
 mod shell;
 mod types;
 
@@ -43,6 +44,7 @@ pub struct ToolRuntime {
     pub shell_clients: Arc<ShellClientRegistry>,
     pub codex: Arc<CodexConfig>,
     pub runtime_info: Arc<RuntimeInfo>,
+    pub(crate) sessions: sessions::SessionStore,
     local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
     job_killer: Arc<dyn LocalJobKiller>,
 }
@@ -59,6 +61,7 @@ impl ToolRuntime {
             shell_clients,
             codex,
             runtime_info,
+            sessions: sessions::SessionStore::default(),
             local_jobs: Arc::new(Mutex::new(HashMap::new())),
             job_killer: Arc::new(SystemJobKiller),
         }
@@ -173,6 +176,8 @@ impl ToolRuntime {
             | ToolCall::CargoTest { .. } => Some(AgentCapability::Shell),
             ToolCall::RunJob { .. } | ToolCall::RunCodex { .. } => Some(AgentCapability::AsyncJobs),
             ToolCall::ListTools
+            | ToolCall::StartSession { .. }
+            | ToolCall::SessionSummary { .. }
             | ToolCall::ListProjects
             | ToolCall::RegisterProject { .. }
             | ToolCall::CreateProject { .. }
@@ -329,6 +334,27 @@ impl ToolRuntime {
         }
         match call {
             ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
+
+            ToolCall::StartSession { project, title } => {
+                let summary = self.sessions.start_session(project, title);
+                ToolResult::ok(json!({
+                    "success": true,
+                    "session_id": summary.session_id,
+                    "project": summary.project,
+                    "title": summary.title,
+                    "created_at": summary.created_at,
+                }))
+            }
+
+            ToolCall::SessionSummary { session_id, limit } => {
+                match self.sessions.summary(&session_id, limit) {
+                    Some(summary) => ToolResult::ok(
+                        serde_json::to_value(summary)
+                            .unwrap_or_else(|_| json!({"session_id": session_id, "events": []})),
+                    ),
+                    None => ToolResult::err(format!("unknown session_id: {}", session_id)),
+                }
+            }
 
             ToolCall::ListProjects => self.list_projects().await,
 

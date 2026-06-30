@@ -101,6 +101,8 @@ fn tool_annotations(name: &str) -> Value {
     let read_only = matches!(
         name,
         "list_tools"
+            | "start_session"
+            | "session_summary"
             | "list_projects"
             | "list_agents"
             | "runtime_status"
@@ -135,6 +137,8 @@ fn tool_annotations(name: &str) -> Value {
     let idempotent = matches!(
         name,
         "list_tools"
+            | "start_session"
+            | "session_summary"
             | "list_projects"
             | "list_agents"
             | "runtime_status"
@@ -297,6 +301,49 @@ fn output_schema_for_tool(name: &str) -> Value {
                 array_schema(open_object_schema("Tool metadata."), "Runtime tool specs."),
             ),
             ("count", schema_type("integer", "Tool count.")),
+        ]),
+        "start_session" => wrapped_output_schema(vec![
+            ("success", schema_type("boolean", "Always true on success.")),
+            ("session_id", schema_type("string", "Opaque session id.")),
+            (
+                "project",
+                nullable_schema("string", "Optional project associated with the task."),
+            ),
+            (
+                "title",
+                nullable_schema("string", "Optional session title."),
+            ),
+            (
+                "created_at",
+                schema_type("integer", "Unix timestamp in seconds."),
+            ),
+        ]),
+        "session_summary" => wrapped_output_schema(vec![
+            ("session_id", schema_type("string", "Opaque session id.")),
+            (
+                "project",
+                nullable_schema("string", "Optional project associated with the task."),
+            ),
+            (
+                "title",
+                nullable_schema("string", "Optional session title."),
+            ),
+            (
+                "created_at",
+                schema_type("integer", "Unix timestamp in seconds."),
+            ),
+            (
+                "updated_at",
+                schema_type("integer", "Unix timestamp in seconds."),
+            ),
+            ("counts", open_object_schema("Structured event counters.")),
+            (
+                "events",
+                array_schema(
+                    open_object_schema("Bounded session event."),
+                    "Recent events.",
+                ),
+            ),
         ]),
         "read_file" => wrapped_output_schema(vec![
             ("content", schema_type("string", "File content.")),
@@ -628,6 +675,26 @@ impl ToolRuntime {
                 input_schema: object_schema(vec![]),
                 output_schema: output_schema_for_tool("list_tools"),
                 annotations: tool_annotations("list_tools"),
+            },
+            ToolSpec {
+                name: "start_session".to_string(),
+                description: "Start an in-memory task tracking session. Read-only; creates bounded recorder metadata only and never modifies a project.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Optional runtime project id associated with this task.", false),
+                    ("title", "string", "Optional human-readable task title.", false),
+                ]),
+                output_schema: output_schema_for_tool("start_session"),
+                annotations: tool_annotations("start_session"),
+            },
+            ToolSpec {
+                name: "session_summary".to_string(),
+                description: "Return a bounded structured summary of tool calls recorded for a session. In-memory only; events are lost on restart.".to_string(),
+                input_schema: object_schema(vec![
+                    ("session_id", "string", "Opaque session id returned by start_session.", true),
+                    ("limit", "integer", "Maximum recent events to return, capped by the runtime.", false),
+                ]),
+                output_schema: output_schema_for_tool("session_summary"),
+                annotations: tool_annotations("session_summary"),
             },
             ToolSpec {
                 name: "list_projects".to_string(),
@@ -1329,7 +1396,8 @@ impl ToolRuntime {
                 "list_jobs", "job_tail"
             ]),
             "runtime": pick(&[
-                "list_tools", "list_projects", "list_agents", "runtime_status"
+                "list_tools", "start_session", "session_summary",
+                "list_projects", "list_agents", "runtime_status"
             ]),
             "cleanup": pick(&[
                 "delete_project_files", "git_restore_paths", "discard_untracked"

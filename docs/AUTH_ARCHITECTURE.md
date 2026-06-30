@@ -188,7 +188,7 @@ Bootstrap auth is treated as holding every scope (`admin` is a wildcard).
 
 | Scope | Purpose |
 | --- | --- |
-| `runtime:read` | Read runtime status, list tools |
+| `runtime:read` | Read runtime status, list tools, start/read in-memory session summaries |
 | `project:read` | List and read projects |
 | `project:write` | Create projects, write files, apply patches |
 | `job:run` | Run jobs and shell commands |
@@ -244,6 +244,14 @@ tokens.
 `project:read` to call it through `/api/tools/call` or MCP `tools/call`; the
 tool is read-only and does not clean, stage, commit, restore, or otherwise
 modify the worktree.
+
+`start_session` and `session_summary` are in the runtime bucket. OAuth2 access
+tokens need `runtime:read` to call them through `/api/tools/call` or MCP
+`tools/call`. They create/read bounded in-memory task tracking metadata only;
+sessions are lost on restart and the recorder is not a complete audit log.
+REST callers pass top-level `session_id` metadata on `/api/tools/call`. MCP
+callers pass reserved `_session_id` inside `tools/call` arguments; WebCodex
+strips it before concrete tool dispatch.
 
 OAuth2 scope failures return HTTP 403:
 

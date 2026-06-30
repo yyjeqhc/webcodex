@@ -43,7 +43,7 @@ The documented distribution path uses the npm thin installer/wrapper:
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
-Supported v0.2.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not included in v0.2.0 unless a later release adds artifacts.
+Planned v0.2.0 GitHub release artifacts are `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not planned for v0.2.0 unless a later release adds artifacts. The npm wrapper currently installs v0.1.0 binaries; download GitHub release binaries directly for v0.2.0.
 
 
 The npm package is a thin wrapper around native release artifacts. During install it downloads the matching GitHub Release artifact and verifies the SHA-256 checksum from the manifest.
@@ -118,26 +118,26 @@ sudo webcodex-cli client enroll \
   --server-url https://your-domain.example \
   --pairing-code <wc_pair_...> \
   --client-id friend-laptop \
-  --profile special \
+  --profile workstation \
   --allowed-root /home/friend/git
 ```
 
-Client enroll creates the `wc_pat_*` user token, `wc_agent_*` agent token, and `/etc/webcodex/clients/special/agent.toml` locally with `0600` permissions on Unix. `/etc/webcodex/webcodex.env` is server-side only; isolate client-side token/config files under `/etc/webcodex/clients/<profile>/` when multiple users or clients share one machine.
+Client enroll creates the `wc_pat_*` user token, `wc_agent_*` agent token, and `/etc/webcodex/clients/workstation/agent.toml` locally with `0600` permissions on Unix. `/etc/webcodex/webcodex.env` is server-side only; isolate client-side token/config files under `/etc/webcodex/clients/<profile>/` when multiple users or clients share one machine.
 
 8. Install and start the agent service, then validate:
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --profile special \
+  --profile workstation \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent-special
+sudo systemctl enable --now webcodex-agent-workstation
 webcodex-cli agent status \
-  --profile special \
+  --profile workstation \
   --server-url https://your-domain.example
 webcodex-cli doctor --strict \
-  --profile special \
+  --profile workstation \
   --server-url https://your-domain.example
 ```
 
@@ -169,11 +169,11 @@ Run non-destructive diagnostics:
 ```bash
 webcodex-cli doctor --strict \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/workstation/webcodex-agent-token
 ```
 
-Add `--agent-config /etc/webcodex/clients/special/agent.toml` to run local shell-profile / project
+Add `--agent-config /etc/webcodex/clients/workstation/agent.toml` to run local shell-profile / project
 diagnostics (parses `agent.toml`, checks `projects_dir`, project paths, and
 `shell_profile` resolution) without contacting the server. Add `--project <id>`
 to also run a remote `printf webcodex-doctor-ok` shell roundtrip against a
@@ -181,9 +181,9 @@ specific project:
 
 ```bash
 webcodex-cli doctor --strict \
-  --agent-config /etc/webcodex/clients/special/agent.toml \
+  --agent-config /etc/webcodex/clients/workstation/agent.toml \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
+  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
   --project agent:workstation:my-repo
 ```
 

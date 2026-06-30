@@ -68,8 +68,8 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 | Structured line edits | Working; preferred for scoped source edits with known line numbers. |
 | Git/file/patch/shell/Cargo tools | Working; shell execution should remain bounded and project-scoped. |
 | Codex CLI job launcher | Optional; requires Codex CLI on the agent machine. |
-| Release artifacts | v0.2.0 includes `linux-x64`, `linux-arm64`, and `darwin-arm64`. |
-| Windows and `darwin-x64` binaries | Not included in v0.2.0 release artifacts. |
+| Release artifacts | Planned v0.2.0 GitHub release will publish `linux-x64`, `linux-arm64`, and `darwin-arm64` artifacts. |
+| Windows and `darwin-x64` binaries | Not planned for v0.2.0 release artifacts. |
 
 ## Quick start
 
@@ -81,7 +81,7 @@ This local demo runs on one machine without `sudo`, `/etc`, systemd, HTTPS, Ngin
 npm install -g @yyjeqhc/webcodex
 ```
 
-Or download platform binaries from the project release artifacts.
+Or download platform binaries from the GitHub release. The npm wrapper currently installs v0.1.0 binaries; v0.2.0 users should download GitHub release binaries directly until a later npm release updates the wrapper.
 
 ### 2. Start a local server
 

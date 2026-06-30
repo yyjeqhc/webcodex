@@ -86,7 +86,7 @@ token、`userinfo_endpoint`、`client_credentials` grant、device code 流程，
 npm install -g @yyjeqhc/webcodex
 ```
 
-v0.2.0 release artifacts 当前包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.2.0 不包含 `darwin-x64`、Windows 和其他目标平台。
+计划发布的 v0.2.0 GitHub release artifacts 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.2.0 暂不计划包含 `darwin-x64`、Windows 和其他目标平台。npm wrapper 当前安装的是 v0.1.0 二进制文件；v0.2.0 用户应直接下载 GitHub release 二进制文件。
 
 初始化 env 文件：
 
@@ -154,11 +154,11 @@ Client：
 13. 运行 `webcodex-cli agent status`。
 14. 运行 `webcodex-cli doctor --strict`。
 
-`/etc/webcodex/webcodex.env` 只属于 server 侧。多用户或多个 client 共享一台机器时，client 侧文件应放在 profile 目录下，例如 `/etc/webcodex/clients/special/agent.toml`、`/etc/webcodex/clients/special/webcodex-user-token`、`/etc/webcodex/clients/special/webcodex-agent-token` 和 `/etc/webcodex/clients/special/projects.d`。
+`/etc/webcodex/webcodex.env` 只属于 server 侧。多用户或多个 client 共享一台机器时，client 侧文件应放在 profile 目录下，例如 `/etc/webcodex/clients/workstation/agent.toml`、`/etc/webcodex/clients/workstation/webcodex-user-token`、`/etc/webcodex/clients/workstation/webcodex-agent-token` 和 `/etc/webcodex/clients/workstation/projects.d`。
 
 ## 账户凭据开通流程
 
-如果部署不使用 pairing，可以使用下面的 account credential flow。环境特定 smoke 记录单独放在 [smoke-test-sg4.md](smoke-test-sg4.md)；本节命令统一使用 `https://your-domain.example` 占位符。
+如果部署不使用 pairing，可以使用下面的 account credential flow。本节命令统一使用 `https://your-domain.example` 占位符。
 
 1. 使用 server env file 中的 `WEBCODEX_TOKEN` 启动服务器。它只是 bootstrap/root/admin 凭据。
 2. 管理员运行 `webcodex-cli users create --issue-credential` 创建用户，并把返回的 `wc_acct_xxx` 一次性发给该用户。这个路径的二进制帮助使用 `users create` 和 `--server-url`；`token create-local` 与 `agent-token create-local` 使用 `--server`。
@@ -194,19 +194,19 @@ webcodex-cli client enroll \
   --pairing-code <wc_pair_...> \
   --client-id friend-laptop \
   --display-name "Friend Name" \
-  --profile special \
+  --profile workstation \
   --allowed-root /home/friend/git
 
 webcodex-cli agent install-service \
-  --profile special \
+  --profile workstation \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent-special
+sudo systemctl enable --now webcodex-agent-workstation
 
 webcodex-cli doctor \
-  --profile special \
+  --profile workstation \
   --server-url https://your-domain.example \
   --strict
 ```
@@ -285,19 +285,19 @@ server {
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --profile special \
+  --profile workstation \
   --bin /opt/webcodex/bin/webcodex-agent
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent-special
+sudo systemctl enable --now webcodex-agent-workstation
 webcodex-cli agent status \
-  --profile special \
+  --profile workstation \
   --server-url https://your-domain.example
 ```
 
 前台测试可直接启动 agent：
 
 ```bash
-webcodex-agent --profile special
+webcodex-agent --profile workstation
 ```
 
 `webcodex-agent init` 仍保留为兼容入口。

@@ -111,7 +111,7 @@ shell_profile = "conda-ml"
 运行本地 agent-config doctor 验证 shell profiles 和 project binding：
 
 ```bash
-webcodex-cli doctor --agent-config /etc/webcodex/clients/special/agent.toml
+webcodex-cli doctor --agent-config /etc/webcodex/clients/workstation/agent.toml
 ```
 
 如需 strict diagnostics 或对特定项目做远程 roundtrip，请参考 [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) 与 [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md)。

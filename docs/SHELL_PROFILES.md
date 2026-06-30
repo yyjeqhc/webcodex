@@ -158,7 +158,7 @@ Run the local agent-config doctor to validate shell profiles and project
 binding without contacting the server:
 
 ```bash
-webcodex-cli doctor --agent-config /etc/webcodex/clients/special/agent.toml
+webcodex-cli doctor --agent-config /etc/webcodex/clients/workstation/agent.toml
 ```
 
 Add `--strict` to exit non-zero on any failure, and `--project <id>` to also
@@ -166,11 +166,11 @@ run a remote shell roundtrip (`printf webcodex-doctor-ok`) against a specific
 project:
 
 ```bash
-webcodex-cli doctor --agent-config /etc/webcodex/clients/special/agent.toml --strict
+webcodex-cli doctor --agent-config /etc/webcodex/clients/workstation/agent.toml --strict
 webcodex-cli doctor --server-url https://example.test \
   --user-token-file ~/.config/webcodex/user.token \
-  --agent-config /etc/webcodex/clients/special/agent.toml \
-  --project agent:oe:webcodex --strict
+  --agent-config /etc/webcodex/clients/workstation/agent.toml \
+  --project agent:workstation:my-repo --strict
 ```
 
 The doctor checks, locally:

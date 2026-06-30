@@ -132,8 +132,8 @@ Server listener 和 handshake check：
 ```sh
 webcodex-cli doctor --quic --server-only \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-config /etc/webcodex/clients/special/agent.toml \
+  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
+  --agent-config /etc/webcodex/clients/workstation/agent.toml \
   --strict
 ```
 
@@ -142,8 +142,8 @@ Agent dispatch check：
 ```sh
 webcodex-cli doctor --quic --agent-e2e \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-config /etc/webcodex/clients/special/agent.toml \
+  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
+  --agent-config /etc/webcodex/clients/workstation/agent.toml \
   --project agent:CLIENT_ID:PROJECT_ID \
   --strict
 ```

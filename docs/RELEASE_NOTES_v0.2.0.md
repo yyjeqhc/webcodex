@@ -8,7 +8,7 @@
 
 Binary users: download new platform artifacts from the GitHub release and replace existing `webcodex`, `webcodex-cli`, and `webcodex-agent` binaries.
 
-npm wrapper users: the npm `@yyjeqhc/webcodex` package version remains at `0.1.0` for this release. The npm wrapper is a thin installer that downloads platform binaries; it will be updated in a later release.
+npm wrapper users: the npm `@yyjeqhc/webcodex` package version remains at `0.1.0` for this release. Running `npm install -g @yyjeqhc/webcodex` currently installs v0.1.0 binaries. The npm wrapper will be updated in a later release. To use v0.2.0, download GitHub release binaries directly instead of using npm install.
 
 Rust crate version: `Cargo.toml` is updated from `0.1.0` to `0.2.0`.
 

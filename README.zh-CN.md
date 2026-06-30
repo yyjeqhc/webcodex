@@ -68,8 +68,8 @@ registered project directory
 | 结构化行编辑 | 可用；已知目标行号时是推荐的局部源码编辑方式。 |
 | Git/file/patch/shell/Cargo tools | 可用；shell 执行应保持受限并限定在项目内。 |
 | Codex CLI job launcher | 可选；需要 agent 机器上已有 Codex CLI。 |
-| Release artifacts | v0.2.0 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。 |
-| Windows 和 `darwin-x64` binaries | v0.2.0 release artifacts 暂不包含。 |
+| Release artifacts | 计划发布的 v0.2.0 GitHub release 将包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64` artifacts。 |
+| Windows 和 `darwin-x64` binaries | v0.2.0 release artifacts 暂不计划包含。 |
 
 ## 快速开始
 
@@ -81,7 +81,7 @@ registered project directory
 npm install -g @yyjeqhc/webcodex
 ```
 
-也可以从项目 release artifacts 下载平台二进制文件。
+也可以从 GitHub release 下载平台二进制文件。npm wrapper 当前安装的是 v0.1.0 二进制文件；v0.2.0 用户应直接下载 GitHub release 二进制文件，直到后续 npm release 更新 wrapper。
 
 ### 2. 启动本地 server
 

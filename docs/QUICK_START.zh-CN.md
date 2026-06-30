@@ -25,7 +25,7 @@ webcodex-cli -h
 webcodex-agent -h
 ```
 
-v0.2.0 release artifacts 当前包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。v0.2.0 暂不包含 Windows 和 `darwin-x64` artifacts。
+计划发布的 v0.2.0 GitHub release artifacts 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。v0.2.0 暂不计划包含 Windows 和 `darwin-x64` artifacts。npm wrapper 当前安装的是 v0.1.0 二进制文件；v0.2.0 用户应直接下载 GitHub release 二进制文件。
 
 ## 1. 第一次部署服务器
 

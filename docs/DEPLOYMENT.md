@@ -87,7 +87,7 @@ The documented distribution path uses the npm thin installer/wrapper:
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
-Supported v0.2.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not included in v0.2.0 unless a later release adds artifacts.
+Planned v0.2.0 GitHub release artifacts are `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not planned for v0.2.0 unless a later release adds artifacts. The npm wrapper currently installs v0.1.0 binaries; download GitHub release binaries directly for v0.2.0.
 
 
 Initialize the env file:
@@ -156,11 +156,11 @@ Client:
 13. Run `webcodex-cli agent status`.
 14. Run `webcodex-cli doctor --strict`.
 
-`/etc/webcodex/webcodex.env` is server-side only. Client-side files live under a profile directory such as `/etc/webcodex/clients/special/agent.toml`, `/etc/webcodex/clients/special/webcodex-user-token`, `/etc/webcodex/clients/special/webcodex-agent-token`, and `/etc/webcodex/clients/special/projects.d` when multiple users or clients share one machine.
+`/etc/webcodex/webcodex.env` is server-side only. Client-side files live under a profile directory such as `/etc/webcodex/clients/workstation/agent.toml`, `/etc/webcodex/clients/workstation/webcodex-user-token`, `/etc/webcodex/clients/workstation/webcodex-agent-token`, and `/etc/webcodex/clients/workstation/projects.d` when multiple users or clients share one machine.
 
 ## Account credential onboarding flow
 
-For deployments that do not use pairing, use the account credential flow below. Environment-specific smoke records are kept separately in [smoke-test-sg4.md](smoke-test-sg4.md); the commands in this section use `https://your-domain.example` placeholders.
+For deployments that do not use pairing, use the account credential flow below. The commands in this section use `https://your-domain.example` placeholders.
 
 1. Start the server with `WEBCODEX_TOKEN` in the server env file. This is the bootstrap/root/admin credential only.
 2. Create a user with `webcodex-cli users create --issue-credential` and give the returned `wc_acct_xxx` to that user once. The binary help for this path uses `users create` plus `--server-url`, while `token create-local` and `agent-token create-local` use `--server`.
@@ -196,19 +196,19 @@ webcodex-cli client enroll \
   --pairing-code <wc_pair_...> \
   --client-id friend-laptop \
   --display-name "Friend Name" \
-  --profile special \
+  --profile workstation \
   --allowed-root /home/friend/git
 
 webcodex-cli agent install-service \
-  --profile special \
+  --profile workstation \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent-special
+sudo systemctl enable --now webcodex-agent-workstation
 
 webcodex-cli doctor \
-  --profile special \
+  --profile workstation \
   --server-url https://your-domain.example \
   --strict
 ```
@@ -288,19 +288,19 @@ Client enroll generates the agent config. Install a systemd unit with:
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --profile special \
+  --profile workstation \
   --bin /opt/webcodex/bin/webcodex-agent
 sudo systemctl daemon-reload
-sudo systemctl enable --now webcodex-agent-special
+sudo systemctl enable --now webcodex-agent-workstation
 webcodex-cli agent status \
-  --profile special \
+  --profile workstation \
   --server-url https://your-domain.example
 ```
 
 For a foreground test, start the agent with:
 
 ```bash
-webcodex-agent --profile special
+webcodex-agent --profile workstation
 ```
 
 `webcodex-agent init` remains available as a compatibility entry point.

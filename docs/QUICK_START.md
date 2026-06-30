@@ -25,7 +25,7 @@ webcodex-cli -h
 webcodex-agent -h
 ```
 
-v0.2.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. Windows and `darwin-x64` artifacts are not included in v0.2.0.
+Planned v0.2.0 GitHub release artifacts are `linux-x64`, `linux-arm64`, and `darwin-arm64`. Windows and `darwin-x64` artifacts are not planned for v0.2.0. The npm wrapper currently installs v0.1.0 binaries; download GitHub release binaries directly for v0.2.0.
 
 ## 1. First server deployment
 

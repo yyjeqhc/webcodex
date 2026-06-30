@@ -3378,6 +3378,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn start_session_read_only_summary_returns_guard_config() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "start_session",
+                "params": {"title": "readonly", "mode": "read_only"}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+        assert_eq!(start_body["output"]["mode"], "read_only");
+        assert_eq!(start_body["output"]["guards"]["deny_write_tools"], true);
+        assert_eq!(start_body["output"]["guards"]["deny_shell_tools"], true);
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "session_summary", "params": {"session_id": session_id}}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["output"]["session_id"], session_id);
+        assert_eq!(body["output"]["mode"], "read_only");
+        assert_eq!(body["output"]["guards"]["deny_write_tools"], true);
+        assert_eq!(body["output"]["guards"]["deny_shell_tools"], true);
+    }
+
+    #[tokio::test]
     async fn api_tools_call_records_success_event_with_session_id() {
         let (_tmp, service) = phase2_service();
         let mut resp = TestClient::post("http://localhost/api/tools/call")
@@ -4223,6 +4254,25 @@ mod tests {
         assert!(names.iter().any(|n| n == "write_project_file"));
         assert_eq!(body["count"], names.len());
         let tools = body["tools"].as_array().unwrap();
+        let start_session = tools
+            .iter()
+            .find(|tool| tool["name"] == "start_session")
+            .expect("missing start_session");
+        assert_eq!(
+            start_session["inputSchema"]["properties"]["mode"]["enum"],
+            json!(["normal", "read_only"])
+        );
+        assert!(start_session["inputSchema"]["properties"]
+            .get("deny_write_tools")
+            .is_some());
+        assert!(start_session["inputSchema"]["properties"]
+            .get("deny_shell_tools")
+            .is_some());
+        assert!(
+            start_session["outputSchema"]["properties"]["output"]["properties"]
+                .get("guards")
+                .is_some()
+        );
         for name in ["read_file", "run_shell", "write_project_file"] {
             let tool = tools
                 .iter()

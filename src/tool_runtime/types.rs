@@ -9,6 +9,28 @@ pub fn default_true() -> bool {
     true
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SessionMode {
+    Normal,
+    ReadOnly,
+}
+
+impl Default for SessionMode {
+    fn default() -> Self {
+        Self::Normal
+    }
+}
+
+impl SessionMode {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::ReadOnly => "read_only",
+        }
+    }
+}
+
 // =============================================================================
 // Tool input — one variant per tool
 // =============================================================================
@@ -27,6 +49,12 @@ pub enum ToolCall {
         project: Option<String>,
         #[serde(default)]
         title: Option<String>,
+        #[serde(default)]
+        mode: SessionMode,
+        #[serde(default)]
+        deny_write_tools: bool,
+        #[serde(default)]
+        deny_shell_tools: bool,
     },
 
     /// Return a bounded structured summary of recorded session events.

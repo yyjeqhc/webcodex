@@ -1,5 +1,7 @@
 use super::sessions::SessionTransport;
-use super::{ToolCall, ToolResult, ToolRuntime};
+use super::{
+    session_guard_denied_result, unknown_session_result, ToolCall, ToolResult, ToolRuntime,
+};
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
 use serde_json::Value;
@@ -94,6 +96,41 @@ impl ToolRuntime {
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
     ) -> ToolCallOutcome {
+        if let Some(session_id) = context.session_id {
+            if !self.sessions.contains_session(session_id) {
+                return ToolCallOutcome {
+                    success: false,
+                    result: Some(unknown_session_result(session_id)),
+                    error_status: None,
+                    project: None,
+                };
+            }
+            if let Some(denial) = self.sessions.guard_denial(session_id, &request.tool_name) {
+                let session_event = self.sessions.record_tool_call_started(
+                    Some(session_id),
+                    context.transport.into(),
+                    &request.tool_name,
+                    &guard_denial_log_arguments(&request.tool_name, &request.arguments),
+                );
+                let mut result =
+                    session_guard_denied_result(session_id, &request.tool_name, denial);
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_event,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some("session_guard_denied"),
+                );
+                super::add_session_telemetry_hint(&mut result, session_id, event_id);
+                return ToolCallOutcome {
+                    success: false,
+                    result: Some(result),
+                    error_status: None,
+                    project: None,
+                };
+            }
+        }
+
         if !context.record_oauth_scope_denials {
             if let Err(error_status) =
                 check_oauth_runtime_tool_scope(context.auth, &request.tool_name)
@@ -175,6 +212,183 @@ impl ToolRuntime {
             result: Some(result),
             error_status: None,
             project,
+        }
+    }
+}
+
+fn guard_denial_log_arguments(tool_name: &str, arguments: &Value) -> Value {
+    let Some(obj) = arguments.as_object() else {
+        return Value::Null;
+    };
+    let mut out = serde_json::Map::new();
+    if let Some(project) = obj.get("project").cloned() {
+        out.insert("project".to_string(), project);
+    }
+    match tool_name {
+        "run_shell" | "run_job" => {
+            out.insert(
+                "command_present".to_string(),
+                Value::Bool(obj.contains_key("command")),
+            );
+            for key in ["timeout_secs", "cwd"] {
+                if let Some(value) = obj.get(key).cloned() {
+                    out.insert(key.to_string(), value);
+                }
+            }
+        }
+        "run_codex" => {
+            out.insert(
+                "prompt_present".to_string(),
+                Value::Bool(obj.contains_key("prompt")),
+            );
+            for key in ["approval_mode", "timeout_secs", "cwd"] {
+                if let Some(value) = obj.get(key).cloned() {
+                    out.insert(key.to_string(), value);
+                }
+            }
+            if let Some(count) = obj
+                .get("extra_args")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+            {
+                out.insert("extra_args_count".to_string(), Value::from(count));
+            }
+        }
+        "write_project_file" => {
+            for key in [
+                "path",
+                "overwrite",
+                "expected_sha256",
+                "expected_content_prefix",
+            ] {
+                if let Some(value) = obj.get(key).cloned() {
+                    out.insert(key.to_string(), value);
+                }
+            }
+            out.insert(
+                "content_present".to_string(),
+                Value::Bool(obj.contains_key("content")),
+            );
+        }
+        "save_project_artifact" => {
+            for key in ["path", "mime_type", "overwrite"] {
+                if let Some(value) = obj.get(key).cloned() {
+                    out.insert(key.to_string(), value);
+                }
+            }
+            out.insert(
+                "content_base64_present".to_string(),
+                Value::Bool(obj.contains_key("content_base64")),
+            );
+        }
+        "apply_patch" | "apply_patch_checked" | "validate_patch" => {
+            out.insert(
+                "patch_present".to_string(),
+                Value::Bool(obj.contains_key("patch")),
+            );
+            if let Some(value) = obj.get("deny_sensitive_paths").cloned() {
+                out.insert("deny_sensitive_paths".to_string(), value);
+            }
+        }
+        "replace_in_file" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["path", "expected_replacements", "allow_multiple"],
+            );
+            out.insert(
+                "old_present".to_string(),
+                Value::Bool(obj.contains_key("old")),
+            );
+            out.insert(
+                "new_present".to_string(),
+                Value::Bool(obj.contains_key("new")),
+            );
+        }
+        "replace_exact_block" => {
+            copy_keys(obj, &mut out, &["path", "expected_old_sha256"]);
+            out.insert(
+                "old_text_present".to_string(),
+                Value::Bool(obj.contains_key("old_text")),
+            );
+            out.insert(
+                "new_text_present".to_string(),
+                Value::Bool(obj.contains_key("new_text")),
+            );
+        }
+        "insert_before_pattern" | "insert_after_pattern" => {
+            copy_keys(obj, &mut out, &["path"]);
+            out.insert(
+                "pattern_present".to_string(),
+                Value::Bool(obj.contains_key("pattern")),
+            );
+            out.insert(
+                "text_present".to_string(),
+                Value::Bool(obj.contains_key("text")),
+            );
+        }
+        "replace_line_range" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "path",
+                    "start_line",
+                    "end_line",
+                    "expected_old_sha256",
+                    "expected_old_prefix",
+                ],
+            );
+            out.insert(
+                "new_text_present".to_string(),
+                Value::Bool(obj.contains_key("new_text")),
+            );
+        }
+        "insert_at_line" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "path",
+                    "line",
+                    "expected_anchor_sha256",
+                    "expected_anchor_prefix",
+                ],
+            );
+            out.insert(
+                "text_present".to_string(),
+                Value::Bool(obj.contains_key("text")),
+            );
+        }
+        "delete_line_range" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &[
+                    "path",
+                    "start_line",
+                    "end_line",
+                    "expected_old_sha256",
+                    "expected_old_prefix",
+                ],
+            );
+        }
+        "delete_project_files" | "git_restore_paths" | "discard_untracked" => {
+            copy_keys(obj, &mut out, &["paths"]);
+        }
+        _ => return arguments.clone(),
+    }
+    Value::Object(out)
+}
+
+fn copy_keys(
+    obj: &serde_json::Map<String, Value>,
+    out: &mut serde_json::Map<String, Value>,
+    keys: &[&str],
+) {
+    for key in keys {
+        if let Some(value) = obj.get(*key).cloned() {
+            out.insert((*key).to_string(), value);
         }
     }
 }
@@ -320,6 +534,47 @@ mod tests {
         let finished = &summary.events[1];
         assert_eq!(finished.transport, "mcp");
         assert_eq!(finished.error_kind.as_deref(), Some("invalid_arguments"));
+    }
+
+    #[tokio::test]
+    async fn tool_kernel_guard_denial_sanitizes_edit_content() {
+        let runtime = test_runtime();
+        let session = runtime.sessions.start_session_with_guards(
+            None,
+            Some("readonly".to_string()),
+            crate::tool_runtime::SessionMode::ReadOnly,
+            crate::tool_runtime::sessions::SessionGuards::default(),
+        );
+        let outcome = runtime
+            .call_tool_with_context(
+                ToolCallRequest {
+                    tool_name: "replace_in_file".to_string(),
+                    arguments: json!({
+                        "project": "demo",
+                        "path": "README.md",
+                        "old": "secret-old",
+                        "new": "secret-new"
+                    }),
+                },
+                ToolCallContext {
+                    transport: ToolTransport::Api,
+                    session_id: Some(&session.session_id),
+                    auth: None,
+                    record_oauth_scope_denials: true,
+                },
+            )
+            .await;
+
+        assert!(!outcome.success);
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(10))
+            .unwrap();
+        let serialized = serde_json::to_string(&summary.events).unwrap();
+        assert!(serialized.contains("\"old_present\":true"));
+        assert!(serialized.contains("\"new_present\":true"));
+        assert!(!serialized.contains("secret-old"));
+        assert!(!serialized.contains("secret-new"));
     }
 
     #[tokio::test]

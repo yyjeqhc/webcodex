@@ -21,7 +21,8 @@ mod types;
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[allow(unused_imports)]
 pub use types::{
-    default_true, is_known_tool_name, RuntimeInfo, ToolCall, ToolResult, ToolSpec, KNOWN_TOOL_NAMES,
+    default_true, is_known_tool_name, RuntimeInfo, SessionMode, ToolCall, ToolResult, ToolSpec,
+    KNOWN_TOOL_NAMES,
 };
 
 use crate::auth::AuthContext;
@@ -173,6 +174,31 @@ fn unknown_session_result(session_id: &str) -> ToolResult {
             "error_kind": "unknown_session_id",
             "session_id": session_id,
         }),
+    )
+}
+
+fn session_guard_denied_result(
+    session_id: &str,
+    tool_name: &str,
+    denial: sessions::SessionGuardDenial,
+) -> ToolResult {
+    let mut output = json!({
+        "error_kind": "session_guard_denied",
+        "session_id": session_id,
+        "tool_name": tool_name,
+        "guard": denial.guard,
+        "mode": denial.mode.as_str(),
+    });
+    if denial.guard == "deny_shell_tools" {
+        output["command_started"] = Value::Bool(false);
+    }
+    ToolResult::err_with_output(
+        format!(
+            "session_guard_denied: {} blocked by {} session",
+            tool_name,
+            denial.mode.as_str()
+        ),
+        output,
     )
 }
 
@@ -649,6 +675,24 @@ impl ToolRuntime {
             if !self.sessions.contains_session(session_id) {
                 return unknown_session_result(session_id);
             }
+            if let Some(denial) = self.sessions.guard_denial(session_id, call.tool_name()) {
+                let session_start = self.sessions.record_tool_call_started(
+                    Some(session_id),
+                    transport,
+                    call.tool_name(),
+                    &call.session_log_arguments(),
+                );
+                let mut result = session_guard_denied_result(session_id, call.tool_name(), denial);
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_start,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some("session_guard_denied"),
+                );
+                add_session_telemetry_hint(&mut result, session_id, event_id);
+                return result;
+            }
         }
         let session_start = if session_id.is_some() {
             let resolved_project = match call.project() {
@@ -705,7 +749,13 @@ impl ToolRuntime {
         match call {
             ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
 
-            ToolCall::StartSession { project, title } => {
+            ToolCall::StartSession {
+                project,
+                title,
+                mode,
+                deny_write_tools,
+                deny_shell_tools,
+            } => {
                 let resolved = match project {
                     Some(project_input) => match self.resolve_project_input(&project_input).await {
                         Ok(resolved) => Some(resolved),
@@ -713,11 +763,19 @@ impl ToolRuntime {
                     },
                     None => None,
                 };
-                let summary = self.sessions.start_session(
+                let summary = self.sessions.start_session_with_guards(
                     resolved
                         .as_ref()
                         .map(|resolved| resolved.resolved_id.clone()),
                     title,
+                    mode,
+                    sessions::SessionGuards::effective(
+                        mode,
+                        sessions::SessionGuards {
+                            deny_write_tools,
+                            deny_shell_tools,
+                        },
+                    ),
                 );
                 ToolResult::ok(json!({
                     "success": true,
@@ -726,6 +784,8 @@ impl ToolRuntime {
                     "project_input": resolved.as_ref().map(|resolved| resolved.input.clone()),
                     "resolved_project": resolved.as_ref().map(|resolved| resolved.resolved_id.clone()),
                     "title": summary.title,
+                    "mode": summary.mode,
+                    "guards": summary.guards,
                     "created_at": summary.created_at,
                 }))
             }
@@ -3995,10 +4055,428 @@ index 1111111..2222222 100644
         assert!(result.output.get("session_recorded").is_none());
     }
 
+    #[tokio::test]
+    async fn start_session_defaults_to_normal_without_guards() {
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(ToolCall::from_tool_name("start_session", json!({})).unwrap())
+            .await;
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["mode"], "normal");
+        assert_eq!(result.output["guards"]["deny_write_tools"], false);
+        assert_eq!(result.output["guards"]["deny_shell_tools"], false);
+        let session_id = result.output["session_id"].as_str().unwrap();
+        let summary = runtime.sessions.summary(session_id, None).unwrap();
+        assert_eq!(summary.mode, SessionMode::Normal);
+        assert!(!summary.guards.deny_write_tools);
+        assert!(!summary.guards.deny_shell_tools);
+    }
+
+    #[tokio::test]
+    async fn start_session_read_only_enables_write_and_shell_guards() {
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch(
+                ToolCall::from_tool_name(
+                    "start_session",
+                    json!({"mode": "read_only", "deny_shell_tools": false}),
+                )
+                .unwrap(),
+            )
+            .await;
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["mode"], "read_only");
+        assert_eq!(result.output["guards"]["deny_write_tools"], true);
+        assert_eq!(result.output["guards"]["deny_shell_tools"], true);
+        let session_id = result.output["session_id"].as_str().unwrap();
+        let summary = runtime.sessions.summary(session_id, None).unwrap();
+        assert_eq!(summary.mode, SessionMode::ReadOnly);
+        assert!(summary.guards.deny_write_tools);
+        assert!(summary.guards.deny_shell_tools);
+    }
+
+    #[tokio::test]
+    async fn read_only_session_allows_read_file_and_records_success() {
+        let runtime = runtime_with_agent_project("guard-read");
+        register_agent(
+            &runtime,
+            "guard-read",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("guard-read");
+        let session = runtime.sessions.start_session_with_guards(
+            Some(project.clone()),
+            Some("read only".to_string()),
+            SessionMode::ReadOnly,
+            sessions::SessionGuards::default(),
+        );
+
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project,
+                            path: "README.md".to_string(),
+                            session_id: Some(session_id),
+                            start_line: None,
+                            limit: Some(1),
+                            with_line_numbers: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "guard-read", "inst")
+            .await
+            .expect("read_file should be allowed in read_only session");
+        assert_eq!(req.kind, "file_read");
+        complete_patch_agent_request(&runtime, "guard-read", &req.request_id, 0, "hello\n", "")
+            .await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["session_recorded"], true);
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.succeeded, 1);
+        assert_eq!(summary.counts.read_like, 1);
+        assert_eq!(
+            finished_event(&summary, "read_file").status.as_deref(),
+            Some("succeeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn read_only_session_rejects_write_project_file_before_mutation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let runtime = runtime_with_project(tmp.path(), "demo");
+        let session = runtime.sessions.start_session_with_guards(
+            Some("demo".to_string()),
+            Some("read only".to_string()),
+            SessionMode::ReadOnly,
+            sessions::SessionGuards::default(),
+        );
+
+        let result = runtime
+            .dispatch(ToolCall::WriteProjectFile {
+                project: "demo".to_string(),
+                path: "should-not-exist.txt".to_string(),
+                content: "nope".to_string(),
+                session_id: Some(session.session_id.clone()),
+                overwrite: None,
+                expected_sha256: None,
+                expected_content_prefix: None,
+            })
+            .await;
+
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "session_guard_denied");
+        assert_eq!(result.output["guard"], "deny_write_tools");
+        assert_eq!(result.output["mode"], "read_only");
+        assert_eq!(result.output["session_recorded"], true);
+        assert!(result.output["session_event_id"].as_str().is_some());
+        assert!(!tmp.path().join("should-not-exist.txt").exists());
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.failed, 1);
+        assert_eq!(summary.counts.write_like, 1);
+        let event = finished_event(&summary, "write_project_file");
+        assert_eq!(event.status.as_deref(), Some("failed"));
+        assert_eq!(event.error_kind.as_deref(), Some("session_guard_denied"));
+    }
+
+    #[tokio::test]
+    async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
+        let runtime = runtime_with_agent_project("guard-shell");
+        register_agent(
+            &runtime,
+            "guard-shell",
+            None,
+            ShellClientCapabilities {
+                shell: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("guard-shell");
+        let session = runtime.sessions.start_session_with_guards(
+            Some(project.clone()),
+            Some("read only".to_string()),
+            SessionMode::ReadOnly,
+            sessions::SessionGuards::default(),
+        );
+
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::RunShell {
+                    project,
+                    command: "echo should-not-run".to_string(),
+                    session_id: Some(session.session_id.clone()),
+                    timeout_secs: Some(30),
+                    cwd: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "session_guard_denied");
+        assert_eq!(result.output["guard"], "deny_shell_tools");
+        assert_eq!(result.output["command_started"], false);
+        assert_eq!(result.output["session_recorded"], true);
+        assert!(
+            next_patch_agent_request(&runtime, "guard-shell")
+                .await
+                .is_none(),
+            "run_shell guard denial must not enqueue an agent request"
+        );
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.failed, 1);
+        assert_eq!(summary.counts.shell_like, 1);
+        let event = finished_event(&summary, "run_shell");
+        assert_eq!(event.error_kind.as_deref(), Some("session_guard_denied"));
+    }
+
+    #[tokio::test]
+    async fn deny_write_only_allows_read_and_shell_tools() {
+        let runtime = runtime_with_agent_project("guard-write-only");
+        register_agent(
+            &runtime,
+            "guard-write-only",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                shell: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("guard-write-only");
+        let session = runtime.sessions.start_session_with_guards(
+            Some(project.clone()),
+            None,
+            SessionMode::Normal,
+            sessions::SessionGuards {
+                deny_write_tools: true,
+                deny_shell_tools: false,
+            },
+        );
+        let bootstrap = auth_context(None, true);
+
+        let denied = runtime
+            .dispatch_with_auth(
+                ToolCall::WriteProjectFile {
+                    project: project.clone(),
+                    path: "blocked.txt".to_string(),
+                    content: "x".to_string(),
+                    session_id: Some(session.session_id.clone()),
+                    overwrite: None,
+                    expected_sha256: None,
+                    expected_content_prefix: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!denied.success);
+        assert_eq!(denied.output["guard"], "deny_write_tools");
+
+        let read_task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project,
+                            path: "README.md".to_string(),
+                            session_id: Some(session_id),
+                            start_line: None,
+                            limit: Some(1),
+                            with_line_numbers: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "guard-write-only", "inst")
+            .await
+            .expect("read_file should be allowed with deny_write_tools only");
+        complete_patch_agent_request(
+            &runtime,
+            "guard-write-only",
+            &req.request_id,
+            0,
+            "hello\n",
+            "",
+        )
+        .await;
+        assert!(read_task.await.unwrap().success);
+
+        let shell_task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::RunShell {
+                            project,
+                            command: "exit 0".to_string(),
+                            session_id: Some(session_id),
+                            timeout_secs: Some(30),
+                            cwd: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "guard-write-only")
+            .await
+            .expect("run_shell should be allowed when deny_shell_tools=false");
+        complete_patch_agent_request(&runtime, "guard-write-only", &req.request_id, 0, "", "")
+            .await;
+        assert!(shell_task.await.unwrap().success);
+    }
+
+    #[tokio::test]
+    async fn deny_shell_only_allows_write_tools() {
+        let runtime = runtime_with_agent_project("guard-shell-only");
+        register_agent(
+            &runtime,
+            "guard-shell-only",
+            None,
+            ShellClientCapabilities {
+                shell: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("guard-shell-only");
+        let session = runtime.sessions.start_session_with_guards(
+            Some(project.clone()),
+            None,
+            SessionMode::Normal,
+            sessions::SessionGuards {
+                deny_write_tools: false,
+                deny_shell_tools: true,
+            },
+        );
+        let bootstrap = auth_context(None, true);
+
+        let denied = runtime
+            .dispatch_with_auth(
+                ToolCall::RunShell {
+                    project: project.clone(),
+                    command: "echo blocked".to_string(),
+                    session_id: Some(session.session_id.clone()),
+                    timeout_secs: Some(30),
+                    cwd: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!denied.success);
+        assert_eq!(denied.output["guard"], "deny_shell_tools");
+
+        let write_task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::WriteProjectFile {
+                            project,
+                            path: "allowed.txt".to_string(),
+                            content: "x".to_string(),
+                            session_id: Some(session_id),
+                            overwrite: None,
+                            expected_sha256: None,
+                            expected_content_prefix: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "guard-shell-only")
+            .await
+            .expect("write_project_file should be allowed when deny_write_tools=false");
+        complete_patch_agent_request(
+            &runtime,
+            "guard-shell-only",
+            &req.request_id,
+            0,
+            r#"{"path":"allowed.txt","bytes_written":1,"sha256":"abc","changed":true}"#,
+            "",
+        )
+        .await;
+        assert!(write_task.await.unwrap().success);
+    }
+
     #[test]
     fn project_tool_schemas_include_optional_session_id() {
         let runtime = test_runtime();
         let specs = runtime.tool_specs();
+        let start_session = spec_named(&specs, "start_session");
+        assert_eq!(
+            start_session.input_schema["properties"]["mode"]["enum"],
+            json!(["normal", "read_only"])
+        );
+        assert!(start_session.input_schema["properties"]
+            .get("deny_write_tools")
+            .is_some());
+        assert!(start_session.input_schema["properties"]
+            .get("deny_shell_tools")
+            .is_some());
+        assert!(
+            start_session.output_schema["properties"]["output"]["properties"]
+                .get("mode")
+                .is_some()
+        );
+        assert!(
+            start_session.output_schema["properties"]["output"]["properties"]
+                .get("guards")
+                .is_some()
+        );
+        let session_summary = spec_named(&specs, "session_summary");
+        assert!(
+            session_summary.output_schema["properties"]["output"]["properties"]
+                .get("mode")
+                .is_some()
+        );
+        assert!(
+            session_summary.output_schema["properties"]["output"]["properties"]
+                .get("guards")
+                .is_some()
+        );
         for name in [
             "read_file",
             "run_shell",
@@ -5675,6 +6153,9 @@ new file mode 100644\n\
                 ToolCall::StartSession {
                     project: None,
                     title: Some("probe".to_string()),
+                    mode: SessionMode::Normal,
+                    deny_write_tools: false,
+                    deny_shell_tools: false,
                 },
                 None,
             )
@@ -5693,6 +6174,9 @@ new file mode 100644\n\
                 ToolCall::StartSession {
                     project: Some("agent:workstation:my-repo".to_string()),
                     title: Some("probe".to_string()),
+                    mode: SessionMode::Normal,
+                    deny_write_tools: false,
+                    deny_shell_tools: false,
                 },
                 None,
             )
@@ -5714,6 +6198,9 @@ new file mode 100644\n\
                 ToolCall::StartSession {
                     project: Some("other-repo".to_string()),
                     title: Some("probe".to_string()),
+                    mode: SessionMode::Normal,
+                    deny_write_tools: false,
+                    deny_shell_tools: false,
                 },
                 None,
             )
@@ -5735,6 +6222,9 @@ new file mode 100644\n\
                 ToolCall::StartSession {
                     project: Some("my-repo".to_string()),
                     title: Some("probe".to_string()),
+                    mode: SessionMode::Normal,
+                    deny_write_tools: false,
+                    deny_shell_tools: false,
                 },
                 None,
             )
@@ -5755,6 +6245,9 @@ new file mode 100644\n\
                 ToolCall::StartSession {
                     project: Some("missing-repo".to_string()),
                     title: Some("probe".to_string()),
+                    mode: SessionMode::Normal,
+                    deny_write_tools: false,
+                    deny_shell_tools: false,
                 },
                 None,
             )

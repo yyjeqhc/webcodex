@@ -1,5 +1,6 @@
 use super::metadata::{tool_metadata, ToolPathHint, ToolRisk};
-use serde::Serialize;
+use super::types::SessionMode;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
@@ -34,9 +35,35 @@ struct SessionRecord {
     session_id: String,
     project: Option<String>,
     title: Option<String>,
+    mode: SessionMode,
+    guards: SessionGuards,
     created_at: i64,
     updated_at: i64,
     events: VecDeque<SessionEvent>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
+pub(crate) struct SessionGuards {
+    pub(crate) deny_write_tools: bool,
+    pub(crate) deny_shell_tools: bool,
+}
+
+impl SessionGuards {
+    pub(crate) fn effective(mode: SessionMode, guards: Self) -> Self {
+        match mode {
+            SessionMode::Normal => guards,
+            SessionMode::ReadOnly => Self {
+                deny_write_tools: true,
+                deny_shell_tools: true,
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct SessionGuardDenial {
+    pub(crate) mode: SessionMode,
+    pub(crate) guard: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -118,6 +145,8 @@ pub(crate) struct SessionSummary {
     pub(crate) session_id: String,
     pub(crate) project: Option<String>,
     pub(crate) title: Option<String>,
+    pub(crate) mode: SessionMode,
+    pub(crate) guards: SessionGuards,
     pub(crate) created_at: i64,
     pub(crate) updated_at: i64,
     pub(crate) counts: SessionCounts,
@@ -142,17 +171,36 @@ impl SessionStore {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) fn start_session(
         &self,
         project: Option<String>,
         title: Option<String>,
     ) -> SessionSummary {
+        self.start_session_with_guards(
+            project,
+            title,
+            SessionMode::Normal,
+            SessionGuards::default(),
+        )
+    }
+
+    pub(crate) fn start_session_with_guards(
+        &self,
+        project: Option<String>,
+        title: Option<String>,
+        mode: SessionMode,
+        guards: SessionGuards,
+    ) -> SessionSummary {
         let session_id = format!("{SESSION_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let now = now_ts();
+        let guards = SessionGuards::effective(mode, guards);
         let record = SessionRecord {
             session_id: session_id.clone(),
             project,
             title,
+            mode,
+            guards,
             created_at: now,
             updated_at: now,
             events: VecDeque::new(),
@@ -175,6 +223,35 @@ impl SessionStore {
     pub(crate) fn contains_session(&self, session_id: &str) -> bool {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner.sessions.contains_key(session_id)
+    }
+
+    pub(crate) fn guard_state(&self, session_id: &str) -> Option<(SessionMode, SessionGuards)> {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        inner
+            .sessions
+            .get(session_id)
+            .map(|record| (record.mode, record.guards))
+    }
+
+    pub(crate) fn guard_denial(
+        &self,
+        session_id: &str,
+        tool_name: &str,
+    ) -> Option<SessionGuardDenial> {
+        let (mode, guards) = self.guard_state(session_id)?;
+        if guards.deny_write_tools && is_write_like_tool(tool_name) {
+            return Some(SessionGuardDenial {
+                mode,
+                guard: "deny_write_tools",
+            });
+        }
+        if guards.deny_shell_tools && is_shell_like_tool(tool_name) {
+            return Some(SessionGuardDenial {
+                mode,
+                guard: "deny_shell_tools",
+            });
+        }
+        None
     }
 
     pub(crate) fn record_tool_call_started(
@@ -393,6 +470,8 @@ impl SessionStoreInner {
             session_id: record.session_id.clone(),
             project: record.project.clone(),
             title: record.title.clone(),
+            mode: record.mode,
+            guards: record.guards,
             created_at: record.created_at,
             updated_at: record.updated_at,
             counts,

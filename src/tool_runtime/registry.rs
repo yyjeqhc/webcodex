@@ -78,6 +78,60 @@ fn open_object_schema(description: &str) -> Value {
     })
 }
 
+fn session_mode_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": ["normal", "read_only"],
+        "description": description,
+    })
+}
+
+fn session_guards_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "deny_write_tools": {
+                "type": "boolean",
+                "description": "True when write-like runtime tools are blocked for this session."
+            },
+            "deny_shell_tools": {
+                "type": "boolean",
+                "description": "True when shell/job-like runtime tools are blocked for this session."
+            }
+        },
+        "required": ["deny_write_tools", "deny_shell_tools"]
+    })
+}
+
+fn start_session_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Optional runtime project id associated with this task."
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional human-readable task title."
+            },
+            "mode": session_mode_schema("Optional session mode. Defaults to normal. read_only automatically blocks write-like and shell/job-like tools."),
+            "deny_write_tools": {
+                "type": "boolean",
+                "description": "Optional task guard. When true, write-like tools such as apply_patch, write_project_file, replace_line_range, insert_at_line, and delete_line_range are blocked before execution."
+            },
+            "deny_shell_tools": {
+                "type": "boolean",
+                "description": "Optional task guard. When true, shell/job-like tools such as run_shell, run_job, run_codex, cargo_fmt, cargo_check, and cargo_test are blocked before execution."
+            }
+        },
+        "required": [],
+        "additionalProperties": false,
+    })
+}
+
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 
 fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
@@ -336,6 +390,14 @@ fn output_schema_for_tool(name: &str) -> Value {
                 nullable_schema("string", "Optional session title."),
             ),
             (
+                "mode",
+                session_mode_schema("Effective session mode."),
+            ),
+            (
+                "guards",
+                session_guards_schema("Effective task guard settings for this session."),
+            ),
+            (
                 "created_at",
                 schema_type("integer", "Unix timestamp in seconds."),
             ),
@@ -349,6 +411,14 @@ fn output_schema_for_tool(name: &str) -> Value {
             (
                 "title",
                 nullable_schema("string", "Optional session title."),
+            ),
+            (
+                "mode",
+                session_mode_schema("Effective session mode."),
+            ),
+            (
+                "guards",
+                session_guards_schema("Effective task guard settings for this session."),
             ),
             (
                 "created_at",
@@ -765,10 +835,7 @@ impl ToolRuntime {
             ToolSpec {
                 name: "start_session".to_string(),
                 description: "Start an in-memory task tracking session. Read-only; creates bounded recorder metadata only and never modifies a project.".to_string(),
-                input_schema: object_schema(vec![
-                    ("project", "string", "Optional runtime project id associated with this task.", false),
-                    ("title", "string", "Optional human-readable task title.", false),
-                ]),
+                input_schema: start_session_input_schema(),
                 output_schema: output_schema_for_tool("start_session"),
                 annotations: tool_annotations("start_session"),
             },

@@ -724,7 +724,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced generic entry point for any runtime tool. Prefer dedicated actions. Use listRuntimeTools for names. Send arguments in params, arguments, or flattened fields. Pass top-level session_id from start_session to record this call in the in-memory recorder.",
+                    "Advanced generic entry point for any runtime tool. Prefer dedicated actions. Use listRuntimeTools for names. Send arguments in params, arguments, or flattened fields. Pass top-level session_id from start_session to record this call in the in-memory recorder and enforce that session's task guards.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
@@ -734,7 +734,8 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "tool": "start_session",
                                 "params": {
                                     "project": "webcodex",
-                                    "title": "implement show_changes follow-up"
+                                    "title": "implement show_changes follow-up",
+                                    "mode": "read_only"
                                 }
                             }
                         },
@@ -974,7 +975,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. Top-level `session_id` is reserved recorder metadata returned by start_session and is not forwarded to the concrete tool. Project tools may also accept optional `params.session_id` for explicit tool-level session telemetry; use listRuntimeTools to inspect each input schema. GPT Actions may pass tool-specific arguments as top-level fields when params/arguments are not accepted by the Action schema; those flattened fields are used only when `params` and `arguments` are absent. Omit all arguments for argument-less tools like list_tools.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. Top-level `session_id` is reserved recorder metadata returned by start_session and enforces that session's task guards before execution. Project tools may also accept optional `params.session_id` for explicit tool-level session telemetry and guard enforcement; use listRuntimeTools to inspect each input schema. GPT Actions may pass tool-specific arguments as top-level fields when params/arguments are not accepted by the Action schema; those flattened fields are used only when `params` and `arguments` are absent. Omit all arguments for argument-less tools like list_tools.",
             "properties": {
                 "tool": {
                     "type": "string",
@@ -982,7 +983,7 @@ fn schemas() -> Value {
                 },
                 "session_id": {
                     "type": "string",
-                    "description": "Reserved recorder metadata. Pass the wc_sess_* value returned by start_session to record this generic call. It is stripped before concrete tool dispatch. For project tools, `params.session_id` is also accepted as an explicit tool argument and appears in listRuntimeTools schemas."
+                    "description": "Reserved recorder metadata. Pass the wc_sess_* value returned by start_session to record this generic call and enforce the session's task guards. It is stripped before concrete tool dispatch. For project tools, `params.session_id` is also accepted as an explicit tool argument and appears in listRuntimeTools schemas."
                 },
                 "params": {
                     "type": "object",
@@ -2627,9 +2628,14 @@ mod tests {
         );
         let description = tool_call["description"].as_str().unwrap_or("");
         assert!(
-            description.contains("params.session_id") && description.contains("listRuntimeTools"),
+            description.contains("params.session_id")
+                && description.contains("listRuntimeTools")
+                && description.contains("task guards"),
             "ToolCallRequest should document tool-level session_id telemetry: {description}"
         );
+        let start_example = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
+            ["application/json"]["examples"]["trackedSession"]["value"]["params"];
+        assert_eq!(start_example["mode"], "read_only");
         // `tool` remains required; `params` is optional (advanced callers may
         // omit it for argument-less tools).
         let required = tool_call["required"].as_array().unwrap();

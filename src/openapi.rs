@@ -733,6 +733,16 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 }
                             }
                         },
+                        "showChanges": {
+                            "summary": "Summarize current worktree changes before review or commit",
+                            "value": {
+                                "tool": "show_changes",
+                                "params": {
+                                    "project": "webcodex",
+                                    "include_diff": false
+                                }
+                            }
+                        },
                         "readFile": {
                             "summary": "Call read_file via the generic entry point",
                             "value": {
@@ -951,7 +961,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, show_changes, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
                 "params": {
                     "type": "object",
@@ -2121,6 +2131,7 @@ mod tests {
             "git_status",
             "read_file",
             "git_diff_hunks",
+            "show_changes",
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
@@ -2573,6 +2584,7 @@ mod tests {
             "/api/projects/cargo_check",
             "/api/projects/cargo_test",
             "/api/projects/git_diff_hunks",
+            "/api/projects/show_changes",
         ] {
             assert!(
                 !paths.contains_key(forbidden),

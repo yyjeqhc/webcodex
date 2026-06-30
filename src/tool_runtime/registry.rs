@@ -113,6 +113,7 @@ fn tool_annotations(name: &str) -> Value {
             | "git_diff"
             | "git_diff_summary"
             | "git_diff_hunks"
+            | "show_changes"
             | "job_status"
             | "job_log"
             | "job_tail"
@@ -146,6 +147,7 @@ fn tool_annotations(name: &str) -> Value {
             | "git_diff"
             | "git_diff_summary"
             | "git_diff_hunks"
+            | "show_changes"
             | "job_status"
             | "job_log"
             | "job_tail"
@@ -383,6 +385,45 @@ fn output_schema_for_tool(name: &str) -> Value {
                 nullable_schema("integer", "Git diff exit code."),
             ),
             ("stderr", schema_type("string", "Git diff stderr.")),
+        ]),
+        "show_changes" => wrapped_output_schema(vec![
+            ("project", schema_type("string", "Runtime project id.")),
+            (
+                "branch",
+                nullable_schema("string", "Current git branch from porcelain status."),
+            ),
+            ("head", open_object_schema("Current HEAD commit metadata.")),
+            (
+                "clean",
+                schema_type("boolean", "Whether the worktree is clean."),
+            ),
+            ("counts", open_object_schema("Parsed status counts.")),
+            (
+                "files",
+                array_schema(open_object_schema("Changed file status."), "Changed files."),
+            ),
+            (
+                "diff_stat",
+                schema_type("string", "Git diff --stat output."),
+            ),
+            (
+                "hunks",
+                array_schema(
+                    open_object_schema("Bounded file diff hunks."),
+                    "Diff hunks.",
+                ),
+            ),
+            (
+                "warnings",
+                array_schema(open_object_schema("Review warning."), "Warnings."),
+            ),
+            (
+                "suggested_next_actions",
+                array_schema(
+                    schema_type("string", "Suggested action."),
+                    "Suggested actions.",
+                ),
+            ),
         ]),
         "cargo_fmt" | "cargo_check" | "cargo_test" => wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project id.")),
@@ -840,6 +881,18 @@ impl ToolRuntime {
                 annotations: tool_annotations("git_diff_summary"),
             },
             ToolSpec {
+                name: "show_changes".to_string(),
+                description: "Read-only model-facing git worktree summary: branch/head, parsed status files/counts, diff stat, warnings, suggested next actions, and optional bounded hunks. Routed through the owning agent; never modifies the worktree.".to_string(),
+                input_schema: object_schema(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("include_diff", "boolean", "Include bounded diff hunks (default false).", false),
+                    ("max_hunks", "integer", "Maximum hunks to return when include_diff=true (clamped).", false),
+                    ("max_hunk_lines", "integer", "Maximum lines per hunk when include_diff=true (clamped).", false),
+                ]),
+                output_schema: output_schema_for_tool("show_changes"),
+                annotations: tool_annotations("show_changes"),
+            },
+            ToolSpec {
                 name: "list_jobs".to_string(),
                 description: "List bounded runtime job summaries across agent and local executors. "
                     .to_string()
@@ -1246,15 +1299,17 @@ impl ToolRuntime {
             "inspect": pick(&[
                 "list_tools", "list_projects", "list_agents", "runtime_status",
                 "read_file", "list_project_files", "search_project_text",
-                "git_status", "git_diff", "git_diff_summary", "git_diff_hunks"
+                "git_status", "git_diff", "git_diff_summary", "git_diff_hunks",
+                "show_changes"
             ]),
             "projects": pick(&["list_projects", "register_project", "create_project"]),
             "git": pick(&[
                 "git_status", "git_diff", "git_diff_summary", "git_diff_hunks",
+                "show_changes",
                 "git_restore_paths", "discard_untracked"
             ]),
             "review": pick(&[
-                "git_diff_hunks", "git_diff_summary", "git_status", "git_diff"
+                "show_changes", "git_diff_hunks", "git_diff_summary", "git_status", "git_diff"
             ]),
             "validation": pick(&[
                 "cargo_fmt", "cargo_check", "cargo_test", "validate_patch"
@@ -1287,8 +1342,8 @@ impl ToolRuntime {
     pub fn recommended_flows() -> Vec<&'static str> {
         vec![
             "Discovery: call list_projects then runtime_status to see agents and projects.",
-            "Inspect: use git_diff_summary then read_file before proposing changes.",
-            "Review: use git_diff_summary for changed files, git_diff_hunks for bounded hunk review, then git_status.",
+            "Inspect: use show_changes or git_diff_summary, then read_file before proposing changes.",
+            "Review: use show_changes first; request include_diff=true or call git_diff_hunks for bounded hunk review, then run focused tests.",
             "Source code edit: inspect with read_file/search_project_text; prefer replace_line_range/insert_at_line/delete_line_range with guards. apply_patch_checked for broad diffs; run_shell not primary; validate with cargo tools.",
             "Rust validation: use cargo_fmt, cargo_check, cargo_test before run_shell for common checks.",
             "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",

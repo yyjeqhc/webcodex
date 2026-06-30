@@ -58,7 +58,7 @@ MCP and GPT Actions share the same `ToolRuntime`. A tool call made through MCP r
 Typical MCP tools include:
 
 - Discovery and health: `list_tools`, `runtime_status`, `list_projects`, `list_agents`.
-- Read-only project inspection: `list_project_files`, `read_file`, `search_project_text`, `git_status`, `git_diff`, `git_diff_summary`, `git_diff_hunks`.
+- Read-only project inspection: `show_changes`, `list_project_files`, `read_file`, `search_project_text`, `git_status`, `git_diff`, `git_diff_summary`, `git_diff_hunks`.
 - Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`.
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
 - Project commands and jobs: `run_shell`, `run_job`, `job_status`, `job_log`, `job_tail`.
@@ -66,6 +66,11 @@ Typical MCP tools include:
 - Optional Codex CLI launcher: `run_codex`.
 
 Use the structured line edit tools when you already know the target line range. Use patch tools for broader multi-file changes. Treat `run_shell` as a diagnostics/build/test fallback, not as the first source-editing path.
+
+Use `show_changes` near the end of a task to summarize the current worktree,
+check for untracked smoke/tmp/test files, review `git diff --stat`, and request
+optional bounded hunks with `include_diff=true`. It is read-only, requires
+`project:read`, and never cleans, stages, commits, or restores files.
 
 Use agent-backed project ids such as:
 

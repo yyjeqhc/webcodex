@@ -1303,6 +1303,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mcp_tools_list_includes_show_changes() {
+        let runtime = test_runtime();
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc("tools/list", Some(Value::from(13)), json!({})),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(v) => v,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        let tools = value["result"]["tools"].as_array().unwrap();
+        let names: Vec<String> = tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "show_changes"),
+            "MCP tools/list must include show_changes: {:?}",
+            names
+        );
+    }
+
+    #[tokio::test]
     async fn mcp_tools_call_runtime_status_returns_content() {
         let runtime = test_runtime();
         let outcome = handle_mcp_request(
@@ -1333,6 +1358,35 @@ mod tests {
         // runtime_status never errors on a failed-projects runtime — it
         // reports configured=false instead.
         assert_eq!(value["result"]["isError"], false);
+    }
+
+    #[tokio::test]
+    async fn mcp_tools_call_show_changes_returns_structured_tool_error() {
+        let runtime = test_runtime();
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(Value::from(14)),
+                json!({
+                    "name": "show_changes",
+                    "arguments": {"project": "agent:nope:nope"}
+                }),
+            ),
+            None,
+        )
+        .await;
+        let value = match outcome {
+            McpOutcome::Ok(v) => v,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        assert_eq!(value["id"], 14);
+        assert_eq!(value["result"]["isError"], true);
+        assert_eq!(value["result"]["structuredContent"]["success"], false);
+        assert!(value["result"]["structuredContent"]["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("unknown shell client"));
     }
 
     #[tokio::test]

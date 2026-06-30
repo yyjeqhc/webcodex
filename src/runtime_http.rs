@@ -3039,6 +3039,7 @@ mod tests {
         assert!(!names.is_empty(), "names must not be empty");
         assert!(names.iter().any(|n| n == "list_tools"));
         assert!(names.iter().any(|n| n == "git_diff_summary"));
+        assert!(names.iter().any(|n| n == "show_changes"));
         assert_eq!(body["count"], names.len());
         for tool in body["tools"].as_array().unwrap() {
             assert!(tool["inputSchema"].is_object());
@@ -3269,6 +3270,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn http_tools_call_show_changes_dispatches() {
+        // callRuntimeTool routes show_changes to the runtime. With an unknown
+        // agent project the runtime returns a structured error, proving the
+        // generic path deserializes + dispatches.
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "show_changes",
+                "params": {"project": "agent:nope:nope", "include_diff": false}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(
+            body["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "show_changes should return a structured runtime error"
+        );
+    }
+
+    #[tokio::test]
     async fn http_tools_call_requires_bearer_auth() {
         let (_tmp, service) = phase2_service();
         let resp = TestClient::post("http://localhost/api/tools/call")
@@ -3369,6 +3393,30 @@ mod tests {
             challenge.as_deref(),
             Some(crate::auth::SCOPE_PROJECT_READ),
         );
+    }
+
+    #[tokio::test]
+    async fn oauth2_tools_call_show_changes_tool_scope_is_project_read() {
+        let (_tmp, service, token) = phase2_oauth_service("project:read");
+        let (status, body, _) = oauth_tools_call(
+            &service,
+            &token,
+            "show_changes",
+            json!({"project": "agent:nope:nope"}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "body: {:?}", body);
+        assert_eq!(body["success"], false);
+
+        let (_tmp, service, token) = phase2_oauth_service("runtime:read");
+        let (status, body, challenge) = oauth_tools_call(
+            &service,
+            &token,
+            "show_changes",
+            json!({"project": "agent:nope:nope"}),
+        )
+        .await;
+        assert_oauth_scope_rejected(status, &body, challenge.as_deref(), Some("project:read"));
     }
 
     #[tokio::test]

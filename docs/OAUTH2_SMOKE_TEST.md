@@ -193,6 +193,17 @@ curl -fsS -X POST $BASE/api/runtime/status \
   -H "Content-Type: application/json" -d '{}' | jq .
 ```
 
+Project inspection tools require `project:read`. If the OAuth authorization
+request included `project:read`, `show_changes` can summarize a registered
+project without modifying the worktree:
+
+```bash
+curl -fsS -X POST $BASE/api/tools/call \
+  -H "Authorization: Bearer $OAT" \
+  -H "Content-Type: application/json" \
+  -d '{"tool":"show_changes","params":{"project":"agent:<client_id>:<project_id>","include_diff":false}}' | jq .
+```
+
 It must NOT be able to call first-party-only routes (e.g. client management):
 
 ```bash

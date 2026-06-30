@@ -110,7 +110,7 @@ Use `webcodex-cli` for those management tasks.
 1. `getRuntimeStatus` — verify runtime health and redacted agent policy summaries.
 2. `getRuntimeStatus`, or `callRuntimeTool` with `list_agents` — confirm an online agent and its redacted policy summary or `agent_instance_id`.
 3. `listProjects` — choose an `agent:<client_id>:<project_id>`.
-4. `getProjectGitStatus`, `listProjectFiles`, `readProjectFile`, and `searchProjectText` — inspect before editing.
+4. `callRuntimeTool` with `show_changes`, plus `getProjectGitStatus`, `listProjectFiles`, `readProjectFile`, and `searchProjectText` — inspect before editing.
 5. For scoped source edits with known line numbers, use `callRuntimeTool` with the structured line edit tools: `replace_line_range`, `insert_at_line`, and `delete_line_range`.
 6. For broader multi-file edits, use `validateProjectPatch` first, then `applyProjectPatchChecked` only when the patch is intentional.
 7. Use `writeProjectFile` only for new files or deliberate small whole-file overwrites; use `replaceProjectFileText` only for short exact substring changes.
@@ -118,6 +118,13 @@ Use `webcodex-cli` for those management tasks.
 9. `runCodexTask` — optional advanced path when Codex CLI is installed and configured on the agent machine.
 
 `runCodexTask` does not launch a new agent. It asks the already connected agent to run the Codex CLI in a project.
+
+`show_changes` is a read-only project inspection tool available through
+`callRuntimeTool`. It summarizes branch/head, modified/added/deleted/renamed/
+untracked files, `git diff --stat`, optional bounded hunks, simple warnings for
+untracked smoke/tmp/test/anchor files, and suggested next actions. Use it before
+summarizing a task or committing. It requires `project:read` and never modifies,
+cleans, stages, commits, or restores the worktree.
 
 ## Observability
 

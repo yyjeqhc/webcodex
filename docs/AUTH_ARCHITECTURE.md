@@ -240,6 +240,11 @@ project inspection to `project:read`, file/patch/artifact/project mutation to
 routes, unknown MCP methods, and unknown runtime tools fail closed for OAuth2
 tokens.
 
+`show_changes` is in the project-inspection bucket. OAuth2 access tokens need
+`project:read` to call it through `/api/tools/call` or MCP `tools/call`; the
+tool is read-only and does not clean, stage, commit, restore, or otherwise
+modify the worktree.
+
 OAuth2 scope failures return HTTP 403:
 
 ```json

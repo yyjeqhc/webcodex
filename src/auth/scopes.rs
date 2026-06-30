@@ -289,6 +289,7 @@ pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolS
         | "git_diff"
         | "git_diff_summary"
         | "git_diff_hunks"
+        | "show_changes"
         | "validate_patch" => OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
 
         "apply_patch"
@@ -616,6 +617,10 @@ mod tests {
             ),
             (
                 "read_file",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
+            (
+                "show_changes",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
             (

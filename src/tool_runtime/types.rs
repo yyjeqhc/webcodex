@@ -215,6 +215,20 @@ pub enum ToolCall {
     /// worktree. Routed to the owning agent.
     GitDiffSummary { project: String },
 
+    /// Read-only model-facing git worktree summary for a project. Reports
+    /// branch/head, parsed status counts/files, diff stat, warnings, suggested
+    /// next actions, and optional bounded diff hunks. Routed to the owning
+    /// agent.
+    ShowChanges {
+        project: String,
+        #[serde(default)]
+        include_diff: Option<bool>,
+        #[serde(default)]
+        max_hunks: Option<usize>,
+        #[serde(default)]
+        max_hunk_lines: Option<usize>,
+    },
+
     /// List bounded runtime job summaries across agent and local executors.
     /// Never returns stdout/stderr bodies — only metadata (job_id, kind,
     /// status, project, timestamps, exit_code).
@@ -466,6 +480,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "list_project_files",
     "search_project_text",
     "git_diff_summary",
+    "show_changes",
     "list_jobs",
     "job_tail",
     "list_projects",

@@ -166,7 +166,8 @@ impl ToolRuntime {
             ToolCall::GitStatus { .. }
             | ToolCall::GitDiff { .. }
             | ToolCall::GitDiffHunks { .. }
-            | ToolCall::GitDiffSummary { .. } => Some(AgentCapability::GitOrShell),
+            | ToolCall::GitDiffSummary { .. }
+            | ToolCall::ShowChanges { .. } => Some(AgentCapability::GitOrShell),
             ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }
             | ToolCall::CargoTest { .. } => Some(AgentCapability::Shell),
@@ -224,6 +225,7 @@ impl ToolRuntime {
             | ToolCall::CargoCheck { project, .. }
             | ToolCall::CargoTest { project, .. }
             | ToolCall::GitDiffSummary { project }
+            | ToolCall::ShowChanges { project, .. }
             | ToolCall::ReadFile { project, .. }
             | ToolCall::ListProjectFiles { project, .. }
             | ToolCall::SearchProjectText { project, .. }
@@ -553,6 +555,16 @@ impl ToolRuntime {
             }
 
             ToolCall::GitDiffSummary { project } => self.git_diff_summary(project).await,
+
+            ToolCall::ShowChanges {
+                project,
+                include_diff,
+                max_hunks,
+                max_hunk_lines,
+            } => {
+                self.show_changes(project, include_diff, max_hunks, max_hunk_lines)
+                    .await
+            }
 
             ToolCall::ListJobs { limit, status } => self.list_jobs(limit, status).await,
 
@@ -1522,6 +1534,9 @@ mod tests {
             "read_file",
             "git_status",
             "git_diff",
+            "git_diff_summary",
+            "git_diff_hunks",
+            "show_changes",
             "apply_patch",
             "apply_patch_checked",
             "validate_patch",
@@ -1606,6 +1621,36 @@ mod tests {
         let spec = spec_named(&specs, "git_diff_summary");
         let required = required_fields(spec);
         assert_eq!(required, vec!["project".to_string()]);
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_show_changes_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "show_changes");
+        let required = required_fields(spec);
+        assert_eq!(required, vec!["project".to_string()]);
+        let props = spec.input_schema["properties"].as_object().unwrap();
+        for field in ["project", "include_diff", "max_hunks", "max_hunk_lines"] {
+            assert!(props.contains_key(field), "missing {}", field);
+        }
+        let output_props = spec.output_schema["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap();
+        for field in [
+            "project",
+            "branch",
+            "head",
+            "clean",
+            "counts",
+            "files",
+            "diff_stat",
+            "warnings",
+            "suggested_next_actions",
+        ] {
+            assert!(output_props.contains_key(field), "missing {}", field);
+        }
         assert!(spec.description.chars().count() <= 300);
     }
 
@@ -1908,6 +1953,30 @@ mod tests {
     }
 
     #[test]
+    fn show_changes_tool_is_known_and_parses() {
+        assert!(KNOWN_TOOL_NAMES.contains(&"show_changes"));
+        let call = ToolCall::from_tool_name(
+            "show_changes",
+            json!({
+                "project": "agent:oe:webcodex",
+                "include_diff": true,
+                "max_hunks": 4,
+                "max_hunk_lines": 12
+            }),
+        )
+        .unwrap();
+        assert!(matches!(
+            call,
+            ToolCall::ShowChanges {
+                project,
+                include_diff: Some(true),
+                max_hunks: Some(4),
+                max_hunk_lines: Some(12)
+            } if project == "agent:oe:webcodex"
+        ));
+    }
+
+    #[test]
     fn git_diff_hunks_parser_handles_modified_empty_and_limits() {
         let diff = "\
 diff --git a/src/lib.rs b/src/lib.rs
@@ -1944,6 +2013,163 @@ index 1111111..2222222 100644
         let (files, _hunk_count, truncated) = parse_git_diff_hunks(diff, 10, 2);
         assert!(truncated);
         assert_eq!(files[0]["hunks"][0]["truncated"], true);
+    }
+
+    #[test]
+    fn show_changes_command_is_read_only() {
+        let without_diff = show_changes_command(false);
+        let with_diff = show_changes_command(true);
+        for cmd in [without_diff, with_diff] {
+            assert!(cmd.contains("git status --porcelain=v1 -b"));
+            assert!(cmd.contains("git log -1"));
+            assert!(cmd.contains("git diff --stat"));
+            for forbidden in [
+                " clean",
+                " restore",
+                " add",
+                " commit",
+                " reset",
+                " checkout",
+                " push",
+                " stash",
+                " merge",
+                " rebase",
+                " rm ",
+            ] {
+                assert!(
+                    !cmd.contains(forbidden),
+                    "show_changes command must not contain '{}': {}",
+                    forbidden,
+                    cmd
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn show_changes_clean_worktree() {
+        let output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main...origin/main",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix: route anchor edit file ops through agent dispatch",
+            "",
+            None,
+            20,
+            80,
+            Some(0),
+            "",
+        );
+        assert_eq!(output["clean"], true);
+        assert_eq!(output["branch"], "main");
+        assert_eq!(output["head"]["short"], "b47e4fb");
+        assert_eq!(output["counts"]["modified"], 0);
+        assert!(output["files"].as_array().unwrap().is_empty());
+        assert!(output.get("hunks").is_none());
+        assert_eq!(output["suggested_next_actions"][0], "no changes detected");
+    }
+
+    #[test]
+    fn show_changes_reports_modified_file() {
+        let output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main\n M src/users_http.rs",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+            " src/users_http.rs | 2 +-\n 1 file changed, 1 insertion(+), 1 deletion(-)",
+            None,
+            20,
+            80,
+            Some(0),
+            "",
+        );
+        assert_eq!(output["clean"], false);
+        assert_eq!(output["counts"]["modified"], 1);
+        assert_eq!(output["counts"]["unstaged"], 1);
+        assert_eq!(output["files"][0]["path"], "src/users_http.rs");
+        assert_eq!(output["files"][0]["status"], "modified");
+        assert_eq!(output["files"][0]["kind"], "tracked");
+        assert!(output["diff_stat"]
+            .as_str()
+            .unwrap()
+            .contains("1 file changed"));
+    }
+
+    #[test]
+    fn show_changes_reports_untracked_file() {
+        let output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main\n?? webcodex-anchor-edit-smoke-c99f7de.txt",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+            "",
+            None,
+            20,
+            80,
+            Some(0),
+            "",
+        );
+        assert_eq!(output["clean"], false);
+        assert_eq!(output["counts"]["untracked"], 1);
+        assert_eq!(output["files"][0]["status"], "untracked");
+        assert_eq!(output["files"][0]["staged"], false);
+        assert_eq!(output["warnings"][0]["kind"], "untracked_smoke_file");
+        assert!(output["suggested_next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v.as_str().unwrap().contains("untracked")));
+    }
+
+    #[test]
+    fn show_changes_include_diff_false_omits_hunks() {
+        let output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main\n M src/lib.rs",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+            " src/lib.rs | 2 +-",
+            None,
+            20,
+            80,
+            Some(0),
+            "",
+        );
+        assert!(output.get("hunks").is_none());
+        assert!(output.get("hunk_count").is_none());
+    }
+
+    #[test]
+    fn show_changes_include_diff_true_returns_bounded_hunks() {
+        let diff = "\
+diff --git a/src/lib.rs b/src/lib.rs
+index 1111111..2222222 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -1,3 +1,3 @@
+ line one
+-old
++new
+ line three
+@@ -10,3 +10,3 @@
+ alpha
+-beta
++gamma
+ omega
+";
+        let output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main\n M src/lib.rs",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+            " src/lib.rs | 4 ++--",
+            Some(diff),
+            1,
+            4,
+            Some(0),
+            "",
+        );
+        assert_eq!(output["hunk_count"], 1);
+        assert_eq!(output["hunks_truncated"], true);
+        let hunks = output["hunks"].as_array().unwrap();
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0]["path"], "src/lib.rs");
+        assert_eq!(hunks[0]["hunks"].as_array().unwrap().len(), 1);
     }
 
     #[test]
@@ -2167,6 +2393,7 @@ index 1111111..2222222 100644
             "git_status",
             "git_diff_summary",
             "git_diff_hunks",
+            "show_changes",
         ] {
             assert_eq!(spec_named(&specs, name).annotations["readOnlyHint"], true);
         }
@@ -5803,6 +6030,33 @@ new file mode 100644\n\
         assert!(
             err.contains("shell") || err.contains("git"),
             "git_diff_summary should require shell or git capability: {}",
+            err
+        );
+    }
+
+    #[tokio::test]
+    async fn show_changes_requires_git_or_shell_capability() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = false;
+        register_agent(&runtime, "oe", None, caps).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ShowChanges {
+                    project: agent_test_project_id("oe"),
+                    include_diff: None,
+                    max_hunks: None,
+                    max_hunk_lines: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(
+            err.contains("shell") || err.contains("git"),
+            "show_changes should require shell or git capability: {}",
             err
         );
     }

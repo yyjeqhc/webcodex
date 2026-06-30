@@ -13,10 +13,15 @@ use crate::shell_protocol::ShellRunRequest;
 /// combined `git_diff_summary` command output. Chosen to be extremely unlikely
 /// to appear in real git output.
 pub(crate) const DIFF_SUMMARY_SENTINEL: &str = "@@WEBCODEX_DIFF_SUMMARY_SEP@@";
+pub(crate) const SHOW_CHANGES_SENTINEL: &str = "@@WEBCODEX_SHOW_CHANGES_SEP@@";
 const DEFAULT_MAX_HUNKS: usize = 30;
 const MAX_MAX_HUNKS: usize = 100;
 const DEFAULT_MAX_HUNK_LINES: usize = 160;
 const MAX_MAX_HUNK_LINES: usize = 400;
+const SHOW_CHANGES_DEFAULT_MAX_HUNKS: usize = 20;
+const SHOW_CHANGES_MAX_HUNKS: usize = 100;
+const SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES: usize = 80;
+const SHOW_CHANGES_MAX_HUNK_LINES: usize = 240;
 
 /// Build the read-only `git_diff_summary` command. Runs `git status
 /// --porcelain` and `git diff --stat` separated by a unique sentinel. No
@@ -26,6 +31,271 @@ pub(crate) fn git_diff_summary_command() -> String {
         "git status --porcelain; printf '\\n{sentinel}\\n'; git diff --stat",
         sentinel = DIFF_SUMMARY_SENTINEL,
     )
+}
+
+/// Build the read-only `show_changes` command. It combines the minimal git
+/// inspections needed for a model-facing worktree summary. The optional full
+/// diff is only emitted when the caller asks for bounded hunks.
+pub(crate) fn show_changes_command(include_diff: bool) -> String {
+    let diff_part = if include_diff {
+        format!(
+            "; printf '\\n{sentinel}\\n'; git diff --unified=80",
+            sentinel = SHOW_CHANGES_SENTINEL,
+        )
+    } else {
+        String::new()
+    };
+    format!(
+        "git status --porcelain=v1 -b; \
+         printf '\\n{sentinel}\\n'; \
+         {{ git log -1 --format='%H%x00%h%x00%s' || true; }}; \
+         printf '\\n{sentinel}\\n'; \
+         git diff --stat{diff_part}",
+        sentinel = SHOW_CHANGES_SENTINEL,
+        diff_part = diff_part,
+    )
+}
+
+fn split_show_changes_stdout(stdout: &str, include_diff: bool) -> (String, String, String, String) {
+    let mut parts = stdout.split(SHOW_CHANGES_SENTINEL);
+    let status = parts
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches(['\n', '\r'])
+        .to_string();
+    let head = parts
+        .next()
+        .unwrap_or_default()
+        .trim_matches(['\n', '\r'])
+        .to_string();
+    let stat = parts
+        .next()
+        .unwrap_or_default()
+        .trim_matches(['\n', '\r'])
+        .to_string();
+    let diff = if include_diff {
+        parts
+            .next()
+            .unwrap_or_default()
+            .trim_start_matches(['\n', '\r'])
+            .to_string()
+    } else {
+        String::new()
+    };
+    (status, head, stat, diff)
+}
+
+fn parse_status_branch(line: &str) -> Option<String> {
+    let rest = line.strip_prefix("## ")?;
+    let branch = rest
+        .split("...")
+        .next()
+        .unwrap_or(rest)
+        .trim()
+        .trim_matches('"');
+    if branch.is_empty() {
+        None
+    } else {
+        Some(branch.to_string())
+    }
+}
+
+fn parse_show_changes_head(head: &str) -> serde_json::Value {
+    let mut parts = head.splitn(3, '\0');
+    let commit = parts.next().unwrap_or_default().trim();
+    let short = parts.next().unwrap_or_default().trim();
+    let summary = parts.next().unwrap_or_default().trim();
+    if commit.is_empty() {
+        json!({
+            "commit": null,
+            "short": null,
+            "summary": null,
+        })
+    } else {
+        json!({
+            "commit": commit,
+            "short": if short.is_empty() { commit.chars().take(7).collect::<String>() } else { short.to_string() },
+            "summary": summary,
+        })
+    }
+}
+
+fn porcelain_path(path_part: &str) -> (String, Option<String>) {
+    let path_part = path_part.trim().trim_matches('"');
+    if let Some((old, new)) = path_part.split_once(" -> ") {
+        (
+            new.trim().trim_matches('"').to_string(),
+            Some(old.trim().trim_matches('"').to_string()),
+        )
+    } else {
+        (path_part.to_string(), None)
+    }
+}
+
+fn status_label(x: char, y: char) -> &'static str {
+    if x == '?' && y == '?' {
+        return "untracked";
+    }
+    if x == 'R' || y == 'R' {
+        "renamed"
+    } else if x == 'C' || y == 'C' {
+        "copied"
+    } else if x == 'D' || y == 'D' {
+        "deleted"
+    } else if x == 'A' || y == 'A' {
+        "added"
+    } else {
+        "modified"
+    }
+}
+
+fn looks_like_smoke_path(path: &str) -> bool {
+    let lower = path.to_ascii_lowercase();
+    lower.contains("smoke")
+        || lower.contains("tmp")
+        || lower.contains("test")
+        || lower.contains("anchor")
+}
+
+pub(crate) fn parse_show_changes_output(
+    project: &str,
+    status_stdout: &str,
+    head_stdout: &str,
+    diff_stat: &str,
+    diff_stdout: Option<&str>,
+    max_hunks: usize,
+    max_hunk_lines: usize,
+    exit_code: Option<i32>,
+    stderr: &str,
+) -> serde_json::Value {
+    let mut branch = None;
+    let mut files = Vec::new();
+    let mut modified = 0usize;
+    let mut added = 0usize;
+    let mut deleted = 0usize;
+    let mut renamed = 0usize;
+    let mut copied = 0usize;
+    let mut untracked = 0usize;
+    let mut staged_count = 0usize;
+    let mut unstaged_count = 0usize;
+
+    for line in status_stdout.lines() {
+        if let Some(parsed) = parse_status_branch(line) {
+            branch = Some(parsed);
+            continue;
+        }
+        if line.len() < 3 {
+            continue;
+        }
+        let mut chars = line.chars();
+        let x = chars.next().unwrap_or(' ');
+        let y = chars.next().unwrap_or(' ');
+        if x == '!' && y == '!' {
+            continue;
+        }
+        let path_part = line.get(3..).unwrap_or_default();
+        let (path, old_path) = porcelain_path(path_part);
+        if path.is_empty() {
+            continue;
+        }
+        let status = status_label(x, y);
+        let is_untracked = status == "untracked";
+        let staged = !is_untracked && x != ' ' && x != '?';
+        let unstaged = !is_untracked && y != ' ' && y != '?';
+        match status {
+            "modified" => modified += 1,
+            "added" => added += 1,
+            "deleted" => deleted += 1,
+            "renamed" => renamed += 1,
+            "copied" => copied += 1,
+            "untracked" => untracked += 1,
+            _ => {}
+        }
+        if staged {
+            staged_count += 1;
+        }
+        if unstaged {
+            unstaged_count += 1;
+        }
+        let mut file = serde_json::Map::new();
+        file.insert("path".to_string(), json!(path));
+        file.insert("status".to_string(), json!(status));
+        file.insert("staged".to_string(), json!(staged));
+        file.insert("unstaged".to_string(), json!(unstaged));
+        file.insert(
+            "kind".to_string(),
+            json!(if is_untracked { "untracked" } else { "tracked" }),
+        );
+        if let Some(old_path) = old_path {
+            file.insert("old_path".to_string(), json!(old_path));
+        }
+        files.push(json!(file));
+    }
+
+    let clean = files.is_empty();
+    let mut warnings = Vec::new();
+    for file in &files {
+        if file["kind"] != "untracked" {
+            continue;
+        }
+        let path = file["path"].as_str().unwrap_or_default();
+        if looks_like_smoke_path(path) {
+            warnings.push(json!({
+                "kind": "untracked_smoke_file",
+                "path": path,
+                "message": "untracked smoke/tmp/test/anchor file should be reviewed before commit",
+            }));
+        } else {
+            warnings.push(json!({
+                "kind": "untracked_file",
+                "path": path,
+                "message": "untracked file should be reviewed before commit",
+            }));
+        }
+    }
+
+    let suggested_next_actions = if clean {
+        vec!["no changes detected".to_string()]
+    } else {
+        let mut actions = vec!["review diff".to_string(), "run focused tests".to_string()];
+        if untracked > 0 {
+            actions.push("clean untracked files or intentionally commit them".to_string());
+        }
+        actions.push("commit when reviewed and validated".to_string());
+        actions
+    };
+
+    let mut output = json!({
+        "project": project,
+        "branch": branch,
+        "head": parse_show_changes_head(head_stdout),
+        "clean": clean,
+        "counts": {
+            "modified": modified,
+            "added": added,
+            "deleted": deleted,
+            "renamed": renamed,
+            "copied": copied,
+            "untracked": untracked,
+            "staged": staged_count,
+            "unstaged": unstaged_count,
+        },
+        "files": files,
+        "diff_stat": diff_stat,
+        "warnings": warnings,
+        "suggested_next_actions": suggested_next_actions,
+        "exit_code": exit_code,
+        "stderr": stderr,
+    });
+
+    if let Some(diff) = diff_stdout {
+        let (hunks, hunk_count, truncated) = parse_git_diff_hunks(diff, max_hunks, max_hunk_lines);
+        output["hunks"] = json!(hunks);
+        output["hunk_count"] = json!(hunk_count);
+        output["hunks_truncated"] = json!(truncated);
+    }
+
+    output
 }
 
 /// Split the combined `git_diff_summary` stdout into the porcelain section and
@@ -583,6 +853,54 @@ impl ToolRuntime {
                 }))
             }
             Err(e) => ToolResult::err(format!("task join error: {}", e)),
+        }
+    }
+
+    pub(crate) async fn show_changes(
+        &self,
+        project: String,
+        include_diff: Option<bool>,
+        max_hunks: Option<usize>,
+        max_hunk_lines: Option<usize>,
+    ) -> ToolResult {
+        let include_diff = include_diff.unwrap_or(false);
+        let max_hunks = max_hunks
+            .filter(|n| *n > 0)
+            .unwrap_or(SHOW_CHANGES_DEFAULT_MAX_HUNKS)
+            .min(SHOW_CHANGES_MAX_HUNKS);
+        let max_hunk_lines = max_hunk_lines
+            .filter(|n| *n > 0)
+            .unwrap_or(SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES)
+            .min(SHOW_CHANGES_MAX_HUNK_LINES);
+        let command = show_changes_command(include_diff);
+        let output = match self
+            .run_project_command_capture(&project, command, 30, None)
+            .await
+        {
+            Ok(output) => output,
+            Err(e) => return ToolResult::err(e),
+        };
+        let (status_stdout, head_stdout, diff_stat, diff_stdout) =
+            split_show_changes_stdout(&output.stdout, include_diff);
+        let payload = parse_show_changes_output(
+            &project,
+            &status_stdout,
+            &head_stdout,
+            &diff_stat,
+            include_diff.then_some(diff_stdout.as_str()),
+            max_hunks,
+            max_hunk_lines,
+            output.exit_code,
+            &output.stderr,
+        );
+        if output.exit_code == Some(0) {
+            ToolResult::ok(payload)
+        } else {
+            ToolResult {
+                success: false,
+                output: payload,
+                error: Some("show_changes git inspection failed".to_string()),
+            }
         }
     }
 }

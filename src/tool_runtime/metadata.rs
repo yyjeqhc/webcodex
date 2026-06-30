@@ -392,6 +392,16 @@ pub(crate) const TOOL_METADATA: &[ToolMetadata] = &[
         false,
     ),
     metadata(
+        "git_log",
+        "agent",
+        ToolRisk::ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
         "cargo_fmt",
         "agent",
         ToolRisk::JobRun,

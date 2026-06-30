@@ -627,6 +627,7 @@ mod tests {
                 "show_changes",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
+            ("git_log", OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)),
             (
                 "write_project_file",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),

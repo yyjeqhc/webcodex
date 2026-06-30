@@ -1000,7 +1000,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, bind_current_session, current_session, unbind_current_session, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, show_changes, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, bind_current_session, current_session, unbind_current_session, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
                 "recording_session_id": {
                     "type": "string",
@@ -2322,6 +2322,7 @@ mod tests {
             "unbind_current_session",
             "read_file",
             "git_diff_hunks",
+            "git_log",
             "show_changes",
             "cargo_fmt",
             "cargo_check",

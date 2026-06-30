@@ -201,6 +201,17 @@ pub enum ToolCall {
         args: Option<Vec<String>>,
     },
 
+    /// Return bounded structured recent git commit history.
+    GitLog {
+        project: String,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        skip: Option<usize>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Return bounded structured hunks from `git diff`.
     GitDiffHunks {
         project: String,
@@ -664,6 +675,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "git_status",
     "git_diff",
     "git_diff_hunks",
+    "git_log",
     "cargo_fmt",
     "cargo_check",
     "cargo_test",
@@ -751,6 +763,7 @@ impl ToolCall {
             Self::GitStatus { .. } => "git_status",
             Self::GitDiff { .. } => "git_diff",
             Self::GitDiffHunks { .. } => "git_diff_hunks",
+            Self::GitLog { .. } => "git_log",
             Self::CargoFmt { .. } => "cargo_fmt",
             Self::CargoCheck { .. } => "cargo_check",
             Self::CargoTest { .. } => "cargo_test",
@@ -796,6 +809,7 @@ impl ToolCall {
             | Self::GitStatus { session_id, .. }
             | Self::GitDiff { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
+            | Self::GitLog { session_id, .. }
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
             | Self::CargoTest { session_id, .. }
@@ -833,6 +847,7 @@ impl ToolCall {
             | Self::GitStatus { session_id, .. }
             | Self::GitDiff { session_id, .. }
             | Self::GitDiffHunks { session_id, .. }
+            | Self::GitLog { session_id, .. }
             | Self::CargoFmt { session_id, .. }
             | Self::CargoCheck { session_id, .. }
             | Self::CargoTest { session_id, .. }
@@ -875,6 +890,7 @@ impl ToolCall {
             | Self::GitStatus { project, .. }
             | Self::GitDiff { project, .. }
             | Self::GitDiffHunks { project, .. }
+            | Self::GitLog { project, .. }
             | Self::CargoFmt { project, .. }
             | Self::CargoCheck { project, .. }
             | Self::CargoTest { project, .. }
@@ -971,6 +987,16 @@ impl ToolCall {
                     "project": project,
                 })
             }
+            Self::GitLog {
+                project,
+                limit,
+                skip,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "limit": limit,
+                "skip": skip,
+            }),
             Self::GitDiff { project, args, .. } => serde_json::json!({
                 "project": project,
                 "args_count": args.as_ref().map(Vec::len),

@@ -3258,6 +3258,7 @@ mod tests {
         assert!(!names.is_empty(), "names must not be empty");
         assert!(names.iter().any(|n| n == "list_tools"));
         assert!(names.iter().any(|n| n == "git_diff_summary"));
+        assert!(names.iter().any(|n| n == "git_log"));
         assert!(names.iter().any(|n| n == "show_changes"));
         assert_eq!(body["count"], names.len());
         for tool in body["tools"].as_array().unwrap() {
@@ -3874,6 +3875,26 @@ mod tests {
         assert!(
             body["error"].as_str().is_some_and(|e| !e.is_empty()),
             "git_diff_summary should return a structured runtime error"
+        );
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_git_log_dispatches() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "git_log",
+                "params": {"project": "agent:nope:nope", "limit": 5, "skip": 1}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(
+            body["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "git_log should return a structured runtime error"
         );
     }
 

@@ -814,6 +814,20 @@ fn output_schema_for_tool(name: &str) -> Value {
             ),
             ("stderr", schema_type("string", "Git diff stderr.")),
         ]),
+        "git_log" => wrapped_output_schema(vec![
+            ("project", schema_type("string", "Runtime project id.")),
+            ("limit", schema_type("integer", "Effective commit limit.")),
+            ("skip", schema_type("integer", "Effective commit offset.")),
+            ("count", schema_type("integer", "Returned commit count.")),
+            (
+                "truncated",
+                schema_type("boolean", "Whether more commits were available."),
+            ),
+            (
+                "commits",
+                array_schema(open_object_schema("Git commit summary."), "Recent commits."),
+            ),
+        ]),
         "show_changes" => wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project id.")),
             (
@@ -1510,6 +1524,17 @@ impl ToolRuntime {
                 annotations: tool_annotations("git_diff_hunks"),
             },
             ToolSpec {
+                name: "git_log".to_string(),
+                description: "Return bounded structured recent git commit history for a project. Does not return commit bodies or modify the worktree.".to_string(),
+                input_schema: object_schema(with_optional_session_id(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("limit", "integer", "Maximum commits to return (default 20, clamped to 1..100).", false),
+                    ("skip", "integer", "Number of recent commits to skip (default 0, clamped to 0..10000).", false),
+                ])),
+                output_schema: output_schema_for_tool("git_log"),
+                annotations: tool_annotations("git_log"),
+            },
+            ToolSpec {
                 name: "cargo_fmt".to_string(),
                 description: "Run cargo fmt in an agent-registered project. Use check=true for cargo fmt -- --check before broader validation.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
@@ -1831,17 +1856,17 @@ impl ToolRuntime {
             "inspect": pick(&[
                 "list_tools", "list_projects", "list_agents", "runtime_status",
                 "read_file", "list_project_files", "search_project_text",
-                "git_status", "git_diff", "git_diff_summary", "git_diff_hunks",
+                "git_status", "git_diff", "git_diff_summary", "git_diff_hunks", "git_log",
                 "show_changes"
             ]),
             "projects": pick(&["list_projects", "register_project", "create_project"]),
             "git": pick(&[
-                "git_status", "git_diff", "git_diff_summary", "git_diff_hunks",
+                "git_status", "git_diff", "git_diff_summary", "git_diff_hunks", "git_log",
                 "show_changes",
                 "git_restore_paths", "discard_untracked"
             ]),
             "review": pick(&[
-                "show_changes", "git_diff_hunks", "git_diff_summary", "git_status", "git_diff"
+                "show_changes", "git_diff_hunks", "git_diff_summary", "git_log", "git_status", "git_diff"
             ]),
             "validation": pick(&[
                 "cargo_fmt", "cargo_check", "cargo_test", "validate_patch"

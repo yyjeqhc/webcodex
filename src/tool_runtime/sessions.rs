@@ -1026,6 +1026,7 @@ fn is_git_like_tool(tool_name: &str) -> bool {
             | "git_diff"
             | "git_diff_hunks"
             | "git_diff_summary"
+            | "git_log"
             | "show_changes"
             | "git_restore_paths"
             | "discard_untracked"

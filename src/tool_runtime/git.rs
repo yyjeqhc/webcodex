@@ -25,6 +25,11 @@ const SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES: usize = 80;
 const SHOW_CHANGES_MAX_HUNK_LINES: usize = 240;
 const SHOW_CHANGES_DEFAULT_SESSION_EVENT_LIMIT: usize = 30;
 const SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT: usize = 200;
+const DEFAULT_GIT_LOG_LIMIT: usize = 20;
+const MAX_GIT_LOG_LIMIT: usize = 100;
+const MAX_GIT_LOG_SKIP: usize = 10_000;
+const GIT_LOG_RECORD_SEP: char = '\u{1e}';
+const GIT_LOG_UNIT_SEP: char = '\u{1f}';
 
 const SHOW_CHANGES_UNTRACKED_PREVIEW_SCRIPT: &str = r#"
 import json, os, stat, subprocess, sys
@@ -152,6 +157,76 @@ pub(crate) fn git_diff_summary_command() -> String {
         "git status --porcelain; printf '\\n{sentinel}\\n'; git diff --stat",
         sentinel = DIFF_SUMMARY_SENTINEL,
     )
+}
+
+pub(crate) fn normalize_git_log_limit(limit: Option<usize>) -> usize {
+    limit
+        .filter(|n| *n > 0)
+        .unwrap_or(DEFAULT_GIT_LOG_LIMIT)
+        .min(MAX_GIT_LOG_LIMIT)
+}
+
+pub(crate) fn normalize_git_log_skip(skip: Option<usize>) -> usize {
+    skip.unwrap_or(0).min(MAX_GIT_LOG_SKIP)
+}
+
+pub(crate) fn git_log_command(limit: usize, skip: usize) -> String {
+    let limit_plus_one = limit.saturating_add(1);
+    format!(
+        "git log --decorate=short --date=iso-strict --pretty=format:'%H%x1f%h%x1f%D%x1f%an%x1f%ae%x1f%aI%x1f%s%x1e' -n {limit_plus_one} --skip {skip}",
+    )
+}
+
+fn parse_git_log_refs(decorations: &str) -> Vec<String> {
+    decorations
+        .split(',')
+        .flat_map(|part| {
+            let trimmed = part.trim();
+            if trimmed.is_empty() {
+                Vec::new()
+            } else if let Some((head, branch)) = trimmed.split_once(" -> ") {
+                vec![head.trim().to_string(), branch.trim().to_string()]
+            } else if let Some(tag) = trimmed.strip_prefix("tag: ") {
+                vec![tag.trim().to_string()]
+            } else {
+                vec![trimmed.to_string()]
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn parse_git_log_commits(stdout: &str, limit: usize) -> (Vec<Value>, bool) {
+    let mut commits = Vec::new();
+    let mut truncated = false;
+    for record in stdout.split(GIT_LOG_RECORD_SEP) {
+        let record = record.trim_matches(['\n', '\r']);
+        if record.is_empty() {
+            continue;
+        }
+        let fields: Vec<&str> = record.splitn(7, GIT_LOG_UNIT_SEP).collect();
+        if fields.len() != 7 {
+            continue;
+        }
+        if commits.len() >= limit {
+            truncated = true;
+            break;
+        }
+        commits.push(json!({
+            "hash": fields[0],
+            "short_hash": fields[1],
+            "subject": fields[6],
+            "author_name": fields[3],
+            "author_email": fields[4],
+            "author_date": fields[5],
+            "refs": parse_git_log_refs(fields[2]),
+        }));
+    }
+    (commits, truncated)
+}
+
+fn git_log_empty_repo(stderr: &str) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    lower.contains("does not have any commits") || lower.contains("no commits yet")
 }
 
 /// Build the read-only `show_changes` command. It combines the minimal git
@@ -1123,6 +1198,51 @@ impl ToolRuntime {
                 success: false,
                 output: payload,
                 error: Some("git diff failed".to_string()),
+            }
+        }
+    }
+
+    pub(crate) async fn git_log(
+        &self,
+        project: String,
+        limit: Option<usize>,
+        skip: Option<usize>,
+    ) -> ToolResult {
+        let limit = normalize_git_log_limit(limit);
+        let skip = normalize_git_log_skip(skip);
+        let command = git_log_command(limit, skip);
+        let output = match self
+            .run_project_command_capture(&project, command, 30, None)
+            .await
+        {
+            Ok(output) => output,
+            Err(e) => return ToolResult::err(e),
+        };
+        let (commits, truncated) = parse_git_log_commits(&output.stdout, limit);
+        let payload = json!({
+            "project": project,
+            "limit": limit,
+            "skip": skip,
+            "count": commits.len(),
+            "truncated": truncated,
+            "commits": commits,
+        });
+        if output.exit_code == Some(0) || git_log_empty_repo(&output.stderr) {
+            ToolResult::ok(payload)
+        } else {
+            ToolResult {
+                success: false,
+                output: json!({
+                    "project": payload["project"],
+                    "limit": payload["limit"],
+                    "skip": payload["skip"],
+                    "count": payload["count"],
+                    "truncated": payload["truncated"],
+                    "commits": payload["commits"],
+                    "exit_code": output.exit_code,
+                    "stderr": output.stderr,
+                }),
+                error: Some("git log failed".to_string()),
             }
         }
     }

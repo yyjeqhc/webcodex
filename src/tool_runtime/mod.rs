@@ -601,6 +601,7 @@ impl ToolRuntime {
             ToolCall::GitStatus { .. }
             | ToolCall::GitDiff { .. }
             | ToolCall::GitDiffHunks { .. }
+            | ToolCall::GitLog { .. }
             | ToolCall::GitDiffSummary { .. }
             | ToolCall::ShowChanges { .. } => Some(AgentCapability::GitOrShell),
             ToolCall::CargoFmt { .. }
@@ -1214,6 +1215,13 @@ impl ToolRuntime {
                 self.git_diff_hunks(project, paths, max_hunks, max_hunk_lines, cached)
                     .await
             }
+
+            ToolCall::GitLog {
+                project,
+                limit,
+                skip,
+                session_id: _,
+            } => self.git_log(project, limit, skip).await,
 
             ToolCall::CargoFmt {
                 project,
@@ -2387,6 +2395,7 @@ mod tests {
                 ToolRisk::ReadOnly,
                 AgentCapability::GitOrShell,
             ),
+            ("git_log", ToolRisk::ReadOnly, AgentCapability::GitOrShell),
             ("cargo_fmt", ToolRisk::JobRun, AgentCapability::Shell),
             ("cargo_check", ToolRisk::JobRun, AgentCapability::Shell),
             ("cargo_test", ToolRisk::JobRun, AgentCapability::Shell),
@@ -2756,6 +2765,7 @@ mod tests {
             "git_diff",
             "git_diff_summary",
             "git_diff_hunks",
+            "git_log",
             "show_changes",
             "apply_patch",
             "apply_patch_checked",
@@ -2841,6 +2851,26 @@ mod tests {
         let spec = spec_named(&specs, "git_diff_summary");
         let required = required_fields(spec);
         assert_eq!(required, vec!["project".to_string()]);
+        assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_git_log_schema() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "git_log");
+        let required = required_fields(spec);
+        assert_eq!(required, vec!["project".to_string()]);
+        let props = spec.input_schema["properties"].as_object().unwrap();
+        for field in ["project", "limit", "skip", "session_id"] {
+            assert!(props.contains_key(field), "missing {}", field);
+        }
+        let output_props = spec.output_schema["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap();
+        for field in ["project", "limit", "skip", "count", "truncated", "commits"] {
+            assert!(output_props.contains_key(field), "missing {}", field);
+        }
         assert!(spec.description.chars().count() <= 300);
     }
 
@@ -3857,6 +3887,7 @@ index 1111111..2222222 100644
         }
         let review = categories["review"].as_array().unwrap();
         assert!(review.iter().any(|v| v == "git_diff_hunks"));
+        assert!(review.iter().any(|v| v == "git_log"));
         // recommended_flows are short and non-empty.
         let flows = ToolRuntime::recommended_flows();
         assert!(!flows.is_empty());
@@ -3930,6 +3961,7 @@ index 1111111..2222222 100644
             "git_status",
             "git_diff_summary",
             "git_diff_hunks",
+            "git_log",
             "show_changes",
         ] {
             assert_eq!(spec_named(&specs, name).annotations["readOnlyHint"], true);
@@ -4090,7 +4122,7 @@ index 1111111..2222222 100644
         for cmd in [
             "git init",
             "git config user.email webcodex-test@example.com",
-            "git config user.name WebCodex Test",
+            "git config user.name 'WebCodex Test'",
         ] {
             let (exit_code, stdout, stderr, _) = run_command_sync(cmd, root, 30);
             assert_eq!(
@@ -4098,6 +4130,30 @@ index 1111111..2222222 100644
                 "git setup command failed: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}"
             );
         }
+    }
+
+    fn commit_file(root: &Path, path: &str, content: &str, subject: &str) {
+        fs::write(root.join(path), content).unwrap();
+        for cmd in [
+            format!("git add -- {}", shell_escape_simple(path)),
+            format!("git commit -m {}", shell_escape_simple(subject)),
+        ] {
+            let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, root, 30);
+            assert_eq!(
+                exit_code, 0,
+                "git commit helper command failed: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            );
+        }
+    }
+
+    fn git_log_stdout(root: &Path, limit: usize, skip: usize) -> String {
+        let command = git_log_command(limit, skip);
+        let (exit_code, stdout, stderr, _) = run_command_sync(&command, root, 30);
+        assert_eq!(
+            exit_code, 0,
+            "git log helper command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        stdout
     }
 
     fn output_has_file(output: &Value, path: &str) -> bool {
@@ -4284,6 +4340,220 @@ index 1111111..2222222 100644
         let event = finished_event(&summary, "git_status");
         assert!(event.git_like);
         assert!(event.read_like);
+    }
+
+    #[tokio::test]
+    async fn git_log_parses_commits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "one\n", "first commit");
+        commit_file(root, "a.txt", "two\n", "second commit");
+        let stdout = git_log_stdout(root, 20, 0);
+        let runtime = runtime_with_agent_project("git-log-parse");
+        let mut caps = ShellClientCapabilities::default();
+        caps.git = true;
+        register_agent(&runtime, "git-log-parse", None, caps).await;
+        let project = agent_test_project_id("git-log-parse");
+
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::GitLog {
+                            project,
+                            limit: None,
+                            skip: None,
+                            session_id: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "git-log-parse")
+            .await
+            .expect("git_log should enqueue an agent shell request");
+        assert!(req.command.contains("git log"));
+        assert!(req.command.contains("-n 21"));
+        complete_patch_agent_request(&runtime, "git-log-parse", &req.request_id, 0, &stdout, "")
+            .await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["project"], project);
+        assert_eq!(result.output["limit"], 20);
+        assert_eq!(result.output["skip"], 0);
+        assert_eq!(result.output["count"], 2);
+        let commits = result.output["commits"].as_array().unwrap();
+        assert_eq!(commits[0]["subject"], "second commit");
+        assert!(commits[0]["hash"].as_str().is_some_and(|s| s.len() >= 40));
+        assert!(commits[0]["short_hash"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()));
+        assert!(commits[0]["author_date"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()));
+        assert_eq!(commits[0]["author_name"], "WebCodex Test");
+        assert_eq!(commits[0]["author_email"], "webcodex-test@example.com");
+        assert!(commits[0]["refs"].as_array().is_some());
+    }
+
+    #[tokio::test]
+    async fn git_log_limit_and_skip_returns_second_recent_and_truncated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "one\n", "first commit");
+        commit_file(root, "a.txt", "two\n", "second commit");
+        commit_file(root, "a.txt", "three\n", "third commit");
+        let stdout = git_log_stdout(root, 1, 1);
+        let runtime = runtime_with_agent_project("git-log-page");
+        let mut caps = ShellClientCapabilities::default();
+        caps.git = true;
+        register_agent(&runtime, "git-log-page", None, caps).await;
+        let project = agent_test_project_id("git-log-page");
+
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::GitLog {
+                            project,
+                            limit: Some(1),
+                            skip: Some(1),
+                            session_id: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "git-log-page")
+            .await
+            .expect("git_log should enqueue an agent shell request");
+        assert!(req.command.contains("-n 2"));
+        assert!(req.command.contains("--skip 1"));
+        complete_patch_agent_request(&runtime, "git-log-page", &req.request_id, 0, &stdout, "")
+            .await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["limit"], 1);
+        assert_eq!(result.output["skip"], 1);
+        assert_eq!(result.output["count"], 1);
+        assert_eq!(result.output["truncated"], true);
+        let commits = result.output["commits"].as_array().unwrap();
+        assert_eq!(commits[0]["subject"], "second commit");
+    }
+
+    #[tokio::test]
+    async fn git_log_unknown_project_and_unknown_session_are_structured_errors() {
+        let runtime = runtime_with_agent_project("git-log-errors");
+        let mut caps = ShellClientCapabilities::default();
+        caps.git = true;
+        register_agent(&runtime, "git-log-errors", None, caps).await;
+        let project = agent_test_project_id("git-log-errors");
+
+        let unknown_project = runtime
+            .dispatch(ToolCall::GitLog {
+                project: "ghost".to_string(),
+                limit: None,
+                skip: None,
+                session_id: None,
+            })
+            .await;
+        assert!(!unknown_project.success);
+        assert_eq!(unknown_project.output["error_kind"], "unknown_project");
+
+        let unknown_session = runtime
+            .dispatch(ToolCall::GitLog {
+                project,
+                limit: None,
+                skip: None,
+                session_id: Some("wc_sess_missing".to_string()),
+            })
+            .await;
+        assert!(!unknown_session.success);
+        assert_eq!(unknown_session.output["error_kind"], "unknown_session_id");
+    }
+
+    #[tokio::test]
+    async fn git_log_read_only_session_allowed_and_recorded() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "one\n", "first commit");
+        let stdout = git_log_stdout(root, 5, 0);
+        let runtime = runtime_with_agent_project("git-log-readonly");
+        let mut caps = ShellClientCapabilities::default();
+        caps.git = true;
+        register_agent(&runtime, "git-log-readonly", None, caps).await;
+        let project = agent_test_project_id("git-log-readonly");
+        let session_result = runtime
+            .dispatch(
+                ToolCall::from_tool_name(
+                    "start_session",
+                    json!({"project": project, "mode": "read_only"}),
+                )
+                .unwrap(),
+            )
+            .await;
+        assert!(session_result.success, "{:?}", session_result.error);
+        let session_id = session_result.output["session_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::GitLog {
+                            project,
+                            limit: Some(5),
+                            skip: Some(0),
+                            session_id: Some(session_id),
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "git-log-readonly")
+            .await
+            .expect("git_log should be allowed in read_only session");
+        complete_patch_agent_request(
+            &runtime,
+            "git-log-readonly",
+            &req.request_id,
+            0,
+            &stdout,
+            "",
+        )
+        .await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["session_recorded"], true);
+        let summary = runtime.sessions.summary(&session_id, Some(20)).unwrap();
+        assert_eq!(summary.counts.tool_calls, 1);
+        assert_eq!(summary.counts.read_like, 1);
+        assert_eq!(summary.counts.git_like, 1);
+        let event = finished_event(&summary, "git_log");
+        assert!(event.read_like);
+        assert!(event.git_like);
+        assert!(!event.write_like);
     }
 
     #[tokio::test]
@@ -5660,6 +5930,7 @@ index 1111111..2222222 100644
             "write_project_file",
             "replace_line_range",
             "git_status",
+            "git_log",
             "show_changes",
         ] {
             let spec = spec_named(&specs, name);
@@ -9973,6 +10244,39 @@ new file mode 100644\n\
         assert!(cmd.contains("--exclude-dir=node_modules"));
         assert!(cmd.contains("head -n 26"));
         assert!(cmd.contains("grep -rnI"));
+    }
+
+    #[test]
+    fn git_log_command_is_read_only_and_bounded() {
+        assert_eq!(normalize_git_log_limit(None), 20);
+        assert_eq!(normalize_git_log_limit(Some(0)), 20);
+        assert_eq!(normalize_git_log_limit(Some(999)), 100);
+        assert_eq!(normalize_git_log_skip(Some(20_000)), 10_000);
+        let cmd = git_log_command(21, 7);
+        assert!(cmd.contains("git log"));
+        assert!(cmd.contains("-n 22"));
+        assert!(cmd.contains("--skip 7"));
+        for forbidden in [
+            "apply", "commit", "checkout", "reset", "push", "stash", "merge", "rebase", "rm ",
+        ] {
+            assert!(
+                !cmd.contains(forbidden),
+                "git_log command must not contain '{}': {}",
+                forbidden,
+                cmd
+            );
+        }
+    }
+
+    #[test]
+    fn git_log_parser_splits_commits_refs_and_truncation() {
+        let stdout = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\u{1f}aaaaaaa\u{1f}HEAD -> main, tag: v1\u{1f}Ada\u{1f}ada@example.com\u{1f}2026-06-30T00:00:00+00:00\u{1f}newest\u{1e}bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb\u{1f}bbbbbbb\u{1f}\u{1f}Ben\u{1f}ben@example.com\u{1f}2026-06-29T00:00:00+00:00\u{1f}older\u{1e}";
+        let (commits, truncated) = parse_git_log_commits(stdout, 1);
+        assert!(truncated);
+        assert_eq!(commits.len(), 1);
+        assert_eq!(commits[0]["short_hash"], "aaaaaaa");
+        assert_eq!(commits[0]["subject"], "newest");
+        assert_eq!(commits[0]["refs"], json!(["HEAD", "main", "v1"]));
     }
 
     #[test]

@@ -1639,6 +1639,11 @@ mod tests {
             "MCP tools/list must include show_changes: {:?}",
             names
         );
+        assert!(
+            names.iter().any(|n| n == "git_log"),
+            "MCP tools/list must include git_log: {:?}",
+            names
+        );
     }
 
     #[tokio::test]

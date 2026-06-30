@@ -466,6 +466,27 @@ mod tests {
             .collect();
         assert!(names.iter().any(|name| name == "start_session"));
         assert!(names.iter().any(|name| name == "session_summary"));
+        let tools = value["result"]["tools"].as_array().unwrap();
+        for name in ["read_file", "run_shell", "write_project_file"] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap_or_else(|| panic!("missing MCP tool {name}"));
+            assert!(
+                tool["inputSchema"]["properties"]
+                    .get("session_id")
+                    .is_some(),
+                "MCP tools/list schema missing session_id for {name}"
+            );
+            assert!(
+                !tool["inputSchema"]["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|field| field == "session_id"),
+                "MCP tools/list must not require session_id for {name}"
+            );
+        }
     }
 
     #[tokio::test]
@@ -577,7 +598,7 @@ mod tests {
             .find(|event| event.kind == "tool_call_finished")
             .unwrap();
         assert_eq!(finished.transport, "mcp");
-        assert_eq!(finished.status.as_deref(), Some("success"));
+        assert_eq!(finished.status.as_deref(), Some("succeeded"));
         assert_eq!(finished.risk_class, "read_only");
     }
 

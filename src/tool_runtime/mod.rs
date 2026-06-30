@@ -166,6 +166,39 @@ impl From<ProjectResolverError> for String {
     }
 }
 
+fn unknown_session_result(session_id: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        format!("unknown_session_id: {}", session_id),
+        json!({
+            "error_kind": "unknown_session_id",
+            "session_id": session_id,
+        }),
+    )
+}
+
+fn add_session_telemetry_hint(result: &mut ToolResult, session_id: &str, event_id: Option<String>) {
+    let mut output = match std::mem::take(&mut result.output) {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+    output.insert(
+        "session_recorded".to_string(),
+        Value::Bool(event_id.is_some()),
+    );
+    output.insert(
+        "session_id".to_string(),
+        Value::String(session_id.to_string()),
+    );
+    if let Some(event_id) = event_id {
+        output.insert("session_event_id".to_string(), Value::String(event_id));
+    }
+    result.output = Value::Object(output);
+}
+
 impl ToolRuntime {
     pub fn new(
         projects: Arc<ProjectsState>,
@@ -487,13 +520,13 @@ impl ToolRuntime {
             | ToolCall::ReplaceLineRange { project, .. }
             | ToolCall::InsertAtLine { project, .. }
             | ToolCall::DeleteLineRange { project, .. }
-            | ToolCall::GitStatus { project }
+            | ToolCall::GitStatus { project, .. }
             | ToolCall::GitDiff { project, .. }
             | ToolCall::GitDiffHunks { project, .. }
             | ToolCall::CargoFmt { project, .. }
             | ToolCall::CargoCheck { project, .. }
             | ToolCall::CargoTest { project, .. }
-            | ToolCall::GitDiffSummary { project }
+            | ToolCall::GitDiffSummary { project, .. }
             | ToolCall::ShowChanges { project, .. }
             | ToolCall::ReadFile { project, .. }
             | ToolCall::ListProjectFiles { project, .. }
@@ -601,9 +634,74 @@ impl ToolRuntime {
         call: ToolCall,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
+        self.dispatch_with_auth_transport(call, auth, sessions::SessionTransport::Api)
+            .await
+    }
+
+    pub(crate) async fn dispatch_with_auth_transport(
+        &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+    ) -> ToolResult {
+        let session_id = call.session_id().map(str::to_string);
+        if let Some(session_id) = session_id.as_deref() {
+            if !self.sessions.contains_session(session_id) {
+                return unknown_session_result(session_id);
+            }
+        }
+        let session_start = if session_id.is_some() {
+            let resolved_project = match call.project() {
+                Some(project) => self
+                    .resolve_project_input(project)
+                    .await
+                    .ok()
+                    .map(|resolved| resolved.resolved_id),
+                None => None,
+            };
+            Some(self.sessions.record_tool_call_started_with_options(
+                session_id.as_deref(),
+                transport,
+                call.tool_name(),
+                &call.session_log_arguments(),
+                resolved_project,
+            ))
+        } else {
+            None
+        };
         if let Err(err) = self.authorize_agent_tool(&call, auth).await {
+            let mut err = err;
+            if let Some(session_id) = session_id.as_deref() {
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_start.flatten(),
+                    false,
+                    &err.output,
+                    err.error.as_deref(),
+                    None,
+                );
+                add_session_telemetry_hint(&mut err, session_id, event_id);
+            }
             return err;
         }
+        let mut result = self.dispatch_authorized_inner(call, auth).await;
+        if let Some(session_id) = session_id.as_deref() {
+            let event_id = self.sessions.record_tool_call_finished(
+                session_start.flatten(),
+                result.success,
+                &result.output,
+                result.error.as_deref(),
+                None,
+            );
+            add_session_telemetry_hint(&mut result, session_id, event_id);
+        }
+        result
+    }
+
+    async fn dispatch_authorized_inner(
+        &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
         match call {
             ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
 
@@ -701,48 +799,69 @@ impl ToolRuntime {
             ToolCall::RunShell {
                 project,
                 command,
+                session_id: _,
                 timeout_secs,
                 cwd,
             } => self.run_shell(project, command, timeout_secs, cwd).await,
 
-            ToolCall::ApplyPatch { project, patch } => self.apply_patch(project, patch).await,
+            ToolCall::ApplyPatch {
+                project,
+                patch,
+                session_id: _,
+            } => self.apply_patch(project, patch).await,
 
             ToolCall::ApplyPatchChecked {
                 project,
                 patch,
+                session_id: _,
                 deny_sensitive_paths,
             } => {
                 self.apply_patch_checked(project, patch, deny_sensitive_paths)
                     .await
             }
 
-            ToolCall::DeleteProjectFiles { project, paths } => {
-                self.delete_project_files(project, paths).await
-            }
+            ToolCall::DeleteProjectFiles {
+                project,
+                paths,
+                session_id: _,
+            } => self.delete_project_files(project, paths).await,
 
-            ToolCall::GitRestorePaths { project, paths } => {
-                self.git_restore_paths(project, paths).await
-            }
+            ToolCall::GitRestorePaths {
+                project,
+                paths,
+                session_id: _,
+            } => self.git_restore_paths(project, paths).await,
 
-            ToolCall::DiscardUntracked { project, paths } => {
-                self.discard_untracked(project, paths).await
-            }
+            ToolCall::DiscardUntracked {
+                project,
+                paths,
+                session_id: _,
+            } => self.discard_untracked(project, paths).await,
 
             ToolCall::ValidatePatch {
                 project,
                 patch,
+                session_id: _,
                 deny_sensitive_paths,
             } => {
                 self.validate_patch(project, patch, deny_sensitive_paths)
                     .await
             }
 
-            ToolCall::GitStatus { project } => self.git_status(project).await,
+            ToolCall::GitStatus {
+                project,
+                session_id: _,
+            } => self.git_status(project).await,
 
-            ToolCall::GitDiff { project, args } => self.git_diff(project, args).await,
+            ToolCall::GitDiff {
+                project,
+                session_id: _,
+                args,
+            } => self.git_diff(project, args).await,
 
             ToolCall::GitDiffHunks {
                 project,
+                session_id: _,
                 paths,
                 max_hunks,
                 max_hunk_lines,
@@ -754,6 +873,7 @@ impl ToolRuntime {
 
             ToolCall::CargoFmt {
                 project,
+                session_id: _,
                 cwd,
                 check,
                 timeout_secs,
@@ -761,6 +881,7 @@ impl ToolRuntime {
 
             ToolCall::CargoCheck {
                 project,
+                session_id: _,
                 cwd,
                 all_targets,
                 all_features,
@@ -784,6 +905,7 @@ impl ToolRuntime {
 
             ToolCall::CargoTest {
                 project,
+                session_id: _,
                 cwd,
                 filter,
                 all_targets,
@@ -812,6 +934,7 @@ impl ToolRuntime {
             ToolCall::ReadFile {
                 project,
                 path,
+                session_id: _,
                 start_line,
                 limit,
                 with_line_numbers,
@@ -823,6 +946,7 @@ impl ToolRuntime {
             ToolCall::RunJob {
                 project,
                 command,
+                session_id: _,
                 timeout_secs,
                 cwd,
             } => self.run_job(project, command, timeout_secs, cwd).await,
@@ -830,6 +954,7 @@ impl ToolRuntime {
             ToolCall::RunCodex {
                 project,
                 prompt,
+                session_id: _,
                 approval_mode,
                 timeout_secs,
                 cwd,
@@ -856,6 +981,7 @@ impl ToolRuntime {
 
             ToolCall::ListProjectFiles {
                 project,
+                session_id: _,
                 path,
                 limit,
             } => self.list_project_files(project, path, limit).await,
@@ -863,6 +989,7 @@ impl ToolRuntime {
             ToolCall::SearchProjectText {
                 project,
                 pattern,
+                session_id: _,
                 path,
                 limit,
                 context_before,
@@ -879,7 +1006,10 @@ impl ToolRuntime {
                 .await
             }
 
-            ToolCall::GitDiffSummary { project } => self.git_diff_summary(project).await,
+            ToolCall::GitDiffSummary {
+                project,
+                session_id: _,
+            } => self.git_diff_summary(project).await,
 
             ToolCall::ShowChanges {
                 project,
@@ -909,6 +1039,7 @@ impl ToolRuntime {
                 path,
                 old,
                 new,
+                session_id: _,
                 expected_replacements,
                 allow_multiple,
             } => {
@@ -928,6 +1059,7 @@ impl ToolRuntime {
                 path,
                 old_text,
                 new_text,
+                session_id: _,
                 expected_old_sha256,
             } => {
                 self.replace_exact_block(project, path, old_text, new_text, expected_old_sha256)
@@ -939,6 +1071,7 @@ impl ToolRuntime {
                 path,
                 pattern,
                 text,
+                session_id: _,
             } => {
                 self.insert_around_pattern(project, path, pattern, text, "insert_before_pattern")
                     .await
@@ -949,6 +1082,7 @@ impl ToolRuntime {
                 path,
                 pattern,
                 text,
+                session_id: _,
             } => {
                 self.insert_around_pattern(project, path, pattern, text, "insert_after_pattern")
                     .await
@@ -958,6 +1092,7 @@ impl ToolRuntime {
                 project,
                 path,
                 content,
+                session_id: _,
                 overwrite,
                 expected_sha256,
                 expected_content_prefix,
@@ -977,6 +1112,7 @@ impl ToolRuntime {
                 project,
                 path,
                 content_base64,
+                session_id: _,
                 mime_type,
                 overwrite,
             } => {
@@ -984,13 +1120,16 @@ impl ToolRuntime {
                     .await
             }
 
-            ToolCall::ReadProjectArtifactMetadata { project, path } => {
-                self.read_project_artifact_metadata(project, path).await
-            }
+            ToolCall::ReadProjectArtifactMetadata {
+                project,
+                path,
+                session_id: _,
+            } => self.read_project_artifact_metadata(project, path).await,
 
             ToolCall::ReadProjectArtifact {
                 project,
                 path,
+                session_id: _,
                 encoding,
                 offset,
                 length,
@@ -1006,6 +1145,7 @@ impl ToolRuntime {
                 start_line,
                 end_line,
                 new_text,
+                session_id: _,
                 expected_old_sha256,
                 expected_old_prefix,
             } => {
@@ -1026,6 +1166,7 @@ impl ToolRuntime {
                 path,
                 line,
                 text,
+                session_id: _,
                 expected_anchor_sha256,
                 expected_anchor_prefix,
             } => {
@@ -1045,6 +1186,7 @@ impl ToolRuntime {
                 path,
                 start_line,
                 end_line,
+                session_id: _,
                 expected_old_sha256,
                 expected_old_prefix,
             } => {
@@ -1448,6 +1590,7 @@ mod tests {
                 command,
                 timeout_secs,
                 cwd,
+                ..
             } => {
                 assert_eq!(project, "demo");
                 assert_eq!(command, "echo hi");
@@ -1471,6 +1614,7 @@ mod tests {
                 command,
                 timeout_secs,
                 cwd,
+                ..
             } => {
                 assert_eq!(project, "demo");
                 assert_eq!(command, "ls");
@@ -1503,6 +1647,7 @@ mod tests {
                 timeout_secs,
                 cwd,
                 extra_args,
+                ..
             } => {
                 assert_eq!(project, "demo");
                 assert_eq!(prompt, "fix tests");
@@ -1561,6 +1706,7 @@ mod tests {
                 start_line,
                 limit,
                 with_line_numbers,
+                ..
             } => {
                 assert_eq!(project, "demo");
                 assert_eq!(path, "src/main.rs");
@@ -3341,6 +3487,551 @@ index 1111111..2222222 100644
         output
     }
 
+    fn finished_event<'a>(
+        summary: &'a crate::tool_runtime::sessions::SessionSummary,
+        tool_name: &str,
+    ) -> &'a crate::tool_runtime::sessions::SessionEvent {
+        summary
+            .events
+            .iter()
+            .rev()
+            .find(|event| event.kind == "tool_call_finished" && event.tool_name == tool_name)
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing finished event for {tool_name}: {:?}",
+                    summary.events
+                )
+            })
+    }
+
+    #[tokio::test]
+    async fn read_file_with_session_id_records_event_without_content() {
+        let runtime = runtime_with_agent_project("telemetry-read");
+        register_agent(
+            &runtime,
+            "telemetry-read",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("telemetry-read");
+        let session = runtime
+            .sessions
+            .start_session(Some(project.clone()), Some("read telemetry".to_string()));
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project,
+                            path: "README.md".to_string(),
+                            session_id: Some(session_id),
+                            start_line: None,
+                            limit: Some(1),
+                            with_line_numbers: Some(true),
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "telemetry-read", "inst")
+            .await
+            .expect("read_file should enqueue an agent request");
+        assert_eq!(req.kind, "file_read");
+        complete_patch_agent_request(
+            &runtime,
+            "telemetry-read",
+            &req.request_id,
+            0,
+            "secret line\nsecond\n",
+            "",
+        )
+        .await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["session_recorded"], true);
+        assert_eq!(result.output["session_id"], session.session_id);
+        assert!(result.output["session_event_id"].as_str().is_some());
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.tool_calls, 1);
+        assert_eq!(summary.counts.succeeded, 1);
+        assert_eq!(summary.counts.read_like, 1);
+        let event = finished_event(&summary, "read_file");
+        assert_eq!(event.status.as_deref(), Some("succeeded"));
+        assert!(event.read_like);
+        assert!(!event.write_like);
+        let serialized = serde_json::to_string(&summary.events).unwrap();
+        assert!(
+            !serialized.contains("secret line"),
+            "session event leaked read_file content: {serialized}"
+        );
+    }
+
+    #[tokio::test]
+    async fn git_status_with_session_id_records_git_read_event() {
+        let runtime = runtime_with_agent_project("telemetry-git");
+        let mut caps = ShellClientCapabilities::default();
+        caps.git = true;
+        caps.shell = false;
+        register_agent(&runtime, "telemetry-git", None, caps).await;
+        let project = agent_test_project_id("telemetry-git");
+        let session = runtime.sessions.start_session(None, None);
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::GitStatus {
+                            project,
+                            session_id: Some(session_id),
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "telemetry-git")
+            .await
+            .expect("git_status should enqueue an agent shell request");
+        complete_patch_agent_request(&runtime, "telemetry-git", &req.request_id, 0, "", "").await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["session_recorded"], true);
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.tool_calls, 1);
+        assert_eq!(summary.counts.read_like, 1);
+        assert_eq!(summary.counts.git_like, 1);
+        let event = finished_event(&summary, "git_status");
+        assert!(event.git_like);
+        assert!(event.read_like);
+    }
+
+    #[tokio::test]
+    async fn run_shell_session_events_record_exit_without_stdio_bodies() {
+        let runtime = runtime_with_agent_project("telemetry-shell");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "telemetry-shell", None, caps).await;
+        let project = agent_test_project_id("telemetry-shell");
+        let session = runtime.sessions.start_session(None, None);
+
+        let ok_task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::RunShell {
+                            project,
+                            command: "printf shell-secret-out; printf shell-secret-err >&2"
+                                .to_string(),
+                            session_id: Some(session_id),
+                            timeout_secs: Some(30),
+                            cwd: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "telemetry-shell")
+            .await
+            .expect("run_shell should enqueue success request");
+        complete_patch_agent_request(
+            &runtime,
+            "telemetry-shell",
+            &req.request_id,
+            0,
+            "shell-secret-out",
+            "shell-secret-err",
+        )
+        .await;
+        let ok = ok_task.await.unwrap();
+        assert!(ok.success, "{:?}", ok.error);
+        assert_eq!(ok.output["session_recorded"], true);
+
+        let fail_task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::RunShell {
+                            project,
+                            command: "printf fail-secret-out; printf fail-secret-err >&2; exit 7"
+                                .to_string(),
+                            session_id: Some(session_id),
+                            timeout_secs: Some(30),
+                            cwd: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "telemetry-shell")
+            .await
+            .expect("run_shell should enqueue failure request");
+        complete_patch_agent_request(
+            &runtime,
+            "telemetry-shell",
+            &req.request_id,
+            7,
+            "fail-secret-out",
+            "fail-secret-err",
+        )
+        .await;
+        let fail = fail_task.await.unwrap();
+        assert!(!fail.success);
+        assert_eq!(fail.output["failure_kind"], "command_exit_nonzero");
+        assert_eq!(fail.output["session_recorded"], true);
+
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.tool_calls, 2);
+        assert_eq!(summary.counts.succeeded, 1);
+        assert_eq!(summary.counts.failed, 1);
+        assert_eq!(summary.counts.shell_like, 2);
+        let failed = summary
+            .events
+            .iter()
+            .rev()
+            .find(|event| {
+                event.kind == "tool_call_finished"
+                    && event.tool_name == "run_shell"
+                    && event.status.as_deref() == Some("failed")
+            })
+            .unwrap();
+        assert_eq!(failed.exit_code, Some(7));
+        assert_eq!(failed.failure_kind.as_deref(), Some("command_exit_nonzero"));
+        assert_eq!(failed.error_kind.as_deref(), Some("command_exit_nonzero"));
+        let serialized = serde_json::to_string(&summary.events).unwrap();
+        for leaked in [
+            "shell-secret-out",
+            "shell-secret-err",
+            "fail-secret-out",
+            "fail-secret-err",
+        ] {
+            assert!(
+                !serialized.contains(leaked),
+                "session event leaked shell output {leaked}: {serialized}"
+            );
+        }
+        assert!(serialized.contains("\"command_present\":true"));
+    }
+
+    #[tokio::test]
+    async fn write_project_file_with_session_id_records_changed_path_without_content() {
+        let runtime = runtime_with_agent_project("telemetry-write");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "telemetry-write", None, caps).await;
+        let project = agent_test_project_id("telemetry-write");
+        let session = runtime.sessions.start_session(None, None);
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::WriteProjectFile {
+                            project,
+                            path: "src/new.txt".to_string(),
+                            content: "do-not-log-this-content\n".to_string(),
+                            session_id: Some(session_id),
+                            overwrite: None,
+                            expected_sha256: None,
+                            expected_content_prefix: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "telemetry-write")
+            .await
+            .expect("write_project_file should enqueue helper request");
+        complete_patch_agent_request(
+            &runtime,
+            "telemetry-write",
+            &req.request_id,
+            0,
+            r#"{"path":"src/new.txt","bytes_written":24,"sha256":"abc","changed":true}"#,
+            "",
+        )
+        .await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.write_like, 1);
+        let event = finished_event(&summary, "write_project_file");
+        assert!(event.write_like);
+        assert_eq!(event.changed_paths, vec!["src/new.txt".to_string()]);
+        let serialized = serde_json::to_string(&summary.events).unwrap();
+        assert!(
+            !serialized.contains("do-not-log-this-content"),
+            "session event leaked write content: {serialized}"
+        );
+    }
+
+    #[tokio::test]
+    async fn show_changes_with_session_id_returns_session_block_and_records_call() {
+        let runtime = runtime_with_agent_project("telemetry-show");
+        let mut caps = ShellClientCapabilities::default();
+        caps.file_read = true;
+        caps.shell = true;
+        register_agent(&runtime, "telemetry-show", None, caps).await;
+        let project = agent_test_project_id("telemetry-show");
+        let session = runtime.sessions.start_session(None, None);
+
+        let read_task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project,
+                            path: "README.md".to_string(),
+                            session_id: Some(session_id),
+                            start_line: None,
+                            limit: Some(1),
+                            with_line_numbers: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "telemetry-show", "inst")
+            .await
+            .expect("read_file should enqueue before show_changes");
+        complete_patch_agent_request(
+            &runtime,
+            "telemetry-show",
+            &req.request_id,
+            0,
+            "hello\n",
+            "",
+        )
+        .await;
+        let read = read_task.await.unwrap();
+        assert!(read.success, "{:?}", read.error);
+
+        let show_task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let session_id = session.session_id.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ShowChanges {
+                            project,
+                            session_id: Some(session_id),
+                            include_diff: Some(false),
+                            max_hunks: None,
+                            max_hunk_lines: None,
+                            session_event_limit: Some(20),
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_patch_agent_request(&runtime, "telemetry-show")
+            .await
+            .expect("show_changes should enqueue shell request");
+        let stdout =
+            "## main\n M README.md\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n README.md | 1 +\n";
+        complete_patch_agent_request(&runtime, "telemetry-show", &req.request_id, 0, stdout, "")
+            .await;
+        let result = show_task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["session_recorded"], true);
+        assert_eq!(result.output["session"]["found"], true);
+        assert_eq!(result.output["session"]["counts"]["tool_calls"], 1);
+        assert!(result.output["session"]["recent_events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["tool_name"] == "read_file"));
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.tool_calls, 2);
+        assert_eq!(summary.counts.change_summary_like, 1);
+        let event = finished_event(&summary, "show_changes");
+        assert!(event.git_like);
+        assert!(event.change_summary_like);
+    }
+
+    #[tokio::test]
+    async fn unknown_session_id_fails_before_execution_or_mutation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::write(root.join("README.md"), "hello\n").unwrap();
+        let runtime = runtime_with_project(root, "demo");
+
+        let read = runtime
+            .dispatch(ToolCall::ReadFile {
+                project: "demo".to_string(),
+                path: "README.md".to_string(),
+                session_id: Some("wc_sess_missing".to_string()),
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            })
+            .await;
+        assert!(!read.success);
+        assert_eq!(read.output["error_kind"], "unknown_session_id");
+        assert_eq!(read.output["session_id"], "wc_sess_missing");
+        assert!(read
+            .error
+            .as_deref()
+            .unwrap()
+            .contains("unknown_session_id"));
+
+        let write = runtime
+            .dispatch(ToolCall::WriteProjectFile {
+                project: "demo".to_string(),
+                path: "should-not-exist.txt".to_string(),
+                content: "nope".to_string(),
+                session_id: Some("wc_sess_missing".to_string()),
+                overwrite: None,
+                expected_sha256: None,
+                expected_content_prefix: None,
+            })
+            .await;
+        assert!(!write.success);
+        assert_eq!(write.output["error_kind"], "unknown_session_id");
+        assert!(!root.join("should-not-exist.txt").exists());
+    }
+
+    #[tokio::test]
+    async fn no_session_id_keeps_old_behavior_without_telemetry_hint() {
+        let runtime = runtime_with_agent_project("telemetry-nosession");
+        register_agent(
+            &runtime,
+            "telemetry-nosession",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("telemetry-nosession");
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project,
+                            path: "README.md".to_string(),
+                            session_id: None,
+                            start_line: None,
+                            limit: None,
+                            with_line_numbers: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "telemetry-nosession", "inst")
+            .await
+            .expect("read_file should enqueue without session_id");
+        complete_patch_agent_request(
+            &runtime,
+            "telemetry-nosession",
+            &req.request_id,
+            0,
+            "hello\n",
+            "",
+        )
+        .await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["content"], "hello");
+        assert!(result.output.get("session_recorded").is_none());
+    }
+
+    #[test]
+    fn project_tool_schemas_include_optional_session_id() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        for name in [
+            "read_file",
+            "run_shell",
+            "write_project_file",
+            "replace_line_range",
+            "git_status",
+            "show_changes",
+        ] {
+            let spec = spec_named(&specs, name);
+            assert!(
+                spec.input_schema["properties"].get("session_id").is_some(),
+                "{name} schema missing session_id"
+            );
+            assert!(
+                !spec.input_schema["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|field| field == "session_id"),
+                "{name} schema must not require session_id"
+            );
+        }
+        for name in ["read_file", "run_shell", "write_project_file"] {
+            let spec = spec_named(&specs, name);
+            assert!(spec.output_schema["properties"]["output"]["properties"]
+                .get("session_recorded")
+                .is_some());
+            assert!(spec.output_schema["properties"]["output"]["properties"]
+                .get("session_event_id")
+                .is_some());
+        }
+    }
+
     /// Write a fake on-disk local job simulating a job that survived a restart.
     fn write_fake_job(
         root: &Path,
@@ -5086,6 +5777,7 @@ new file mode 100644\n\
                         ToolCall::ReadFile {
                             project: "other-repo".to_string(),
                             path: "README.md".to_string(),
+                            session_id: None,
                             start_line: None,
                             limit: None,
                             with_line_numbers: None,
@@ -5128,6 +5820,7 @@ new file mode 100644\n\
                     .dispatch_with_auth(
                         ToolCall::GitStatus {
                             project: "other-repo".to_string(),
+                            session_id: None,
                         },
                         Some(&bootstrap),
                     )
@@ -5211,6 +5904,7 @@ new file mode 100644\n\
                 ToolCall::ReadFile {
                     project: "my-repo".to_string(),
                     path: "README.md".to_string(),
+                    session_id: None,
                     start_line: None,
                     limit: None,
                     with_line_numbers: None,
@@ -5236,6 +5930,7 @@ new file mode 100644\n\
                         ToolCall::ReadFile {
                             project: "agent:workstation:other-repo".to_string(),
                             path: "README.md".to_string(),
+                            session_id: None,
                             start_line: None,
                             limit: None,
                             with_line_numbers: None,
@@ -5942,6 +6637,7 @@ new file mode 100644\n\
                         ToolCall::RunShell {
                             project: "agent-proj".to_string(),
                             command: "echo hi".to_string(),
+                            session_id: None,
                             timeout_secs: Some(1),
                             cwd: None,
                         },
@@ -5984,6 +6680,7 @@ new file mode 100644\n\
                 ToolCall::RunShell {
                     project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
+                    session_id: None,
                     timeout_secs: None,
                     cwd: None,
                 },
@@ -6007,6 +6704,7 @@ new file mode 100644\n\
                 ToolCall::ReadFile {
                     project: agent_test_project_id("oe"),
                     path: "README.md".to_string(),
+                    session_id: None,
                     start_line: None,
                     limit: None,
                     with_line_numbers: None,
@@ -6030,6 +6728,7 @@ new file mode 100644\n\
                 ToolCall::RunJob {
                     project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
+                    session_id: None,
                     timeout_secs: None,
                     cwd: None,
                 },
@@ -6052,6 +6751,7 @@ new file mode 100644\n\
             .dispatch_with_auth(
                 ToolCall::GitStatus {
                     project: agent_test_project_id("oe"),
+                    session_id: None,
                 },
                 Some(&bootstrap),
             )
@@ -6071,6 +6771,7 @@ new file mode 100644\n\
                 ToolCall::RunShell {
                     project: agent_test_project_id("ghost"),
                     command: "echo hi".to_string(),
+                    session_id: None,
                     timeout_secs: None,
                     cwd: None,
                 },
@@ -6098,6 +6799,7 @@ new file mode 100644\n\
                 ToolCall::RunJob {
                     project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
+                    session_id: None,
                     timeout_secs: None,
                     cwd: None,
                 },
@@ -6122,6 +6824,7 @@ new file mode 100644\n\
                 ToolCall::RunShell {
                     project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
+                    session_id: None,
                     timeout_secs: None,
                     cwd: None,
                 },
@@ -6149,6 +6852,7 @@ new file mode 100644\n\
                 ToolCall::RunJob {
                     project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
+                    session_id: None,
                     timeout_secs: None,
                     cwd: None,
                 },
@@ -6171,6 +6875,7 @@ new file mode 100644\n\
                 ToolCall::RunJob {
                     project: agent_test_project_id("oe"),
                     command: "echo hi".to_string(),
+                    session_id: None,
                     timeout_secs: None,
                     cwd: None,
                 },
@@ -6192,6 +6897,7 @@ new file mode 100644\n\
                 ToolCall::RunCodex {
                     project: "demo".to_string(),
                     prompt: "echo hi".to_string(),
+                    session_id: None,
                     approval_mode: None,
                     timeout_secs: Some(10),
                     cwd: None,
@@ -6827,6 +7533,7 @@ new file mode 100644\n\
                 project,
                 path,
                 limit,
+                ..
             } => {
                 assert_eq!(project, "demo");
                 assert_eq!(path, None);
@@ -6854,6 +7561,7 @@ new file mode 100644\n\
                 limit,
                 context_before,
                 context_after,
+                ..
             } => {
                 assert_eq!(project, "demo");
                 assert_eq!(pattern, "fn main");
@@ -6867,7 +7575,7 @@ new file mode 100644\n\
 
         let call =
             ToolCall::from_tool_name("git_diff_summary", json!({"project": "demo"})).unwrap();
-        assert!(matches!(call, ToolCall::GitDiffSummary { project } if project == "demo"));
+        assert!(matches!(call, ToolCall::GitDiffSummary { project, .. } if project == "demo"));
 
         // list_jobs has only optional fields; null arguments must still parse.
         let call = ToolCall::from_tool_name("list_jobs", Value::Null).unwrap();
@@ -6945,7 +7653,7 @@ new file mode 100644\n\
         .unwrap();
         assert!(matches!(
             checked,
-            ToolCall::ApplyPatchChecked { project, patch, deny_sensitive_paths }
+            ToolCall::ApplyPatchChecked { project, patch, deny_sensitive_paths, .. }
                 if project == "agent:c:p" && patch == "diff" && deny_sensitive_paths == Some(true)
         ));
 
@@ -6955,7 +7663,7 @@ new file mode 100644\n\
         )
         .unwrap();
         assert!(
-            matches!(delete, ToolCall::DeleteProjectFiles { project, paths } if project == "agent:c:p" && paths == vec!["tmp.txt"])
+            matches!(delete, ToolCall::DeleteProjectFiles { project, paths, .. } if project == "agent:c:p" && paths == vec!["tmp.txt"])
         );
 
         let restore = ToolCall::from_tool_name(
@@ -6964,7 +7672,7 @@ new file mode 100644\n\
         )
         .unwrap();
         assert!(
-            matches!(restore, ToolCall::GitRestorePaths { project, paths } if project == "agent:c:p" && paths == vec!["README.md"])
+            matches!(restore, ToolCall::GitRestorePaths { project, paths, .. } if project == "agent:c:p" && paths == vec!["README.md"])
         );
 
         let discard = ToolCall::from_tool_name(
@@ -6973,7 +7681,7 @@ new file mode 100644\n\
         )
         .unwrap();
         assert!(
-            matches!(discard, ToolCall::DiscardUntracked { project, paths } if project == "agent:c:p" && paths == vec!["tmp.txt"])
+            matches!(discard, ToolCall::DiscardUntracked { project, paths, .. } if project == "agent:c:p" && paths == vec!["tmp.txt"])
         );
     }
 
@@ -7410,6 +8118,7 @@ new file mode 100644\n\
             .dispatch_with_auth(
                 ToolCall::ListProjectFiles {
                     project: agent_test_project_id("oe"),
+                    session_id: None,
                     path: None,
                     limit: None,
                 },
@@ -7435,6 +8144,7 @@ new file mode 100644\n\
                 ToolCall::SearchProjectText {
                     project: agent_test_project_id("oe"),
                     pattern: "fn".to_string(),
+                    session_id: None,
                     path: None,
                     limit: None,
                     context_before: None,
@@ -7461,6 +8171,7 @@ new file mode 100644\n\
             .dispatch_with_auth(
                 ToolCall::GitDiffSummary {
                     project: agent_test_project_id("oe"),
+                    session_id: None,
                 },
                 Some(&bootstrap),
             )
@@ -7512,6 +8223,7 @@ new file mode 100644\n\
         let result = runtime
             .dispatch(ToolCall::ListProjectFiles {
                 project: "some-local-id".to_string(),
+                session_id: None,
                 path: None,
                 limit: None,
             })
@@ -7540,6 +8252,7 @@ new file mode 100644\n\
                 .dispatch_with_auth(
                     ToolCall::ListProjectFiles {
                         project: agent_test_project_id("oe"),
+                        session_id: None,
                         path: Some(path.to_string()),
                         limit: None,
                     },
@@ -7578,6 +8291,7 @@ new file mode 100644\n\
                 ToolCall::SearchProjectText {
                     project: agent_test_project_id("oe"),
                     pattern: "   ".to_string(),
+                    session_id: None,
                     path: None,
                     limit: None,
                     context_before: None,
@@ -7610,6 +8324,7 @@ new file mode 100644\n\
                     ToolCall::SearchProjectText {
                         project: agent_test_project_id("oe"),
                         pattern: "needle".to_string(),
+                        session_id: None,
                         path: Some(path.to_string()),
                         limit: None,
                         context_before: None,
@@ -7649,7 +8364,7 @@ new file mode 100644\n\
         .unwrap();
         assert!(matches!(
             replace,
-            ToolCall::ReplaceInFile { project, path, old, new, expected_replacements, allow_multiple }
+            ToolCall::ReplaceInFile { project, path, old, new, expected_replacements, allow_multiple, .. }
                 if project == "agent:c:p"
                 && path == "src/main.rs"
                 && old == "foo"
@@ -7669,7 +8384,7 @@ new file mode 100644\n\
         .unwrap();
         assert!(matches!(
             write,
-            ToolCall::WriteProjectFile { project, path, content, overwrite, expected_sha256, expected_content_prefix }
+            ToolCall::WriteProjectFile { project, path, content, overwrite, expected_sha256, expected_content_prefix, .. }
                 if project == "agent:c:p"
                 && path == "new.txt"
                 && content == "hello"
@@ -7738,7 +8453,7 @@ new file mode 100644\n\
         .unwrap();
         assert!(matches!(
             call,
-            ToolCall::ReplaceExactBlock { project, path, old_text, new_text, expected_old_sha256 }
+            ToolCall::ReplaceExactBlock { project, path, old_text, new_text, expected_old_sha256, .. }
                 if project == "agent:c:p"
                 && path == "src/main.rs"
                 && old_text == "old"
@@ -7756,7 +8471,7 @@ new file mode 100644\n\
         .unwrap();
         assert!(matches!(
             call,
-            ToolCall::InsertBeforePattern { project, path, pattern, text }
+            ToolCall::InsertBeforePattern { project, path, pattern, text, .. }
                 if project == "agent:c:p" && path == "src/main.rs" && pattern == "fn main" && text == "// before\n"
         ));
     }
@@ -7770,7 +8485,7 @@ new file mode 100644\n\
         .unwrap();
         assert!(matches!(
             call,
-            ToolCall::InsertAfterPattern { project, path, pattern, text }
+            ToolCall::InsertAfterPattern { project, path, pattern, text, .. }
                 if project == "agent:c:p" && path == "src/main.rs" && pattern == "fn main" && text == " // after"
         ));
     }
@@ -8372,6 +9087,7 @@ new file mode 100644\n\
                     path: "EDIT_PROBE.txt".to_string(),
                     old: "hello".to_string(),
                     new: "world".to_string(),
+                    session_id: None,
                     expected_replacements: None,
                     allow_multiple: None,
                 },
@@ -8501,6 +9217,7 @@ new file mode 100644\n\
                     path: "EDIT_PROBE.txt".to_string(),
                     old: "foo".to_string(),
                     new: "bar".to_string(),
+                    session_id: None,
                     expected_replacements: None,
                     allow_multiple: None,
                 },
@@ -8523,6 +9240,7 @@ new file mode 100644\n\
                     start_line: 1,
                     end_line: 1,
                     new_text: "new".to_string(),
+                    session_id: None,
                     expected_old_sha256: None,
                     expected_old_prefix: None,
                 },

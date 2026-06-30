@@ -45,7 +45,13 @@ pub(crate) struct ToolCallStart {
     pub(crate) transport: SessionTransport,
     pub(crate) tool_name: String,
     pub(crate) project: Option<String>,
+    pub(crate) resolved_project: Option<String>,
     pub(crate) risk_class: String,
+    pub(crate) read_like: bool,
+    pub(crate) write_like: bool,
+    pub(crate) shell_like: bool,
+    pub(crate) git_like: bool,
+    pub(crate) change_summary_like: bool,
     pub(crate) changed_paths: Vec<String>,
     pub(crate) started_at: i64,
     pub(crate) started_instant: Instant,
@@ -71,14 +77,23 @@ pub(crate) struct SessionEvent {
     pub(crate) event_id: String,
     pub(crate) session_id: String,
     pub(crate) kind: String,
+    pub(crate) timestamp: i64,
     pub(crate) transport: String,
     pub(crate) tool_name: String,
     pub(crate) project: Option<String>,
+    pub(crate) resolved_project: Option<String>,
     pub(crate) risk_class: String,
+    pub(crate) read_like: bool,
+    pub(crate) write_like: bool,
+    pub(crate) shell_like: bool,
+    pub(crate) git_like: bool,
+    pub(crate) change_summary_like: bool,
     pub(crate) started_at: Option<i64>,
     pub(crate) finished_at: Option<i64>,
     pub(crate) duration_ms: Option<u64>,
     pub(crate) status: Option<String>,
+    pub(crate) exit_code: Option<i64>,
+    pub(crate) failure_kind: Option<String>,
     pub(crate) error_kind: Option<String>,
     pub(crate) error_message_summary: Option<String>,
     pub(crate) changed_paths: Vec<String>,
@@ -91,8 +106,11 @@ pub(crate) struct SessionCounts {
     pub(crate) tool_calls: usize,
     pub(crate) succeeded: usize,
     pub(crate) failed: usize,
+    pub(crate) read_like: usize,
     pub(crate) write_like: usize,
     pub(crate) shell_like: usize,
+    pub(crate) git_like: usize,
+    pub(crate) change_summary_like: usize,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -154,6 +172,11 @@ impl SessionStore {
         inner.summary(session_id, limit)
     }
 
+    pub(crate) fn contains_session(&self, session_id: &str) -> bool {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.sessions.contains_key(session_id)
+    }
+
     pub(crate) fn record_tool_call_started(
         &self,
         session_id: Option<&str>,
@@ -161,14 +184,32 @@ impl SessionStore {
         tool_name: &str,
         arguments: &Value,
     ) -> Option<ToolCallStart> {
+        self.record_tool_call_started_with_options(
+            session_id, transport, tool_name, arguments, None,
+        )
+    }
+
+    pub(crate) fn record_tool_call_started_with_options(
+        &self,
+        session_id: Option<&str>,
+        transport: SessionTransport,
+        tool_name: &str,
+        arguments: &Value,
+        resolved_project: Option<String>,
+    ) -> Option<ToolCallStart> {
         let session_id = session_id?.trim();
-        if !is_valid_session_id(session_id) {
+        if !is_valid_session_id(session_id) || !self.contains_session(session_id) {
             return None;
         }
         let now = now_ts();
         let event_id = format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
         let project = extract_project(arguments);
         let risk_class = risk_class_for_tool(tool_name).to_string();
+        let read_like = is_read_like_tool(tool_name);
+        let write_like = is_write_like_tool(tool_name);
+        let shell_like = is_shell_like_tool(tool_name);
+        let git_like = is_git_like_tool(tool_name);
+        let change_summary_like = is_change_summary_like_tool(tool_name);
         let changed_paths = changed_paths_for_tool(tool_name, arguments);
         let input_summary = Some(redact_and_bound_value(arguments));
         let start = ToolCallStart {
@@ -176,7 +217,13 @@ impl SessionStore {
             transport,
             tool_name: tool_name.to_string(),
             project: project.clone(),
+            resolved_project: resolved_project.clone(),
             risk_class: risk_class.clone(),
+            read_like,
+            write_like,
+            shell_like,
+            git_like,
+            change_summary_like,
             changed_paths: changed_paths.clone(),
             started_at: now,
             started_instant: Instant::now(),
@@ -185,14 +232,23 @@ impl SessionStore {
             event_id,
             session_id: session_id.to_string(),
             kind: "tool_call_started".to_string(),
+            timestamp: now,
             transport: transport.as_str().to_string(),
             tool_name: tool_name.to_string(),
             project,
+            resolved_project,
             risk_class,
+            read_like,
+            write_like,
+            shell_like,
+            git_like,
+            change_summary_like,
             started_at: Some(now),
             finished_at: None,
             duration_ms: None,
             status: None,
+            exit_code: None,
+            failure_kind: None,
             error_kind: None,
             error_message_summary: None,
             changed_paths,
@@ -209,9 +265,9 @@ impl SessionStore {
         output: &Value,
         error: Option<&str>,
         error_kind: Option<&str>,
-    ) {
+    ) -> Option<String> {
         let Some(start) = start else {
-            return;
+            return None;
         };
         let finished_at = now_ts();
         let duration_ms = start
@@ -219,24 +275,44 @@ impl SessionStore {
             .elapsed()
             .as_millis()
             .min(u64::MAX as u128) as u64;
+        let event_id = format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple());
+        let failure_kind = output
+            .get("failure_kind")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let error_kind = error_kind
+            .or_else(|| error.and_then(|_| output.get("failure_kind").and_then(Value::as_str)))
+            .or_else(|| error.map(|_| "runtime_error"));
+        let error_message_summary =
+            error.map(|message| bound_event_error_summary(message, start.shell_like));
         self.push_event(SessionEvent {
-            event_id: format!("{EVENT_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+            event_id: event_id.clone(),
             session_id: start.session_id,
             kind: "tool_call_finished".to_string(),
+            timestamp: finished_at,
             transport: start.transport.as_str().to_string(),
             tool_name: start.tool_name,
             project: start.project,
+            resolved_project: start.resolved_project,
             risk_class: start.risk_class,
+            read_like: start.read_like,
+            write_like: start.write_like,
+            shell_like: start.shell_like,
+            git_like: start.git_like,
+            change_summary_like: start.change_summary_like,
             started_at: Some(start.started_at),
             finished_at: Some(finished_at),
             duration_ms: Some(duration_ms),
-            status: Some(if success { "success" } else { "error" }.to_string()),
+            status: Some(if success { "succeeded" } else { "failed" }.to_string()),
+            exit_code: output.get("exit_code").and_then(Value::as_i64),
+            failure_kind,
             error_kind: error.map(|_| error_kind.unwrap_or("runtime_error").to_string()),
-            error_message_summary: error.map(bound_summary_string),
+            error_message_summary,
             changed_paths: start.changed_paths,
             job_id: extract_job_id(output),
             input_summary: None,
         });
+        Some(event_id)
     }
 
     fn push_event(&self, event: SessionEvent) {
@@ -285,19 +361,31 @@ impl SessionStoreInner {
             tool_calls: finished_events.len(),
             succeeded: finished_events
                 .iter()
-                .filter(|event| event.status.as_deref() == Some("success"))
+                .filter(|event| event.status.as_deref() == Some("succeeded"))
                 .count(),
             failed: finished_events
                 .iter()
-                .filter(|event| event.status.as_deref() == Some("error"))
+                .filter(|event| event.status.as_deref() == Some("failed"))
+                .count(),
+            read_like: finished_events
+                .iter()
+                .filter(|event| event.read_like)
                 .count(),
             write_like: finished_events
                 .iter()
-                .filter(|event| event.risk_class == "project_write")
+                .filter(|event| event.write_like)
                 .count(),
             shell_like: finished_events
                 .iter()
-                .filter(|event| event.risk_class == "job_run")
+                .filter(|event| event.shell_like)
+                .count(),
+            git_like: finished_events
+                .iter()
+                .filter(|event| event.git_like)
+                .count(),
+            change_summary_like: finished_events
+                .iter()
+                .filter(|event| event.change_summary_like)
                 .count(),
         };
         let skip = record.events.len().saturating_sub(limit);
@@ -334,6 +422,39 @@ pub(crate) fn extract_project(value: &Value) -> Option<String> {
 
 pub(crate) fn risk_class_for_tool(tool_name: &str) -> &'static str {
     tool_metadata(tool_name).risk.session_risk_class()
+}
+
+fn is_read_like_tool(tool_name: &str) -> bool {
+    tool_metadata(tool_name).read_only
+}
+
+fn is_write_like_tool(tool_name: &str) -> bool {
+    tool_metadata(tool_name).risk == ToolRisk::ProjectWrite
+}
+
+fn is_shell_like_tool(tool_name: &str) -> bool {
+    let metadata = tool_metadata(tool_name);
+    metadata.shell_like || metadata.risk == ToolRisk::JobRun
+}
+
+fn is_git_like_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "git_status"
+            | "git_diff"
+            | "git_diff_hunks"
+            | "git_diff_summary"
+            | "show_changes"
+            | "git_restore_paths"
+            | "discard_untracked"
+    )
+}
+
+fn is_change_summary_like_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "show_changes" | "git_diff_summary" | "git_diff_hunks"
+    )
 }
 
 pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<String> {
@@ -448,6 +569,29 @@ fn looks_like_secret_string(value: &str) -> bool {
 
 fn bound_summary_string(value: &str) -> String {
     bound_chars(value, MAX_SUMMARY_STRING_CHARS)
+}
+
+fn bound_event_error_summary(value: &str, shell_like: bool) -> String {
+    if !shell_like {
+        return bound_summary_string(value);
+    }
+    let summary = value
+        .lines()
+        .take_while(|line| {
+            let trimmed = line.trim_start();
+            !trimmed.starts_with("stdout_tail:")
+                && !trimmed.starts_with("stderr_tail:")
+                && !trimmed.starts_with("stdout:")
+                && !trimmed.starts_with("stderr:")
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    let summary = summary.trim();
+    if summary.is_empty() {
+        "shell command failed; stdout/stderr omitted from session event".to_string()
+    } else {
+        bound_summary_string(summary)
+    }
 }
 
 fn bound_chars(value: &str, max_chars: usize) -> String {

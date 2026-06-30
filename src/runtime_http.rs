@@ -732,6 +732,7 @@ pub async fn import_conversation_files_to_project(
                     project: body.project.clone(),
                     path: path.clone(),
                     content_base64: general_purpose::STANDARD.encode(&bytes),
+                    session_id: None,
                     mime_type: Some(mime.to_string()),
                     overwrite: body.overwrite,
                 },
@@ -803,6 +804,7 @@ pub async fn codex_run(req: &mut Request, depot: &mut Depot, res: &mut Response)
             ToolCall::RunCodex {
                 project: body.project,
                 prompt: body.prompt,
+                session_id: None,
                 approval_mode: body.approval_mode,
                 timeout_secs: body.timeout_secs,
                 cwd: body.cwd,
@@ -969,6 +971,7 @@ pub async fn projects_read_file(req: &mut Request, depot: &mut Depot, res: &mut 
             ToolCall::ReadFile {
                 project: body.project,
                 path: body.path,
+                session_id: None,
                 start_line: body.start_line,
                 limit: body.limit,
                 with_line_numbers: body.with_line_numbers,
@@ -1012,6 +1015,7 @@ pub async fn projects_git_status(req: &mut Request, depot: &mut Depot, res: &mut
         .dispatch_with_auth(
             ToolCall::GitStatus {
                 project: body.project,
+                session_id: None,
             },
             auth.as_ref(),
         )
@@ -1049,6 +1053,7 @@ pub async fn projects_git_diff(req: &mut Request, depot: &mut Depot, res: &mut R
         .dispatch_with_auth(
             ToolCall::GitDiff {
                 project: body.project,
+                session_id: None,
                 args: body.args,
             },
             auth.as_ref(),
@@ -1089,6 +1094,7 @@ pub async fn projects_apply_patch(req: &mut Request, depot: &mut Depot, res: &mu
             ToolCall::ApplyPatch {
                 project: body.project,
                 patch: body.patch,
+                session_id: None,
             },
             auth.as_ref(),
         )
@@ -1134,6 +1140,7 @@ pub async fn projects_validate_patch(req: &mut Request, depot: &mut Depot, res: 
             ToolCall::ValidatePatch {
                 project: body.project,
                 patch: body.patch,
+                session_id: None,
                 deny_sensitive_paths: body.deny_sensitive_paths,
             },
             auth.as_ref(),
@@ -1185,6 +1192,7 @@ pub async fn projects_apply_patch_checked(
             ToolCall::ApplyPatchChecked {
                 project: body.project,
                 patch: body.patch,
+                session_id: None,
                 deny_sensitive_paths: body.deny_sensitive_paths,
             },
             auth.as_ref(),
@@ -1231,6 +1239,7 @@ pub async fn projects_delete_files(req: &mut Request, depot: &mut Depot, res: &m
             ToolCall::DeleteProjectFiles {
                 project: body.project,
                 paths: body.paths,
+                session_id: None,
             },
             auth.as_ref(),
         )
@@ -1276,6 +1285,7 @@ pub async fn projects_git_restore_paths(req: &mut Request, depot: &mut Depot, re
             ToolCall::GitRestorePaths {
                 project: body.project,
                 paths: body.paths,
+                session_id: None,
             },
             auth.as_ref(),
         )
@@ -1321,6 +1331,7 @@ pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, re
             ToolCall::DiscardUntracked {
                 project: body.project,
                 paths: body.paths,
+                session_id: None,
             },
             auth.as_ref(),
         )
@@ -1365,6 +1376,7 @@ pub async fn projects_replace_in_file(req: &mut Request, depot: &mut Depot, res:
                 path: body.path,
                 old: body.old,
                 new: body.new,
+                session_id: None,
                 expected_replacements: body.expected_replacements,
                 allow_multiple: body.allow_multiple,
             },
@@ -1409,6 +1421,7 @@ pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut
                 project: body.project,
                 path: body.path,
                 content: body.content,
+                session_id: None,
                 overwrite: body.overwrite,
                 expected_sha256: body.expected_sha256,
                 expected_content_prefix: body.expected_content_prefix,
@@ -1469,6 +1482,7 @@ pub async fn projects_run_job(req: &mut Request, depot: &mut Depot, res: &mut Re
             ToolCall::RunJob {
                 project: body.project,
                 command: body.command,
+                session_id: None,
                 timeout_secs: body.timeout_secs,
                 cwd: body.cwd,
             },
@@ -1515,6 +1529,7 @@ pub async fn projects_run_shell(req: &mut Request, depot: &mut Depot, res: &mut 
             ToolCall::RunShell {
                 project: body.project,
                 command: body.command,
+                session_id: None,
                 timeout_secs: body.timeout_secs,
                 cwd: body.cwd,
             },
@@ -1578,6 +1593,7 @@ pub async fn projects_list_files(req: &mut Request, depot: &mut Depot, res: &mut
         .dispatch_with_auth(
             ToolCall::ListProjectFiles {
                 project: body.project,
+                session_id: None,
                 path: body.path,
                 limit: body.limit,
             },
@@ -1617,6 +1633,7 @@ pub async fn projects_search_text(req: &mut Request, depot: &mut Depot, res: &mu
             ToolCall::SearchProjectText {
                 project: body.project,
                 pattern: body.pattern,
+                session_id: None,
                 path: body.path,
                 limit: body.limit,
                 context_before: body.context_before,
@@ -1662,6 +1679,7 @@ pub async fn projects_git_diff_summary(req: &mut Request, depot: &mut Depot, res
         .dispatch_with_auth(
             ToolCall::GitDiffSummary {
                 project: body.project,
+                session_id: None,
             },
             auth.as_ref(),
         )
@@ -3184,7 +3202,7 @@ mod tests {
         assert_eq!(events[1]["transport"], "api");
         assert_eq!(events[1]["tool_name"], "list_projects");
         assert_eq!(events[1]["risk_class"], "read_only");
-        assert_eq!(events[1]["status"], "success");
+        assert_eq!(events[1]["status"], "succeeded");
         assert!(events[1]["duration_ms"].is_u64());
     }
 
@@ -3221,7 +3239,7 @@ mod tests {
         assert_eq!(body["output"]["counts"]["failed"], 1);
         let event = &body["output"]["events"].as_array().unwrap()[1];
         assert_eq!(event["tool_name"], "read_file");
-        assert_eq!(event["status"], "error");
+        assert_eq!(event["status"], "failed");
         assert_eq!(event["error_kind"], "runtime_error");
         assert!(event["error_message_summary"].as_str().unwrap().len() <= 243);
     }
@@ -3990,6 +4008,27 @@ mod tests {
         assert!(names.iter().any(|n| n == "replace_in_file"));
         assert!(names.iter().any(|n| n == "write_project_file"));
         assert_eq!(body["count"], names.len());
+        let tools = body["tools"].as_array().unwrap();
+        for name in ["read_file", "run_shell", "write_project_file"] {
+            let tool = tools
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap_or_else(|| panic!("missing tool {name}"));
+            assert!(
+                tool["inputSchema"]["properties"]
+                    .get("session_id")
+                    .is_some(),
+                "tools/list schema missing session_id for {name}"
+            );
+            assert!(
+                !tool["inputSchema"]["required"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|field| field == "session_id"),
+                "session_id must be optional for {name}"
+            );
+        }
     }
 
     #[tokio::test]

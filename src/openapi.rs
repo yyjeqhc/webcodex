@@ -973,7 +973,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. `session_id` is reserved top-level recorder metadata returned by start_session and is never forwarded to the concrete tool. GPT Actions may pass tool-specific arguments as top-level fields when params/arguments are not accepted by the Action schema; those flattened fields are used only when `params` and `arguments` are absent. Omit all arguments for argument-less tools like list_tools.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. Top-level `session_id` is reserved recorder metadata returned by start_session and is not forwarded to the concrete tool. Project tools may also accept optional `params.session_id` for explicit tool-level session telemetry; use listRuntimeTools to inspect each input schema. GPT Actions may pass tool-specific arguments as top-level fields when params/arguments are not accepted by the Action schema; those flattened fields are used only when `params` and `arguments` are absent. Omit all arguments for argument-less tools like list_tools.",
             "properties": {
                 "tool": {
                     "type": "string",
@@ -981,7 +981,7 @@ fn schemas() -> Value {
                 },
                 "session_id": {
                     "type": "string",
-                    "description": "Reserved recorder metadata. Pass the wc_sess_* value returned by start_session to record this call. It is stripped before concrete tool dispatch and is not a tool argument."
+                    "description": "Reserved recorder metadata. Pass the wc_sess_* value returned by start_session to record this generic call. It is stripped before concrete tool dispatch. For project tools, `params.session_id` is also accepted as an explicit tool argument and appears in listRuntimeTools schemas."
                 },
                 "params": {
                     "type": "object",
@@ -2525,6 +2525,11 @@ mod tests {
         assert_eq!(
             params["additionalProperties"], true,
             "params must allow arbitrary object properties"
+        );
+        let description = tool_call["description"].as_str().unwrap_or("");
+        assert!(
+            description.contains("params.session_id") && description.contains("listRuntimeTools"),
+            "ToolCallRequest should document tool-level session_id telemetry: {description}"
         );
         // `tool` remains required; `params` is optional (advanced callers may
         // omit it for argument-less tools).

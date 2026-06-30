@@ -160,7 +160,9 @@ impl ToolRuntime {
         };
 
         let project = tool_project(&call);
-        let result = self.dispatch_with_auth(call, context.auth).await;
+        let result = self
+            .dispatch_with_auth_transport(call, context.auth, context.transport.into())
+            .await;
         self.sessions.record_tool_call_finished(
             session_event,
             result.success,
@@ -197,13 +199,13 @@ fn tool_project(call: &ToolCall) -> Option<String> {
         | ToolCall::ReplaceLineRange { project, .. }
         | ToolCall::InsertAtLine { project, .. }
         | ToolCall::DeleteLineRange { project, .. }
-        | ToolCall::GitStatus { project }
+        | ToolCall::GitStatus { project, .. }
         | ToolCall::GitDiff { project, .. }
         | ToolCall::GitDiffHunks { project, .. }
         | ToolCall::CargoFmt { project, .. }
         | ToolCall::CargoCheck { project, .. }
         | ToolCall::CargoTest { project, .. }
-        | ToolCall::GitDiffSummary { project }
+        | ToolCall::GitDiffSummary { project, .. }
         | ToolCall::ShowChanges { project, .. }
         | ToolCall::ReadFile { project, .. }
         | ToolCall::ListProjectFiles { project, .. }
@@ -282,7 +284,7 @@ mod tests {
         assert_eq!(summary.counts.succeeded, 1);
         assert_eq!(summary.events[0].kind, "tool_call_started");
         assert_eq!(summary.events[1].kind, "tool_call_finished");
-        assert_eq!(summary.events[1].status.as_deref(), Some("success"));
+        assert_eq!(summary.events[1].status.as_deref(), Some("succeeded"));
     }
 
     #[tokio::test]

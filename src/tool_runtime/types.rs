@@ -13,7 +13,7 @@ pub fn default_true() -> bool {
 // Tool input — one variant per tool
 // =============================================================================
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "params", rename_all = "snake_case")]
 pub enum ToolCall {
     /// List registered tool runtime tools.
@@ -41,30 +41,54 @@ pub enum ToolCall {
         project: String,
         command: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         timeout_secs: Option<u64>,
         #[serde(default)]
         cwd: Option<String>,
     },
 
     /// Apply a unified diff patch to a project.
-    ApplyPatch { project: String, patch: String },
+    ApplyPatch {
+        project: String,
+        patch: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     /// Validate then apply a unified diff patch in one safer full-auto step.
     ApplyPatchChecked {
         project: String,
         patch: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         deny_sensitive_paths: Option<bool>,
     },
 
     /// Delete project-relative files only (not directories).
-    DeleteProjectFiles { project: String, paths: Vec<String> },
+    DeleteProjectFiles {
+        project: String,
+        paths: Vec<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     /// Restore tracked paths with `git restore -- <paths>`.
-    GitRestorePaths { project: String, paths: Vec<String> },
+    GitRestorePaths {
+        project: String,
+        paths: Vec<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     /// Discard selected untracked files with `git clean -f -- <paths>`.
-    DiscardUntracked { project: String, paths: Vec<String> },
+    DiscardUntracked {
+        project: String,
+        paths: Vec<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     /// Validate (preflight) a unified diff patch against an agent-registered
     /// project **without applying it**. Dry-run only: runs `git apply --check`
@@ -76,15 +100,23 @@ pub enum ToolCall {
         project: String,
         patch: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         deny_sensitive_paths: Option<bool>,
     },
 
     /// Run `git status` on a project.
-    GitStatus { project: String },
+    GitStatus {
+        project: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     /// Run `git diff` on a project.
     GitDiff {
         project: String,
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         args: Option<Vec<String>>,
     },
@@ -92,6 +124,8 @@ pub enum ToolCall {
     /// Return bounded structured hunks from `git diff`.
     GitDiffHunks {
         project: String,
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         paths: Option<Vec<String>>,
         #[serde(default)]
@@ -106,6 +140,8 @@ pub enum ToolCall {
     CargoFmt {
         project: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         cwd: Option<String>,
         #[serde(default)]
         check: Option<bool>,
@@ -116,6 +152,8 @@ pub enum ToolCall {
     /// Run `cargo check` in an agent-registered Rust project.
     CargoCheck {
         project: String,
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         cwd: Option<String>,
         #[serde(default)]
@@ -135,6 +173,8 @@ pub enum ToolCall {
     /// Run `cargo test` in an agent-registered Rust project.
     CargoTest {
         project: String,
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         cwd: Option<String>,
         #[serde(default)]
@@ -160,6 +200,8 @@ pub enum ToolCall {
         project: String,
         path: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         start_line: Option<usize>,
         #[serde(default)]
         limit: Option<usize>,
@@ -172,6 +214,8 @@ pub enum ToolCall {
         project: String,
         command: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         timeout_secs: Option<i64>,
         #[serde(default)]
         cwd: Option<String>,
@@ -181,6 +225,8 @@ pub enum ToolCall {
     RunCodex {
         project: String,
         prompt: String,
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         approval_mode: Option<String>,
         #[serde(default)]
@@ -210,6 +256,8 @@ pub enum ToolCall {
     ListProjectFiles {
         project: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         path: Option<String>,
         #[serde(default)]
         limit: Option<usize>,
@@ -224,6 +272,8 @@ pub enum ToolCall {
         project: String,
         pattern: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         path: Option<String>,
         #[serde(default)]
         limit: Option<usize>,
@@ -236,7 +286,11 @@ pub enum ToolCall {
     /// Read-only git diff summary for a project: `git status --porcelain`,
     /// `git diff --stat`, and a parsed changed-file list. Does not modify the
     /// worktree. Routed to the owning agent.
-    GitDiffSummary { project: String },
+    GitDiffSummary {
+        project: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     /// Read-only model-facing git worktree summary for a project. Reports
     /// branch/head, parsed status counts/files, diff stat, warnings, suggested
@@ -285,6 +339,8 @@ pub enum ToolCall {
         old: String,
         new: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         expected_replacements: Option<i64>,
         #[serde(default)]
         allow_multiple: Option<bool>,
@@ -297,6 +353,8 @@ pub enum ToolCall {
         old_text: String,
         new_text: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         expected_old_sha256: Option<String>,
     },
 
@@ -306,6 +364,8 @@ pub enum ToolCall {
         path: String,
         pattern: String,
         text: String,
+        #[serde(default)]
+        session_id: Option<String>,
     },
 
     /// Insert literal text after a literal pattern that must occur exactly once.
@@ -314,6 +374,8 @@ pub enum ToolCall {
         path: String,
         pattern: String,
         text: String,
+        #[serde(default)]
+        session_id: Option<String>,
     },
 
     /// Write a UTF-8 file in a project via the owning agent. Creates new files
@@ -325,6 +387,8 @@ pub enum ToolCall {
         project: String,
         path: String,
         content: String,
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         overwrite: Option<bool>,
         #[serde(default)]
@@ -340,6 +404,8 @@ pub enum ToolCall {
         path: String,
         content_base64: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         mime_type: Option<String>,
         #[serde(default)]
         overwrite: Option<bool>,
@@ -347,13 +413,20 @@ pub enum ToolCall {
 
     /// Read bounded metadata for a binary project artifact. Zip files are
     /// counted but never extracted.
-    ReadProjectArtifactMetadata { project: String, path: String },
+    ReadProjectArtifactMetadata {
+        project: String,
+        path: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
 
     /// Read one bounded binary content segment for a project artifact. Returns
     /// base64 for the requested chunk plus full-file sha256 and MIME metadata.
     ReadProjectArtifact {
         project: String,
         path: String,
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         encoding: Option<String>,
         #[serde(default)]
@@ -373,6 +446,8 @@ pub enum ToolCall {
         end_line: usize,
         new_text: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         expected_old_sha256: Option<String>,
         #[serde(default)]
         expected_old_prefix: Option<String>,
@@ -387,6 +462,8 @@ pub enum ToolCall {
         line: usize,
         text: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         expected_anchor_sha256: Option<String>,
         #[serde(default)]
         expected_anchor_prefix: Option<String>,
@@ -400,6 +477,8 @@ pub enum ToolCall {
         path: String,
         start_line: usize,
         end_line: usize,
+        #[serde(default)]
+        session_id: Option<String>,
         #[serde(default)]
         expected_old_sha256: Option<String>,
         #[serde(default)]
@@ -561,6 +640,456 @@ impl ToolCall {
         }
         serde_json::from_value(Value::Object(wrapped))
             .map_err(|e| format!("invalid arguments for tool '{}': {}", name, e))
+    }
+
+    pub(crate) fn tool_name(&self) -> &'static str {
+        match self {
+            Self::ListTools => "list_tools",
+            Self::StartSession { .. } => "start_session",
+            Self::SessionSummary { .. } => "session_summary",
+            Self::RunShell { .. } => "run_shell",
+            Self::ApplyPatch { .. } => "apply_patch",
+            Self::ApplyPatchChecked { .. } => "apply_patch_checked",
+            Self::DeleteProjectFiles { .. } => "delete_project_files",
+            Self::GitRestorePaths { .. } => "git_restore_paths",
+            Self::DiscardUntracked { .. } => "discard_untracked",
+            Self::ValidatePatch { .. } => "validate_patch",
+            Self::GitStatus { .. } => "git_status",
+            Self::GitDiff { .. } => "git_diff",
+            Self::GitDiffHunks { .. } => "git_diff_hunks",
+            Self::CargoFmt { .. } => "cargo_fmt",
+            Self::CargoCheck { .. } => "cargo_check",
+            Self::CargoTest { .. } => "cargo_test",
+            Self::ReadFile { .. } => "read_file",
+            Self::RunJob { .. } => "run_job",
+            Self::RunCodex { .. } => "run_codex",
+            Self::JobStatus { .. } => "job_status",
+            Self::JobLog { .. } => "job_log",
+            Self::ListProjectFiles { .. } => "list_project_files",
+            Self::SearchProjectText { .. } => "search_project_text",
+            Self::GitDiffSummary { .. } => "git_diff_summary",
+            Self::ShowChanges { .. } => "show_changes",
+            Self::ListJobs { .. } => "list_jobs",
+            Self::JobTail { .. } => "job_tail",
+            Self::ReplaceInFile { .. } => "replace_in_file",
+            Self::ReplaceExactBlock { .. } => "replace_exact_block",
+            Self::InsertBeforePattern { .. } => "insert_before_pattern",
+            Self::InsertAfterPattern { .. } => "insert_after_pattern",
+            Self::WriteProjectFile { .. } => "write_project_file",
+            Self::SaveProjectArtifact { .. } => "save_project_artifact",
+            Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",
+            Self::ReadProjectArtifact { .. } => "read_project_artifact",
+            Self::ReplaceLineRange { .. } => "replace_line_range",
+            Self::InsertAtLine { .. } => "insert_at_line",
+            Self::DeleteLineRange { .. } => "delete_line_range",
+            Self::ListProjects => "list_projects",
+            Self::RegisterProject { .. } => "register_project",
+            Self::CreateProject { .. } => "create_project",
+            Self::ListAgents => "list_agents",
+            Self::RuntimeStatus => "runtime_status",
+        }
+    }
+
+    pub(crate) fn session_id(&self) -> Option<&str> {
+        match self {
+            Self::RunShell { session_id, .. }
+            | Self::ApplyPatch { session_id, .. }
+            | Self::ApplyPatchChecked { session_id, .. }
+            | Self::DeleteProjectFiles { session_id, .. }
+            | Self::GitRestorePaths { session_id, .. }
+            | Self::DiscardUntracked { session_id, .. }
+            | Self::ValidatePatch { session_id, .. }
+            | Self::GitStatus { session_id, .. }
+            | Self::GitDiff { session_id, .. }
+            | Self::GitDiffHunks { session_id, .. }
+            | Self::CargoFmt { session_id, .. }
+            | Self::CargoCheck { session_id, .. }
+            | Self::CargoTest { session_id, .. }
+            | Self::ReadFile { session_id, .. }
+            | Self::RunJob { session_id, .. }
+            | Self::RunCodex { session_id, .. }
+            | Self::ListProjectFiles { session_id, .. }
+            | Self::SearchProjectText { session_id, .. }
+            | Self::GitDiffSummary { session_id, .. }
+            | Self::ShowChanges { session_id, .. }
+            | Self::ReplaceInFile { session_id, .. }
+            | Self::ReplaceExactBlock { session_id, .. }
+            | Self::InsertBeforePattern { session_id, .. }
+            | Self::InsertAfterPattern { session_id, .. }
+            | Self::WriteProjectFile { session_id, .. }
+            | Self::SaveProjectArtifact { session_id, .. }
+            | Self::ReadProjectArtifactMetadata { session_id, .. }
+            | Self::ReadProjectArtifact { session_id, .. }
+            | Self::ReplaceLineRange { session_id, .. }
+            | Self::InsertAtLine { session_id, .. }
+            | Self::DeleteLineRange { session_id, .. } => session_id.as_deref(),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn project(&self) -> Option<&str> {
+        match self {
+            Self::RunShell { project, .. }
+            | Self::ApplyPatch { project, .. }
+            | Self::ApplyPatchChecked { project, .. }
+            | Self::DeleteProjectFiles { project, .. }
+            | Self::GitRestorePaths { project, .. }
+            | Self::DiscardUntracked { project, .. }
+            | Self::ValidatePatch { project, .. }
+            | Self::GitStatus { project, .. }
+            | Self::GitDiff { project, .. }
+            | Self::GitDiffHunks { project, .. }
+            | Self::CargoFmt { project, .. }
+            | Self::CargoCheck { project, .. }
+            | Self::CargoTest { project, .. }
+            | Self::ReadFile { project, .. }
+            | Self::RunJob { project, .. }
+            | Self::RunCodex { project, .. }
+            | Self::ListProjectFiles { project, .. }
+            | Self::SearchProjectText { project, .. }
+            | Self::GitDiffSummary { project, .. }
+            | Self::ShowChanges { project, .. }
+            | Self::ReplaceInFile { project, .. }
+            | Self::ReplaceExactBlock { project, .. }
+            | Self::InsertBeforePattern { project, .. }
+            | Self::InsertAfterPattern { project, .. }
+            | Self::WriteProjectFile { project, .. }
+            | Self::SaveProjectArtifact { project, .. }
+            | Self::ReadProjectArtifactMetadata { project, .. }
+            | Self::ReadProjectArtifact { project, .. }
+            | Self::ReplaceLineRange { project, .. }
+            | Self::InsertAtLine { project, .. }
+            | Self::DeleteLineRange { project, .. } => Some(project.as_str()),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn session_log_arguments(&self) -> Value {
+        match self {
+            Self::RunShell {
+                project,
+                timeout_secs,
+                cwd,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "command_present": true,
+                "timeout_secs": timeout_secs,
+                "cwd": cwd,
+            }),
+            Self::RunJob {
+                project,
+                timeout_secs,
+                cwd,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "command_present": true,
+                "timeout_secs": timeout_secs,
+                "cwd": cwd,
+            }),
+            Self::RunCodex {
+                project,
+                approval_mode,
+                timeout_secs,
+                cwd,
+                extra_args,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "prompt_present": true,
+                "approval_mode": approval_mode,
+                "timeout_secs": timeout_secs,
+                "cwd": cwd,
+                "extra_args_count": extra_args.as_ref().map(Vec::len),
+            }),
+            Self::ApplyPatch { project, .. } => serde_json::json!({
+                "project": project,
+                "patch_present": true,
+            }),
+            Self::ApplyPatchChecked {
+                project,
+                deny_sensitive_paths,
+                ..
+            }
+            | Self::ValidatePatch {
+                project,
+                deny_sensitive_paths,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "patch_present": true,
+                "deny_sensitive_paths": deny_sensitive_paths,
+            }),
+            Self::DeleteProjectFiles { project, paths, .. }
+            | Self::GitRestorePaths { project, paths, .. }
+            | Self::DiscardUntracked { project, paths, .. } => serde_json::json!({
+                "project": project,
+                "paths": paths,
+            }),
+            Self::GitStatus { project, .. } | Self::GitDiffSummary { project, .. } => {
+                serde_json::json!({
+                    "project": project,
+                })
+            }
+            Self::GitDiff { project, args, .. } => serde_json::json!({
+                "project": project,
+                "args_count": args.as_ref().map(Vec::len),
+            }),
+            Self::GitDiffHunks {
+                project,
+                paths,
+                max_hunks,
+                max_hunk_lines,
+                cached,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "paths": paths,
+                "max_hunks": max_hunks,
+                "max_hunk_lines": max_hunk_lines,
+                "cached": cached,
+            }),
+            Self::CargoFmt {
+                project,
+                cwd,
+                check,
+                timeout_secs,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "cwd": cwd,
+                "check": check,
+                "timeout_secs": timeout_secs,
+            }),
+            Self::CargoCheck {
+                project,
+                cwd,
+                all_targets,
+                all_features,
+                no_default_features,
+                features,
+                package,
+                timeout_secs,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "cwd": cwd,
+                "all_targets": all_targets,
+                "all_features": all_features,
+                "no_default_features": no_default_features,
+                "features_present": features.as_ref().is_some_and(|v| !v.is_empty()),
+                "package": package,
+                "timeout_secs": timeout_secs,
+            }),
+            Self::CargoTest {
+                project,
+                cwd,
+                filter,
+                all_targets,
+                all_features,
+                no_default_features,
+                features,
+                package,
+                no_run,
+                timeout_secs,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "cwd": cwd,
+                "filter_present": filter.as_ref().is_some_and(|v| !v.is_empty()),
+                "all_targets": all_targets,
+                "all_features": all_features,
+                "no_default_features": no_default_features,
+                "features_present": features.as_ref().is_some_and(|v| !v.is_empty()),
+                "package": package,
+                "no_run": no_run,
+                "timeout_secs": timeout_secs,
+            }),
+            Self::ReadFile {
+                project,
+                path,
+                start_line,
+                limit,
+                with_line_numbers,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "start_line": start_line,
+                "limit": limit,
+                "with_line_numbers": with_line_numbers,
+            }),
+            Self::ListProjectFiles {
+                project,
+                path,
+                limit,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "limit": limit,
+            }),
+            Self::SearchProjectText {
+                project,
+                path,
+                limit,
+                context_before,
+                context_after,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "pattern_present": true,
+                "path": path,
+                "limit": limit,
+                "context_before": context_before,
+                "context_after": context_after,
+            }),
+            Self::ShowChanges {
+                project,
+                include_diff,
+                max_hunks,
+                max_hunk_lines,
+                session_event_limit,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "include_diff": include_diff,
+                "max_hunks": max_hunks,
+                "max_hunk_lines": max_hunk_lines,
+                "session_event_limit": session_event_limit,
+            }),
+            Self::ReplaceInFile {
+                project,
+                path,
+                expected_replacements,
+                allow_multiple,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "old_present": true,
+                "new_present": true,
+                "expected_replacements": expected_replacements,
+                "allow_multiple": allow_multiple,
+            }),
+            Self::ReplaceExactBlock {
+                project,
+                path,
+                expected_old_sha256,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "old_text_present": true,
+                "new_text_present": true,
+                "expected_old_sha256_present": expected_old_sha256.as_ref().is_some_and(|v| !v.is_empty()),
+            }),
+            Self::InsertBeforePattern { project, path, .. }
+            | Self::InsertAfterPattern { project, path, .. } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "pattern_present": true,
+                "text_present": true,
+            }),
+            Self::WriteProjectFile {
+                project,
+                path,
+                overwrite,
+                expected_sha256,
+                expected_content_prefix,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "content_present": true,
+                "overwrite": overwrite,
+                "expected_sha256_present": expected_sha256.as_ref().is_some_and(|v| !v.is_empty()),
+                "expected_content_prefix_present": expected_content_prefix.as_ref().is_some_and(|v| !v.is_empty()),
+            }),
+            Self::SaveProjectArtifact {
+                project,
+                path,
+                mime_type,
+                overwrite,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "content_base64_present": true,
+                "mime_type": mime_type,
+                "overwrite": overwrite,
+            }),
+            Self::ReadProjectArtifactMetadata { project, path, .. } => serde_json::json!({
+                "project": project,
+                "path": path,
+            }),
+            Self::ReadProjectArtifact {
+                project,
+                path,
+                encoding,
+                offset,
+                length,
+                max_bytes,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "encoding": encoding,
+                "offset": offset,
+                "length": length,
+                "max_bytes": max_bytes,
+            }),
+            Self::ReplaceLineRange {
+                project,
+                path,
+                start_line,
+                end_line,
+                expected_old_sha256,
+                expected_old_prefix,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "new_text_present": true,
+                "expected_old_sha256_present": expected_old_sha256.as_ref().is_some_and(|v| !v.is_empty()),
+                "expected_old_prefix_present": expected_old_prefix.as_ref().is_some_and(|v| !v.is_empty()),
+            }),
+            Self::InsertAtLine {
+                project,
+                path,
+                line,
+                expected_anchor_sha256,
+                expected_anchor_prefix,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "line": line,
+                "text_present": true,
+                "expected_anchor_sha256_present": expected_anchor_sha256.as_ref().is_some_and(|v| !v.is_empty()),
+                "expected_anchor_prefix_present": expected_anchor_prefix.as_ref().is_some_and(|v| !v.is_empty()),
+            }),
+            Self::DeleteLineRange {
+                project,
+                path,
+                start_line,
+                end_line,
+                expected_old_sha256,
+                expected_old_prefix,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "start_line": start_line,
+                "end_line": end_line,
+                "expected_old_sha256_present": expected_old_sha256.as_ref().is_some_and(|v| !v.is_empty()),
+                "expected_old_prefix_present": expected_old_prefix.as_ref().is_some_and(|v| !v.is_empty()),
+            }),
+            _ => serde_json::json!({}),
+        }
     }
 }
 

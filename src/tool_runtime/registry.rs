@@ -33,6 +33,18 @@ pub(crate) fn object_schema(fields: Vec<(&str, &str, &str, bool)>) -> Value {
     })
 }
 
+fn with_optional_session_id(
+    mut fields: Vec<(&'static str, &'static str, &'static str, bool)>,
+) -> Vec<(&'static str, &'static str, &'static str, bool)> {
+    fields.push((
+        "session_id",
+        "string",
+        "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session.",
+        false,
+    ));
+    fields
+}
+
 fn schema_type(kind: &str, description: &str) -> Value {
     json!({
         "type": kind,
@@ -69,6 +81,30 @@ fn open_object_schema(description: &str) -> Value {
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 
 fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
+    let mut output_properties = output_properties;
+    output_properties.extend([
+        (
+            "session_recorded",
+            schema_type(
+                "boolean",
+                "True when this tool call was recorded in a provided session_id.",
+            ),
+        ),
+        (
+            "session_id",
+            schema_type(
+                "string",
+                "Session id used for telemetry recording, when provided.",
+            ),
+        ),
+        (
+            "session_event_id",
+            schema_type(
+                "string",
+                "Session event id for the recorded finished tool call.",
+            ),
+        ),
+    ]);
     let properties = output_properties
         .into_iter()
         .map(|(name, schema)| (name.to_string(), schema))
@@ -817,7 +853,7 @@ impl ToolRuntime {
                 description: "Run checks, builds, tests, read-only diagnostics, or necessary commands in a project. "
                     .to_string()
                     + "Do not use as the primary project file editing path; prefer structured line edit tools for source edits.",
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id.", true),
                     ("command", "string", "Shell command to run.", true),
                     (
@@ -832,7 +868,7 @@ impl ToolRuntime {
                         "Optional project-relative working directory.",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("run_shell"),
                 annotations: tool_annotations("run_shell"),
             },
@@ -840,7 +876,7 @@ impl ToolRuntime {
                 name: "run_job".to_string(),
                 description: "Start an asynchronous shell job inside an agent-registered project."
                     .to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id.", true),
                     (
                         "command",
@@ -860,14 +896,14 @@ impl ToolRuntime {
                         "Optional project-relative working directory.",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("run_job"),
                 annotations: tool_annotations("run_job"),
             },
             ToolSpec {
                 name: "run_codex".to_string(),
                 description: "Optional Codex CLI delegation as an async project job. Requires Codex CLI installed and configured on the owning agent. Use only when the user explicitly asks to delegate to Codex; otherwise use WebCodex file/git/shell/line-edit tools directly.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id.", true),
                     (
                         "prompt",
@@ -899,7 +935,7 @@ impl ToolRuntime {
                         "Optional extra Codex CLI arguments.",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("run_codex"),
                 annotations: tool_annotations("run_codex"),
             },
@@ -938,7 +974,7 @@ impl ToolRuntime {
                     + "read-only). Returns project-relative paths plus a file/dir kind. Routed "
                     + "to the owning registered agent; the server never reads the agent project "
                     + "path directly.",
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     (
                         "path",
@@ -952,7 +988,7 @@ impl ToolRuntime {
                         "Maximum number of entries to return.",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("list_project_files"),
                 annotations: tool_annotations("list_project_files"),
             },
@@ -963,7 +999,7 @@ impl ToolRuntime {
                     + " Each match carries a project-relative path, 1-based line number, and a "
                     + "preview line. Sensitive/build directories (.git, target, node_modules) are "
                     + "excluded by default.",
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("pattern", "string", "Text pattern to search for.", true),
                     (
@@ -990,7 +1026,7 @@ impl ToolRuntime {
                         "Optional number of context lines after each match (clamped to 20).",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("search_project_text"),
                 annotations: tool_annotations("search_project_text"),
             },
@@ -1000,26 +1036,26 @@ impl ToolRuntime {
                     .to_string()
                     + "`git diff --stat`, and a parsed changed-file list. Does not modify the "
                     + "worktree.",
-                input_schema: object_schema(vec![(
+                input_schema: object_schema(with_optional_session_id(vec![(
                     "project",
                     "string",
                     "Agent-registered project id.",
                     true,
-                )]),
+                )])),
                 output_schema: output_schema_for_tool("git_diff_summary"),
                 annotations: tool_annotations("git_diff_summary"),
             },
             ToolSpec {
                 name: "show_changes".to_string(),
                 description: "Read-only git worktree and optional session activity summary for task review. Reports status, warnings, next actions, bounded hunks, and never modifies the worktree.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("session_id", "string", "Optional wc_sess_* id to summarize with the git changes.", false),
                     ("include_diff", "boolean", "Include bounded diff hunks (default false).", false),
                     ("max_hunks", "integer", "Maximum hunks to return when include_diff=true (clamped).", false),
                     ("max_hunk_lines", "integer", "Maximum lines per hunk when include_diff=true (clamped).", false),
                     ("session_event_limit", "integer", "Maximum recent session events to include (clamped).", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("show_changes"),
                 annotations: tool_annotations("show_changes"),
             },
@@ -1064,7 +1100,7 @@ impl ToolRuntime {
             ToolSpec {
                 name: "read_file".to_string(),
                 description: "Read a UTF-8 file from an agent-registered project.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("start_line", "integer", "1-based line offset.", false),
@@ -1075,61 +1111,61 @@ impl ToolRuntime {
                         "When true, include numbered_text and lines with 1-based line numbers.",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("read_file"),
                 annotations: tool_annotations("read_file"),
             },
             ToolSpec {
                 name: "git_status".to_string(),
                 description: "Run git status --porcelain for a project.".to_string(),
-                input_schema: object_schema(vec![(
+                input_schema: object_schema(with_optional_session_id(vec![(
                     "project",
                     "string",
                     "Configured project id.",
                     true,
-                )]),
+                )])),
                 output_schema: output_schema_for_tool("git_status"),
                 annotations: tool_annotations("git_status"),
             },
             ToolSpec {
                 name: "git_diff".to_string(),
                 description: "Run git diff for a project, optionally scoped to paths.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id.", true),
                     ("args", "array", "Optional path list.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("git_diff"),
                 annotations: tool_annotations("git_diff"),
             },
             ToolSpec {
                 name: "git_diff_hunks".to_string(),
                 description: "Return bounded structured git diff hunks for review. Supports optional paths and cached diff; does not modify the worktree.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("paths", "array", "Optional project-relative paths to scope diff.", false),
                     ("max_hunks", "integer", "Maximum hunks to return (clamped).", false),
                     ("max_hunk_lines", "integer", "Maximum lines per hunk (clamped).", false),
                     ("cached", "boolean", "Use staged diff via git diff --cached.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("git_diff_hunks"),
                 annotations: tool_annotations("git_diff_hunks"),
             },
             ToolSpec {
                 name: "cargo_fmt".to_string(),
                 description: "Run cargo fmt in an agent-registered project. Use check=true for cargo fmt -- --check before broader validation.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("cwd", "string", "Optional project-relative working directory.", false),
                     ("check", "boolean", "Run cargo fmt -- --check instead of formatting.", false),
                     ("timeout_secs", "integer", "Command timeout in seconds.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("cargo_fmt"),
                 annotations: tool_annotations("cargo_fmt"),
             },
             ToolSpec {
                 name: "cargo_check".to_string(),
                 description: "Run structured cargo check. Defaults to --all-targets; supports features/package/cwd without shell interpolation.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("cwd", "string", "Optional project-relative working directory.", false),
                     ("all_targets", "boolean", "Include --all-targets (default true).", false),
@@ -1138,14 +1174,14 @@ impl ToolRuntime {
                     ("features", "string", "Feature list passed to --features.", false),
                     ("package", "string", "Package passed to -p.", false),
                     ("timeout_secs", "integer", "Command timeout in seconds.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("cargo_check"),
                 annotations: tool_annotations("cargo_check"),
             },
             ToolSpec {
                 name: "cargo_test".to_string(),
                 description: "Run structured cargo test. Supports optional filter, feature flags, package, --no-run, and bounded output tails.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("cwd", "string", "Optional project-relative working directory.", false),
                     ("filter", "string", "Optional cargo test filter.", false),
@@ -1156,7 +1192,7 @@ impl ToolRuntime {
                     ("package", "string", "Package passed to -p.", false),
                     ("no_run", "boolean", "Include --no-run.", false),
                     ("timeout_secs", "integer", "Command timeout in seconds.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("cargo_test"),
                 annotations: tool_annotations("cargo_test"),
             },
@@ -1164,69 +1200,69 @@ impl ToolRuntime {
                 name: "apply_patch".to_string(),
                 description: "Apply a unified diff patch to an agent-registered project."
                     .to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id.", true),
                     ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("apply_patch"),
                 annotations: tool_annotations("apply_patch"),
             },
             ToolSpec {
                 name: "apply_patch_checked".to_string(),
                 description: "Validate/apply a unified diff and return a diff summary. Best for broad or multi-file patches; for local line edits prefer structured line edit tools.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings before applying.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("apply_patch_checked"),
                 annotations: tool_annotations("apply_patch_checked"),
             },
             ToolSpec {
                 name: "delete_project_files".to_string(),
                 description: "Delete selected project-relative files only; safer than arbitrary rm for cleanup.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("paths", "array", "Project-relative file paths to delete.", true),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("delete_project_files"),
                 annotations: tool_annotations("delete_project_files"),
             },
             ToolSpec {
                 name: "git_restore_paths".to_string(),
                 description: "Restore selected tracked paths with git restore; does not remove untracked files.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("paths", "array", "Project-relative tracked paths to restore.", true),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("git_restore_paths"),
                 annotations: tool_annotations("git_restore_paths"),
             },
             ToolSpec {
                 name: "discard_untracked".to_string(),
                 description: "Discard selected untracked files with git clean -f -- <paths>.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("paths", "array", "Project-relative untracked paths to remove.", true),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("discard_untracked"),
                 annotations: tool_annotations("discard_untracked"),
             },
             ToolSpec {
                 name: "validate_patch".to_string(),
                 description: "Dry-run a unified diff with git apply --check/--stat through the owning agent; never writes files.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
                     ("deny_sensitive_paths", "boolean", "Block sensitive path warnings.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("validate_patch"),
                 annotations: tool_annotations("validate_patch"),
             },
             ToolSpec {
                 name: "replace_in_file".to_string(),
                 description: "Replace a short unique substring in a project file. Good for small exact text changes; not for large source rewrites. Fails without writing when old is missing or ambiguous.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("old", "string", "Non-empty substring to replace.", true),
@@ -1243,51 +1279,51 @@ impl ToolRuntime {
                         "Allow replacing multiple occurrences (default false).",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("replace_in_file"),
                 annotations: tool_annotations("replace_in_file"),
             },
             ToolSpec {
                 name: "replace_exact_block".to_string(),
                 description: "Replace literal UTF-8 text that matches exactly once; no regex or auto-format. Use line edit tools when line numbers are known.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("old_text", "string", "Non-empty literal block; must match exactly once.", true),
                     ("new_text", "string", "Replacement text; may be empty to delete the block.", true),
                     ("expected_old_sha256", "string", "Optional sha256 guard for current whole-file content.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("replace_exact_block"),
                 annotations: tool_annotations("replace_exact_block"),
             },
             ToolSpec {
                 name: "insert_before_pattern".to_string(),
                 description: "Insert UTF-8 text before one literal pattern match; no regex, AST, auto-newline, or auto-format.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("pattern", "string", "Non-empty literal pattern; must match exactly once.", true),
                     ("text", "string", "Non-empty text to insert, including intended newlines.", true),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("insert_before_pattern"),
                 annotations: tool_annotations("insert_before_pattern"),
             },
             ToolSpec {
                 name: "insert_after_pattern".to_string(),
                 description: "Insert UTF-8 text after one literal pattern match; no regex, AST, auto-newline, or auto-format.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("pattern", "string", "Non-empty literal pattern; must match exactly once.", true),
                     ("text", "string", "Non-empty text to insert, including intended newlines.", true),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("insert_after_pattern"),
                 annotations: tool_annotations("insert_after_pattern"),
             },
             ToolSpec {
                 name: "write_project_file".to_string(),
                 description: "Create a new UTF-8 file or deliberately overwrite a small whole file. Not the first choice for ordinary local source edits; prefer line edit tools when scoped by line.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("content", "string", "UTF-8 file content (no NUL).", true),
@@ -1309,37 +1345,37 @@ impl ToolRuntime {
                         "Required prefix of the current file when overwriting.",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("write_project_file"),
                 annotations: tool_annotations("write_project_file"),
             },
             ToolSpec {
                 name: "save_project_artifact".to_string(),
                 description: "Write a bounded binary project artifact from base64. Use for imported session files, generated images, PDFs, and zip files; not for UTF-8 source edits.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative output path.", true),
                     ("content_base64", "string", "Base64-encoded binary content.", true),
                     ("mime_type", "string", "Optional MIME type.", false),
                     ("overwrite", "boolean", "Allow overwriting an existing file (default false).", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("save_project_artifact"),
                 annotations: tool_annotations("save_project_artifact"),
             },
             ToolSpec {
                 name: "read_project_artifact_metadata".to_string(),
                 description: "Read bounded metadata for a binary artifact; images include dimensions and zip archives are counted but never extracted.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative artifact path.", true),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("read_project_artifact_metadata"),
                 annotations: tool_annotations("read_project_artifact_metadata"),
             },
             ToolSpec {
                 name: "read_project_artifact".to_string(),
                 description: "Chunked content read for a project artifact. Returns base64 for one small segment plus full-file sha256/MIME metadata; not a large-file transfer tool.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative artifact path.", true),
                     (
@@ -1366,14 +1402,14 @@ impl ToolRuntime {
                         "Compatibility alias/upper bound for length; cannot exceed 65536.",
                         false,
                     ),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("read_project_artifact"),
                 annotations: tool_annotations("read_project_artifact"),
             },
             ToolSpec {
                 name: "replace_line_range".to_string(),
                 description: "Preferred source-code edit tool for local changes with clear line numbers. Replaces a 1-based inclusive line range; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("start_line", "integer", "1-based inclusive start line.", true),
@@ -1381,35 +1417,35 @@ impl ToolRuntime {
                     ("new_text", "string", "Replacement text; empty deletes the range.", true),
                     ("expected_old_sha256", "string", "Optional sha256 guard for the original range text.", false),
                     ("expected_old_prefix", "string", "Optional prefix guard for the original range text.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("replace_line_range"),
                 annotations: tool_annotations("replace_line_range"),
             },
             ToolSpec {
                 name: "insert_at_line".to_string(),
                 description: "Preferred source-code edit tool for local changes with clear line numbers. Inserts before a specified 1-based line; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("line", "integer", "1-based insertion line; total_lines+1 appends at EOF.", true),
                     ("text", "string", "Text to insert.", true),
                     ("expected_anchor_sha256", "string", "Optional sha256 guard for anchor line or empty EOF anchor.", false),
                     ("expected_anchor_prefix", "string", "Optional prefix guard for anchor line or empty EOF anchor.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("insert_at_line"),
                 annotations: tool_annotations("insert_at_line"),
             },
             ToolSpec {
                 name: "delete_line_range".to_string(),
                 description: "Preferred source-code edit tool for local changes with clear line numbers. Deletes a 1-based inclusive line range; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
-                input_schema: object_schema(vec![
+                input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
                     ("start_line", "integer", "1-based inclusive start line.", true),
                     ("end_line", "integer", "1-based inclusive end line.", true),
                     ("expected_old_sha256", "string", "Optional sha256 guard for the original range text.", false),
                     ("expected_old_prefix", "string", "Optional prefix guard for the original range text.", false),
-                ]),
+                ])),
                 output_schema: output_schema_for_tool("delete_line_range"),
                 annotations: tool_annotations("delete_line_range"),
             },

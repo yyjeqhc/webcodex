@@ -1,5 +1,5 @@
 # Example config for webcodex-agent.
-# Copy to /etc/webcodex/clients/special/agent.toml and edit token/client_id/server_url.
+# Copy to /etc/webcodex/clients/workstation/agent.toml and edit token/client_id/server_url.
 # Prefer generating this file with: webcodex-cli agent init --profile special
 # The compatibility command webcodex-agent init still works.
 
@@ -10,7 +10,7 @@ display_name = "Example Agent"
 owner = "example-user"
 transport = "auto"
 poll_interval_ms = 1000
-projects_dir = "/etc/webcodex/clients/special/projects.d"
+projects_dir = "/etc/webcodex/clients/workstation/projects.d"
 
 # Agent transport. New deployments should prefer auto transport with
 # [quic] configured: the agent tries QUIC first, then WebSocket, then polling.

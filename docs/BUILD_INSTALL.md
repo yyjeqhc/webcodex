@@ -157,7 +157,7 @@ webcodex-cli setup single-user
 Client enroll writes `agent.toml`. For a systemd service, use `webcodex-cli agent install-service`; for a foreground test, run:
 
 ```bash
-webcodex-agent --profile special
+webcodex-agent --profile workstation
 ```
 
 `webcodex-agent init` remains available as a compatibility entry point.

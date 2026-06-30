@@ -118,7 +118,7 @@ sudo webcodex-cli client enroll \
   --server-url https://your-domain.example \
   --pairing-code <wc_pair_...> \
   --client-id friend-laptop \
-  --profile special \
+  --profile workstation \
   --allowed-root /home/friend/git
 ```
 
@@ -128,16 +128,16 @@ sudo webcodex-cli client enroll \
 
 ```bash
 sudo webcodex-cli agent install-service \
-  --profile special \
+  --profile workstation \
   --bin /opt/webcodex/bin/webcodex-agent \
   --overwrite
 sudo systemctl daemon-reload
 sudo systemctl enable --now webcodex-agent-special
 webcodex-cli agent status \
-  --profile special \
+  --profile workstation \
   --server-url https://your-domain.example
 webcodex-cli doctor --strict \
-  --profile special \
+  --profile workstation \
   --server-url https://your-domain.example
 ```
 
@@ -148,7 +148,7 @@ GPT Actions 应使用生成的 client-side user-token file。GPT Actions 需要 
 `client enroll` 会写入 `agent.toml`。systemd service 使用 `webcodex-cli agent install-service`；前台测试可运行：
 
 ```bash
-webcodex-agent --profile special
+webcodex-agent --profile workstation
 ```
 
 `webcodex-agent init` 仍保留为兼容入口。
@@ -160,11 +160,11 @@ webcodex-agent --profile special
 ```bash
 webcodex-cli doctor --strict \
   --server-url https://your-domain.example \
-  --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --agent-token-file /etc/webcodex/clients/special/webcodex-agent-token
+  --user-token-file /etc/webcodex/clients/workstation/webcodex-user-token \
+  --agent-token-file /etc/webcodex/clients/workstation/webcodex-agent-token
 ```
 
-添加 `--agent-config /etc/webcodex/clients/special/agent.toml` 可运行本地 shell-profile / project diagnostics。添加 `--project <id>` 可对指定项目运行远程 shell roundtrip。
+添加 `--agent-config /etc/webcodex/clients/workstation/agent.toml` 可运行本地 shell-profile / project diagnostics。添加 `--project <id>` 可对指定项目运行远程 shell roundtrip。
 
 Doctor 不会打印 `init_script` bodies、env values 或 tokens。Profile 配置和排障见 [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md)。
 

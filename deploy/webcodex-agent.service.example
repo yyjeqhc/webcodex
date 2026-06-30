@@ -22,7 +22,7 @@ Wants=network-online.target
 Type=simple
 User=root
 Group=root
-ExecStart=/opt/webcodex/webcodex-agent --config /etc/webcodex/clients/special/agent.toml
+ExecStart=/opt/webcodex/webcodex-agent --config /etc/webcodex/clients/workstation/agent.toml
 Restart=always
 RestartSec=5
 

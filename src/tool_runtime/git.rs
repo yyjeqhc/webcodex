@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{json, Value};
 use std::time::Duration;
 
 use super::helpers::{
@@ -8,6 +8,7 @@ use super::helpers::{
 use super::types::ToolResult;
 use super::ToolRuntime;
 use crate::shell_protocol::ShellRunRequest;
+use crate::tool_runtime::sessions::{SessionEvent, SessionSummary};
 
 /// Sentinel separating `git status --porcelain` from `git diff --stat` in the
 /// combined `git_diff_summary` command output. Chosen to be extremely unlikely
@@ -22,6 +23,8 @@ const SHOW_CHANGES_DEFAULT_MAX_HUNKS: usize = 20;
 const SHOW_CHANGES_MAX_HUNKS: usize = 100;
 const SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES: usize = 80;
 const SHOW_CHANGES_MAX_HUNK_LINES: usize = 240;
+const SHOW_CHANGES_DEFAULT_SESSION_EVENT_LIMIT: usize = 30;
+const SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT: usize = 200;
 
 /// Build the read-only `git_diff_summary` command. Runs `git status
 /// --porcelain` and `git diff --stat` separated by a unique sentinel. No
@@ -254,16 +257,8 @@ pub(crate) fn parse_show_changes_output(
         }
     }
 
-    let suggested_next_actions = if clean {
-        vec!["no changes detected".to_string()]
-    } else {
-        let mut actions = vec!["review diff".to_string(), "run focused tests".to_string()];
-        if untracked > 0 {
-            actions.push("clean untracked files or intentionally commit them".to_string());
-        }
-        actions.push("commit when reviewed and validated".to_string());
-        actions
-    };
+    let suggested_next_actions =
+        suggested_next_actions_for(clean, untracked > 0, has_smoke_warning(&warnings), None);
 
     let mut output = json!({
         "project": project,
@@ -284,6 +279,7 @@ pub(crate) fn parse_show_changes_output(
         "diff_stat": diff_stat,
         "warnings": warnings,
         "suggested_next_actions": suggested_next_actions,
+        "session": null,
         "exit_code": exit_code,
         "stderr": stderr,
     });
@@ -296,6 +292,162 @@ pub(crate) fn parse_show_changes_output(
     }
 
     output
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct SessionActionSignals {
+    failed: bool,
+    write_like: bool,
+    shell_like: bool,
+}
+
+fn has_smoke_warning(warnings: &[Value]) -> bool {
+    warnings
+        .iter()
+        .any(|warning| warning["kind"] == "untracked_smoke_file")
+}
+
+fn suggested_next_actions_for(
+    clean: bool,
+    has_untracked: bool,
+    has_smoke_warning: bool,
+    session: Option<SessionActionSignals>,
+) -> Vec<String> {
+    let mut actions = Vec::new();
+    let session = session.unwrap_or_default();
+    if clean && !session.failed {
+        push_unique_action(&mut actions, "no changes detected");
+    }
+    if !clean {
+        push_unique_action(&mut actions, "review diff");
+        push_unique_action(&mut actions, "run focused tests");
+        if has_untracked {
+            push_unique_action(&mut actions, "review untracked files before commit");
+        }
+        if has_smoke_warning {
+            push_unique_action(
+                &mut actions,
+                "clean untracked smoke/tmp files or intentionally commit them",
+            );
+        }
+        push_unique_action(&mut actions, "commit or revert changes after review");
+    }
+    if session.failed {
+        push_unique_action(&mut actions, "review failed tool calls in session_summary");
+    }
+    if session.write_like {
+        push_unique_action(&mut actions, "review changed paths from this session");
+    }
+    if session.shell_like {
+        push_unique_action(&mut actions, "check command/test results before commit");
+    }
+    actions
+}
+
+fn push_unique_action(actions: &mut Vec<String>, action: &str) {
+    if !actions.iter().any(|existing| existing == action) {
+        actions.push(action.to_string());
+    }
+}
+
+pub(crate) fn apply_show_changes_session(
+    output: &mut Value,
+    session_id: Option<&str>,
+    summary: Option<SessionSummary>,
+) {
+    let Some(session_id) = session_id else {
+        output["session"] = Value::Null;
+        return;
+    };
+    let session_signals = match summary {
+        Some(summary) => {
+            let changed_paths = session_changed_paths(&summary.events);
+            let recent_events: Vec<Value> = summary
+                .events
+                .iter()
+                .map(show_changes_session_event)
+                .collect();
+            let signals = SessionActionSignals {
+                failed: summary.counts.failed > 0,
+                write_like: summary.counts.write_like > 0,
+                shell_like: summary.counts.shell_like > 0,
+            };
+            output["session"] = json!({
+                "found": true,
+                "session_id": summary.session_id,
+                "project": summary.project,
+                "title": summary.title,
+                "created_at": summary.created_at,
+                "updated_at": summary.updated_at,
+                "counts": summary.counts,
+                "changed_paths": changed_paths,
+                "recent_events": recent_events,
+            });
+            Some(signals)
+        }
+        None => {
+            output["session"] = json!({
+                "found": false,
+                "session_id": session_id,
+                "message": "session not found",
+            });
+            if let Some(warnings) = output["warnings"].as_array_mut() {
+                warnings.push(json!({
+                    "kind": "session_not_found",
+                    "session_id": session_id,
+                    "message": "session not found",
+                }));
+            }
+            None
+        }
+    };
+    refresh_show_changes_suggestions(output, session_signals);
+}
+
+fn refresh_show_changes_suggestions(output: &mut Value, session: Option<SessionActionSignals>) {
+    let clean = output["clean"].as_bool().unwrap_or(false);
+    let has_untracked = output["counts"]["untracked"].as_u64().unwrap_or(0) > 0;
+    let has_smoke_warning = output["warnings"]
+        .as_array()
+        .is_some_and(|warnings| has_smoke_warning(warnings));
+    output["suggested_next_actions"] = json!(suggested_next_actions_for(
+        clean,
+        has_untracked,
+        has_smoke_warning,
+        session,
+    ));
+}
+
+fn session_changed_paths(events: &[SessionEvent]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for event in events {
+        for path in &event.changed_paths {
+            let path = path.trim();
+            if !path.is_empty() && !paths.iter().any(|existing| existing == path) {
+                paths.push(path.to_string());
+            }
+        }
+    }
+    paths
+}
+
+fn show_changes_session_event(event: &SessionEvent) -> Value {
+    json!({
+        "event_id": event.event_id,
+        "kind": event.kind,
+        "transport": event.transport,
+        "tool_name": event.tool_name,
+        "project": event.project,
+        "risk_class": event.risk_class,
+        "started_at": event.started_at,
+        "finished_at": event.finished_at,
+        "status": event.status,
+        "duration_ms": event.duration_ms,
+        "error_kind": event.error_kind,
+        "error_message_summary": event.error_message_summary,
+        "changed_paths": event.changed_paths,
+        "job_id": event.job_id,
+    })
 }
 
 /// Split the combined `git_diff_summary` stdout into the porcelain section and
@@ -859,9 +1011,11 @@ impl ToolRuntime {
     pub(crate) async fn show_changes(
         &self,
         project: String,
+        session_id: Option<String>,
         include_diff: Option<bool>,
         max_hunks: Option<usize>,
         max_hunk_lines: Option<usize>,
+        session_event_limit: Option<usize>,
     ) -> ToolResult {
         let include_diff = include_diff.unwrap_or(false);
         let max_hunks = max_hunks
@@ -872,6 +1026,10 @@ impl ToolRuntime {
             .filter(|n| *n > 0)
             .unwrap_or(SHOW_CHANGES_DEFAULT_MAX_HUNK_LINES)
             .min(SHOW_CHANGES_MAX_HUNK_LINES);
+        let session_event_limit = session_event_limit
+            .filter(|n| *n > 0)
+            .unwrap_or(SHOW_CHANGES_DEFAULT_SESSION_EVENT_LIMIT)
+            .min(SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT);
         let command = show_changes_command(include_diff);
         let output = match self
             .run_project_command_capture(&project, command, 30, None)
@@ -882,7 +1040,7 @@ impl ToolRuntime {
         };
         let (status_stdout, head_stdout, diff_stat, diff_stdout) =
             split_show_changes_stdout(&output.stdout, include_diff);
-        let payload = parse_show_changes_output(
+        let mut payload = parse_show_changes_output(
             &project,
             &status_stdout,
             &head_stdout,
@@ -893,6 +1051,10 @@ impl ToolRuntime {
             output.exit_code,
             &output.stderr,
         );
+        let session_summary = session_id
+            .as_deref()
+            .and_then(|id| self.sessions.summary(id, Some(session_event_limit)));
+        apply_show_changes_session(&mut payload, session_id.as_deref(), session_summary);
         if output.exit_code == Some(0) {
             ToolResult::ok(payload)
         } else {

@@ -243,7 +243,8 @@ tokens.
 `show_changes` is in the project-inspection bucket. OAuth2 access tokens need
 `project:read` to call it through `/api/tools/call` or MCP `tools/call`; the
 tool is read-only and does not clean, stage, commit, restore, or otherwise
-modify the worktree.
+modify the worktree. Its optional `session_id` parameter can include bounded
+session activity in the output, but the tool remains governed by `project:read`.
 
 `start_session` and `session_summary` are in the runtime bucket. OAuth2 access
 tokens need `runtime:read` to call them through `/api/tools/call` or MCP

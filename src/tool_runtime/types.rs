@@ -239,11 +239,15 @@ pub enum ToolCall {
     ShowChanges {
         project: String,
         #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
         include_diff: Option<bool>,
         #[serde(default)]
         max_hunks: Option<usize>,
         #[serde(default)]
         max_hunk_lines: Option<usize>,
+        #[serde(default)]
+        session_event_limit: Option<usize>,
     },
 
     /// List bounded runtime job summaries across agent and local executors.

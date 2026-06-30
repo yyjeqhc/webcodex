@@ -3512,6 +3512,84 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn api_show_changes_with_session_id() {
+        use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let (runtime, registry) = register_import_agent(tmp_proj.path()).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "start_session",
+                "params": {"project": "agent:importer:demo", "title": "api show changes"}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+
+        let request = async {
+            TestClient::post("http://localhost/api/tools/call")
+                .bearer_auth("secret")
+                .json(&json!({
+                    "tool": "show_changes",
+                    "params": {
+                        "project": "agent:importer:demo",
+                        "session_id": session_id,
+                        "include_diff": false,
+                        "session_event_limit": 10
+                    }
+                }))
+                .send(&service)
+                .await
+        };
+        let complete = async {
+            let mut req = None;
+            for _ in 0..20 {
+                req = registry
+                    .poll(ShellAgentPollRequest {
+                        client_id: "importer".to_string(),
+                        agent_instance_id: "inst-import".to_string(),
+                        projects: None,
+                    })
+                    .await
+                    .unwrap();
+                if req.is_some() {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+            let req = req.expect("show_changes should enqueue an agent shell request");
+            let stdout = "## main\n?? README.md\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0test head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+            registry
+                .complete(ShellAgentResultRequest {
+                    client_id: "importer".to_string(),
+                    agent_instance_id: "inst-import".to_string(),
+                    request_id: req.request_id,
+                    exit_code: Some(0),
+                    stdout: Some(stdout.to_string()),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(1),
+                    error: None,
+                })
+                .await
+                .unwrap();
+        };
+        let (mut resp, _) = tokio::join!(request, complete);
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["output"]["project"], "agent:importer:demo");
+        assert_eq!(body["output"]["session"]["found"], true);
+        assert_eq!(body["output"]["session"]["session_id"], session_id);
+        assert_eq!(body["output"]["session"]["title"], "api show changes");
+    }
+
+    #[tokio::test]
     async fn http_tools_call_requires_bearer_auth() {
         let (_tmp, service) = phase2_service();
         let resp = TestClient::post("http://localhost/api/tools/call")
@@ -3653,7 +3731,7 @@ mod tests {
             &service,
             &token,
             "show_changes",
-            json!({"project": "agent:nope:nope"}),
+            json!({"project": "agent:nope:nope", "session_id": "wc_sess_missing"}),
         )
         .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "body: {:?}", body);
@@ -3664,7 +3742,7 @@ mod tests {
             &service,
             &token,
             "show_changes",
-            json!({"project": "agent:nope:nope"}),
+            json!({"project": "agent:nope:nope", "session_id": "wc_sess_missing"}),
         )
         .await;
         assert_oauth_scope_rejected(status, &body, challenge.as_deref(), Some("project:read"));

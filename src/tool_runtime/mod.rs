@@ -584,12 +584,21 @@ impl ToolRuntime {
 
             ToolCall::ShowChanges {
                 project,
+                session_id,
                 include_diff,
                 max_hunks,
                 max_hunk_lines,
+                session_event_limit,
             } => {
-                self.show_changes(project, include_diff, max_hunks, max_hunk_lines)
-                    .await
+                self.show_changes(
+                    project,
+                    session_id,
+                    include_diff,
+                    max_hunks,
+                    max_hunk_lines,
+                    session_event_limit,
+                )
+                .await
             }
 
             ToolCall::ListJobs { limit, status } => self.list_jobs(limit, status).await,
@@ -1658,7 +1667,14 @@ mod tests {
         let required = required_fields(spec);
         assert_eq!(required, vec!["project".to_string()]);
         let props = spec.input_schema["properties"].as_object().unwrap();
-        for field in ["project", "include_diff", "max_hunks", "max_hunk_lines"] {
+        for field in [
+            "project",
+            "session_id",
+            "include_diff",
+            "max_hunks",
+            "max_hunk_lines",
+            "session_event_limit",
+        ] {
             assert!(props.contains_key(field), "missing {}", field);
         }
         let output_props = spec.output_schema["properties"]["output"]["properties"]
@@ -1674,6 +1690,7 @@ mod tests {
             "diff_stat",
             "warnings",
             "suggested_next_actions",
+            "session",
         ] {
             assert!(output_props.contains_key(field), "missing {}", field);
         }
@@ -1987,7 +2004,9 @@ mod tests {
                 "project": "agent:oe:webcodex",
                 "include_diff": true,
                 "max_hunks": 4,
-                "max_hunk_lines": 12
+                "max_hunk_lines": 12,
+                "session_id": "wc_sess_1234",
+                "session_event_limit": 8
             }),
         )
         .unwrap();
@@ -1995,10 +2014,12 @@ mod tests {
             call,
             ToolCall::ShowChanges {
                 project,
+                session_id: Some(session_id),
                 include_diff: Some(true),
                 max_hunks: Some(4),
-                max_hunk_lines: Some(12)
-            } if project == "agent:oe:webcodex"
+                max_hunk_lines: Some(12),
+                session_event_limit: Some(8)
+            } if project == "agent:oe:webcodex" && session_id == "wc_sess_1234"
         ));
     }
 
@@ -2091,7 +2112,192 @@ index 1111111..2222222 100644
         assert_eq!(output["counts"]["modified"], 0);
         assert!(output["files"].as_array().unwrap().is_empty());
         assert!(output.get("hunks").is_none());
+        assert!(output["session"].is_null());
         assert_eq!(output["suggested_next_actions"][0], "no changes detected");
+    }
+
+    #[test]
+    fn show_changes_without_session_id_keeps_existing_behavior() {
+        let mut output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main\n M src/lib.rs",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+            " src/lib.rs | 2 +-",
+            None,
+            20,
+            80,
+            Some(0),
+            "",
+        );
+        apply_show_changes_session(&mut output, None, None);
+        assert_eq!(output["clean"], false);
+        assert_eq!(output["counts"]["modified"], 1);
+        assert!(output["session"].is_null());
+        assert!(output["suggested_next_actions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|v| v == "review diff"));
+    }
+
+    #[test]
+    fn show_changes_with_session_id_includes_session_summary() {
+        let runtime = test_runtime();
+        let session = runtime.sessions.start_session(
+            Some("agent:oe:webcodex".to_string()),
+            Some("finish task".to_string()),
+        );
+        let write_args = json!({"project": "agent:oe:webcodex", "path": "src/foo.rs"});
+        let write = runtime.sessions.record_tool_call_started(
+            Some(&session.session_id),
+            crate::tool_runtime::sessions::SessionTransport::Api,
+            "replace_line_range",
+            &write_args,
+        );
+        runtime
+            .sessions
+            .record_tool_call_finished(write, true, &json!({}), None, None);
+        let shell_args = json!({"project": "agent:oe:webcodex", "command": "cargo test"});
+        let shell = runtime.sessions.record_tool_call_started(
+            Some(&session.session_id),
+            crate::tool_runtime::sessions::SessionTransport::Api,
+            "run_shell",
+            &shell_args,
+        );
+        runtime
+            .sessions
+            .record_tool_call_finished(shell, true, &json!({}), None, None);
+
+        let mut output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main\n M src/foo.rs",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+            " src/foo.rs | 2 +-",
+            None,
+            20,
+            80,
+            Some(0),
+            "",
+        );
+        let summary = runtime.sessions.summary(&session.session_id, Some(30));
+        apply_show_changes_session(&mut output, Some(&session.session_id), summary);
+
+        assert_eq!(output["session"]["found"], true);
+        assert_eq!(output["session"]["session_id"], session.session_id);
+        assert_eq!(output["session"]["title"], "finish task");
+        assert_eq!(output["session"]["counts"]["tool_calls"], 2);
+        assert_eq!(output["session"]["counts"]["write_like"], 1);
+        assert_eq!(output["session"]["counts"]["shell_like"], 1);
+        assert_eq!(output["session"]["changed_paths"], json!(["src/foo.rs"]));
+        assert!(output["session"]["recent_events"].as_array().unwrap().len() >= 2);
+        let actions = output["suggested_next_actions"].as_array().unwrap();
+        assert!(actions
+            .iter()
+            .any(|v| v == "review changed paths from this session"));
+        assert!(actions
+            .iter()
+            .any(|v| v == "check command/test results before commit"));
+    }
+
+    #[test]
+    fn show_changes_with_missing_session_id_returns_warning_not_panic() {
+        let mut output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+            "",
+            None,
+            20,
+            80,
+            Some(0),
+            "",
+        );
+        apply_show_changes_session(&mut output, Some("wc_sess_missing"), None);
+        assert_eq!(output["session"]["found"], false);
+        assert_eq!(output["session"]["session_id"], "wc_sess_missing");
+        assert!(output["warnings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|warning| warning["kind"] == "session_not_found"));
+        assert_eq!(output["suggested_next_actions"][0], "no changes detected");
+    }
+
+    #[test]
+    fn show_changes_session_changed_paths_are_deduped() {
+        let runtime = test_runtime();
+        let session = runtime.sessions.start_session(None, None);
+        for path in ["src/foo.rs", "src/foo.rs", "src/bar.rs"] {
+            let args = json!({"project": "agent:oe:webcodex", "path": path});
+            let start = runtime.sessions.record_tool_call_started(
+                Some(&session.session_id),
+                crate::tool_runtime::sessions::SessionTransport::Api,
+                "write_project_file",
+                &args,
+            );
+            runtime
+                .sessions
+                .record_tool_call_finished(start, true, &json!({}), None, None);
+        }
+        let mut output = parse_show_changes_output(
+            "agent:oe:webcodex",
+            "## main\n M src/foo.rs",
+            "b47e4fb000000000000000000000000000000000\0b47e4fb\0fix",
+            " src/foo.rs | 2 +-",
+            None,
+            20,
+            80,
+            Some(0),
+            "",
+        );
+        let summary = runtime.sessions.summary(&session.session_id, Some(30));
+        apply_show_changes_session(&mut output, Some(&session.session_id), summary);
+        assert_eq!(
+            output["session"]["changed_paths"],
+            json!(["src/foo.rs", "src/bar.rs"])
+        );
+    }
+
+    #[tokio::test]
+    async fn show_changes_session_event_limit_is_bounded() {
+        let runtime = runtime_with_agent_project("show");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "show", None, caps).await;
+        let session = runtime.sessions.start_session(None, None);
+        for idx in 0..250 {
+            let args =
+                json!({"project": agent_test_project_id("show"), "path": format!("src/{idx}.rs")});
+            let start = runtime.sessions.record_tool_call_started(
+                Some(&session.session_id),
+                crate::tool_runtime::sessions::SessionTransport::Api,
+                "write_project_file",
+                &args,
+            );
+            runtime
+                .sessions
+                .record_tool_call_finished(start, true, &json!({}), None, None);
+        }
+        let runtime_for_task = runtime.clone();
+        let project = agent_test_project_id("show");
+        let session_id = session.session_id.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .show_changes(project, Some(session_id), None, None, None, Some(999))
+                .await
+        });
+        let req = next_patch_agent_request(&runtime, "show")
+            .await
+            .expect("show_changes should enqueue an agent shell request");
+        let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0test head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+        complete_patch_agent_request(&runtime, "show", &req.request_id, 0, stdout, "").await;
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        let len = result.output["session"]["recent_events"]
+            .as_array()
+            .unwrap()
+            .len();
+        assert_eq!(len, 200);
     }
 
     #[test]
@@ -6071,9 +6277,11 @@ new file mode 100644\n\
             .dispatch_with_auth(
                 ToolCall::ShowChanges {
                     project: agent_test_project_id("oe"),
+                    session_id: None,
                     include_diff: None,
                     max_hunks: None,
                     max_hunk_lines: None,
+                    session_event_limit: None,
                 },
                 Some(&bootstrap),
             )

@@ -471,6 +471,10 @@ fn output_schema_for_tool(name: &str) -> Value {
                     "Suggested actions.",
                 ),
             ),
+            (
+                "session",
+                nullable_schema("object", "Optional session activity summary."),
+            ),
         ]),
         "cargo_fmt" | "cargo_check" | "cargo_test" => wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project id.")),
@@ -949,12 +953,14 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "show_changes".to_string(),
-                description: "Read-only model-facing git worktree summary: branch/head, parsed status files/counts, diff stat, warnings, suggested next actions, and optional bounded hunks. Routed through the owning agent; never modifies the worktree.".to_string(),
+                description: "Read-only git worktree and optional session activity summary for task review. Reports status, warnings, next actions, bounded hunks, and never modifies the worktree.".to_string(),
                 input_schema: object_schema(vec![
                     ("project", "string", "Agent-registered project id.", true),
+                    ("session_id", "string", "Optional wc_sess_* id to summarize with the git changes.", false),
                     ("include_diff", "boolean", "Include bounded diff hunks (default false).", false),
                     ("max_hunks", "integer", "Maximum hunks to return when include_diff=true (clamped).", false),
                     ("max_hunk_lines", "integer", "Maximum lines per hunk when include_diff=true (clamped).", false),
+                    ("session_event_limit", "integer", "Maximum recent session events to include (clamped).", false),
                 ]),
                 output_schema: output_schema_for_tool("show_changes"),
                 annotations: tool_annotations("show_changes"),

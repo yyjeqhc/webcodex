@@ -68,9 +68,10 @@ Typical MCP tools include:
 Use the structured line edit tools when you already know the target line range. Use patch tools for broader multi-file changes. Treat `run_shell` as a diagnostics/build/test fallback, not as the first source-editing path.
 
 Use `show_changes` near the end of a task to summarize the current worktree,
-check for untracked smoke/tmp/test files, review `git diff --stat`, and request
-optional bounded hunks with `include_diff=true`. It is read-only, requires
-`project:read`, and never cleans, stages, commits, or restores files.
+check for untracked smoke/tmp/test files, review `git diff --stat`, request
+optional bounded hunks with `include_diff=true`, and optionally include session
+activity with `session_id`. It is read-only, requires `project:read`, and never
+cleans, stages, commits, or restores files.
 
 `start_session` and `session_summary` are the current task tracking foundation.
 They create and read bounded in-memory recorder state only; they do not modify a
@@ -96,6 +97,15 @@ not forwarded to the tool parser, agent, or workspace files. The summary records
 bounded/redacted start and finish events, including tool name, transport,
 project id when supplied, risk class, status, duration, inferred write-like
 paths, and returned `job_id` when available.
+
+For `show_changes`, distinguish two session fields:
+
+- `arguments._session_id` is MCP reserved tracking metadata for recording this
+  `show_changes` call.
+- `arguments.session_id` is the `show_changes` business parameter that asks it
+  to include a session activity summary.
+
+They can be the same id or different ids.
 
 Use agent-backed project ids such as:
 

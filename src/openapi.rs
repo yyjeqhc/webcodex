@@ -745,12 +745,14 @@ pub(crate) fn build_openapi_spec() -> Value {
                             }
                         },
                         "showChanges": {
-                            "summary": "Summarize current worktree changes before review or commit",
+                            "summary": "Summarize current worktree changes with optional session activity",
                             "value": {
                                 "tool": "show_changes",
                                 "params": {
                                     "project": "webcodex",
-                                    "include_diff": false
+                                    "session_id": "wc_sess_example",
+                                    "include_diff": false,
+                                    "session_event_limit": 30
                                 }
                             }
                         },
@@ -1033,6 +1035,10 @@ fn schemas() -> Value {
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
                 "max_hunk_lines": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "session_event_limit": {
                     "type": "integer",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },

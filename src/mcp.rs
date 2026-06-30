@@ -611,6 +611,144 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn mcp_show_changes_distinguishes_reserved_session_id_from_query_session_id() {
+        use crate::shell_protocol::{
+            ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
+            ShellClientRegisterRequest,
+        };
+
+        let runtime = test_runtime();
+        runtime
+            .shell_clients
+            .register(ShellClientRegisterRequest {
+                client_id: "mcp-client".to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: None,
+                projects: Some(vec![ShellAgentProjectSummary {
+                    id: "demo".to_string(),
+                    name: Some("Demo".to_string()),
+                    path: "/tmp/demo".to_string(),
+                    allow_patch: true,
+                    kind: None,
+                    description: None,
+                    hooks: vec![],
+                    disabled: false,
+                    git_branch: None,
+                    git_head: None,
+                    git_dirty: None,
+                    updated_at: 0,
+                    shell_profile: None,
+                }]),
+                agent_protocol_version: None,
+                policy: None,
+            })
+            .await
+            .unwrap();
+        let project = "agent:mcp-client:demo";
+        let tracking_session = runtime
+            .sessions
+            .start_session(Some(project.to_string()), Some("track call".to_string()));
+        let query_session = runtime
+            .sessions
+            .start_session(Some(project.to_string()), Some("query session".to_string()));
+        let write_args = json!({"project": project, "path": "src/query.rs"});
+        let start = runtime.sessions.record_tool_call_started(
+            Some(&query_session.session_id),
+            crate::tool_runtime::sessions::SessionTransport::Mcp,
+            "write_project_file",
+            &write_args,
+        );
+        runtime
+            .sessions
+            .record_tool_call_finished(start, true, &json!({}), None, None);
+        let auth = AuthContext {
+            kind: crate::auth::AuthKind::Bootstrap,
+            user_id: None,
+            username: None,
+            api_key_id: None,
+            api_key_name: None,
+            role: Some("admin".to_string()),
+            scopes: vec!["admin".to_string()],
+            is_bootstrap: true,
+            token_kind: None,
+            allowed_client_id: None,
+        };
+
+        let outcome = handle_mcp_request(
+            &runtime,
+            rpc(
+                "tools/call",
+                Some(Value::from(34)),
+                json!({
+                    "name": "show_changes",
+                    "arguments": {
+                        "_session_id": &tracking_session.session_id,
+                        "project": project,
+                        "session_id": &query_session.session_id,
+                        "include_diff": false
+                    }
+                }),
+            ),
+            Some(&auth),
+        );
+        let complete = async {
+            let mut req = None;
+            for _ in 0..50 {
+                req = runtime
+                    .shell_clients
+                    .poll(ShellAgentPollRequest {
+                        client_id: "mcp-client".to_string(),
+                        agent_instance_id: "inst".to_string(),
+                        projects: None,
+                    })
+                    .await
+                    .unwrap();
+                if req.is_some() {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            let req = req.expect("show_changes should enqueue an agent shell request");
+            let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0test head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+            runtime
+                .shell_clients
+                .complete(ShellAgentResultRequest {
+                    client_id: "mcp-client".to_string(),
+                    agent_instance_id: "inst".to_string(),
+                    request_id: req.request_id,
+                    exit_code: Some(0),
+                    stdout: Some(stdout.to_string()),
+                    stderr: Some(String::new()),
+                    duration_ms: Some(1),
+                    error: None,
+                })
+                .await
+                .unwrap();
+        };
+        let (outcome, _) = tokio::join!(outcome, complete);
+        let value = match outcome {
+            McpOutcome::Ok(value) => value,
+            other => panic!("expected Ok, got {:?}", other),
+        };
+        let output = &value["result"]["structuredContent"]["output"];
+        assert_eq!(output["session"]["found"], true);
+        assert_eq!(output["session"]["session_id"], query_session.session_id);
+        assert_eq!(output["session"]["changed_paths"], json!(["src/query.rs"]));
+
+        let tracking_summary = runtime
+            .sessions
+            .summary(&tracking_session.session_id, Some(10))
+            .unwrap();
+        assert!(tracking_summary
+            .events
+            .iter()
+            .any(|event| event.tool_name == "show_changes"));
+    }
+
+    #[tokio::test]
     async fn mcp_tools_call_unknown_tool_is_bad_request() {
         let runtime = test_runtime();
         let outcome = handle_mcp_request(

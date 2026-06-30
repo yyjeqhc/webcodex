@@ -124,9 +124,10 @@ Use `webcodex-cli` for those management tasks.
 `show_changes` is a read-only project inspection tool available through
 `callRuntimeTool`. It summarizes branch/head, modified/added/deleted/renamed/
 untracked files, `git diff --stat`, optional bounded hunks, simple warnings for
-untracked smoke/tmp/test/anchor files, and suggested next actions. Use it before
-summarizing a task or committing. It requires `project:read` and never modifies,
-cleans, stages, commits, or restores the worktree.
+untracked smoke/tmp/test/anchor files, optional session activity, and suggested
+next actions. Use it before summarizing a task, reviewing, or committing. It
+requires `project:read` and never modifies, cleans, stages, commits, or restores
+the worktree.
 
 ## Session tracking
 
@@ -163,17 +164,25 @@ Pass the returned id as top-level metadata on later generic calls:
 }
 ```
 
-Then summarize it:
+Then summarize it directly, or pass the same id to `show_changes` so the git
+state and session activity are returned together:
 
 ```json
 {
-  "tool": "session_summary",
+  "tool": "show_changes",
   "params": {
+    "project": "agent:special-container:webcodex",
     "session_id": "wc_sess_example",
-    "limit": 50
+    "include_diff": false,
+    "session_event_limit": 30
   }
 }
 ```
+
+For `/api/tools/call`, top-level `session_id` is recorder metadata for the
+current tool call. `params.session_id` is the `show_changes` business argument
+that selects which session to summarize; the two ids may be the same or
+different.
 
 The recorder is in-memory and bounded; server restart loses sessions. It does
 not automatically modify a workspace, does not scan diffs, and is not a

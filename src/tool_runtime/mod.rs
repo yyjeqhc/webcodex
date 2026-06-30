@@ -2066,6 +2066,8 @@ mod tests {
             "counts",
             "files",
             "diff_stat",
+            "untracked_previews",
+            "untracked_previews_truncated",
             "warnings",
             "suggested_next_actions",
             "session",
@@ -2782,6 +2784,106 @@ index 1111111..2222222 100644
         assert_eq!(hunks[0]["hunks"].as_array().unwrap().len(), 1);
     }
 
+    #[tokio::test]
+    async fn show_changes_clean_repo_include_diff_false_has_no_untracked_previews() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_git_repo(tmp.path());
+
+        let output = show_changes_output_from_command(tmp.path(), false);
+
+        assert_eq!(output["clean"], true);
+        assert_eq!(output["counts"]["untracked"], 0);
+        assert!(output.get("untracked_previews").is_none());
+    }
+
+    #[tokio::test]
+    async fn show_changes_untracked_text_include_diff_false_omits_preview() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_git_repo(tmp.path());
+        let content = "webcodex untracked preview body";
+        fs::write(tmp.path().join("notes.txt"), content).unwrap();
+
+        let output = show_changes_output_from_command(tmp.path(), false);
+
+        assert_eq!(output["counts"]["untracked"], 1);
+        assert!(output_has_file(&output, "notes.txt"));
+        assert!(output.get("untracked_previews").is_none());
+        let serialized = serde_json::to_string(&output).unwrap();
+        assert!(
+            !serialized.contains(content),
+            "include_diff=false leaked untracked file content: {serialized}"
+        );
+    }
+
+    #[tokio::test]
+    async fn show_changes_untracked_text_include_diff_true_returns_bounded_preview() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_git_repo(tmp.path());
+        fs::write(tmp.path().join("notes.txt"), "alpha\nbeta\n").unwrap();
+
+        let output = show_changes_output_from_command(tmp.path(), true);
+
+        assert_eq!(output["counts"]["untracked"], 1);
+        assert!(output_has_file(&output, "notes.txt"));
+        let preview = preview_for_path(&output, "notes.txt");
+        assert_eq!(preview["kind"], "text");
+        assert_eq!(preview["line_count"], 2);
+        assert_eq!(preview["truncated"], false);
+        assert_eq!(preview["lines"][0]["line"], 1);
+        assert_eq!(preview["lines"][0]["text"], "alpha");
+        assert_eq!(preview["lines"][1]["line"], 2);
+        assert_eq!(preview["lines"][1]["text"], "beta");
+        assert_eq!(output["hunk_count"], 0);
+    }
+
+    #[tokio::test]
+    async fn show_changes_untracked_large_file_preview_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_git_repo(tmp.path());
+        fs::write(tmp.path().join("large.txt"), vec![b'x'; 8193]).unwrap();
+
+        let output = show_changes_output_from_command(tmp.path(), true);
+
+        assert_eq!(output["counts"]["untracked"], 1);
+        let preview = preview_for_path(&output, "large.txt");
+        assert_eq!(preview["kind"], "skipped");
+        assert_eq!(preview["reason"], "too_large");
+        assert_eq!(preview["byte_count"], 8193);
+    }
+
+    #[tokio::test]
+    async fn show_changes_untracked_binary_preview_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_git_repo(tmp.path());
+        fs::write(tmp.path().join("binary.bin"), [0, 159, 146, 150]).unwrap();
+
+        let output = show_changes_output_from_command(tmp.path(), true);
+
+        assert_eq!(output["counts"]["untracked"], 1);
+        let preview = preview_for_path(&output, "binary.bin");
+        assert_eq!(preview["kind"], "skipped");
+        assert_eq!(preview["reason"], "binary_or_non_utf8");
+    }
+
+    #[tokio::test]
+    async fn show_changes_untracked_sensitive_path_preview_is_skipped() {
+        let tmp = tempfile::tempdir().unwrap();
+        init_git_repo(tmp.path());
+        fs::write(tmp.path().join("agent.toml"), "API_TOKEN=secret\n").unwrap();
+
+        let output = show_changes_output_from_command(tmp.path(), true);
+
+        assert_eq!(output["counts"]["untracked"], 1);
+        let preview = preview_for_path(&output, "agent.toml");
+        assert_eq!(preview["kind"], "skipped");
+        assert_eq!(preview["reason"], "sensitive_or_excluded_path");
+        let serialized = serde_json::to_string(&output).unwrap();
+        assert!(
+            !serialized.contains("API_TOKEN=secret"),
+            "sensitive file content leaked: {serialized}"
+        );
+    }
+
     #[test]
     fn git_diff_hunks_command_rejects_unsafe_paths() {
         assert!(git_diff_hunks_command(&["src/lib.rs".to_string()], false)
@@ -3175,6 +3277,68 @@ index 1111111..2222222 100644
             Arc::new(CodexConfig::default()),
             Arc::new(RuntimeInfo::default()),
         )
+    }
+
+    fn init_git_repo(root: &Path) {
+        for cmd in [
+            "git init",
+            "git config user.email webcodex-test@example.com",
+            "git config user.name WebCodex Test",
+        ] {
+            let (exit_code, stdout, stderr, _) = run_command_sync(cmd, root, 30);
+            assert_eq!(
+                exit_code, 0,
+                "git setup command failed: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+            );
+        }
+    }
+
+    fn output_has_file(output: &Value, path: &str) -> bool {
+        output["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"].as_str() == Some(path))
+    }
+
+    fn preview_for_path<'a>(output: &'a Value, path: &str) -> &'a Value {
+        output["untracked_previews"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|preview| preview["path"].as_str() == Some(path))
+            .unwrap_or_else(|| {
+                panic!(
+                    "missing preview for {path}: {}",
+                    output["untracked_previews"]
+                )
+            })
+    }
+
+    fn show_changes_output_from_command(root: &Path, include_diff: bool) -> Value {
+        let command = show_changes_command(include_diff);
+        let (exit_code, stdout, stderr, _) = run_command_sync(&command, root, 30);
+        assert_eq!(
+            exit_code, 0,
+            "show_changes command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+        let (status_stdout, head_stdout, diff_stat, diff_stdout, untracked_preview_stdout) =
+            split_show_changes_stdout(&stdout, include_diff);
+        let mut output = parse_show_changes_output(
+            "demo",
+            &status_stdout,
+            &head_stdout,
+            &diff_stat,
+            include_diff.then_some(diff_stdout.as_str()),
+            20,
+            80,
+            Some(exit_code),
+            &stderr,
+        );
+        if include_diff {
+            apply_show_changes_untracked_previews(&mut output, &untracked_preview_stdout);
+        }
+        output
     }
 
     /// Write a fake on-disk local job simulating a job that survived a restart.

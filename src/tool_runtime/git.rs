@@ -26,6 +26,124 @@ const SHOW_CHANGES_MAX_HUNK_LINES: usize = 240;
 const SHOW_CHANGES_DEFAULT_SESSION_EVENT_LIMIT: usize = 30;
 const SHOW_CHANGES_MAX_SESSION_EVENT_LIMIT: usize = 200;
 
+const SHOW_CHANGES_UNTRACKED_PREVIEW_SCRIPT: &str = r#"
+import json, os, stat, subprocess, sys
+MAX_FILES = 5
+MAX_BYTES = 8192
+MAX_LINES = 40
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False))
+
+def skipped(path, reason, byte_count=None):
+    obj = {"path": path, "kind": "skipped", "reason": reason}
+    if byte_count is not None:
+        obj["byte_count"] = byte_count
+    return obj
+
+def decode_path(raw):
+    try:
+        return raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return raw.decode("utf-8", "backslashreplace")
+
+def path_is_sensitive(path):
+    parts = [part.lower() for part in path.replace("\\", "/").split("/") if part and part != "."]
+    for part in parts:
+        if part in [".git", "target", "node_modules", "projects.d", "agent.toml", "webcodex.env", ".env", "secrets", "tokens"]:
+            return True
+        if part.startswith(".env") or part.startswith("agent.toml") or part.startswith("webcodex.env"):
+            return True
+        if part in ["id_rsa", "id_ed25519"] or part.endswith(".pem") or part.endswith(".key"):
+            return True
+    return False
+
+def path_is_invalid(path):
+    if not path or "\x00" in path or os.path.isabs(path):
+        return True
+    parts = [part for part in path.replace("\\", "/").split("/") if part]
+    return any(part == ".." for part in parts)
+
+try:
+    status = subprocess.check_output(["git", "status", "--porcelain=v1", "-z"], stderr=subprocess.DEVNULL)
+except Exception:
+    emit({"previews": [], "truncated": False})
+    sys.exit(0)
+
+raw_paths = []
+for entry in status.split(b"\x00"):
+    if entry.startswith(b"?? "):
+        raw_paths.append(entry[3:])
+
+root = os.path.realpath(".")
+previews = []
+for raw_path in raw_paths[:MAX_FILES]:
+    try:
+        path = raw_path.decode("utf-8")
+    except UnicodeDecodeError:
+        previews.append(skipped(decode_path(raw_path), "binary_or_non_utf8"))
+        continue
+    if path_is_invalid(path) or path_is_sensitive(path):
+        previews.append(skipped(path, "sensitive_or_excluded_path"))
+        continue
+    full_path = os.path.abspath(os.path.join(root, path))
+    if full_path != root and not full_path.startswith(root + os.sep):
+        previews.append(skipped(path, "sensitive_or_excluded_path"))
+        continue
+    try:
+        real_path = os.path.realpath(full_path)
+    except OSError:
+        previews.append(skipped(path, "sensitive_or_excluded_path"))
+        continue
+    if real_path != root and not real_path.startswith(root + os.sep):
+        previews.append(skipped(path, "sensitive_or_excluded_path"))
+        continue
+    try:
+        st = os.lstat(full_path)
+    except OSError:
+        previews.append(skipped(path, "not_found"))
+        continue
+    if stat.S_ISLNK(st.st_mode):
+        previews.append(skipped(path, "sensitive_or_excluded_path"))
+        continue
+    if not stat.S_ISREG(st.st_mode):
+        previews.append(skipped(path, "not_regular_file"))
+        continue
+    byte_count = int(st.st_size)
+    if byte_count > MAX_BYTES:
+        previews.append(skipped(path, "too_large", byte_count))
+        continue
+    try:
+        with open(full_path, "rb") as f:
+            data = f.read(MAX_BYTES + 1)
+    except OSError:
+        previews.append(skipped(path, "read_error"))
+        continue
+    if len(data) > MAX_BYTES:
+        previews.append(skipped(path, "too_large", max(byte_count, len(data))))
+        continue
+    if b"\x00" in data or any(byte < 32 and byte not in (9, 10, 13) for byte in data):
+        previews.append(skipped(path, "binary_or_non_utf8", len(data)))
+        continue
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError:
+        previews.append(skipped(path, "binary_or_non_utf8", len(data)))
+        continue
+    all_lines = text.splitlines()
+    shown_lines = all_lines[:MAX_LINES]
+    previews.append({
+        "path": path,
+        "kind": "text",
+        "line_count": len(all_lines),
+        "byte_count": len(data),
+        "truncated": len(all_lines) > MAX_LINES,
+        "lines": [{"line": index + 1, "text": line} for index, line in enumerate(shown_lines)],
+    })
+
+emit({"previews": previews, "truncated": len(raw_paths) > MAX_FILES, "limit": MAX_FILES})
+"#;
+
 /// Build the read-only `git_diff_summary` command. Runs `git status
 /// --porcelain` and `git diff --stat` separated by a unique sentinel. No
 /// mutating git subcommand is emitted.
@@ -41,9 +159,19 @@ pub(crate) fn git_diff_summary_command() -> String {
 /// diff is only emitted when the caller asks for bounded hunks.
 pub(crate) fn show_changes_command(include_diff: bool) -> String {
     let diff_part = if include_diff {
+        let preview_command = format!(
+            "python3 -c {} 2>/dev/null || printf '[]\\n'",
+            shell_escape_simple(SHOW_CHANGES_UNTRACKED_PREVIEW_SCRIPT),
+        );
         format!(
-            "; printf '\\n{sentinel}\\n'; git diff --unified=80",
+            "; printf '\\n{sentinel}\\n'; \
+             git diff --unified=80; \
+             show_changes_status=$?; \
+             printf '\\n{sentinel}\\n'; \
+             {preview_command}; \
+             exit $show_changes_status",
             sentinel = SHOW_CHANGES_SENTINEL,
+            preview_command = preview_command,
         )
     } else {
         String::new()
@@ -59,7 +187,10 @@ pub(crate) fn show_changes_command(include_diff: bool) -> String {
     )
 }
 
-fn split_show_changes_stdout(stdout: &str, include_diff: bool) -> (String, String, String, String) {
+pub(crate) fn split_show_changes_stdout(
+    stdout: &str,
+    include_diff: bool,
+) -> (String, String, String, String, String) {
     let mut parts = stdout.split(SHOW_CHANGES_SENTINEL);
     let status = parts
         .next()
@@ -85,7 +216,16 @@ fn split_show_changes_stdout(stdout: &str, include_diff: bool) -> (String, Strin
     } else {
         String::new()
     };
-    (status, head, stat, diff)
+    let untracked_preview = if include_diff {
+        parts
+            .next()
+            .unwrap_or_default()
+            .trim_matches(['\n', '\r'])
+            .to_string()
+    } else {
+        String::new()
+    };
+    (status, head, stat, diff, untracked_preview)
 }
 
 fn parse_status_branch(line: &str) -> Option<String> {
@@ -292,6 +432,52 @@ pub(crate) fn parse_show_changes_output(
     }
 
     output
+}
+
+fn parse_untracked_previews_stdout(preview_stdout: &str) -> Result<(Vec<Value>, bool), String> {
+    let preview_stdout = preview_stdout.trim();
+    if preview_stdout.is_empty() {
+        return Ok((Vec::new(), false));
+    }
+    let value: Value = serde_json::from_str(preview_stdout)
+        .map_err(|e| format!("failed to parse untracked preview JSON: {}", e))?;
+    match value {
+        Value::Array(entries) => Ok((entries, false)),
+        Value::Object(mut object) => {
+            let previews = object
+                .remove("previews")
+                .and_then(|previews| match previews {
+                    Value::Array(entries) => Some(entries),
+                    _ => None,
+                })
+                .unwrap_or_default();
+            let truncated = object
+                .remove("truncated")
+                .and_then(|truncated| truncated.as_bool())
+                .unwrap_or(false);
+            Ok((previews, truncated))
+        }
+        _ => Err("untracked preview JSON must be an array or object".to_string()),
+    }
+}
+
+pub(crate) fn apply_show_changes_untracked_previews(output: &mut Value, preview_stdout: &str) {
+    match parse_untracked_previews_stdout(preview_stdout) {
+        Ok((previews, truncated)) => {
+            output["untracked_previews"] = json!(previews);
+            output["untracked_previews_truncated"] = json!(truncated);
+        }
+        Err(error) => {
+            output["untracked_previews"] = json!([]);
+            output["untracked_previews_truncated"] = json!(false);
+            if let Some(warnings) = output["warnings"].as_array_mut() {
+                warnings.push(json!({
+                    "kind": "untracked_preview_parse_failed",
+                    "message": error,
+                }));
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -1038,7 +1224,7 @@ impl ToolRuntime {
             Ok(output) => output,
             Err(e) => return ToolResult::err(e),
         };
-        let (status_stdout, head_stdout, diff_stat, diff_stdout) =
+        let (status_stdout, head_stdout, diff_stat, diff_stdout, untracked_preview_stdout) =
             split_show_changes_stdout(&output.stdout, include_diff);
         let mut payload = parse_show_changes_output(
             &project,
@@ -1051,6 +1237,9 @@ impl ToolRuntime {
             output.exit_code,
             &output.stderr,
         );
+        if include_diff {
+            apply_show_changes_untracked_previews(&mut payload, &untracked_preview_stdout);
+        }
         let session_summary = session_id
             .as_deref()
             .and_then(|id| self.sessions.summary(id, Some(session_event_limit)));

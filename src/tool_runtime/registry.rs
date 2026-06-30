@@ -493,6 +493,20 @@ fn output_schema_for_tool(name: &str) -> Value {
                 ),
             ),
             (
+                "untracked_previews",
+                array_schema(
+                    open_object_schema("Bounded untracked file preview or skip reason."),
+                    "Untracked file previews.",
+                ),
+            ),
+            (
+                "untracked_previews_truncated",
+                schema_type(
+                    "boolean",
+                    "Whether the untracked preview file list was bounded/truncated.",
+                ),
+            ),
+            (
                 "warnings",
                 array_schema(open_object_schema("Review warning."), "Warnings."),
             ),

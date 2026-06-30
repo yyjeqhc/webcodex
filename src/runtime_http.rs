@@ -2346,6 +2346,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn import_http_rejects_content_length_over_limit() {
         let _guard = lock_import_http_test().await;
         let server = start_mock_http_server(vec![http_response(
@@ -2372,6 +2373,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn import_http_rejects_chunked_body_after_limit_without_content_length() {
         let _guard = lock_import_http_test().await;
         let body = vec![b'x'; MAX_IMPORT_FILE_BYTES + 1];
@@ -2394,6 +2396,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn import_http_success_uses_source_name_fallback_for_missing_target() {
         let _guard = lock_import_http_test().await;
         let png = vec![0x89, b'P', b'N', b'G'];

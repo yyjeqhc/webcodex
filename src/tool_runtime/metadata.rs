@@ -534,6 +534,7 @@ pub(crate) fn tool_metadata(name: &str) -> ToolMetadata {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::auth::scopes::{oauth_scope_policy_for_runtime_tool, OAuthToolScopePolicy};
     use crate::auth::scopes::{
         SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
     };
@@ -545,6 +546,24 @@ mod tests {
             assert!(
                 lookup_tool_metadata(name).is_some(),
                 "{name} missing tool metadata"
+            );
+        }
+    }
+
+    #[test]
+    fn runtime_tool_metadata_oauth_scopes_are_known_to_scope_policy() {
+        for metadata in TOOL_METADATA
+            .iter()
+            .filter(|metadata| KNOWN_TOOL_NAMES.contains(&metadata.name))
+        {
+            let Some(scope) = metadata.oauth_scope else {
+                continue;
+            };
+            assert_eq!(
+                oauth_scope_policy_for_runtime_tool(metadata.name),
+                OAuthToolScopePolicy::Require(scope),
+                "{} metadata scope should drive runtime tool OAuth policy",
+                metadata.name
             );
         }
     }

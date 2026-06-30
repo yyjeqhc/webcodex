@@ -394,40 +394,7 @@ fn copy_keys(
 }
 
 fn tool_project(call: &ToolCall) -> Option<String> {
-    match call {
-        ToolCall::RunShell { project, .. }
-        | ToolCall::ApplyPatch { project, .. }
-        | ToolCall::ApplyPatchChecked { project, .. }
-        | ToolCall::DeleteProjectFiles { project, .. }
-        | ToolCall::GitRestorePaths { project, .. }
-        | ToolCall::DiscardUntracked { project, .. }
-        | ToolCall::ValidatePatch { project, .. }
-        | ToolCall::ReplaceInFile { project, .. }
-        | ToolCall::ReplaceExactBlock { project, .. }
-        | ToolCall::InsertBeforePattern { project, .. }
-        | ToolCall::InsertAfterPattern { project, .. }
-        | ToolCall::WriteProjectFile { project, .. }
-        | ToolCall::SaveProjectArtifact { project, .. }
-        | ToolCall::ReadProjectArtifactMetadata { project, .. }
-        | ToolCall::ReadProjectArtifact { project, .. }
-        | ToolCall::ReplaceLineRange { project, .. }
-        | ToolCall::InsertAtLine { project, .. }
-        | ToolCall::DeleteLineRange { project, .. }
-        | ToolCall::GitStatus { project, .. }
-        | ToolCall::GitDiff { project, .. }
-        | ToolCall::GitDiffHunks { project, .. }
-        | ToolCall::CargoFmt { project, .. }
-        | ToolCall::CargoCheck { project, .. }
-        | ToolCall::CargoTest { project, .. }
-        | ToolCall::GitDiffSummary { project, .. }
-        | ToolCall::ShowChanges { project, .. }
-        | ToolCall::ReadFile { project, .. }
-        | ToolCall::ListProjectFiles { project, .. }
-        | ToolCall::SearchProjectText { project, .. }
-        | ToolCall::RunJob { project, .. }
-        | ToolCall::RunCodex { project, .. } => Some(project.clone()),
-        _ => None,
-    }
+    call.project().map(str::to_string)
 }
 
 #[cfg(test)]

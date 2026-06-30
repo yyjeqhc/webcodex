@@ -527,39 +527,8 @@ impl ToolRuntime {
         call: &ToolCall,
         auth: Option<&AuthContext>,
     ) -> Result<(), ToolResult> {
-        let project = match call {
-            ToolCall::RunShell { project, .. }
-            | ToolCall::ApplyPatch { project, .. }
-            | ToolCall::ApplyPatchChecked { project, .. }
-            | ToolCall::DeleteProjectFiles { project, .. }
-            | ToolCall::GitRestorePaths { project, .. }
-            | ToolCall::DiscardUntracked { project, .. }
-            | ToolCall::ValidatePatch { project, .. }
-            | ToolCall::ReplaceInFile { project, .. }
-            | ToolCall::ReplaceExactBlock { project, .. }
-            | ToolCall::InsertBeforePattern { project, .. }
-            | ToolCall::InsertAfterPattern { project, .. }
-            | ToolCall::WriteProjectFile { project, .. }
-            | ToolCall::SaveProjectArtifact { project, .. }
-            | ToolCall::ReadProjectArtifactMetadata { project, .. }
-            | ToolCall::ReadProjectArtifact { project, .. }
-            | ToolCall::ReplaceLineRange { project, .. }
-            | ToolCall::InsertAtLine { project, .. }
-            | ToolCall::DeleteLineRange { project, .. }
-            | ToolCall::GitStatus { project, .. }
-            | ToolCall::GitDiff { project, .. }
-            | ToolCall::GitDiffHunks { project, .. }
-            | ToolCall::CargoFmt { project, .. }
-            | ToolCall::CargoCheck { project, .. }
-            | ToolCall::CargoTest { project, .. }
-            | ToolCall::GitDiffSummary { project, .. }
-            | ToolCall::ShowChanges { project, .. }
-            | ToolCall::ReadFile { project, .. }
-            | ToolCall::ListProjectFiles { project, .. }
-            | ToolCall::SearchProjectText { project, .. }
-            | ToolCall::RunJob { project, .. }
-            | ToolCall::RunCodex { project, .. } => project,
-            _ => return Ok(()),
+        let Some(project) = call.project() else {
+            return Ok(());
         };
         let required = match Self::required_agent_capability(call) {
             Some(cap) => cap,
@@ -1584,7 +1553,7 @@ mod tests {
     use super::*;
     use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
     use crate::shell_client::ShellClientRegistry;
-    use std::collections::HashMap;
+    use std::collections::{BTreeSet, HashMap};
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
@@ -1601,6 +1570,95 @@ mod tests {
             Arc::new(CodexConfig::default()),
             Arc::new(RuntimeInfo::default()),
         )
+    }
+
+    fn sample_tool_args(name: &str) -> Value {
+        match name {
+            "list_tools" | "list_projects" | "list_agents" | "runtime_status" => Value::Null,
+            "start_session" => json!({}),
+            "session_summary" => json!({"session_id": "wc_sess_existing"}),
+            "run_shell" => json!({"project": "agent:oe:private-drop", "command": "true"}),
+            "apply_patch" => {
+                json!({"project": "agent:oe:private-drop", "patch": "diff --git a/a b/a\n"})
+            }
+            "apply_patch_checked" => {
+                json!({"project": "agent:oe:private-drop", "patch": "diff --git a/a b/a\n"})
+            }
+            "delete_project_files" | "git_restore_paths" | "discard_untracked" => {
+                json!({"project": "agent:oe:private-drop", "paths": ["old.txt"]})
+            }
+            "validate_patch" => {
+                json!({"project": "agent:oe:private-drop", "patch": "diff --git a/a b/a\n"})
+            }
+            "replace_in_file" => {
+                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "old": "a", "new": "b"})
+            }
+            "replace_exact_block" => {
+                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "old_text": "a", "new_text": "b"})
+            }
+            "insert_before_pattern" | "insert_after_pattern" => {
+                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "pattern": "fn main", "text": "// hi\n"})
+            }
+            "write_project_file" => {
+                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "content": "fn main() {}\n"})
+            }
+            "save_project_artifact" => {
+                json!({"project": "agent:oe:private-drop", "path": "artifact.bin", "content_base64": "AA=="})
+            }
+            "read_project_artifact_metadata" => {
+                json!({"project": "agent:oe:private-drop", "path": "artifact.bin"})
+            }
+            "read_project_artifact" => {
+                json!({"project": "agent:oe:private-drop", "path": "artifact.bin"})
+            }
+            "replace_line_range" => {
+                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "start_line": 1, "end_line": 1, "new_text": "fn main() {}\n"})
+            }
+            "insert_at_line" => {
+                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "line": 1, "text": "fn main() {}\n"})
+            }
+            "delete_line_range" => {
+                json!({"project": "agent:oe:private-drop", "path": "src/lib.rs", "start_line": 1, "end_line": 1})
+            }
+            "git_status" | "git_diff_summary" | "show_changes" => {
+                json!({"project": "agent:oe:private-drop"})
+            }
+            "git_diff" => json!({"project": "agent:oe:private-drop"}),
+            "git_diff_hunks" => json!({"project": "agent:oe:private-drop"}),
+            "cargo_fmt" | "cargo_check" | "cargo_test" => {
+                json!({"project": "agent:oe:private-drop"})
+            }
+            "read_file" => json!({"project": "agent:oe:private-drop", "path": "src/lib.rs"}),
+            "run_job" => json!({"project": "agent:oe:private-drop", "command": "true"}),
+            "run_codex" => json!({"project": "agent:oe:private-drop", "prompt": "summarize"}),
+            "job_status" => json!({"job_id": "job_123"}),
+            "job_log" => json!({"job_id": "job_123"}),
+            "list_project_files" => json!({"project": "agent:oe:private-drop"}),
+            "search_project_text" => {
+                json!({"project": "agent:oe:private-drop", "pattern": "ToolCall"})
+            }
+            "list_jobs" => json!({}),
+            "job_tail" => json!({"job_id": "job_123"}),
+            "register_project" => {
+                json!({"client_id": "oe", "id": "private-drop", "name": "Private Drop", "path": "/root/git/private-drop"})
+            }
+            "create_project" => {
+                json!({"client_id": "oe", "id": "scratch", "name": "Scratch", "path": "/root/git/scratch"})
+            }
+            other => panic!("missing sample tool arguments for {other}"),
+        }
+    }
+
+    fn sample_tool_args_with_session(name: &str) -> Value {
+        let mut args = sample_tool_args(name);
+        let obj = args
+            .as_object_mut()
+            .unwrap_or_else(|| panic!("{name} does not accept object arguments"));
+        obj.insert(
+            "session_id".to_string(),
+            Value::String("wc_sess_accessor".to_string()),
+        );
+        args
     }
 
     // =========================================================================
@@ -1841,6 +1899,248 @@ mod tests {
     fn from_tool_name_error_includes_tool_name() {
         let err = ToolCall::from_tool_name("run_shell", json!({})).unwrap_err();
         assert!(err.contains("run_shell"));
+    }
+
+    #[test]
+    fn tool_call_project_accessor_covers_project_tool_specs() {
+        let runtime = test_runtime();
+        for spec in runtime.tool_specs() {
+            let call = ToolCall::from_tool_name(&spec.name, sample_tool_args(&spec.name))
+                .unwrap_or_else(|e| panic!("{} should deserialize: {}", spec.name, e));
+            let schema_has_project = spec.input_schema["properties"].get("project").is_some();
+            let expected_project = if schema_has_project && spec.name != "start_session" {
+                Some("agent:oe:private-drop")
+            } else {
+                None
+            };
+            assert_eq!(
+                call.project(),
+                expected_project,
+                "{} ToolCall::project() mismatch",
+                spec.name
+            );
+        }
+
+        // start_session's optional project is task association metadata, not an
+        // execution target used for authorization or kernel project reporting.
+        let start_session =
+            ToolCall::from_tool_name("start_session", json!({"project": "agent:oe:private-drop"}))
+                .unwrap();
+        assert_eq!(start_session.project(), None);
+    }
+
+    #[test]
+    fn tool_call_session_id_accessor_covers_session_tool_specs() {
+        let runtime = test_runtime();
+        for spec in runtime.tool_specs() {
+            if spec.input_schema["properties"].get("session_id").is_none() {
+                continue;
+            }
+            if spec.input_schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "session_id")
+            {
+                continue;
+            }
+            let call =
+                ToolCall::from_tool_name(&spec.name, sample_tool_args_with_session(&spec.name))
+                    .unwrap_or_else(|e| panic!("{} should deserialize: {}", spec.name, e));
+            assert_eq!(
+                call.session_id(),
+                Some("wc_sess_accessor"),
+                "{} ToolCall::session_id() mismatch",
+                spec.name
+            );
+        }
+    }
+
+    #[test]
+    fn tool_specs_and_metadata_are_synchronized() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec_names = specs
+            .iter()
+            .map(|spec| spec.name.as_str())
+            .collect::<BTreeSet<_>>();
+
+        for spec in &specs {
+            assert!(
+                crate::tool_runtime::metadata::lookup_tool_metadata(&spec.name).is_some(),
+                "{} missing metadata",
+                spec.name
+            );
+        }
+
+        for metadata in crate::tool_runtime::metadata::TOOL_METADATA {
+            if metadata.name == "delete_files" {
+                // Legacy dedicated HTTP route metadata; not a public runtime
+                // ToolSpec name and intentionally not accepted by ToolCall.
+                continue;
+            }
+            assert!(
+                spec_names.contains(metadata.name),
+                "{} metadata is not exposed by registry specs",
+                metadata.name
+            );
+        }
+    }
+
+    #[test]
+    fn required_agent_capability_matches_metadata_risk_table() {
+        use crate::tool_runtime::metadata::{lookup_tool_metadata, ToolRisk};
+
+        let cases = [
+            ("run_shell", ToolRisk::JobRun, AgentCapability::Shell),
+            (
+                "apply_patch",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            (
+                "apply_patch_checked",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            (
+                "delete_project_files",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            (
+                "git_restore_paths",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            (
+                "discard_untracked",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            // Read-only dry run, but implemented through the agent shell path.
+            ("validate_patch", ToolRisk::ReadOnly, AgentCapability::Shell),
+            (
+                "replace_in_file",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            (
+                "replace_exact_block",
+                ToolRisk::ProjectWrite,
+                AgentCapability::FileWrite,
+            ),
+            (
+                "insert_before_pattern",
+                ToolRisk::ProjectWrite,
+                AgentCapability::FileWrite,
+            ),
+            (
+                "insert_after_pattern",
+                ToolRisk::ProjectWrite,
+                AgentCapability::FileWrite,
+            ),
+            (
+                "write_project_file",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            (
+                "save_project_artifact",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            // Artifact reads use fixed helper commands over the shell path.
+            (
+                "read_project_artifact_metadata",
+                ToolRisk::ReadOnly,
+                AgentCapability::Shell,
+            ),
+            (
+                "read_project_artifact",
+                ToolRisk::ReadOnly,
+                AgentCapability::Shell,
+            ),
+            (
+                "replace_line_range",
+                ToolRisk::ProjectWrite,
+                AgentCapability::FileWrite,
+            ),
+            (
+                "insert_at_line",
+                ToolRisk::ProjectWrite,
+                AgentCapability::FileWrite,
+            ),
+            (
+                "delete_line_range",
+                ToolRisk::ProjectWrite,
+                AgentCapability::FileWrite,
+            ),
+            (
+                "git_status",
+                ToolRisk::ReadOnly,
+                AgentCapability::GitOrShell,
+            ),
+            ("git_diff", ToolRisk::ReadOnly, AgentCapability::GitOrShell),
+            (
+                "git_diff_hunks",
+                ToolRisk::ReadOnly,
+                AgentCapability::GitOrShell,
+            ),
+            ("cargo_fmt", ToolRisk::JobRun, AgentCapability::Shell),
+            ("cargo_check", ToolRisk::JobRun, AgentCapability::Shell),
+            ("cargo_test", ToolRisk::JobRun, AgentCapability::Shell),
+            ("read_file", ToolRisk::ReadOnly, AgentCapability::FileRead),
+            ("run_job", ToolRisk::JobRun, AgentCapability::AsyncJobs),
+            ("run_codex", ToolRisk::JobRun, AgentCapability::AsyncJobs),
+            (
+                "list_project_files",
+                ToolRisk::ReadOnly,
+                AgentCapability::FileRead,
+            ),
+            (
+                "search_project_text",
+                ToolRisk::ReadOnly,
+                AgentCapability::Shell,
+            ),
+            (
+                "git_diff_summary",
+                ToolRisk::ReadOnly,
+                AgentCapability::GitOrShell,
+            ),
+            (
+                "show_changes",
+                ToolRisk::ReadOnly,
+                AgentCapability::GitOrShell,
+            ),
+        ];
+
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let expected_project_tools = specs
+            .iter()
+            .filter_map(|spec| {
+                let metadata = lookup_tool_metadata(&spec.name).unwrap();
+                metadata.requires_project.then_some(spec.name.as_str())
+            })
+            .collect::<BTreeSet<_>>();
+        let table_project_tools = cases
+            .iter()
+            .map(|(name, _, _)| *name)
+            .collect::<BTreeSet<_>>();
+        assert_eq!(table_project_tools, expected_project_tools);
+
+        for (name, risk, capability) in cases {
+            let metadata = lookup_tool_metadata(name).unwrap();
+            assert_eq!(metadata.risk, risk, "{name} metadata risk");
+            let call = ToolCall::from_tool_name(name, sample_tool_args(name))
+                .unwrap_or_else(|e| panic!("{name} should deserialize: {e}"));
+            assert_eq!(
+                ToolRuntime::required_agent_capability(&call),
+                Some(capability),
+                "{name} capability"
+            );
+        }
     }
 
     // =========================================================================

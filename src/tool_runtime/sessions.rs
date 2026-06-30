@@ -25,9 +25,18 @@ pub(crate) struct SessionStore {
 #[derive(Debug)]
 struct SessionStoreInner {
     sessions: HashMap<String, SessionRecord>,
+    current_sessions: HashMap<CurrentSessionKey, String>,
     lru: VecDeque<String>,
     max_sessions: usize,
     max_events_per_session: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub(crate) struct CurrentSessionKey {
+    pub(crate) principal_kind: String,
+    pub(crate) principal_id: String,
+    pub(crate) transport: String,
+    pub(crate) resolved_project: String,
 }
 
 #[derive(Debug, Clone)]
@@ -91,7 +100,7 @@ pub(crate) enum SessionTransport {
 }
 
 impl SessionTransport {
-    fn as_str(self) -> &'static str {
+    pub(crate) fn as_str(self) -> &'static str {
         match self {
             Self::Api => "api",
             Self::Mcp => "mcp",
@@ -164,6 +173,7 @@ impl SessionStore {
         Self {
             inner: Arc::new(Mutex::new(SessionStoreInner {
                 sessions: HashMap::new(),
+                current_sessions: HashMap::new(),
                 lru: VecDeque::new(),
                 max_sessions,
                 max_events_per_session,
@@ -218,6 +228,42 @@ impl SessionStore {
         let mut inner = self.inner.lock().expect("session store mutex poisoned");
         inner.touch(session_id);
         inner.summary(session_id, limit)
+    }
+
+    pub(crate) fn bind_current_session(
+        &self,
+        key: CurrentSessionKey,
+        session_id: &str,
+    ) -> Option<SessionSummary> {
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.touch(session_id);
+        let summary = inner.summary(session_id, Some(DEFAULT_SUMMARY_LIMIT))?;
+        inner
+            .current_sessions
+            .insert(key, session_id.trim().to_string());
+        Some(summary)
+    }
+
+    pub(crate) fn current_session(&self, key: &CurrentSessionKey) -> Option<SessionSummary> {
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        let session_id = inner.current_sessions.get(key).cloned()?;
+        inner.touch(&session_id);
+        match inner.summary(&session_id, Some(DEFAULT_SUMMARY_LIMIT)) {
+            Some(summary) => Some(summary),
+            None => {
+                inner.current_sessions.remove(key);
+                None
+            }
+        }
+    }
+
+    pub(crate) fn current_session_id(&self, key: &CurrentSessionKey) -> Option<String> {
+        self.current_session(key).map(|summary| summary.session_id)
+    }
+
+    pub(crate) fn unbind_current_session(&self, key: &CurrentSessionKey) -> bool {
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.current_sessions.remove(key).is_some()
     }
 
     pub(crate) fn contains_session(&self, session_id: &str) -> bool {

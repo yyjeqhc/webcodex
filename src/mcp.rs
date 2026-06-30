@@ -447,6 +447,9 @@ mod tests {
         let registry_names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
         assert!(registry_names.contains(&"start_session"));
         assert!(registry_names.contains(&"session_summary"));
+        assert!(registry_names.contains(&"bind_current_session"));
+        assert!(registry_names.contains(&"current_session"));
+        assert!(registry_names.contains(&"unbind_current_session"));
 
         let outcome = handle_mcp_request(
             &runtime,
@@ -466,6 +469,9 @@ mod tests {
             .collect();
         assert!(names.iter().any(|name| name == "start_session"));
         assert!(names.iter().any(|name| name == "session_summary"));
+        assert!(names.iter().any(|name| name == "bind_current_session"));
+        assert!(names.iter().any(|name| name == "current_session"));
+        assert!(names.iter().any(|name| name == "unbind_current_session"));
         let tools = value["result"]["tools"].as_array().unwrap();
         let start_session = tools
             .iter()
@@ -486,6 +492,20 @@ mod tests {
                 .get("guards")
                 .is_some()
         );
+        let bind_current = tools
+            .iter()
+            .find(|tool| tool["name"] == "bind_current_session")
+            .expect("missing MCP bind_current_session tool");
+        assert!(bind_current["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "project"));
+        assert!(bind_current["inputSchema"]["required"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|field| field == "session_id"));
         for name in ["read_file", "run_shell", "write_project_file"] {
             let tool = tools
                 .iter()

@@ -132,6 +132,24 @@ fn start_session_input_schema() -> Value {
     })
 }
 
+fn current_session_input_schema(require_session_id: bool) -> Value {
+    let mut fields = vec![(
+        "project",
+        "string",
+        "Runtime project id whose current session binding should be inspected or updated.",
+        true,
+    )];
+    if require_session_id {
+        fields.push((
+            "session_id",
+            "string",
+            "Existing wc_sess_* id returned by start_session for this project.",
+            true,
+        ));
+    }
+    object_schema(fields)
+}
+
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 
 fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
@@ -435,6 +453,43 @@ fn output_schema_for_tool(name: &str) -> Value {
                     open_object_schema("Bounded session event."),
                     "Recent events.",
                 ),
+            ),
+        ]),
+        "bind_current_session" => wrapped_output_schema(vec![
+            ("bound", schema_type("boolean", "True when the binding was stored.")),
+            ("session_id", schema_type("string", "Bound session id.")),
+            ("project", schema_type("string", "Project input from the request.")),
+            (
+                "resolved_project",
+                schema_type("string", "Canonical runtime project id used in the binding key."),
+            ),
+            ("mode", session_mode_schema("Bound session mode.")),
+            ("guards", session_guards_schema("Effective guards for the bound session.")),
+        ]),
+        "current_session" => wrapped_output_schema(vec![
+            ("found", schema_type("boolean", "True when a live binding exists.")),
+            ("session_id", schema_type("string", "Bound session id, when found.")),
+            ("project", schema_type("string", "Project input from the request.")),
+            (
+                "resolved_project",
+                schema_type("string", "Canonical runtime project id used in the binding key."),
+            ),
+            ("mode", session_mode_schema("Bound session mode, when found.")),
+            ("guards", session_guards_schema("Effective guards for the bound session.")),
+        ]),
+        "unbind_current_session" => wrapped_output_schema(vec![
+            (
+                "unbound",
+                schema_type("boolean", "True when the unbind request succeeded."),
+            ),
+            (
+                "had_binding",
+                schema_type("boolean", "True when a binding existed before this call."),
+            ),
+            ("project", schema_type("string", "Project input from the request.")),
+            (
+                "resolved_project",
+                schema_type("string", "Canonical runtime project id used in the binding key."),
             ),
         ]),
         "read_file" => wrapped_output_schema(vec![
@@ -848,6 +903,27 @@ impl ToolRuntime {
                 ]),
                 output_schema: output_schema_for_tool("session_summary"),
                 annotations: tool_annotations("session_summary"),
+            },
+            ToolSpec {
+                name: "bind_current_session".to_string(),
+                description: "Bind an existing project-scoped session as the current session for this caller, transport, and project. Read-only control metadata; never modifies project files.".to_string(),
+                input_schema: current_session_input_schema(true),
+                output_schema: output_schema_for_tool("bind_current_session"),
+                annotations: tool_annotations("bind_current_session"),
+            },
+            ToolSpec {
+                name: "current_session".to_string(),
+                description: "Return the current session binding for this caller, transport, and project, if a live binding exists.".to_string(),
+                input_schema: current_session_input_schema(false),
+                output_schema: output_schema_for_tool("current_session"),
+                annotations: tool_annotations("current_session"),
+            },
+            ToolSpec {
+                name: "unbind_current_session".to_string(),
+                description: "Remove the current session binding for this caller, transport, and project. Idempotent and read-only.".to_string(),
+                input_schema: current_session_input_schema(false),
+                output_schema: output_schema_for_tool("unbind_current_session"),
+                annotations: tool_annotations("unbind_current_session"),
             },
             ToolSpec {
                 name: "list_projects".to_string(),
@@ -1570,6 +1646,7 @@ impl ToolRuntime {
             ]),
             "runtime": pick(&[
                 "list_tools", "start_session", "session_summary",
+                "bind_current_session", "current_session", "unbind_current_session",
                 "list_projects", "list_agents", "runtime_status"
             ]),
             "cleanup": pick(&[

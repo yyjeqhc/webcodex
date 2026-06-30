@@ -202,6 +202,15 @@ fn session_guard_denied_result(
     )
 }
 
+fn current_session_unavailable_result(message: impl Into<String>) -> ToolResult {
+    ToolResult::err_with_output(
+        message.into(),
+        json!({
+            "error_kind": "current_session_unavailable",
+        }),
+    )
+}
+
 fn add_session_telemetry_hint(result: &mut ToolResult, session_id: &str, event_id: Option<String>) {
     let mut output = match std::mem::take(&mut result.output) {
         Value::Object(map) => map,
@@ -223,6 +232,70 @@ fn add_session_telemetry_hint(result: &mut ToolResult, session_id: &str, event_i
         output.insert("session_event_id".to_string(), Value::String(event_id));
     }
     result.output = Value::Object(output);
+}
+
+fn is_current_session_control_tool(call: &ToolCall) -> bool {
+    matches!(
+        call,
+        ToolCall::BindCurrentSession { .. }
+            | ToolCall::CurrentSession { .. }
+            | ToolCall::UnbindCurrentSession { .. }
+    )
+}
+
+fn is_current_session_eligible(call: &ToolCall) -> bool {
+    call.project().is_some() && !is_current_session_control_tool(call)
+}
+
+fn current_session_key(
+    auth: Option<&AuthContext>,
+    transport: sessions::SessionTransport,
+    resolved_project: &str,
+) -> Result<sessions::CurrentSessionKey, String> {
+    let (principal_kind, principal_id) = current_session_principal(auth)?;
+    Ok(sessions::CurrentSessionKey {
+        principal_kind,
+        principal_id,
+        transport: transport.as_str().to_string(),
+        resolved_project: resolved_project.to_string(),
+    })
+}
+
+fn current_session_principal(auth: Option<&AuthContext>) -> Result<(String, String), String> {
+    let Some(auth) = auth else {
+        return Ok(("dev".to_string(), "dev".to_string()));
+    };
+    if auth.is_bootstrap {
+        return Ok((
+            "bootstrap".to_string(),
+            auth.user_id
+                .as_deref()
+                .or(auth.username.as_deref())
+                .unwrap_or("bootstrap")
+                .to_string(),
+        ));
+    }
+    let id = auth
+        .api_key_id
+        .as_deref()
+        .or(auth.user_id.as_deref())
+        .or(auth.username.as_deref())
+        .or(auth.allowed_client_id.as_deref())
+        .map(str::to_string);
+    let Some(principal_id) = id else {
+        return Err(
+            "current_session_unavailable: authenticated caller has no stable principal id"
+                .to_string(),
+        );
+    };
+    let principal_kind = match auth.kind {
+        crate::auth::AuthKind::ApiToken => auth.token_kind.as_deref().unwrap_or("api_token"),
+        crate::auth::AuthKind::AgentToken => "agent_token",
+        crate::auth::AuthKind::AccountCredential => "account_credential",
+        crate::auth::AuthKind::OAuth2Token => "oauth2",
+        crate::auth::AuthKind::Bootstrap => "bootstrap",
+    };
+    Ok((principal_kind.to_string(), principal_id))
 }
 
 impl ToolRuntime {
@@ -501,6 +574,9 @@ impl ToolRuntime {
             ToolCall::ListTools
             | ToolCall::StartSession { .. }
             | ToolCall::SessionSummary { .. }
+            | ToolCall::BindCurrentSession { .. }
+            | ToolCall::CurrentSession { .. }
+            | ToolCall::UnbindCurrentSession { .. }
             | ToolCall::ListProjects
             | ToolCall::RegisterProject { .. }
             | ToolCall::CreateProject { .. }
@@ -639,6 +715,34 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
     ) -> ToolResult {
+        self.dispatch_with_auth_transport_options(call, auth, transport, true)
+            .await
+    }
+
+    pub(crate) async fn dispatch_with_auth_transport_options(
+        &self,
+        mut call: ToolCall,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+        use_current_session: bool,
+    ) -> ToolResult {
+        let mut resolved_project = match call.project() {
+            Some(project) => self.resolve_project_input(project).await.ok(),
+            None => None,
+        };
+        if use_current_session && call.session_id().is_none() && is_current_session_eligible(&call)
+        {
+            if let Some(resolved) = resolved_project.as_ref() {
+                match current_session_key(auth, transport, &resolved.resolved_id) {
+                    Ok(key) => {
+                        if let Some(session_id) = self.sessions.current_session_id(&key) {
+                            call = call.with_effective_session_id(session_id);
+                        }
+                    }
+                    Err(message) => return current_session_unavailable_result(message),
+                }
+            }
+        }
         let session_id = call.session_id().map(str::to_string);
         if let Some(session_id) = session_id.as_deref() {
             if !self.sessions.contains_session(session_id) {
@@ -664,14 +768,7 @@ impl ToolRuntime {
             }
         }
         let session_start = if session_id.is_some() {
-            let resolved_project = match call.project() {
-                Some(project) => self
-                    .resolve_project_input(project)
-                    .await
-                    .ok()
-                    .map(|resolved| resolved.resolved_id),
-                None => None,
-            };
+            let resolved_project = resolved_project.take().map(|resolved| resolved.resolved_id);
             Some(self.sessions.record_tool_call_started_with_options(
                 session_id.as_deref(),
                 transport,
@@ -696,7 +793,7 @@ impl ToolRuntime {
             }
             return err;
         }
-        let mut result = self.dispatch_authorized_inner(call, auth).await;
+        let mut result = self.dispatch_authorized_inner(call, auth, transport).await;
         if let Some(session_id) = session_id.as_deref() {
             let event_id = self.sessions.record_tool_call_finished(
                 session_start.flatten(),
@@ -714,6 +811,7 @@ impl ToolRuntime {
         &self,
         call: ToolCall,
         auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
     ) -> ToolResult {
         match call {
             ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
@@ -767,6 +865,90 @@ impl ToolRuntime {
                     ),
                     None => ToolResult::err(format!("unknown session_id: {}", session_id)),
                 }
+            }
+
+            ToolCall::BindCurrentSession {
+                project,
+                session_id,
+            } => {
+                let resolved = match self.resolve_project_input(&project).await {
+                    Ok(resolved) => resolved,
+                    Err(err) => return err.into_tool_result(),
+                };
+                let Some(summary) = self.sessions.summary(&session_id, None) else {
+                    return unknown_session_result(&session_id);
+                };
+                if summary.project.as_deref() != Some(resolved.resolved_id.as_str()) {
+                    return ToolResult::err_with_output(
+                        "session_project_mismatch",
+                        json!({
+                            "error_kind": "session_project_mismatch",
+                            "session_id": session_id,
+                            "session_project": summary.project,
+                            "project": project,
+                            "resolved_project": resolved.resolved_id,
+                        }),
+                    );
+                }
+                let key = match current_session_key(auth, transport, &resolved.resolved_id) {
+                    Ok(key) => key,
+                    Err(message) => return current_session_unavailable_result(message),
+                };
+                let Some(bound) = self.sessions.bind_current_session(key, &session_id) else {
+                    return unknown_session_result(&session_id);
+                };
+                ToolResult::ok(json!({
+                    "bound": true,
+                    "session_id": bound.session_id,
+                    "project": project,
+                    "resolved_project": resolved.resolved_id,
+                    "mode": bound.mode,
+                    "guards": bound.guards,
+                }))
+            }
+
+            ToolCall::CurrentSession { project } => {
+                let resolved = match self.resolve_project_input(&project).await {
+                    Ok(resolved) => resolved,
+                    Err(err) => return err.into_tool_result(),
+                };
+                let key = match current_session_key(auth, transport, &resolved.resolved_id) {
+                    Ok(key) => key,
+                    Err(message) => return current_session_unavailable_result(message),
+                };
+                match self.sessions.current_session(&key) {
+                    Some(summary) => ToolResult::ok(json!({
+                        "found": true,
+                        "session_id": summary.session_id,
+                        "project": project,
+                        "resolved_project": resolved.resolved_id,
+                        "mode": summary.mode,
+                        "guards": summary.guards,
+                    })),
+                    None => ToolResult::ok(json!({
+                        "found": false,
+                        "project": project,
+                        "resolved_project": resolved.resolved_id,
+                    })),
+                }
+            }
+
+            ToolCall::UnbindCurrentSession { project } => {
+                let resolved = match self.resolve_project_input(&project).await {
+                    Ok(resolved) => resolved,
+                    Err(err) => return err.into_tool_result(),
+                };
+                let key = match current_session_key(auth, transport, &resolved.resolved_id) {
+                    Ok(key) => key,
+                    Err(message) => return current_session_unavailable_result(message),
+                };
+                let had_binding = self.sessions.unbind_current_session(&key);
+                ToolResult::ok(json!({
+                    "unbound": true,
+                    "had_binding": had_binding,
+                    "project": project,
+                    "resolved_project": resolved.resolved_id,
+                }))
             }
 
             ToolCall::ListProjects => self.list_projects().await,
@@ -2106,7 +2288,8 @@ mod tests {
             .iter()
             .filter_map(|spec| {
                 let metadata = lookup_tool_metadata(&spec.name).unwrap();
-                metadata.requires_project.then_some(spec.name.as_str())
+                (metadata.provider_id == "agent" && metadata.requires_project)
+                    .then_some(spec.name.as_str())
             })
             .collect::<BTreeSet<_>>();
         let table_project_tools = cases
@@ -4338,6 +4521,582 @@ index 1111111..2222222 100644
         assert!(result.success, "{:?}", result.error);
         assert_eq!(result.output["content"], "hello");
         assert!(result.output.get("session_recorded").is_none());
+    }
+
+    #[tokio::test]
+    async fn bind_current_session_success_and_lookup() {
+        let runtime = runtime_with_agent_project("current-bind");
+        register_agent(
+            &runtime,
+            "current-bind",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("current-bind");
+        let bootstrap = auth_context(None, true);
+        let started = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name(
+                    "start_session",
+                    json!({"project": project, "title": "current"}),
+                )
+                .unwrap(),
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(started.success, "{:?}", started.error);
+        let session_id = started.output["session_id"].as_str().unwrap().to_string();
+
+        let bound = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": session_id}),
+                )
+                .unwrap(),
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(bound.success, "{:?}", bound.error);
+        assert_eq!(bound.output["bound"], true);
+        assert_eq!(bound.output["session_id"], session_id);
+        assert_eq!(bound.output["resolved_project"], project);
+
+        let current = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name("current_session", json!({"project": project})).unwrap(),
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(current.success, "{:?}", current.error);
+        assert_eq!(current.output["found"], true);
+        assert_eq!(current.output["session_id"], session_id);
+    }
+
+    #[tokio::test]
+    async fn bind_current_session_rejects_unknown_session() {
+        let runtime = runtime_with_agent_project("current-unknown");
+        register_agent(
+            &runtime,
+            "current-unknown",
+            None,
+            ShellClientCapabilities::default(),
+        )
+        .await;
+        let project = agent_test_project_id("current-unknown");
+        let result = runtime
+            .dispatch(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": "wc_sess_missing"}),
+                )
+                .unwrap(),
+            )
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "unknown_session_id");
+    }
+
+    #[tokio::test]
+    async fn bind_current_session_rejects_project_mismatch() {
+        let runtime = runtime_with_resolver_projects().await;
+        let project_a = "agent:workstation:my-repo";
+        let project_b = "agent:workstation:other-repo";
+        let session = runtime
+            .sessions
+            .start_session(Some(project_a.to_string()), Some("a".to_string()));
+        let result = runtime
+            .dispatch(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project_b, "session_id": session.session_id}),
+                )
+                .unwrap(),
+            )
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "session_project_mismatch");
+        assert_eq!(result.output["session_project"], project_a);
+        assert_eq!(result.output["resolved_project"], project_b);
+    }
+
+    #[tokio::test]
+    async fn unbind_current_session_removes_binding_and_is_idempotent() {
+        let runtime = runtime_with_agent_project("current-unbind");
+        register_agent(
+            &runtime,
+            "current-unbind",
+            None,
+            ShellClientCapabilities::default(),
+        )
+        .await;
+        let project = agent_test_project_id("current-unbind");
+        let session = runtime
+            .sessions
+            .start_session(Some(project.clone()), Some("unbind".to_string()));
+        let bind = runtime
+            .dispatch(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": session.session_id}),
+                )
+                .unwrap(),
+            )
+            .await;
+        assert!(bind.success, "{:?}", bind.error);
+
+        let first = runtime
+            .dispatch(
+                ToolCall::from_tool_name("unbind_current_session", json!({"project": project}))
+                    .unwrap(),
+            )
+            .await;
+        assert!(first.success, "{:?}", first.error);
+        assert_eq!(first.output["unbound"], true);
+        assert_eq!(first.output["had_binding"], true);
+
+        let current = runtime
+            .dispatch(
+                ToolCall::from_tool_name("current_session", json!({"project": project})).unwrap(),
+            )
+            .await;
+        assert!(current.success, "{:?}", current.error);
+        assert_eq!(current.output["found"], false);
+
+        let second = runtime
+            .dispatch(
+                ToolCall::from_tool_name("unbind_current_session", json!({"project": project}))
+                    .unwrap(),
+            )
+            .await;
+        assert!(second.success, "{:?}", second.error);
+        assert_eq!(second.output["had_binding"], false);
+    }
+
+    #[tokio::test]
+    async fn bound_current_session_records_project_tool_without_session_id() {
+        let runtime = runtime_with_agent_project("current-read");
+        register_agent(
+            &runtime,
+            "current-read",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("current-read");
+        let bootstrap = auth_context(None, true);
+        let session = runtime
+            .sessions
+            .start_session(Some(project.clone()), Some("current read".to_string()));
+        let bind = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": session.session_id}),
+                )
+                .unwrap(),
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(bind.success, "{:?}", bind.error);
+
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let bootstrap = bootstrap.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project,
+                            path: "README.md".to_string(),
+                            session_id: None,
+                            start_line: None,
+                            limit: Some(1),
+                            with_line_numbers: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "current-read", "inst")
+            .await
+            .expect("read_file should enqueue with current session");
+        complete_patch_agent_request(&runtime, "current-read", &req.request_id, 0, "hello\n", "")
+            .await;
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["session_recorded"], true);
+        assert_eq!(result.output["session_id"], session.session_id);
+
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        assert_eq!(summary.counts.tool_calls, 1);
+        assert_eq!(
+            finished_event(&summary, "read_file").status.as_deref(),
+            Some("succeeded")
+        );
+    }
+
+    #[tokio::test]
+    async fn generic_tool_call_uses_bound_current_session_without_session_id() {
+        let runtime = runtime_with_agent_project("current-generic");
+        register_agent(
+            &runtime,
+            "current-generic",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("current-generic");
+        let bootstrap = auth_context(None, true);
+        let session = runtime
+            .sessions
+            .start_session(Some(project.clone()), Some("generic current".to_string()));
+        let bind = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": session.session_id}),
+                )
+                .unwrap(),
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(bind.success, "{:?}", bind.error);
+
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let bootstrap = bootstrap.clone();
+            async move {
+                runtime
+                    .call_tool_with_context(
+                        kernel::ToolCallRequest {
+                            tool_name: "read_file".to_string(),
+                            arguments: json!({
+                                "project": project,
+                                "path": "README.md",
+                                "limit": 1
+                            }),
+                        },
+                        kernel::ToolCallContext {
+                            transport: kernel::ToolTransport::Api,
+                            session_id: None,
+                            auth: Some(&bootstrap),
+                            record_oauth_scope_denials: true,
+                        },
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "current-generic", "inst")
+            .await
+            .expect("generic read_file should enqueue with current session");
+        complete_patch_agent_request(
+            &runtime,
+            "current-generic",
+            &req.request_id,
+            0,
+            "hello\n",
+            "",
+        )
+        .await;
+        let outcome = task.await.unwrap();
+        assert!(outcome.success);
+        let result = outcome.result.unwrap();
+        assert_eq!(result.output["session_recorded"], true);
+        assert_eq!(result.output["session_id"], session.session_id);
+        assert_eq!(
+            runtime
+                .sessions
+                .summary(&session.session_id, Some(20))
+                .unwrap()
+                .counts
+                .tool_calls,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn explicit_session_id_wins_over_current_session() {
+        let runtime = runtime_with_agent_project("current-explicit");
+        register_agent(
+            &runtime,
+            "current-explicit",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("current-explicit");
+        let bootstrap = auth_context(None, true);
+        let current = runtime
+            .sessions
+            .start_session(Some(project.clone()), Some("current".to_string()));
+        let explicit = runtime
+            .sessions
+            .start_session(Some(project.clone()), Some("explicit".to_string()));
+        let bind = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": current.session_id}),
+                )
+                .unwrap(),
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(bind.success, "{:?}", bind.error);
+
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let explicit_id = explicit.session_id.clone();
+            let bootstrap = bootstrap.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project,
+                            path: "README.md".to_string(),
+                            session_id: Some(explicit_id),
+                            start_line: None,
+                            limit: Some(1),
+                            with_line_numbers: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "current-explicit", "inst")
+            .await
+            .expect("read_file should enqueue with explicit session");
+        complete_patch_agent_request(
+            &runtime,
+            "current-explicit",
+            &req.request_id,
+            0,
+            "hello\n",
+            "",
+        )
+        .await;
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["session_id"], explicit.session_id);
+        assert_eq!(
+            runtime
+                .sessions
+                .summary(&current.session_id, Some(20))
+                .unwrap()
+                .counts
+                .tool_calls,
+            0
+        );
+        assert_eq!(
+            runtime
+                .sessions
+                .summary(&explicit.session_id, Some(20))
+                .unwrap()
+                .counts
+                .tool_calls,
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn read_only_current_session_guard_blocks_write_before_enqueue() {
+        let runtime = runtime_with_agent_project("current-guard");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "current-guard", None, caps).await;
+        let project = agent_test_project_id("current-guard");
+        let session = runtime.sessions.start_session_with_guards(
+            Some(project.clone()),
+            Some("readonly current".to_string()),
+            SessionMode::ReadOnly,
+            sessions::SessionGuards::default(),
+        );
+        let bind = runtime
+            .dispatch(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": session.session_id}),
+                )
+                .unwrap(),
+            )
+            .await;
+        assert!(bind.success, "{:?}", bind.error);
+
+        let result = runtime
+            .dispatch(ToolCall::WriteProjectFile {
+                project: project.clone(),
+                path: "blocked.txt".to_string(),
+                content: "nope".to_string(),
+                session_id: None,
+                overwrite: None,
+                expected_sha256: None,
+                expected_content_prefix: None,
+            })
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "session_guard_denied");
+        assert_eq!(result.output["session_id"], session.session_id);
+        assert_eq!(result.output["session_recorded"], true);
+        assert!(
+            next_agent_request_for_instance(&runtime, "current-guard", "inst")
+                .await
+                .is_none(),
+            "guard denial must happen before an agent request is enqueued"
+        );
+    }
+
+    #[tokio::test]
+    async fn stale_current_session_is_cleared_and_project_tool_runs_without_session() {
+        let runtime = runtime_with_agent_project("current-stale");
+        register_agent(
+            &runtime,
+            "current-stale",
+            None,
+            ShellClientCapabilities {
+                file_read: true,
+                ..Default::default()
+            },
+        )
+        .await;
+        let project = agent_test_project_id("current-stale");
+        let bootstrap = auth_context(None, true);
+        let stale = runtime
+            .sessions
+            .start_session(Some(project.clone()), Some("stale".to_string()));
+        let bind = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": stale.session_id}),
+                )
+                .unwrap(),
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(bind.success, "{:?}", bind.error);
+        for idx in 0..101 {
+            runtime
+                .sessions
+                .start_session(Some(project.clone()), Some(format!("evict-{idx}")));
+        }
+        assert!(runtime.sessions.summary(&stale.session_id, None).is_none());
+
+        let current = runtime
+            .dispatch_with_auth(
+                ToolCall::from_tool_name("current_session", json!({"project": project})).unwrap(),
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(current.success, "{:?}", current.error);
+        assert_eq!(current.output["found"], false);
+
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            let project = project.clone();
+            let bootstrap = bootstrap.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project,
+                            path: "README.md".to_string(),
+                            session_id: None,
+                            start_line: None,
+                            limit: Some(1),
+                            with_line_numbers: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "current-stale", "inst")
+            .await
+            .expect("stale current session should not block no-session call");
+        complete_patch_agent_request(&runtime, "current-stale", &req.request_id, 0, "hello\n", "")
+            .await;
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert!(result.output.get("session_recorded").is_none());
+    }
+
+    #[tokio::test]
+    async fn current_session_binding_is_principal_and_transport_isolated() {
+        let runtime = runtime_with_agent_project("current-isolation");
+        register_agent(
+            &runtime,
+            "current-isolation",
+            None,
+            ShellClientCapabilities::default(),
+        )
+        .await;
+        let project = agent_test_project_id("current-isolation");
+        let session = runtime
+            .sessions
+            .start_session(Some(project.clone()), Some("isolated".to_string()));
+        let alice = auth_context(Some("alice"), false);
+        let bob = auth_context(Some("bob"), false);
+        let bind = runtime
+            .dispatch_with_auth_transport(
+                ToolCall::from_tool_name(
+                    "bind_current_session",
+                    json!({"project": project, "session_id": session.session_id}),
+                )
+                .unwrap(),
+                Some(&alice),
+                sessions::SessionTransport::Api,
+            )
+            .await;
+        assert!(bind.success, "{:?}", bind.error);
+
+        let alice_api = runtime
+            .dispatch_with_auth_transport(
+                ToolCall::from_tool_name("current_session", json!({"project": project})).unwrap(),
+                Some(&alice),
+                sessions::SessionTransport::Api,
+            )
+            .await;
+        assert_eq!(alice_api.output["found"], true);
+
+        let bob_api = runtime
+            .dispatch_with_auth_transport(
+                ToolCall::from_tool_name("current_session", json!({"project": project})).unwrap(),
+                Some(&bob),
+                sessions::SessionTransport::Api,
+            )
+            .await;
+        assert_eq!(bob_api.output["found"], false);
+
+        let alice_mcp = runtime
+            .dispatch_with_auth_transport(
+                ToolCall::from_tool_name("current_session", json!({"project": project})).unwrap(),
+                Some(&alice),
+                sessions::SessionTransport::Mcp,
+            )
+            .await;
+        assert_eq!(alice_mcp.output["found"], false);
     }
 
     #[tokio::test]

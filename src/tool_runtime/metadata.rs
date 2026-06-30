@@ -102,6 +102,36 @@ pub(crate) const TOOL_METADATA: &[ToolMetadata] = &[
         false,
     ),
     metadata(
+        "bind_current_session",
+        "control",
+        ToolRisk::ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
+        "current_session",
+        "control",
+        ToolRisk::ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
+        "unbind_current_session",
+        "control",
+        ToolRisk::ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
         "run_shell",
         "agent",
         ToolRisk::JobRun,
@@ -598,6 +628,24 @@ mod tests {
         assert_eq!(metadata.oauth_scope, Some(SCOPE_RUNTIME_READ));
         assert!(!metadata.requires_project);
         assert!(metadata.read_only);
+    }
+
+    #[test]
+    fn current_session_tools_are_project_read_control_tools() {
+        for name in [
+            "bind_current_session",
+            "current_session",
+            "unbind_current_session",
+        ] {
+            let metadata = lookup_tool_metadata(name).unwrap();
+            assert_eq!(metadata.provider_id, "control", "{name}");
+            assert_eq!(metadata.risk, ToolRisk::ReadOnly, "{name}");
+            assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ), "{name}");
+            assert!(metadata.requires_project, "{name}");
+            assert!(metadata.read_only, "{name}");
+            assert!(!metadata.destructive, "{name}");
+            assert!(!metadata.shell_like, "{name}");
+        }
     }
 
     #[test]

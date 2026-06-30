@@ -64,6 +64,16 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Explicitly bind an existing project-scoped session as the caller's
+    /// current session for later project tool calls on this transport.
+    BindCurrentSession { project: String, session_id: String },
+
+    /// Return the caller's current session binding for a project, if any.
+    CurrentSession { project: String },
+
+    /// Remove the caller's current session binding for a project. Idempotent.
+    UnbindCurrentSession { project: String },
+
     /// Execute a shell command in a project directory (sync, short-lived).
     RunShell {
         project: String,
@@ -584,6 +594,9 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "list_tools",
     "start_session",
     "session_summary",
+    "bind_current_session",
+    "current_session",
+    "unbind_current_session",
     "run_shell",
     "apply_patch",
     "apply_patch_checked",
@@ -675,6 +688,9 @@ impl ToolCall {
             Self::ListTools => "list_tools",
             Self::StartSession { .. } => "start_session",
             Self::SessionSummary { .. } => "session_summary",
+            Self::BindCurrentSession { .. } => "bind_current_session",
+            Self::CurrentSession { .. } => "current_session",
+            Self::UnbindCurrentSession { .. } => "unbind_current_session",
             Self::RunShell { .. } => "run_shell",
             Self::ApplyPatch { .. } => "apply_patch",
             Self::ApplyPatchChecked { .. } => "apply_patch_checked",
@@ -755,6 +771,48 @@ impl ToolCall {
         }
     }
 
+    pub(crate) fn with_effective_session_id(mut self, effective_session_id: String) -> Self {
+        match &mut self {
+            Self::RunShell { session_id, .. }
+            | Self::ApplyPatch { session_id, .. }
+            | Self::ApplyPatchChecked { session_id, .. }
+            | Self::DeleteProjectFiles { session_id, .. }
+            | Self::GitRestorePaths { session_id, .. }
+            | Self::DiscardUntracked { session_id, .. }
+            | Self::ValidatePatch { session_id, .. }
+            | Self::GitStatus { session_id, .. }
+            | Self::GitDiff { session_id, .. }
+            | Self::GitDiffHunks { session_id, .. }
+            | Self::CargoFmt { session_id, .. }
+            | Self::CargoCheck { session_id, .. }
+            | Self::CargoTest { session_id, .. }
+            | Self::ReadFile { session_id, .. }
+            | Self::RunJob { session_id, .. }
+            | Self::RunCodex { session_id, .. }
+            | Self::ListProjectFiles { session_id, .. }
+            | Self::SearchProjectText { session_id, .. }
+            | Self::GitDiffSummary { session_id, .. }
+            | Self::ShowChanges { session_id, .. }
+            | Self::ReplaceInFile { session_id, .. }
+            | Self::ReplaceExactBlock { session_id, .. }
+            | Self::InsertBeforePattern { session_id, .. }
+            | Self::InsertAfterPattern { session_id, .. }
+            | Self::WriteProjectFile { session_id, .. }
+            | Self::SaveProjectArtifact { session_id, .. }
+            | Self::ReadProjectArtifactMetadata { session_id, .. }
+            | Self::ReadProjectArtifact { session_id, .. }
+            | Self::ReplaceLineRange { session_id, .. }
+            | Self::InsertAtLine { session_id, .. }
+            | Self::DeleteLineRange { session_id, .. } => {
+                if session_id.is_none() {
+                    *session_id = Some(effective_session_id);
+                }
+            }
+            _ => {}
+        }
+        self
+    }
+
     pub(crate) fn project(&self) -> Option<&str> {
         match self {
             Self::RunShell { project, .. }
@@ -787,7 +845,10 @@ impl ToolCall {
             | Self::ReadProjectArtifact { project, .. }
             | Self::ReplaceLineRange { project, .. }
             | Self::InsertAtLine { project, .. }
-            | Self::DeleteLineRange { project, .. } => Some(project.as_str()),
+            | Self::DeleteLineRange { project, .. }
+            | Self::BindCurrentSession { project, .. }
+            | Self::CurrentSession { project }
+            | Self::UnbindCurrentSession { project } => Some(project.as_str()),
             _ => None,
         }
     }

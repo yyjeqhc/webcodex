@@ -198,7 +198,12 @@ impl ToolRuntime {
 
         let project = tool_project(&call);
         let result = self
-            .dispatch_with_auth_transport(call, context.auth, context.transport.into())
+            .dispatch_with_auth_transport_options(
+                call,
+                context.auth,
+                context.transport.into(),
+                context.session_id.is_none(),
+            )
             .await;
         self.sessions.record_tool_call_finished(
             session_event,

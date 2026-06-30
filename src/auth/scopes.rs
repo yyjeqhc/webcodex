@@ -588,6 +588,18 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
             (
+                "bind_current_session",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
+            (
+                "current_session",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
+            (
+                "unbind_current_session",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
+            (
                 "runtime_status",
                 OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ),
             ),
@@ -620,6 +632,9 @@ mod tests {
             "list_tools",
             "start_session",
             "session_summary",
+            "bind_current_session",
+            "current_session",
+            "unbind_current_session",
             "show_changes",
             "read_file",
             "write_project_file",

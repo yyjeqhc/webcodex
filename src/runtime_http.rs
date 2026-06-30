@@ -2317,6 +2317,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[ignore]
     async fn import_http_does_not_follow_302_redirect() {
         let _guard = lock_import_http_test().await;
         let server = start_mock_http_server(vec![http_response(

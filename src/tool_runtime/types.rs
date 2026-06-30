@@ -589,6 +589,14 @@ impl ToolResult {
             error: Some(msg.into()),
         }
     }
+
+    pub fn err_with_output(msg: impl Into<String>, output: Value) -> Self {
+        Self {
+            success: false,
+            output,
+            error: Some(msg.into()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]

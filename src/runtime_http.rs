@@ -2478,7 +2478,7 @@ mod tests {
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
+        assert!(body["error"].as_str().unwrap().contains("unknown_project"));
     }
 
     #[tokio::test]
@@ -2543,7 +2543,7 @@ mod tests {
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
+        assert!(body["error"].as_str().unwrap().contains("unknown_project"));
     }
 
     // =========================================================================
@@ -2587,7 +2587,7 @@ mod tests {
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
+        assert!(body["error"].as_str().unwrap().contains("unknown_project"));
     }
 
     // =========================================================================
@@ -2625,7 +2625,7 @@ mod tests {
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
+        assert!(body["error"].as_str().unwrap().contains("unknown_project"));
     }
 
     // =========================================================================
@@ -2663,7 +2663,7 @@ mod tests {
         assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("projects.toml"));
+        assert!(body["error"].as_str().unwrap().contains("unknown_project"));
     }
 
     // =========================================================================
@@ -3078,13 +3078,17 @@ mod tests {
 
     #[tokio::test]
     async fn start_session_returns_session_id() {
-        let (_tmp, service) = phase2_service();
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let (runtime, _registry) = register_import_agent(tmp_proj.path()).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
         let mut resp = TestClient::post("http://localhost/api/tools/call")
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "start_session",
                 "params": {
-                    "project": "agent:special-container:webcodex",
+                    "project": "demo",
                     "title": "implement show_changes follow-up"
                 }
             }))
@@ -3097,10 +3101,9 @@ mod tests {
         assert!(body["output"]["session_id"]
             .as_str()
             .is_some_and(|id| id.starts_with("wc_sess_")));
-        assert_eq!(
-            body["output"]["project"],
-            "agent:special-container:webcodex"
-        );
+        assert_eq!(body["output"]["project"], "agent:importer:demo");
+        assert_eq!(body["output"]["project_input"], "demo");
+        assert_eq!(body["output"]["resolved_project"], "agent:importer:demo");
         assert_eq!(body["output"]["title"], "implement show_changes follow-up");
         assert!(body["output"]["created_at"].is_i64());
     }
@@ -3138,7 +3141,7 @@ mod tests {
         let (_tmp, service) = phase2_service();
         let mut resp = TestClient::post("http://localhost/api/tools/call")
             .bearer_auth("secret")
-            .json(&json!({"tool": "start_session", "params": {"project": "demo"}}))
+            .json(&json!({"tool": "start_session", "params": {"title": "tracking"}}))
             .send(&service)
             .await;
         let start_body: Value = resp.take_json().await.unwrap();
@@ -3181,7 +3184,7 @@ mod tests {
         let (_tmp, service) = phase2_service();
         let mut resp = TestClient::post("http://localhost/api/tools/call")
             .bearer_auth("secret")
-            .json(&json!({"tool": "start_session", "params": {"project": "demo"}}))
+            .json(&json!({"tool": "start_session", "params": {"title": "tracking"}}))
             .send(&service)
             .await;
         let start_body: Value = resp.take_json().await.unwrap();
@@ -3646,13 +3649,8 @@ mod tests {
     #[tokio::test]
     async fn session_tools_oauth_scope_policy() {
         let (_tmp, service, token) = phase2_oauth_service("runtime:read");
-        let (status, body, _) = oauth_tools_call(
-            &service,
-            &token,
-            "start_session",
-            json!({"project": "demo", "title": "oauth"}),
-        )
-        .await;
+        let (status, body, _) =
+            oauth_tools_call(&service, &token, "start_session", json!({"title": "oauth"})).await;
         assert_eq!(status, StatusCode::OK, "body: {:?}", body);
         let session_id = body["output"]["session_id"].as_str().unwrap();
         let (status, body, _) = oauth_tools_call(

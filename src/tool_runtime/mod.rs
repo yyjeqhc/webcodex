@@ -28,7 +28,7 @@ use crate::auth::AuthContext;
 use crate::config::CodexConfig;
 use crate::projects::{Executor, ProjectConfig, ProjectsState};
 use crate::shell_client::ShellClientRegistry;
-use crate::shell_protocol::ShellAgentProjectSummary;
+use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientView};
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -49,6 +49,121 @@ pub struct ToolRuntime {
     pub(crate) sessions: sessions::SessionStore,
     local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
     job_killer: Arc<dyn LocalJobKiller>,
+}
+
+#[derive(Debug, Clone)]
+struct ProjectResolverCandidate {
+    id: String,
+    client_id: String,
+    agent_project_id: String,
+    name: Option<String>,
+    path: String,
+    allow_patch: bool,
+    connected: bool,
+    status: String,
+    last_seen: i64,
+}
+
+#[derive(Debug, Clone)]
+struct ResolvedProject {
+    input: String,
+    resolved_id: String,
+    config: ProjectConfig,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectResolverErrorKind {
+    UnknownProject,
+    AmbiguousProject,
+}
+
+impl ProjectResolverErrorKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::UnknownProject => "unknown_project",
+            Self::AmbiguousProject => "ambiguous_project",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ProjectResolverError {
+    kind: ProjectResolverErrorKind,
+    project: String,
+    candidates: Vec<ProjectResolverCandidate>,
+}
+
+impl ProjectResolverError {
+    fn candidate_payload(candidate: &ProjectResolverCandidate) -> Value {
+        json!({
+            "id": candidate.id,
+            "client_id": candidate.client_id,
+            "agent_project_id": candidate.agent_project_id,
+            "name": candidate.name,
+            "path": candidate.path,
+            "connected": candidate.connected,
+            "status": candidate.status,
+            "last_seen": candidate.last_seen,
+        })
+    }
+
+    fn to_output(&self) -> Value {
+        let candidates: Vec<Value> = self
+            .candidates
+            .iter()
+            .map(Self::candidate_payload)
+            .collect();
+        json!({
+            "error_kind": self.kind.as_str(),
+            "project": self.project,
+            "hint": "Use a full runtime project id in the form agent:<client_id>:<project_id> from list_projects.",
+            "candidates": candidates,
+        })
+    }
+
+    fn to_message(&self) -> String {
+        let mut message = format!(
+            "{} '{}'. Use a full runtime project id in the form agent:<client_id>:<project_id> from list_projects.",
+            match self.kind {
+                ProjectResolverErrorKind::UnknownProject => "unknown_project",
+                ProjectResolverErrorKind::AmbiguousProject => "ambiguous_project",
+            },
+            self.project
+        );
+        if self.candidates.is_empty() {
+            return message;
+        }
+        let candidate_summary = self
+            .candidates
+            .iter()
+            .map(|candidate| {
+                format!(
+                    "{} [{}] {} ({})",
+                    candidate.id, candidate.client_id, candidate.path, candidate.status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("; ");
+        message.push_str(" Candidates: ");
+        message.push_str(&candidate_summary);
+        message
+    }
+
+    fn into_tool_result(self) -> ToolResult {
+        ToolResult::err_with_output(self.to_message(), self.to_output())
+    }
+}
+
+impl std::fmt::Display for ProjectResolverError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.to_message())
+    }
+}
+
+impl From<ProjectResolverError> for String {
+    fn from(value: ProjectResolverError) -> Self {
+        value.to_message()
+    }
 }
 
 impl ToolRuntime {
@@ -73,12 +188,29 @@ impl ToolRuntime {
         format!("agent:{}:{}", client_id, project_id)
     }
 
-    fn agent_project_config(client_id: &str, project: &ShellAgentProjectSummary) -> ProjectConfig {
-        ProjectConfig {
+    fn project_candidate_from_view(
+        client: &ShellClientView,
+        project: &ShellAgentProjectSummary,
+    ) -> ProjectResolverCandidate {
+        ProjectResolverCandidate {
+            id: Self::agent_project_runtime_id(&client.client_id, &project.id),
+            client_id: client.client_id.clone(),
+            agent_project_id: project.id.clone(),
+            name: project.name.clone(),
             path: project.path.clone(),
-            executor: Executor::Agent,
-            client_id: Some(client_id.to_string()),
             allow_patch: project.allow_patch,
+            connected: client.connected,
+            status: client.status.clone(),
+            last_seen: client.last_seen,
+        }
+    }
+
+    fn project_config_from_candidate(candidate: &ProjectResolverCandidate) -> ProjectConfig {
+        ProjectConfig {
+            path: candidate.path.clone(),
+            executor: Executor::Agent,
+            client_id: Some(candidate.client_id.clone()),
+            allow_patch: candidate.allow_patch,
             allow_command_requests: false,
             allow_raw_command_requests: false,
             default_apply_patch_backend: None,
@@ -89,51 +221,181 @@ impl ToolRuntime {
         }
     }
 
-    async fn resolve_agent_registered_project(
-        &self,
-        project: &str,
-    ) -> Result<Option<ProjectConfig>, String> {
-        let Some(rest) = project.strip_prefix("agent:") else {
-            return Ok(None);
-        };
-        let Some((client_id, agent_project_id)) = rest.split_once(':') else {
-            return Err("agent project ids must use agent:<client_id>:<project_id>".to_string());
-        };
-        if client_id.trim().is_empty() || agent_project_id.trim().is_empty() {
-            return Err("agent project ids must use agent:<client_id>:<project_id>".to_string());
-        }
-        let client = self
-            .shell_clients
-            .get_client_view(client_id)
-            .await
-            .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
-        let Some(project_summary) = client.projects.iter().find(|p| p.id == agent_project_id)
-        else {
-            return Err(format!(
-                "agent project '{}' is not registered by client '{}'",
-                agent_project_id, client_id
-            ));
-        };
-        if project_summary.disabled {
-            return Err(format!(
-                "agent project '{}' on client '{}' is disabled",
-                agent_project_id, client_id
-            ));
-        }
-        Ok(Some(Self::agent_project_config(
-            &client.client_id,
-            project_summary,
-        )))
+    fn sort_resolver_candidates(candidates: &mut [ProjectResolverCandidate]) {
+        candidates.sort_by(|a, b| {
+            b.connected
+                .cmp(&a.connected)
+                .then_with(|| a.status.cmp(&b.status))
+                .then_with(|| b.last_seen.cmp(&a.last_seen))
+                .then_with(|| a.id.cmp(&b.id))
+        });
     }
 
-    async fn resolve_project(&self, project: &str) -> Result<ProjectConfig, String> {
-        if let Some(project) = self.resolve_agent_registered_project(project).await? {
-            return Ok(project);
+    async fn agent_project_candidates(&self) -> Vec<ProjectResolverCandidate> {
+        let mut candidates = Vec::new();
+        for client in self.shell_clients.list_clients().await {
+            for project in client.projects.iter().filter(|project| !project.disabled) {
+                candidates.push(Self::project_candidate_from_view(&client, project));
+            }
         }
-        Err(format!(
-            "Unknown project '{}'. Server-side projects.toml is not used by the runtime surface; use an agent-registered id like agent:<client_id>:<project_id> from listProjects.",
-            project
-        ))
+        Self::sort_resolver_candidates(&mut candidates);
+        candidates
+    }
+
+    async fn resolve_project_input(
+        &self,
+        project: &str,
+    ) -> Result<ResolvedProject, ProjectResolverError> {
+        let raw = project.trim();
+        if raw.is_empty() {
+            return Err(ProjectResolverError {
+                kind: ProjectResolverErrorKind::UnknownProject,
+                project: project.to_string(),
+                candidates: self.agent_project_candidates().await,
+            });
+        }
+
+        let all_candidates = self.agent_project_candidates().await;
+
+        if raw.starts_with("agent:") {
+            let Some(rest) = raw.strip_prefix("agent:") else {
+                unreachable!();
+            };
+            let Some((client_id, agent_project_id)) = rest.split_once(':') else {
+                return Err(ProjectResolverError {
+                    kind: ProjectResolverErrorKind::UnknownProject,
+                    project: raw.to_string(),
+                    candidates: all_candidates,
+                });
+            };
+            if client_id.trim().is_empty() || agent_project_id.trim().is_empty() {
+                return Err(ProjectResolverError {
+                    kind: ProjectResolverErrorKind::UnknownProject,
+                    project: raw.to_string(),
+                    candidates: all_candidates,
+                });
+            }
+            if let Some(candidate) = all_candidates.iter().find(|candidate| candidate.id == raw) {
+                return Ok(ResolvedProject {
+                    input: project.to_string(),
+                    resolved_id: candidate.id.clone(),
+                    config: Self::project_config_from_candidate(candidate),
+                });
+            }
+            let mut same_client: Vec<ProjectResolverCandidate> = all_candidates
+                .iter()
+                .filter(|candidate| candidate.client_id == client_id)
+                .cloned()
+                .collect();
+            Self::sort_resolver_candidates(&mut same_client);
+            return Err(ProjectResolverError {
+                kind: ProjectResolverErrorKind::UnknownProject,
+                project: raw.to_string(),
+                candidates: same_client,
+            });
+        }
+
+        if let Some((client_id, agent_project_id)) = raw.split_once(':') {
+            if !client_id.trim().is_empty() && !agent_project_id.trim().is_empty() {
+                let mut matches: Vec<ProjectResolverCandidate> = all_candidates
+                    .iter()
+                    .filter(|candidate| {
+                        candidate.client_id == client_id
+                            && candidate.agent_project_id == agent_project_id
+                    })
+                    .cloned()
+                    .collect();
+                Self::sort_resolver_candidates(&mut matches);
+                match matches.len() {
+                    1 => {
+                        let candidate = matches.remove(0);
+                        return Ok(ResolvedProject {
+                            input: project.to_string(),
+                            resolved_id: candidate.id.clone(),
+                            config: Self::project_config_from_candidate(&candidate),
+                        });
+                    }
+                    0 => {
+                        let mut same_client: Vec<ProjectResolverCandidate> = all_candidates
+                            .iter()
+                            .filter(|candidate| candidate.client_id == client_id)
+                            .cloned()
+                            .collect();
+                        Self::sort_resolver_candidates(&mut same_client);
+                        return Err(ProjectResolverError {
+                            kind: ProjectResolverErrorKind::UnknownProject,
+                            project: raw.to_string(),
+                            candidates: same_client,
+                        });
+                    }
+                    _ => {
+                        return Err(ProjectResolverError {
+                            kind: ProjectResolverErrorKind::AmbiguousProject,
+                            project: raw.to_string(),
+                            candidates: matches,
+                        });
+                    }
+                }
+            }
+        }
+
+        let mut short_id_matches: Vec<ProjectResolverCandidate> = all_candidates
+            .iter()
+            .filter(|candidate| candidate.agent_project_id == raw)
+            .cloned()
+            .collect();
+        Self::sort_resolver_candidates(&mut short_id_matches);
+        match short_id_matches.len() {
+            1 => {
+                let candidate = short_id_matches.remove(0);
+                return Ok(ResolvedProject {
+                    input: project.to_string(),
+                    resolved_id: candidate.id.clone(),
+                    config: Self::project_config_from_candidate(&candidate),
+                });
+            }
+            n if n > 1 => {
+                return Err(ProjectResolverError {
+                    kind: ProjectResolverErrorKind::AmbiguousProject,
+                    project: raw.to_string(),
+                    candidates: short_id_matches,
+                });
+            }
+            _ => {}
+        }
+
+        let mut name_matches: Vec<ProjectResolverCandidate> = all_candidates
+            .iter()
+            .filter(|candidate| candidate.name.as_deref() == Some(raw))
+            .cloned()
+            .collect();
+        Self::sort_resolver_candidates(&mut name_matches);
+        match name_matches.len() {
+            1 => {
+                let candidate = name_matches.remove(0);
+                Ok(ResolvedProject {
+                    input: project.to_string(),
+                    resolved_id: candidate.id.clone(),
+                    config: Self::project_config_from_candidate(&candidate),
+                })
+            }
+            n if n > 1 => Err(ProjectResolverError {
+                kind: ProjectResolverErrorKind::AmbiguousProject,
+                project: raw.to_string(),
+                candidates: name_matches,
+            }),
+            _ => Err(ProjectResolverError {
+                kind: ProjectResolverErrorKind::UnknownProject,
+                project: raw.to_string(),
+                candidates: all_candidates,
+            }),
+        }
+    }
+
+    async fn resolve_project(&self, project: &str) -> Result<ProjectConfig, ProjectResolverError> {
+        self.resolve_project_input(project)
+            .await
+            .map(|resolved| resolved.config)
     }
 
     /// The capability an agent-backed tool variant requires from the agent
@@ -205,7 +467,7 @@ impl ToolRuntime {
         &self,
         call: &ToolCall,
         auth: Option<&AuthContext>,
-    ) -> Result<(), String> {
+    ) -> Result<(), ToolResult> {
         let project = match call {
             ToolCall::RunShell { project, .. }
             | ToolCall::ApplyPatch { project, .. }
@@ -244,54 +506,62 @@ impl ToolRuntime {
             Some(cap) => cap,
             None => return Ok(()),
         };
-        let proj = self.resolve_project(project).await?;
+        let proj = self
+            .resolve_project(project)
+            .await
+            .map_err(ProjectResolverError::into_tool_result)?;
         if !proj.is_agent() {
             return Ok(());
         }
-        let client_id = proj.agent_client_id()?.to_string();
+        let client_id = proj.agent_client_id().map_err(ToolResult::err)?.to_string();
         let view = self
             .shell_clients
             .get_client_view(&client_id)
             .await
-            .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
+            .ok_or_else(|| ToolResult::err(format!("unknown shell client: {}", client_id)))?;
         // Owner boundary: bootstrap tokens and dev mode (auth disabled) pass.
         // Otherwise the API key username must match the agent's declared owner.
-        crate::shell_client::assert_shell_client_owner(auth, &client_id, view.owner.as_deref())?;
+        crate::shell_client::assert_shell_client_owner(auth, &client_id, view.owner.as_deref())
+            .map_err(ToolResult::err)?;
         // Capability check via the registry helper so the requirement is
         // expressed as a named capability, not a raw struct field access.
         let supported = match required {
-            AgentCapability::Shell => {
-                self.shell_clients
-                    .client_supports(&client_id, "shell")
-                    .await?
-            }
-            AgentCapability::FileRead => {
-                self.shell_clients
-                    .client_supports(&client_id, "file_read")
-                    .await?
-            }
-            AgentCapability::FileWrite => {
-                self.shell_clients
-                    .client_supports(&client_id, "file_write")
-                    .await?
-            }
+            AgentCapability::Shell => self
+                .shell_clients
+                .client_supports(&client_id, "shell")
+                .await
+                .map_err(ToolResult::err)?,
+            AgentCapability::FileRead => self
+                .shell_clients
+                .client_supports(&client_id, "file_read")
+                .await
+                .map_err(ToolResult::err)?,
+            AgentCapability::FileWrite => self
+                .shell_clients
+                .client_supports(&client_id, "file_write")
+                .await
+                .map_err(ToolResult::err)?,
             AgentCapability::GitOrShell => {
                 self.shell_clients
                     .client_supports(&client_id, "shell")
-                    .await?
+                    .await
+                    .map_err(ToolResult::err)?
                     || self
                         .shell_clients
                         .client_supports(&client_id, "git")
-                        .await?
+                        .await
+                        .map_err(ToolResult::err)?
             }
             AgentCapability::AsyncJobs => {
                 self.shell_clients
                     .client_supports(&client_id, "async_jobs")
-                    .await?
+                    .await
+                    .map_err(ToolResult::err)?
                     || self
                         .shell_clients
                         .client_supports(&client_id, "async_shell_jobs")
-                        .await?
+                        .await
+                        .map_err(ToolResult::err)?
             }
         };
         if !supported {
@@ -302,10 +572,10 @@ impl ToolRuntime {
                 AgentCapability::GitOrShell => "shell or git",
                 AgentCapability::AsyncJobs => "async shell jobs",
             };
-            return Err(format!(
+            return Err(ToolResult::err(format!(
                 "agent client {} does not support {}",
                 client_id, label
-            ));
+            )));
         }
         Ok(())
     }
@@ -332,17 +602,31 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         if let Err(err) = self.authorize_agent_tool(&call, auth).await {
-            return ToolResult::err(err);
+            return err;
         }
         match call {
             ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
 
             ToolCall::StartSession { project, title } => {
-                let summary = self.sessions.start_session(project, title);
+                let resolved = match project {
+                    Some(project_input) => match self.resolve_project_input(&project_input).await {
+                        Ok(resolved) => Some(resolved),
+                        Err(err) => return err.into_tool_result(),
+                    },
+                    None => None,
+                };
+                let summary = self.sessions.start_session(
+                    resolved
+                        .as_ref()
+                        .map(|resolved| resolved.resolved_id.clone()),
+                    title,
+                );
                 ToolResult::ok(json!({
                     "success": true,
                     "session_id": summary.session_id,
                     "project": summary.project,
+                    "project_input": resolved.as_ref().map(|resolved| resolved.input.clone()),
+                    "resolved_project": resolved.as_ref().map(|resolved| resolved.resolved_id.clone()),
                     "title": summary.title,
                     "created_at": summary.created_at,
                 }))
@@ -3208,7 +3492,7 @@ index 1111111..2222222 100644
             .run_job("demo".to_string(), "true".to_string(), Some(10), None)
             .await;
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("projects.toml"));
+        assert!(result.error.unwrap().contains("unknown_project"));
         assert!(runtime.local_jobs.lock().await.is_empty());
     }
 
@@ -3783,7 +4067,7 @@ index 1111111..2222222 100644
             )
             .await;
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("projects.toml"));
+        assert!(result.error.unwrap().contains("unknown_project"));
         assert!(runtime.local_jobs.lock().await.is_empty());
     }
 
@@ -3997,6 +4281,131 @@ index 1111111..2222222 100644
         }
     }
 
+    fn named_registered_project(
+        client_id: &str,
+        id: &str,
+        name: &str,
+        path: &str,
+        updated_at: i64,
+    ) -> ShellAgentProjectSummary {
+        let _ = client_id;
+        ShellAgentProjectSummary {
+            id: id.to_string(),
+            name: Some(name.to_string()),
+            path: path.to_string(),
+            allow_patch: true,
+            kind: Some("repo".to_string()),
+            description: None,
+            hooks: Vec::new(),
+            disabled: false,
+            git_branch: None,
+            git_head: None,
+            git_dirty: None,
+            updated_at,
+            shell_profile: None,
+        }
+    }
+
+    async fn register_agent_projects(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        owner: Option<&str>,
+        caps: ShellClientCapabilities,
+        projects: Vec<ShellAgentProjectSummary>,
+    ) {
+        runtime
+            .shell_clients
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{}", client_id),
+                display_name: None,
+                owner: owner.map(str::to_string),
+                hostname: None,
+                capabilities: Some(caps),
+                projects: Some(projects),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            })
+            .await
+            .unwrap();
+    }
+
+    async fn next_agent_request_for_client(
+        runtime: &ToolRuntime,
+        client_id: &str,
+    ) -> Option<ShellAgentShellRequest> {
+        next_agent_request_for_instance(runtime, client_id, &format!("inst-{}", client_id)).await
+    }
+
+    async fn next_agent_request_for_instance(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        agent_instance_id: &str,
+    ) -> Option<ShellAgentShellRequest> {
+        for _ in 0..20 {
+            let req = runtime
+                .shell_clients
+                .poll(ShellAgentPollRequest {
+                    client_id: client_id.to_string(),
+                    agent_instance_id: agent_instance_id.to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap();
+            if req.is_some() {
+                return req;
+            }
+            tokio::task::yield_now().await;
+        }
+        None
+    }
+
+    async fn runtime_with_resolver_projects() -> ToolRuntime {
+        let runtime = test_runtime();
+        let mut file_caps = ShellClientCapabilities::default();
+        file_caps.file_read = true;
+        file_caps.git = true;
+        file_caps.shell = true;
+        register_agent_projects(
+            &runtime,
+            "workstation",
+            None,
+            file_caps.clone(),
+            vec![
+                named_registered_project(
+                    "workstation",
+                    "my-repo",
+                    "My Repo",
+                    "/root/git/workstation-my-repo",
+                    200,
+                ),
+                named_registered_project(
+                    "workstation",
+                    "other-repo",
+                    "Other Repo",
+                    "/root/git/workstation-other-repo",
+                    210,
+                ),
+            ],
+        )
+        .await;
+        register_agent_projects(
+            &runtime,
+            "laptop",
+            None,
+            file_caps,
+            vec![named_registered_project(
+                "laptop",
+                "my-repo",
+                "My Repo",
+                "/root/git/laptop-my-repo",
+                190,
+            )],
+        )
+        .await;
+        runtime
+    }
+
     #[tokio::test]
     async fn apply_patch_agent_does_not_require_server_local_project_root() {
         let runtime = runtime_with_agent_project("patcher");
@@ -4118,6 +4527,358 @@ new file mode 100644\n\
             .unwrap()
             .iter()
             .any(|v| v.as_str() == Some("REMOTE_ONLY.md")));
+    }
+
+    #[tokio::test]
+    async fn project_resolver_resolves_full_id() {
+        let runtime = runtime_with_resolver_projects().await;
+        let resolved = runtime
+            .resolve_project_input("agent:workstation:my-repo")
+            .await
+            .unwrap();
+        assert_eq!(resolved.resolved_id, "agent:workstation:my-repo");
+        assert_eq!(resolved.config.agent_client_id().unwrap(), "workstation");
+        assert_eq!(resolved.config.path, "/root/git/workstation-my-repo");
+    }
+
+    #[tokio::test]
+    async fn project_resolver_resolves_client_project_shorthand() {
+        let runtime = runtime_with_resolver_projects().await;
+        let resolved = runtime
+            .resolve_project_input("workstation:my-repo")
+            .await
+            .unwrap();
+        assert_eq!(resolved.resolved_id, "agent:workstation:my-repo");
+    }
+
+    #[tokio::test]
+    async fn project_resolver_resolves_unique_short_id() {
+        let runtime = runtime_with_resolver_projects().await;
+        let resolved = runtime.resolve_project_input("other-repo").await.unwrap();
+        assert_eq!(resolved.resolved_id, "agent:workstation:other-repo");
+    }
+
+    #[tokio::test]
+    async fn project_resolver_ambiguous_short_id_returns_candidates() {
+        let runtime = runtime_with_resolver_projects().await;
+        let err = runtime.resolve_project_input("my-repo").await.unwrap_err();
+        assert_eq!(err.kind, ProjectResolverErrorKind::AmbiguousProject);
+        assert_eq!(err.project, "my-repo");
+        let ids: Vec<String> = err
+            .candidates
+            .iter()
+            .map(|candidate| candidate.id.clone())
+            .collect();
+        assert_eq!(
+            ids,
+            vec![
+                "agent:laptop:my-repo".to_string(),
+                "agent:workstation:my-repo".to_string(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn project_resolver_unknown_id_returns_candidates() {
+        let runtime = runtime_with_resolver_projects().await;
+        let err = runtime
+            .resolve_project_input("missing-repo")
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind, ProjectResolverErrorKind::UnknownProject);
+        assert_eq!(err.project, "missing-repo");
+        assert!(err.candidates.len() >= 3);
+        assert!(err
+            .candidates
+            .iter()
+            .any(|candidate| candidate.id == "agent:workstation:other-repo"));
+    }
+
+    #[tokio::test]
+    async fn start_session_without_project_is_allowed() {
+        let runtime = test_runtime();
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::StartSession {
+                    project: None,
+                    title: Some("probe".to_string()),
+                },
+                None,
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["project"], Value::Null);
+        assert_eq!(result.output["project_input"], Value::Null);
+        assert_eq!(result.output["resolved_project"], Value::Null);
+    }
+
+    #[tokio::test]
+    async fn start_session_valid_full_id_stores_resolved_project() {
+        let runtime = runtime_with_resolver_projects().await;
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::StartSession {
+                    project: Some("agent:workstation:my-repo".to_string()),
+                    title: Some("probe".to_string()),
+                },
+                None,
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["project"], "agent:workstation:my-repo");
+        assert_eq!(result.output["project_input"], "agent:workstation:my-repo");
+        assert_eq!(
+            result.output["resolved_project"],
+            "agent:workstation:my-repo"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_session_valid_short_id_stores_resolved_project() {
+        let runtime = runtime_with_resolver_projects().await;
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::StartSession {
+                    project: Some("other-repo".to_string()),
+                    title: Some("probe".to_string()),
+                },
+                None,
+            )
+            .await;
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["project"], "agent:workstation:other-repo");
+        assert_eq!(result.output["project_input"], "other-repo");
+        assert_eq!(
+            result.output["resolved_project"],
+            "agent:workstation:other-repo"
+        );
+    }
+
+    #[tokio::test]
+    async fn start_session_ambiguous_project_fails_with_candidates() {
+        let runtime = runtime_with_resolver_projects().await;
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::StartSession {
+                    project: Some("my-repo".to_string()),
+                    title: Some("probe".to_string()),
+                },
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "ambiguous_project");
+        let candidates = result.output["candidates"].as_array().unwrap();
+        assert_eq!(candidates.len(), 2);
+        assert_eq!(candidates[0]["id"], "agent:laptop:my-repo");
+        assert_eq!(candidates[1]["id"], "agent:workstation:my-repo");
+    }
+
+    #[tokio::test]
+    async fn start_session_unknown_project_fails_with_candidates() {
+        let runtime = runtime_with_resolver_projects().await;
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::StartSession {
+                    project: Some("missing-repo".to_string()),
+                    title: Some("probe".to_string()),
+                },
+                None,
+            )
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "unknown_project");
+        assert_eq!(result.output["project"], "missing-repo");
+        assert!(result.output["candidates"].as_array().unwrap().len() >= 3);
+    }
+
+    #[tokio::test]
+    async fn read_file_accepts_unique_short_id() {
+        let runtime = runtime_with_resolver_projects().await;
+        let bootstrap = auth_context(None, true);
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project: "other-repo".to_string(),
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            limit: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_client(&runtime, "workstation")
+            .await
+            .expect("read_file should enqueue an agent file_read request");
+        assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "workstation".to_string(),
+                agent_instance_id: "inst-workstation".to_string(),
+                request_id: req.request_id,
+                exit_code: Some(0),
+                stdout: Some("hello\n".to_string()),
+                stderr: None,
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+    }
+
+    #[tokio::test]
+    async fn git_status_accepts_unique_short_id() {
+        let runtime = runtime_with_resolver_projects().await;
+        let bootstrap = auth_context(None, true);
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::GitStatus {
+                            project: "other-repo".to_string(),
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_client(&runtime, "workstation")
+            .await
+            .expect("git_status should enqueue an agent shell request");
+        assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "workstation".to_string(),
+                agent_instance_id: "inst-workstation".to_string(),
+                request_id: req.request_id,
+                exit_code: Some(0),
+                stdout: Some(String::new()),
+                stderr: Some(String::new()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+    }
+
+    #[tokio::test]
+    async fn show_changes_accepts_unique_short_id() {
+        let runtime = runtime_with_resolver_projects().await;
+        let bootstrap = auth_context(None, true);
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ShowChanges {
+                            project: "other-repo".to_string(),
+                            session_id: None,
+                            include_diff: Some(false),
+                            max_hunks: None,
+                            max_hunk_lines: None,
+                            session_event_limit: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_client(&runtime, "workstation")
+            .await
+            .expect("show_changes should enqueue an agent shell request");
+        assert_eq!(req.cwd.as_deref(), Some("/root/git/workstation-other-repo"));
+        let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "workstation".to_string(),
+                agent_instance_id: "inst-workstation".to_string(),
+                request_id: req.request_id,
+                exit_code: Some(0),
+                stdout: Some(stdout.to_string()),
+                stderr: Some(String::new()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["project"], "other-repo");
+    }
+
+    #[tokio::test]
+    async fn ambiguous_short_id_returns_candidates_for_project_tools() {
+        let runtime = runtime_with_resolver_projects().await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ReadFile {
+                    project: "my-repo".to_string(),
+                    path: "README.md".to_string(),
+                    start_line: None,
+                    limit: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "ambiguous_project");
+        assert_eq!(result.output["project"], "my-repo");
+        assert_eq!(result.output["candidates"].as_array().unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn full_id_remains_compatible_for_project_tools() {
+        let runtime = runtime_with_resolver_projects().await;
+        let bootstrap = auth_context(None, true);
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::ReadFile {
+                            project: "agent:workstation:other-repo".to_string(),
+                            path: "README.md".to_string(),
+                            start_line: None,
+                            limit: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_client(&runtime, "workstation")
+            .await
+            .expect("full id should still enqueue an agent request");
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "workstation".to_string(),
+                agent_instance_id: "inst-workstation".to_string(),
+                request_id: req.request_id,
+                exit_code: Some(0),
+                stdout: Some("hello\n".to_string()),
+                stderr: None,
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
     }
 
     // -------------------------------------------------------------------------
@@ -4503,7 +5264,7 @@ new file mode 100644\n\
             apply_err.contains("agent-registered")
                 || apply_err.contains("server-configured")
                 || apply_err.contains("Unknown project")
-                || apply_err.contains("projects.toml"),
+                || apply_err.contains("unknown_project"),
             "apply_patch should reject a server-configured project: {}",
             apply_err
         );
@@ -4517,7 +5278,7 @@ new file mode 100644\n\
             checked_err.contains("agent-registered")
                 || checked_err.contains("server-configured")
                 || checked_err.contains("Unknown project")
-                || checked_err.contains("projects.toml"),
+                || checked_err.contains("unknown_project"),
             "apply_patch_checked should reject a server-configured project: {}",
             checked_err
         );
@@ -4531,7 +5292,7 @@ new file mode 100644\n\
             validate_err.contains("agent-registered")
                 || validate_err.contains("server-configured")
                 || validate_err.contains("Unknown project")
-                || validate_err.contains("projects.toml"),
+                || validate_err.contains("unknown_project"),
             "validate_patch should reject a server-configured project: {}",
             validate_err
         );
@@ -4775,7 +5536,7 @@ new file mode 100644\n\
     }
 
     #[tokio::test]
-    async fn server_configured_project_id_is_not_resolved_by_runtime_surface() {
+    async fn unique_short_agent_project_id_is_resolved_by_runtime_surface() {
         let runtime = runtime_with_agent_project("oe");
         register_agent(
             &runtime,
@@ -4788,19 +5549,42 @@ new file mode 100644\n\
         )
         .await;
         let bootstrap = auth_context(None, true);
-        let result = runtime
-            .dispatch_with_auth(
-                ToolCall::RunShell {
-                    project: "agent-proj".to_string(),
-                    command: "echo hi".to_string(),
-                    timeout_secs: Some(1),
-                    cwd: None,
-                },
-                Some(&bootstrap),
-            )
-            .await;
-        assert!(!result.success);
-        assert!(result.error.unwrap().contains("projects.toml"));
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                runtime
+                    .dispatch_with_auth(
+                        ToolCall::RunShell {
+                            project: "agent-proj".to_string(),
+                            command: "echo hi".to_string(),
+                            timeout_secs: Some(1),
+                            cwd: None,
+                        },
+                        Some(&bootstrap),
+                    )
+                    .await
+            }
+        });
+        let req = next_agent_request_for_instance(&runtime, "oe", "inst")
+            .await
+            .expect("unique short id should resolve to the owning agent");
+        assert_eq!(req.cwd.as_deref(), Some("/tmp/agent-proj"));
+        runtime
+            .shell_clients
+            .complete(ShellAgentResultRequest {
+                client_id: "oe".to_string(),
+                agent_instance_id: "inst".to_string(),
+                request_id: req.request_id,
+                exit_code: Some(0),
+                stdout: Some("hi\n".to_string()),
+                stderr: Some(String::new()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
+        let result = task.await.unwrap();
+        assert!(result.success, "{:?}", result.error);
     }
 
     #[tokio::test]
@@ -4892,7 +5676,7 @@ new file mode 100644\n\
     }
 
     #[tokio::test]
-    async fn agent_tool_unknown_client_returns_unknown_shell_client_error() {
+    async fn agent_tool_unknown_client_returns_unknown_project_error() {
         // Project points at client "ghost" which never registered.
         let runtime = runtime_with_agent_project("ghost");
         let bootstrap = auth_context(None, true);
@@ -4909,8 +5693,10 @@ new file mode 100644\n\
             .await;
         assert!(!result.success);
         let err = result.error.unwrap();
-        assert!(err.contains("unknown shell client"), "{}", err);
+        assert!(err.contains("unknown_project"), "{}", err);
         assert!(err.contains("ghost"), "{}", err);
+        assert_eq!(result.output["error_kind"], "unknown_project");
+        assert_eq!(result.output["project"], agent_test_project_id("ghost"));
     }
 
     #[tokio::test]
@@ -5029,7 +5815,7 @@ new file mode 100644\n\
             )
             .await;
         assert!(!result.success);
-        assert!(result.error.unwrap().contains("projects.toml"));
+        assert!(result.error.unwrap().contains("unknown_project"));
     }
 
     // =========================================================================
@@ -7193,7 +7979,7 @@ new file mode 100644\n\
         assert!(!result.success);
         let err = result.error.unwrap();
         assert!(
-            err.contains("agent-registered") || err.contains("projects.toml"),
+            err.contains("agent-registered") || err.contains("unknown_project"),
             "should reject server-configured project: {}",
             err
         );

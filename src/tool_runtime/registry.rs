@@ -256,6 +256,17 @@ fn output_schema_for_tool(name: &str) -> Value {
                 nullable_schema("string", "Optional project associated with the task."),
             ),
             (
+                "project_input",
+                nullable_schema("string", "Original project input, when provided."),
+            ),
+            (
+                "resolved_project",
+                nullable_schema(
+                    "string",
+                    "Resolved full runtime project id, when a project was provided.",
+                ),
+            ),
+            (
                 "title",
                 nullable_schema("string", "Optional session title."),
             ),

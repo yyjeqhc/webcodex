@@ -324,7 +324,7 @@ impl ToolRuntime {
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(command_rejected_message(
-                e,
+                e.to_message(),
                 "verify the project id with list_projects, then retry with a registered project.",
             )),
         };

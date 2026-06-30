@@ -1637,10 +1637,10 @@ mod tests {
         assert_eq!(value["id"], 14);
         assert_eq!(value["result"]["isError"], true);
         assert_eq!(value["result"]["structuredContent"]["success"], false);
-        assert!(value["result"]["structuredContent"]["error"]
-            .as_str()
-            .unwrap_or("")
-            .contains("unknown shell client"));
+        assert_eq!(
+            value["result"]["structuredContent"]["output"]["error_kind"],
+            "unknown_project"
+        );
     }
 
     #[tokio::test]

@@ -141,6 +141,35 @@ fn output_schema_for_tool(name: &str) -> Value {
                 "stderr_truncated",
                 schema_type("boolean", "Whether stderr_tail was truncated."),
             ),
+            (
+                "command_started",
+                schema_type("boolean", "Whether the command process was started."),
+            ),
+            (
+                "command_completed",
+                schema_type(
+                    "boolean",
+                    "Whether the command reached a terminal result before tool timeout.",
+                ),
+            ),
+            (
+                "command_ok",
+                schema_type("boolean", "Whether the command completed with exit code 0."),
+            ),
+            (
+                "failure_kind",
+                nullable_schema(
+                    "string",
+                    "Structured failure kind such as command_exit_nonzero, timeout, agent_offline, spawn_failed, permission_denied, tool_schema_error, or runtime_error.",
+                ),
+            ),
+            (
+                "tool_failure",
+                schema_type(
+                    "boolean",
+                    "True for WebCodex tool/runtime failures; false for command exit status failures.",
+                ),
+            ),
         ]),
         "run_job" | "run_codex" => wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),
@@ -309,9 +338,24 @@ fn output_schema_for_tool(name: &str) -> Value {
                 "start_line",
                 schema_type("integer", "1-based starting line."),
             ),
+            ("limit", schema_type("integer", "Maximum requested line count.")),
             (
                 "total_lines",
                 schema_type("integer", "Total line count, when available."),
+            ),
+            (
+                "numbered_text",
+                schema_type(
+                    "string",
+                    "Optional line-numbered content when with_line_numbers=true.",
+                ),
+            ),
+            (
+                "lines",
+                array_schema(
+                    open_object_schema("Line object with 1-based line and text fields."),
+                    "Optional structured lines when with_line_numbers=true.",
+                ),
             ),
         ]),
         "read_project_artifact" => wrapped_output_schema(vec![
@@ -347,6 +391,37 @@ fn output_schema_for_tool(name: &str) -> Value {
             (
                 "truncated",
                 schema_type("boolean", "True when more bytes remain after this chunk."),
+            ),
+        ]),
+        "search_project_text" => wrapped_output_schema(vec![
+            ("project", schema_type("string", "Resolved project id.")),
+            ("pattern", schema_type("string", "Search pattern.")),
+            ("path", schema_type("string", "Project-relative search root.")),
+            (
+                "matches",
+                array_schema(
+                    open_object_schema(
+                        "Search match with path, 1-based line, preview, and optional context lines.",
+                    ),
+                    "Bounded search matches.",
+                ),
+            ),
+            ("count", schema_type("integer", "Returned match count.")),
+            (
+                "truncated",
+                schema_type("boolean", "Whether more matches were available."),
+            ),
+            (
+                "exit_code",
+                nullable_schema("integer", "Search command exit code, when available."),
+            ),
+            (
+                "context_before",
+                schema_type("integer", "Effective context lines before each match."),
+            ),
+            (
+                "context_after",
+                schema_type("integer", "Effective context lines after each match."),
             ),
         ]),
         "git_status" | "git_diff" => wrapped_output_schema(vec![
@@ -889,6 +964,18 @@ impl ToolRuntime {
                         "Maximum number of matches to return.",
                         false,
                     ),
+                    (
+                        "context_before",
+                        "integer",
+                        "Optional number of context lines before each match (clamped to 20).",
+                        false,
+                    ),
+                    (
+                        "context_after",
+                        "integer",
+                        "Optional number of context lines after each match (clamped to 20).",
+                        false,
+                    ),
                 ]),
                 output_schema: output_schema_for_tool("search_project_text"),
                 annotations: tool_annotations("search_project_text"),
@@ -968,6 +1055,12 @@ impl ToolRuntime {
                     ("path", "string", "Project-relative file path.", true),
                     ("start_line", "integer", "1-based line offset.", false),
                     ("limit", "integer", "Maximum line count.", false),
+                    (
+                        "with_line_numbers",
+                        "boolean",
+                        "When true, include numbered_text and lines with 1-based line numbers.",
+                        false,
+                    ),
                 ]),
                 output_schema: output_schema_for_tool("read_file"),
                 annotations: tool_annotations("read_file"),

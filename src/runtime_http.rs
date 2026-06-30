@@ -77,6 +77,8 @@ struct ReadProjectFileRequest {
     pub start_line: Option<usize>,
     #[serde(default)]
     pub limit: Option<usize>,
+    #[serde(default)]
+    pub with_line_numbers: Option<bool>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -345,6 +347,10 @@ struct SearchProjectTextRequest {
     pub path: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
+    #[serde(default)]
+    pub context_before: Option<usize>,
+    #[serde(default)]
+    pub context_after: Option<usize>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -965,6 +971,7 @@ pub async fn projects_read_file(req: &mut Request, depot: &mut Depot, res: &mut 
                 path: body.path,
                 start_line: body.start_line,
                 limit: body.limit,
+                with_line_numbers: body.with_line_numbers,
             },
             auth.as_ref(),
         )
@@ -1612,6 +1619,8 @@ pub async fn projects_search_text(req: &mut Request, depot: &mut Depot, res: &mu
                 pattern: body.pattern,
                 path: body.path,
                 limit: body.limit,
+                context_before: body.context_before,
+                context_after: body.context_after,
             },
             auth.as_ref(),
         )

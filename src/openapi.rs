@@ -356,7 +356,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "readProjectFile",
                     "Read a project file",
-                    "Read-only. Reads a UTF-8 file from an agent-registered project. Paths are resolved by the owning agent within that project. Output is bounded; use start_line and limit for pagination. Safe dedicated alternative to callRuntimeTool for file inspection.",
+                    "Read-only. Reads a UTF-8 file from an agent-registered project. Paths are resolved by the owning agent within that project. Output is bounded; use start_line and limit for pagination. Set with_line_numbers=true to include 1-based numbered_text and lines for edit tools.",
                     "ReadProjectFileRequest",
                     "ToolResult",
                     json!({
@@ -373,7 +373,8 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "project": "webcodex",
                                 "path": "src/main.rs",
                                 "start_line": 1,
-                                "limit": 100
+                                "limit": 100,
+                                "with_line_numbers": true
                             }
                         }
                     })
@@ -466,7 +467,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "searchProjectText",
                     "Search project text",
-                    "Read-only bounded text search inside an agent-registered project. Each match carries a project-relative path, 1-based line number, and a preview line. Sensitive/build dirs (.git, target, node_modules) are excluded. Routes to the owning agent.",
+                    "Read-only bounded text search inside an agent-registered project. Each match carries a project-relative path, 1-based line number, and a preview line. Optional context_before/context_after add bounded 1-based context lines. Sensitive/build dirs (.git, target, node_modules) are excluded.",
                     "SearchProjectTextRequest",
                     "ToolResult",
                     json!({
@@ -475,7 +476,9 @@ pub(crate) fn build_openapi_spec() -> Value {
                             "value": {
                                 "project": "webcodex",
                                 "pattern": "fn main",
-                                "limit": 20
+                                "limit": 20,
+                                "context_before": 2,
+                                "context_after": 4
                             }
                         }
                     })
@@ -503,7 +506,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "runProjectShellCommand",
                     "Run a shell command in a project",
-                    "Runs a shell command in an agent-registered project through the owning agent and returns stdout, stderr, and exit_code. Executable with side effects; requires Bearer auth and the agent shell capability. Use for build/test/diagnostic commands.",
+                    "Runs a shell command in an agent-registered project and returns stdout, stderr, exit_code plus command_started/command_ok/failure_kind/tool_failure. Executable with side effects; requires Bearer auth and agent shell capability.",
                     "RunShellRequest",
                     "ToolResult",
                     json!({
@@ -1330,6 +1333,10 @@ fn schemas() -> Value {
                 "limit": {
                     "type": "integer",
                     "description": "Optional maximum line count (bounded server-side)."
+                },
+                "with_line_numbers": {
+                    "type": "boolean",
+                    "description": "Optional. When true, output includes numbered_text and lines with 1-based line numbers."
                 }
             }
         },
@@ -1598,6 +1605,14 @@ fn schemas() -> Value {
                 "limit": {
                     "type": "integer",
                     "description": "Optional maximum number of matches to return."
+                },
+                "context_before": {
+                    "type": "integer",
+                    "description": "Optional context lines before each match; clamped server-side to 20."
+                },
+                "context_after": {
+                    "type": "integer",
+                    "description": "Optional context lines after each match; clamped server-side to 20."
                 }
             }
         },
@@ -1636,7 +1651,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["project", "command"],
-            "description": "Run a shell command in an agent-registered project. Executable with side effects; requires the agent shell capability.",
+            "description": "Run a shell command in an agent-registered project. Executable with side effects; result output includes command_started, command_ok, failure_kind, and tool_failure semantics.",
             "properties": {
                 "project": {
                     "type": "string",
@@ -2462,6 +2477,32 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn openapi_file_search_shell_schemas_include_ergonomics_fields() {
+        let spec = build_openapi_spec();
+        let schemas = &spec["components"]["schemas"];
+        let read_props = schemas["ReadProjectFileRequest"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(read_props.contains_key("with_line_numbers"));
+
+        let search_props = schemas["SearchProjectTextRequest"]["properties"]
+            .as_object()
+            .unwrap();
+        assert!(search_props.contains_key("context_before"));
+        assert!(search_props.contains_key("context_after"));
+
+        let run_shell_description = schemas["RunShellRequest"]["description"]
+            .as_str()
+            .unwrap_or("");
+        assert!(run_shell_description.contains("shell command"));
+        let op_description = spec["paths"]["/api/projects/run_shell"]["post"]["description"]
+            .as_str()
+            .unwrap_or("");
+        assert!(op_description.contains("failure_kind"));
+        assert!(op_description.contains("tool_failure"));
     }
 
     #[test]

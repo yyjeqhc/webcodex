@@ -13,48 +13,80 @@ use super::types::ToolResult;
 use super::ToolRuntime;
 use crate::shell_protocol::{ShellFileOpRequest, ShellRunRequest};
 
+#[cfg(test)]
 pub(crate) fn read_file_content_result(
     content: String,
     start_line: Option<usize>,
     limit: Option<usize>,
+) -> ToolResult {
+    read_file_content_result_with_options(content, start_line, limit, false)
+}
+
+pub(crate) fn read_file_content_result_with_options(
+    content: String,
+    start_line: Option<usize>,
+    limit: Option<usize>,
+    with_line_numbers: bool,
 ) -> ToolResult {
     let all_lines: Vec<&str> = content.lines().collect();
     let total_lines = all_lines.len();
     let eff_start = start_line.unwrap_or(1).max(1);
     let eff_limit = limit.unwrap_or(2000).clamp(1, 2000);
     if eff_start > total_lines {
-        return ToolResult::ok(json!({
+        let mut output = json!({
             "content": "",
             "total_lines": total_lines,
             "start_line": eff_start,
             "limit": eff_limit,
-        }));
+        });
+        if with_line_numbers {
+            add_line_number_fields(&mut output, eff_start, &Vec::<&str>::new());
+        }
+        return ToolResult::ok(output);
     }
     let start_idx = eff_start - 1;
     let end_idx = (start_idx + eff_limit).min(total_lines);
-    let slice = all_lines[start_idx..end_idx].join("\n");
-    ToolResult::ok(json!({
+    let selected_lines = &all_lines[start_idx..end_idx];
+    let slice = selected_lines.join("\n");
+    let mut output = json!({
         "content": slice,
         "total_lines": total_lines,
         "start_line": eff_start,
         "limit": eff_limit,
-    }))
+    });
+    if with_line_numbers {
+        add_line_number_fields(&mut output, eff_start, selected_lines);
+    }
+    ToolResult::ok(output)
 }
 
+#[cfg(test)]
 pub(crate) fn read_file_agent_stdout_result(
     stdout: String,
     start_line: Option<usize>,
     limit: Option<usize>,
 ) -> ToolResult {
+    read_file_agent_stdout_result_with_options(stdout, start_line, limit, false)
+}
+
+pub(crate) fn read_file_agent_stdout_result_with_options(
+    stdout: String,
+    start_line: Option<usize>,
+    limit: Option<usize>,
+    with_line_numbers: bool,
+) -> ToolResult {
     let trimmed = stdout.trim();
-    if let Ok(value) = serde_json::from_str::<Value>(trimmed) {
+    if let Ok(mut value) = serde_json::from_str::<Value>(trimmed) {
         if value.get("format").and_then(|format| format.as_str())
             == Some("webcodex.file_read_range.v1")
         {
+            if with_line_numbers {
+                add_agent_read_file_line_number_fields(&mut value, start_line, limit);
+            }
             return ToolResult::ok(value);
         }
     }
-    read_file_content_result(stdout, start_line, limit)
+    read_file_content_result_with_options(stdout, start_line, limit, with_line_numbers)
 }
 
 pub(crate) fn effective_read_file_range(
@@ -65,6 +97,84 @@ pub(crate) fn effective_read_file_range(
     let eff_limit = limit.unwrap_or(2000).clamp(1, 2000);
     let eff_end = eff_start.saturating_add(eff_limit).saturating_sub(1);
     (eff_start, eff_limit, eff_end)
+}
+
+fn add_line_number_fields<T: AsRef<str>>(output: &mut Value, start_line: usize, texts: &[T]) {
+    let lines: Vec<Value> = texts
+        .iter()
+        .enumerate()
+        .map(|(idx, text)| {
+            json!({
+                "line": start_line.saturating_add(idx),
+                "text": text.as_ref(),
+            })
+        })
+        .collect();
+    let numbered_text = texts
+        .iter()
+        .enumerate()
+        .map(|(idx, text)| format!("{} | {}", start_line.saturating_add(idx), text.as_ref()))
+        .collect::<Vec<_>>()
+        .join("\n");
+    if let Some(obj) = output.as_object_mut() {
+        obj.insert("numbered_text".to_string(), Value::String(numbered_text));
+        obj.insert("lines".to_string(), Value::Array(lines));
+    }
+}
+
+fn add_agent_read_file_line_number_fields(
+    output: &mut Value,
+    request_start_line: Option<usize>,
+    request_limit: Option<usize>,
+) {
+    let content = output
+        .get("content")
+        .and_then(|content| content.as_str())
+        .unwrap_or("");
+    let start_line = output
+        .get("start_line")
+        .and_then(|line| line.as_u64())
+        .and_then(|line| usize::try_from(line).ok())
+        .or(request_start_line)
+        .unwrap_or(1)
+        .max(1);
+    let limit = output
+        .get("limit")
+        .and_then(|limit| limit.as_u64())
+        .and_then(|limit| usize::try_from(limit).ok())
+        .or(request_limit)
+        .unwrap_or(2000)
+        .clamp(1, 2000);
+    let selected_count = output
+        .get("total_lines")
+        .and_then(|total| total.as_u64())
+        .and_then(|total| usize::try_from(total).ok())
+        .map(|total_lines| {
+            if start_line > total_lines {
+                0
+            } else {
+                total_lines
+                    .saturating_sub(start_line)
+                    .saturating_add(1)
+                    .min(limit)
+            }
+        });
+    let texts = line_texts_from_content(content, selected_count);
+    add_line_number_fields(output, start_line, &texts);
+}
+
+fn line_texts_from_content(content: &str, selected_count: Option<usize>) -> Vec<String> {
+    match selected_count {
+        Some(0) => Vec::new(),
+        Some(count) => {
+            let mut texts: Vec<String> = content.split('\n').map(str::to_string).collect();
+            texts.resize(count, String::new());
+            texts.truncate(count);
+            texts
+        }
+        None if content.is_empty() => Vec::new(),
+        None => content.lines().map(str::to_string).collect(),
+    }
 }
 
 // =============================================================================
@@ -142,6 +252,95 @@ pub(crate) fn search_project_text_command(
     )
 }
 
+pub(crate) const MAX_SEARCH_CONTEXT_LINES: usize = 20;
+
+const SEARCH_PROJECT_TEXT_CONTEXT_HELPER: &str = r#"
+import json
+import os
+import sys
+
+pattern = sys.argv[1]
+root_arg = sys.argv[2]
+max_matches = int(sys.argv[3])
+context_before = int(sys.argv[4])
+context_after = int(sys.argv[5])
+excluded_dirs = {'.git', 'target', 'node_modules'}
+
+def emit(obj):
+    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\n')
+
+def iter_files(root):
+    if os.path.isfile(root):
+        yield root
+        return
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in excluded_dirs)
+        for filename in sorted(filenames):
+            yield os.path.join(dirpath, filename)
+
+matches = 0
+truncated = False
+for path in iter_files(root_arg):
+    rel = os.path.relpath(path, '.')
+    try:
+        with open(path, 'r', encoding='utf-8') as f:
+            lines = f.read().splitlines()
+    except (UnicodeDecodeError, OSError):
+        continue
+    for idx, text in enumerate(lines):
+        if pattern not in text:
+            continue
+        if matches >= max_matches:
+            truncated = True
+            emit({'truncated': True})
+            sys.exit(0)
+        before_start = max(0, idx - context_before)
+        after_end = min(len(lines), idx + context_after + 1)
+        emit({
+            'path': rel[2:] if rel.startswith('./') else rel,
+            'line': idx + 1,
+            'preview': text,
+            'context_before': [
+                {'line': n + 1, 'text': lines[n]}
+                for n in range(before_start, idx)
+            ],
+            'context_after': [
+                {'line': n + 1, 'text': lines[n]}
+                for n in range(idx + 1, after_end)
+            ],
+        })
+        matches += 1
+emit({'truncated': truncated})
+"#;
+
+pub(crate) fn effective_search_context(
+    context_before: Option<usize>,
+    context_after: Option<usize>,
+) -> (usize, usize) {
+    (
+        context_before.unwrap_or(0).min(MAX_SEARCH_CONTEXT_LINES),
+        context_after.unwrap_or(0).min(MAX_SEARCH_CONTEXT_LINES),
+    )
+}
+
+pub(crate) fn search_project_text_context_command(
+    pattern: &str,
+    rel_path: &str,
+    max_matches: usize,
+    context_before: usize,
+    context_after: usize,
+) -> String {
+    format!(
+        "python3 -c {helper} {pattern} {target} {max_matches} {before} {after}",
+        helper = shell_escape_simple(SEARCH_PROJECT_TEXT_CONTEXT_HELPER),
+        pattern = shell_escape_simple(pattern),
+        target = shell_escape_simple(rel_path),
+        max_matches = max_matches,
+        before = context_before,
+        after = context_after,
+    )
+}
+
 /// Parse `grep -rnI` output lines (`path:lineno:content`) into bounded match
 /// objects. Strips a leading `./` so paths are project-relative. Returns the
 /// matches and whether the source exceeded `max_matches`.
@@ -170,6 +369,66 @@ pub(crate) fn parse_search_matches(stdout: &str, max_matches: usize) -> (Vec<Val
         }));
     }
     (matches, truncated)
+}
+
+pub(crate) fn parse_search_context_matches(stdout: &str, max_matches: usize) -> (Vec<Value>, bool) {
+    let mut matches: Vec<Value> = Vec::new();
+    let mut truncated = false;
+    for line in stdout.lines() {
+        let Ok(value) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        if value
+            .get("truncated")
+            .and_then(|truncated| truncated.as_bool())
+            .unwrap_or(false)
+        {
+            truncated = true;
+            break;
+        }
+        if matches.len() >= max_matches {
+            truncated = true;
+            break;
+        }
+        let Some(path) = value.get("path").and_then(|path| path.as_str()) else {
+            continue;
+        };
+        let Some(line_no) = value.get("line").and_then(|line| line.as_u64()) else {
+            continue;
+        };
+        let Some(preview) = value.get("preview").and_then(|preview| preview.as_str()) else {
+            continue;
+        };
+        let context_before = parse_context_lines(value.get("context_before"));
+        let context_after = parse_context_lines(value.get("context_after"));
+        matches.push(json!({
+            "path": path,
+            "line": line_no,
+            "preview": preview,
+            "context_before": context_before,
+            "context_after": context_after,
+        }));
+    }
+    (matches, truncated)
+}
+
+fn parse_context_lines(value: Option<&Value>) -> Vec<Value> {
+    value
+        .and_then(|value| value.as_array())
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(|item| {
+                    let line_no = item.get("line").and_then(|line| line.as_u64())?;
+                    let text = item.get("text").and_then(|text| text.as_str())?;
+                    Some(json!({
+                        "line": line_no,
+                        "text": text,
+                    }))
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Maximum accepted size for a single `replace_in_file` `old`/`new` field.
@@ -1747,7 +2006,9 @@ impl ToolRuntime {
         path: String,
         start_line: Option<usize>,
         limit: Option<usize>,
+        with_line_numbers: Option<bool>,
     ) -> ToolResult {
+        let with_line_numbers = with_line_numbers.unwrap_or(false);
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
@@ -1788,10 +2049,11 @@ impl ToolRuntime {
             };
             return match tokio::time::timeout(Duration::from_secs(wait_timeout + 2), rx).await {
                 Ok(Ok(resp)) if resp.exit_code == Some(0) && resp.error.is_none() => {
-                    read_file_agent_stdout_result(
+                    read_file_agent_stdout_result_with_options(
                         resp.stdout.unwrap_or_default(),
                         start_line,
                         limit,
+                        with_line_numbers,
                     )
                 }
                 Ok(Ok(resp)) => ToolResult::err(
@@ -1828,7 +2090,7 @@ impl ToolRuntime {
             Ok(c) => c,
             Err(e) => return ToolResult::err(format!("Failed to read file: {}", e)),
         };
-        read_file_content_result(content, start_line, limit)
+        read_file_content_result_with_options(content, start_line, limit, with_line_numbers)
     }
 
     // -------------------------------------------------------------------------
@@ -1977,6 +2239,8 @@ impl ToolRuntime {
         pattern: String,
         path: Option<String>,
         limit: Option<usize>,
+        context_before: Option<usize>,
+        context_after: Option<usize>,
     ) -> ToolResult {
         if pattern.trim().is_empty() {
             return ToolResult::err("pattern cannot be empty");
@@ -1996,7 +2260,20 @@ impl ToolRuntime {
             return ToolResult::err(e);
         }
         let max_matches = limit.unwrap_or(50).clamp(1, 200);
-        let cmd = search_project_text_command(&pattern, &rel_path, max_matches);
+        let (context_before, context_after) =
+            effective_search_context(context_before, context_after);
+        let include_context = context_before > 0 || context_after > 0;
+        let cmd = if include_context {
+            search_project_text_context_command(
+                &pattern,
+                &rel_path,
+                max_matches,
+                context_before,
+                context_after,
+            )
+        } else {
+            search_project_text_command(&pattern, &rel_path, max_matches)
+        };
         if proj.is_agent() {
             let client_id = match proj.agent_client_id() {
                 Ok(id) => id.to_string(),
@@ -2023,8 +2300,12 @@ impl ToolRuntime {
             return match tokio::time::timeout(Duration::from_secs(34), rx).await {
                 Ok(Ok(resp)) => {
                     let stdout = resp.stdout.unwrap_or_default();
-                    let (matches, truncated) = parse_search_matches(&stdout, max_matches);
-                    ToolResult::ok(json!({
+                    let (matches, truncated) = if include_context {
+                        parse_search_context_matches(&stdout, max_matches)
+                    } else {
+                        parse_search_matches(&stdout, max_matches)
+                    };
+                    let mut output = json!({
                         "project": project,
                         "pattern": pattern,
                         "path": rel_path,
@@ -2032,7 +2313,12 @@ impl ToolRuntime {
                         "count": matches.len(),
                         "truncated": truncated,
                         "exit_code": resp.exit_code,
-                    }))
+                    });
+                    if include_context {
+                        output["context_before"] = json!(context_before);
+                        output["context_after"] = json!(context_after);
+                    }
+                    ToolResult::ok(output)
                 }
                 Ok(Err(_)) => {
                     self.shell_clients.cancel_request(&req_id).await;
@@ -2048,8 +2334,12 @@ impl ToolRuntime {
         let result = tokio::task::spawn_blocking(move || run_command_sync(&cmd, &root, 30)).await;
         match result {
             Ok((exit_code, stdout, _stderr, _)) => {
-                let (matches, truncated) = parse_search_matches(&stdout, max_matches);
-                ToolResult::ok(json!({
+                let (matches, truncated) = if include_context {
+                    parse_search_context_matches(&stdout, max_matches)
+                } else {
+                    parse_search_matches(&stdout, max_matches)
+                };
+                let mut output = json!({
                     "project": project,
                     "pattern": pattern,
                     "path": rel_path,
@@ -2057,7 +2347,12 @@ impl ToolRuntime {
                     "count": matches.len(),
                     "truncated": truncated,
                     "exit_code": exit_code,
-                }))
+                });
+                if include_context {
+                    output["context_before"] = json!(context_before);
+                    output["context_after"] = json!(context_after);
+                }
+                ToolResult::ok(output)
             }
             Err(e) => ToolResult::err(format!("task join error: {}", e)),
         }
@@ -2120,6 +2415,19 @@ mod tests {
     }
 
     #[test]
+    fn read_file_default_behavior_has_no_line_number_fields() {
+        let result = read_file_content_result("one\ntwo\nthree".to_string(), Some(2), Some(1));
+
+        assert!(result.success);
+        assert_eq!(result.output["content"], "two");
+        assert_eq!(result.output["total_lines"], 3);
+        assert_eq!(result.output["start_line"], 2);
+        assert_eq!(result.output["limit"], 1);
+        assert!(result.output.get("numbered_text").is_none());
+        assert!(result.output.get("lines").is_none());
+    }
+
+    #[test]
     fn read_file_agent_stdout_json_is_returned_without_reslicing() {
         let result = read_file_agent_stdout_result(
             serde_json::json!({
@@ -2172,6 +2480,196 @@ mod tests {
         assert_eq!(result.output["total_lines"], 3);
         assert_eq!(result.output["start_line"], 2);
         assert_eq!(result.output["limit"], 1);
+        assert!(result.output.get("numbered_text").is_none());
+        assert!(result.output.get("lines").is_none());
+    }
+
+    #[test]
+    fn read_file_with_line_numbers_returns_numbered_text_and_lines() {
+        let result = read_file_content_result_with_options(
+            "alpha\nbeta\ngamma".to_string(),
+            None,
+            None,
+            true,
+        );
+
+        assert!(result.success);
+        assert_eq!(result.output["content"], "alpha\nbeta\ngamma");
+        assert_eq!(
+            result.output["numbered_text"],
+            "1 | alpha\n2 | beta\n3 | gamma"
+        );
+        assert_eq!(
+            result.output["lines"],
+            json!([
+                {"line": 1, "text": "alpha"},
+                {"line": 2, "text": "beta"},
+                {"line": 3, "text": "gamma"},
+            ])
+        );
+    }
+
+    #[test]
+    fn read_file_start_line_limit_with_line_numbers_uses_effective_range() {
+        let result = read_file_content_result_with_options(
+            "one\ntwo\nthree\nfour".to_string(),
+            Some(2),
+            Some(2),
+            true,
+        );
+
+        assert!(result.success);
+        assert_eq!(result.output["content"], "two\nthree");
+        assert_eq!(result.output["start_line"], 2);
+        assert_eq!(result.output["limit"], 2);
+        assert_eq!(result.output["numbered_text"], "2 | two\n3 | three");
+        assert_eq!(
+            result.output["lines"],
+            json!([
+                {"line": 2, "text": "two"},
+                {"line": 3, "text": "three"},
+            ])
+        );
+    }
+
+    #[test]
+    fn read_file_with_line_numbers_handles_eof_and_short_files() {
+        let result =
+            read_file_content_result_with_options("one\ntwo".to_string(), Some(5), Some(3), true);
+
+        assert!(result.success);
+        assert_eq!(result.output["content"], "");
+        assert_eq!(result.output["total_lines"], 2);
+        assert_eq!(result.output["start_line"], 5);
+        assert_eq!(result.output["limit"], 3);
+        assert_eq!(result.output["numbered_text"], "");
+        assert_eq!(result.output["lines"], json!([]));
+    }
+
+    #[test]
+    fn read_file_agent_stdout_json_with_line_numbers_preserves_empty_lines() {
+        let result = read_file_agent_stdout_result_with_options(
+            serde_json::json!({
+                "format": "webcodex.file_read_range.v1",
+                "content": "\nsecond",
+                "total_lines": 3,
+                "start_line": 1,
+                "limit": 2,
+            })
+            .to_string(),
+            Some(1),
+            Some(2),
+            true,
+        );
+
+        assert!(result.success);
+        assert_eq!(result.output["content"], "\nsecond");
+        assert_eq!(result.output["numbered_text"], "1 | \n2 | second");
+        assert_eq!(
+            result.output["lines"],
+            json!([
+                {"line": 1, "text": ""},
+                {"line": 2, "text": "second"},
+            ])
+        );
+    }
+
+    #[test]
+    fn parse_search_matches_default_output_has_no_context_fields() {
+        let (matches, truncated) = parse_search_matches("src/main.rs:42:fn main() {}\n", 10);
+
+        assert!(!truncated);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["path"], "src/main.rs");
+        assert_eq!(matches[0]["line"], 42);
+        assert_eq!(matches[0]["preview"], "fn main() {}");
+        assert!(matches[0].get("context_before").is_none());
+        assert!(matches[0].get("context_after").is_none());
+    }
+
+    #[test]
+    fn parse_search_context_matches_returns_context_line_numbers() {
+        let stdout = serde_json::json!({
+            "path": "src/lib.rs",
+            "line": 3,
+            "preview": "needle",
+            "context_before": [
+                {"line": 1, "text": "one"},
+                {"line": 2, "text": "two"}
+            ],
+            "context_after": [
+                {"line": 4, "text": "four"},
+                {"line": 5, "text": "five"}
+            ]
+        })
+        .to_string()
+            + "\n"
+            + &serde_json::json!({"truncated": false}).to_string()
+            + "\n";
+
+        let (matches, truncated) = parse_search_context_matches(&stdout, 10);
+
+        assert!(!truncated);
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0]["path"], "src/lib.rs");
+        assert_eq!(matches[0]["line"], 3);
+        assert_eq!(matches[0]["preview"], "needle");
+        assert_eq!(
+            matches[0]["context_before"],
+            json!([
+                {"line": 1, "text": "one"},
+                {"line": 2, "text": "two"},
+            ])
+        );
+        assert_eq!(
+            matches[0]["context_after"],
+            json!([
+                {"line": 4, "text": "four"},
+                {"line": 5, "text": "five"},
+            ])
+        );
+    }
+
+    #[test]
+    fn search_context_helper_bounds_file_start_and_end() {
+        let root = unique_temp_dir("search-context");
+        std::fs::write(
+            root.join("sample.txt"),
+            "needle-start\nmiddle\nneedle-end\n",
+        )
+        .expect("write sample");
+        let cmd = search_project_text_context_command("needle", ".", 10, 3, 3);
+        let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+
+        assert_eq!(exit_code, 0, "stderr: {stderr}");
+        let (matches, truncated) = parse_search_context_matches(&stdout, 10);
+        assert!(!truncated);
+        assert_eq!(matches.len(), 2);
+        assert_eq!(matches[0]["line"], 1);
+        assert_eq!(matches[0]["context_before"], json!([]));
+        assert_eq!(
+            matches[0]["context_after"],
+            json!([
+                {"line": 2, "text": "middle"},
+                {"line": 3, "text": "needle-end"},
+            ])
+        );
+        assert_eq!(matches[1]["line"], 3);
+        assert_eq!(
+            matches[1]["context_before"],
+            json!([
+                {"line": 1, "text": "needle-start"},
+                {"line": 2, "text": "middle"},
+            ])
+        );
+        assert_eq!(matches[1]["context_after"], json!([]));
+    }
+
+    #[test]
+    fn effective_search_context_clamps_values() {
+        assert_eq!(effective_search_context(None, None), (0, 0));
+        assert_eq!(effective_search_context(Some(3), Some(8)), (3, 8));
+        assert_eq!(effective_search_context(Some(21), Some(99)), (20, 20));
     }
 
     #[cfg(unix)]

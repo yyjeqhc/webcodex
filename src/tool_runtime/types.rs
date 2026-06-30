@@ -163,6 +163,8 @@ pub enum ToolCall {
         start_line: Option<usize>,
         #[serde(default)]
         limit: Option<usize>,
+        #[serde(default)]
+        with_line_numbers: Option<bool>,
     },
 
     /// Start an async background job (long-running commands, codex CLI, etc.).
@@ -225,6 +227,10 @@ pub enum ToolCall {
         path: Option<String>,
         #[serde(default)]
         limit: Option<usize>,
+        #[serde(default)]
+        context_before: Option<usize>,
+        #[serde(default)]
+        context_after: Option<usize>,
     },
 
     /// Read-only git diff summary for a project: `git status --porcelain`,

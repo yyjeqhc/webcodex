@@ -814,7 +814,11 @@ impl ToolRuntime {
                 path,
                 start_line,
                 limit,
-            } => self.read_file(project, path, start_line, limit).await,
+                with_line_numbers,
+            } => {
+                self.read_file(project, path, start_line, limit, with_line_numbers)
+                    .await
+            }
 
             ToolCall::RunJob {
                 project,
@@ -861,9 +865,18 @@ impl ToolRuntime {
                 pattern,
                 path,
                 limit,
+                context_before,
+                context_after,
             } => {
-                self.search_project_text(project, pattern, path, limit)
-                    .await
+                self.search_project_text(
+                    project,
+                    pattern,
+                    path,
+                    limit,
+                    context_before,
+                    context_after,
+                )
+                .await
             }
 
             ToolCall::GitDiffSummary { project } => self.git_diff_summary(project).await,
@@ -1530,6 +1543,34 @@ mod tests {
                 .unwrap();
         assert!(matches!(call, ToolCall::ReadFile { .. }));
 
+        let call = ToolCall::from_tool_name(
+            "read_file",
+            json!({
+                "project": "demo",
+                "path": "src/main.rs",
+                "start_line": 10,
+                "limit": 3,
+                "with_line_numbers": true
+            }),
+        )
+        .unwrap();
+        match call {
+            ToolCall::ReadFile {
+                project,
+                path,
+                start_line,
+                limit,
+                with_line_numbers,
+            } => {
+                assert_eq!(project, "demo");
+                assert_eq!(path, "src/main.rs");
+                assert_eq!(start_line, Some(10));
+                assert_eq!(limit, Some(3));
+                assert_eq!(with_line_numbers, Some(true));
+            }
+            other => panic!("expected ReadFile, got {:?}", other),
+        }
+
         let call = ToolCall::from_tool_name("git_status", json!({"project": "demo"})).unwrap();
         assert!(matches!(call, ToolCall::GitStatus { .. }));
 
@@ -1691,10 +1732,45 @@ mod tests {
                 .is_some_and(|props| props.contains_key(field))
         };
 
-        for field in ["duration_ms", "exit_code", "stdout", "stderr"] {
+        for field in [
+            "duration_ms",
+            "exit_code",
+            "stdout",
+            "stderr",
+            "command_started",
+            "command_completed",
+            "command_ok",
+            "failure_kind",
+            "tool_failure",
+        ] {
             assert!(
                 has_output_field("run_shell", field),
                 "run_shell missing {field}"
+            );
+        }
+        for field in [
+            "content",
+            "start_line",
+            "limit",
+            "total_lines",
+            "numbered_text",
+            "lines",
+        ] {
+            assert!(
+                has_output_field("read_file", field),
+                "read_file missing {field}"
+            );
+        }
+        for field in [
+            "matches",
+            "count",
+            "truncated",
+            "context_before",
+            "context_after",
+        ] {
+            assert!(
+                has_output_field("search_project_text", field),
+                "search_project_text missing {field}"
             );
         }
         for field in ["job_id", "kind", "status", "project"] {
@@ -1832,6 +1908,22 @@ mod tests {
         assert!(required.contains(&"command".to_string()));
         assert!(!required.contains(&"timeout_secs".to_string()));
         assert!(!required.contains(&"cwd".to_string()));
+
+        let read_file = specs.iter().find(|s| s.name == "read_file").unwrap();
+        let required = required_fields(read_file);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"path".to_string()));
+        assert!(!required.contains(&"with_line_numbers".to_string()));
+
+        let search_project_text = specs
+            .iter()
+            .find(|s| s.name == "search_project_text")
+            .unwrap();
+        let required = required_fields(search_project_text);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"pattern".to_string()));
+        assert!(!required.contains(&"context_before".to_string()));
+        assert!(!required.contains(&"context_after".to_string()));
     }
 
     #[test]
@@ -2770,7 +2862,25 @@ index 1111111..2222222 100644
         assert!(required.contains(&"pattern".to_string()));
         assert!(!required.contains(&"path".to_string()));
         assert!(!required.contains(&"limit".to_string()));
+        assert!(!required.contains(&"context_before".to_string()));
+        assert!(!required.contains(&"context_after".to_string()));
+        let props = spec.input_schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("context_before"));
+        assert!(props.contains_key("context_after"));
         assert!(spec.description.chars().count() <= 300);
+    }
+
+    #[test]
+    fn tool_specs_read_file_schema_includes_optional_line_numbers() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        let spec = spec_named(&specs, "read_file");
+        let required = required_fields(spec);
+        assert!(required.contains(&"project".to_string()));
+        assert!(required.contains(&"path".to_string()));
+        assert!(!required.contains(&"with_line_numbers".to_string()));
+        let props = spec.input_schema["properties"].as_object().unwrap();
+        assert!(props.contains_key("with_line_numbers"));
     }
 
     #[test]
@@ -3366,6 +3476,11 @@ index 1111111..2222222 100644
         assert_eq!(result.output["exit_code"], 7);
         assert_eq!(result.output["stdout_tail"], "run-shell-out");
         assert_eq!(result.output["stderr_tail"], "run-shell-err");
+        assert_eq!(result.output["command_started"], true);
+        assert_eq!(result.output["command_completed"], true);
+        assert_eq!(result.output["command_ok"], false);
+        assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
+        assert_eq!(result.output["tool_failure"], false);
     }
 
     #[tokio::test]
@@ -3384,6 +3499,109 @@ index 1111111..2222222 100644
         assert!(error.contains("No command was started"));
         assert!(error.contains("No files were modified"));
         assert!(error.contains("Retry guidance"));
+        assert_eq!(result.output["command_started"], false);
+        assert_eq!(result.output["command_completed"], false);
+        assert_eq!(result.output["command_ok"], false);
+        assert_eq!(result.output["failure_kind"], "agent_offline");
+        assert_eq!(result.output["tool_failure"], true);
+    }
+
+    #[tokio::test]
+    async fn run_shell_exit_zero_reports_structured_command_success() {
+        let runtime = runtime_with_agent_project("shell-ok");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "shell-ok", None, caps).await;
+        let project = agent_test_project_id("shell-ok");
+        let runtime_for_task = runtime.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .run_shell(
+                    project,
+                    "printf ok; printf err >&2".to_string(),
+                    Some(30),
+                    None,
+                )
+                .await
+        });
+        let req = next_patch_agent_request(&runtime, "shell-ok")
+            .await
+            .expect("run_shell should enqueue a shell command");
+        complete_patch_agent_request(&runtime, "shell-ok", &req.request_id, 0, "ok", "err").await;
+        let result = task.await.unwrap();
+
+        assert!(result.success, "{:?}", result.error);
+        assert_eq!(result.output["exit_code"], 0);
+        assert_eq!(result.output["stdout"], "ok");
+        assert_eq!(result.output["stderr"], "err");
+        assert_eq!(result.output["command_started"], true);
+        assert_eq!(result.output["command_completed"], true);
+        assert_eq!(result.output["command_ok"], true);
+        assert!(result.output["failure_kind"].is_null());
+        assert_eq!(result.output["tool_failure"], false);
+    }
+
+    #[tokio::test]
+    async fn run_shell_exit_seven_reports_structured_command_nonzero() {
+        let runtime = runtime_with_agent_project("shell-seven");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "shell-seven", None, caps).await;
+        let project = agent_test_project_id("shell-seven");
+        let runtime_for_task = runtime.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .run_shell(
+                    project,
+                    "printf out; printf err >&2; exit 7".to_string(),
+                    Some(30),
+                    None,
+                )
+                .await
+        });
+        let req = next_patch_agent_request(&runtime, "shell-seven")
+            .await
+            .expect("run_shell should enqueue a shell command");
+        complete_patch_agent_request(&runtime, "shell-seven", &req.request_id, 7, "out", "err")
+            .await;
+        let result = task.await.unwrap();
+
+        assert!(!result.success);
+        assert_eq!(result.output["command_started"], true);
+        assert_eq!(result.output["command_completed"], true);
+        assert_eq!(result.output["command_ok"], false);
+        assert_eq!(result.output["exit_code"], 7);
+        assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
+        assert_eq!(result.output["tool_failure"], false);
+        assert_eq!(result.output["stdout_tail"], "out");
+        assert_eq!(result.output["stderr_tail"], "err");
+    }
+
+    #[tokio::test]
+    async fn run_shell_timeout_reports_structured_timeout_failure_kind() {
+        let runtime = runtime_with_agent_project("shell-timeout");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = true;
+        register_agent(&runtime, "shell-timeout", None, caps).await;
+        let project = agent_test_project_id("shell-timeout");
+        let runtime_for_task = runtime.clone();
+        let task = tokio::spawn(async move {
+            runtime_for_task
+                .run_shell(project, "sleep 2".to_string(), Some(1), None)
+                .await
+        });
+        let _req = next_patch_agent_request(&runtime, "shell-timeout")
+            .await
+            .expect("run_shell should enqueue a shell command");
+        let result = task.await.unwrap();
+
+        assert!(!result.success);
+        assert_eq!(result.output["command_started"], true);
+        assert_eq!(result.output["command_completed"], false);
+        assert_eq!(result.output["command_ok"], false);
+        assert!(result.output["exit_code"].is_null());
+        assert_eq!(result.output["failure_kind"], "timeout");
+        assert_eq!(result.output["tool_failure"], true);
     }
 
     #[tokio::test]
@@ -4706,6 +4924,7 @@ new file mode 100644\n\
                             path: "README.md".to_string(),
                             start_line: None,
                             limit: None,
+                            with_line_numbers: None,
                         },
                         Some(&bootstrap),
                     )
@@ -4830,6 +5049,7 @@ new file mode 100644\n\
                     path: "README.md".to_string(),
                     start_line: None,
                     limit: None,
+                    with_line_numbers: None,
                 },
                 Some(&bootstrap),
             )
@@ -4854,6 +5074,7 @@ new file mode 100644\n\
                             path: "README.md".to_string(),
                             start_line: None,
                             limit: None,
+                            with_line_numbers: None,
                         },
                         Some(&bootstrap),
                     )
@@ -5624,6 +5845,7 @@ new file mode 100644\n\
                     path: "README.md".to_string(),
                     start_line: None,
                     limit: None,
+                    with_line_numbers: None,
                 },
                 Some(&bootstrap),
             )
@@ -6451,7 +6673,13 @@ new file mode 100644\n\
 
         let call = ToolCall::from_tool_name(
             "search_project_text",
-            json!({"project": "demo", "pattern": "fn main", "limit": 5}),
+            json!({
+                "project": "demo",
+                "pattern": "fn main",
+                "limit": 5,
+                "context_before": 3,
+                "context_after": 8
+            }),
         )
         .unwrap();
         match call {
@@ -6460,11 +6688,15 @@ new file mode 100644\n\
                 pattern,
                 path,
                 limit,
+                context_before,
+                context_after,
             } => {
                 assert_eq!(project, "demo");
                 assert_eq!(pattern, "fn main");
                 assert_eq!(path, None);
                 assert_eq!(limit, Some(5));
+                assert_eq!(context_before, Some(3));
+                assert_eq!(context_after, Some(8));
             }
             other => panic!("expected SearchProjectText, got {:?}", other),
         }
@@ -7041,6 +7273,8 @@ new file mode 100644\n\
                     pattern: "fn".to_string(),
                     path: None,
                     limit: None,
+                    context_before: None,
+                    context_after: None,
                 },
                 Some(&bootstrap),
             )
@@ -7182,6 +7416,8 @@ new file mode 100644\n\
                     pattern: "   ".to_string(),
                     path: None,
                     limit: None,
+                    context_before: None,
+                    context_after: None,
                 },
                 Some(&bootstrap),
             )
@@ -7212,6 +7448,8 @@ new file mode 100644\n\
                         pattern: "needle".to_string(),
                         path: Some(path.to_string()),
                         limit: None,
+                        context_before: None,
+                        context_after: None,
                     },
                     Some(&bootstrap),
                 )

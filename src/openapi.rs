@@ -2,6 +2,7 @@ use salvo::prelude::*;
 use serde_json::{json, Value};
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
+const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional wc_sess_* id returned by start_session. When provided, records this action in session_summary.";
 
 fn public_url() -> String {
     std::env::var("WEBCODEX_PUBLIC_URL")
@@ -1326,6 +1327,10 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Project-relative file path. Absolute paths and traversal (..) are rejected."
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
+                },
                 "start_line": {
                     "type": "integer",
                     "description": "Optional 1-based line offset for pagination."
@@ -1349,6 +1354,10 @@ fn schemas() -> Value {
                 "project": {
                     "type": "string",
                     "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 }
             }
         },
@@ -1366,6 +1375,10 @@ fn schemas() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Optional git diff arguments / path specs (e.g. [\"--stat\"] or [\"src/main.rs\"])."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 }
             }
         },
@@ -1382,6 +1395,10 @@ fn schemas() -> Value {
                 "patch": {
                     "type": "string",
                     "description": PATCH_FIELD_DESCRIPTION
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 }
             }
         },
@@ -1398,6 +1415,10 @@ fn schemas() -> Value {
                 "patch": {
                     "type": "string",
                     "description": PATCH_FIELD_DESCRIPTION
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 },
                 "deny_sensitive_paths": {
                     "type": "boolean",
@@ -1419,6 +1440,10 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": PATCH_FIELD_DESCRIPTION
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
+                },
                 "deny_sensitive_paths": {
                     "type": "boolean",
                     "description": "Optional. When true, sensitive-path warnings block the apply."
@@ -1439,6 +1464,10 @@ fn schemas() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Project-relative file paths to delete."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 }
             }
         },
@@ -1456,6 +1485,10 @@ fn schemas() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Project-relative tracked paths to restore."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 }
             }
         },
@@ -1473,6 +1506,10 @@ fn schemas() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Project-relative untracked paths to remove."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 }
             }
         },
@@ -1497,6 +1534,10 @@ fn schemas() -> Value {
                 "new": {
                     "type": "string",
                     "description": "Replacement string. May be empty to delete the match."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 },
                 "expected_replacements": {
                     "type": "integer",
@@ -1526,6 +1567,10 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Full UTF-8 file content to write."
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
+                },
                 "overwrite": {
                     "type": "boolean",
                     "description": "Optional. When true, allows overwriting an existing file (guarded by expected_sha256 / expected_content_prefix when set)."
@@ -1554,6 +1599,10 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Shell command to run asynchronously in the project directory."
                 },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
+                },
                 "timeout_secs": {
                     "type": "integer",
                     "description": "Optional maximum runtime in seconds."
@@ -1573,6 +1622,10 @@ fn schemas() -> Value {
                 "project": {
                     "type": "string",
                     "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 },
                 "path": {
                     "type": "string",
@@ -1597,6 +1650,10 @@ fn schemas() -> Value {
                 "pattern": {
                     "type": "string",
                     "description": "Text pattern to search for."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 },
                 "path": {
                     "type": "string",
@@ -1660,6 +1717,10 @@ fn schemas() -> Value {
                 "command": {
                     "type": "string",
                     "description": "Shell command to run in the project directory."
+                },
+                "session_id": {
+                    "type": "string",
+                    "description": SESSION_ID_FIELD_DESCRIPTION
                 },
                 "timeout_secs": {
                     "type": "integer",
@@ -2503,6 +2564,44 @@ mod tests {
             .unwrap_or("");
         assert!(op_description.contains("failure_kind"));
         assert!(op_description.contains("tool_failure"));
+    }
+
+    #[test]
+    fn openapi_dedicated_project_action_schemas_include_optional_session_id() {
+        let spec = build_openapi_spec();
+        let schemas = &spec["components"]["schemas"];
+        for name in [
+            "ReadProjectFileRequest",
+            "RunShellRequest",
+            "WriteProjectFileRequest",
+            "ProjectIdRequest",
+            "ProjectGitDiffRequest",
+            "SearchProjectTextRequest",
+            "ApplyPatchRequest",
+            "ApplyPatchCheckedRequest",
+            "ValidatePatchRequest",
+            "DeleteProjectFilesRequest",
+            "GitRestorePathsRequest",
+            "DiscardUntrackedRequest",
+            "ReplaceInFileRequest",
+            "StartProjectShellJobRequest",
+            "ListProjectFilesRequest",
+        ] {
+            let schema = &schemas[name];
+            assert!(
+                schema["properties"].get("session_id").is_some(),
+                "{name} missing optional session_id property"
+            );
+            assert_eq!(
+                schema["properties"]["session_id"]["description"], SESSION_ID_FIELD_DESCRIPTION,
+                "{name} session_id description should match dedicated action guidance"
+            );
+            let required = schema["required"].as_array().unwrap();
+            assert!(
+                !required.iter().any(|field| field == "session_id"),
+                "{name} must not require session_id"
+            );
+        }
     }
 
     #[test]

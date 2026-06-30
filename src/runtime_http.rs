@@ -67,12 +67,16 @@ struct JobStopRequest {
 #[derive(Debug, Deserialize)]
 struct ProjectIdRequest {
     pub project: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct ReadProjectFileRequest {
     pub project: String,
     pub path: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub start_line: Option<usize>,
     #[serde(default)]
@@ -85,6 +89,8 @@ struct ReadProjectFileRequest {
 struct ProjectGitDiffRequest {
     pub project: String,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub args: Option<Vec<String>>,
 }
 
@@ -92,6 +98,8 @@ struct ProjectGitDiffRequest {
 struct ApplyPatchRequest {
     pub project: String,
     pub patch: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// `POST /api/projects/validate_patch` — dedicated read-only GPT Action
@@ -104,6 +112,8 @@ struct ValidatePatchRequest {
     pub project: String,
     pub patch: String,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub deny_sensitive_paths: Option<bool>,
 }
 
@@ -111,6 +121,8 @@ struct ValidatePatchRequest {
 struct RunShellRequest {
     pub project: String,
     pub command: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub timeout_secs: Option<u64>,
     #[serde(default)]
@@ -122,6 +134,8 @@ struct ApplyPatchCheckedRequest {
     pub project: String,
     pub patch: String,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub deny_sensitive_paths: Option<bool>,
 }
 
@@ -129,18 +143,24 @@ struct ApplyPatchCheckedRequest {
 struct DeleteProjectFilesRequest {
     pub project: String,
     pub paths: Vec<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct GitRestorePathsRequest {
     pub project: String,
     pub paths: Vec<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 struct DiscardUntrackedRequest {
     pub project: String,
     pub paths: Vec<String>,
+    #[serde(default)]
+    pub session_id: Option<String>,
 }
 
 /// `POST /api/projects/replace_in_file` — thin REST wrapper over
@@ -154,6 +174,8 @@ struct ReplaceInFileRequest {
     pub path: String,
     pub old: String,
     pub new: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub expected_replacements: Option<i64>,
     #[serde(default)]
@@ -170,6 +192,8 @@ struct WriteProjectFileRequest {
     pub project: String,
     pub path: String,
     pub content: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub overwrite: Option<bool>,
     #[serde(default)]
@@ -259,6 +283,8 @@ fn mime_allowed_for_import(mime: &str, path: &str) -> bool {
 struct ListProjectFilesRequest {
     pub project: String,
     #[serde(default)]
+    pub session_id: Option<String>,
+    #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
     pub limit: Option<usize>,
@@ -343,6 +369,8 @@ async fn read_bounded_download(
 struct SearchProjectTextRequest {
     pub project: String,
     pub pattern: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
@@ -971,7 +999,7 @@ pub async fn projects_read_file(req: &mut Request, depot: &mut Depot, res: &mut 
             ToolCall::ReadFile {
                 project: body.project,
                 path: body.path,
-                session_id: None,
+                session_id: body.session_id,
                 start_line: body.start_line,
                 limit: body.limit,
                 with_line_numbers: body.with_line_numbers,
@@ -1015,7 +1043,7 @@ pub async fn projects_git_status(req: &mut Request, depot: &mut Depot, res: &mut
         .dispatch_with_auth(
             ToolCall::GitStatus {
                 project: body.project,
-                session_id: None,
+                session_id: body.session_id,
             },
             auth.as_ref(),
         )
@@ -1053,7 +1081,7 @@ pub async fn projects_git_diff(req: &mut Request, depot: &mut Depot, res: &mut R
         .dispatch_with_auth(
             ToolCall::GitDiff {
                 project: body.project,
-                session_id: None,
+                session_id: body.session_id,
                 args: body.args,
             },
             auth.as_ref(),
@@ -1094,7 +1122,7 @@ pub async fn projects_apply_patch(req: &mut Request, depot: &mut Depot, res: &mu
             ToolCall::ApplyPatch {
                 project: body.project,
                 patch: body.patch,
-                session_id: None,
+                session_id: body.session_id,
             },
             auth.as_ref(),
         )
@@ -1140,7 +1168,7 @@ pub async fn projects_validate_patch(req: &mut Request, depot: &mut Depot, res: 
             ToolCall::ValidatePatch {
                 project: body.project,
                 patch: body.patch,
-                session_id: None,
+                session_id: body.session_id,
                 deny_sensitive_paths: body.deny_sensitive_paths,
             },
             auth.as_ref(),
@@ -1192,7 +1220,7 @@ pub async fn projects_apply_patch_checked(
             ToolCall::ApplyPatchChecked {
                 project: body.project,
                 patch: body.patch,
-                session_id: None,
+                session_id: body.session_id,
                 deny_sensitive_paths: body.deny_sensitive_paths,
             },
             auth.as_ref(),
@@ -1239,7 +1267,7 @@ pub async fn projects_delete_files(req: &mut Request, depot: &mut Depot, res: &m
             ToolCall::DeleteProjectFiles {
                 project: body.project,
                 paths: body.paths,
-                session_id: None,
+                session_id: body.session_id,
             },
             auth.as_ref(),
         )
@@ -1285,7 +1313,7 @@ pub async fn projects_git_restore_paths(req: &mut Request, depot: &mut Depot, re
             ToolCall::GitRestorePaths {
                 project: body.project,
                 paths: body.paths,
-                session_id: None,
+                session_id: body.session_id,
             },
             auth.as_ref(),
         )
@@ -1331,7 +1359,7 @@ pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, re
             ToolCall::DiscardUntracked {
                 project: body.project,
                 paths: body.paths,
-                session_id: None,
+                session_id: body.session_id,
             },
             auth.as_ref(),
         )
@@ -1376,7 +1404,7 @@ pub async fn projects_replace_in_file(req: &mut Request, depot: &mut Depot, res:
                 path: body.path,
                 old: body.old,
                 new: body.new,
-                session_id: None,
+                session_id: body.session_id,
                 expected_replacements: body.expected_replacements,
                 allow_multiple: body.allow_multiple,
             },
@@ -1421,7 +1449,7 @@ pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut
                 project: body.project,
                 path: body.path,
                 content: body.content,
-                session_id: None,
+                session_id: body.session_id,
                 overwrite: body.overwrite,
                 expected_sha256: body.expected_sha256,
                 expected_content_prefix: body.expected_content_prefix,
@@ -1443,6 +1471,8 @@ pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut
 struct StartProjectShellJobRequest {
     pub project: String,
     pub command: String,
+    #[serde(default)]
+    pub session_id: Option<String>,
     #[serde(default)]
     pub timeout_secs: Option<i64>,
     #[serde(default)]
@@ -1482,7 +1512,7 @@ pub async fn projects_run_job(req: &mut Request, depot: &mut Depot, res: &mut Re
             ToolCall::RunJob {
                 project: body.project,
                 command: body.command,
-                session_id: None,
+                session_id: body.session_id,
                 timeout_secs: body.timeout_secs,
                 cwd: body.cwd,
             },
@@ -1529,7 +1559,7 @@ pub async fn projects_run_shell(req: &mut Request, depot: &mut Depot, res: &mut 
             ToolCall::RunShell {
                 project: body.project,
                 command: body.command,
-                session_id: None,
+                session_id: body.session_id,
                 timeout_secs: body.timeout_secs,
                 cwd: body.cwd,
             },
@@ -1593,7 +1623,7 @@ pub async fn projects_list_files(req: &mut Request, depot: &mut Depot, res: &mut
         .dispatch_with_auth(
             ToolCall::ListProjectFiles {
                 project: body.project,
-                session_id: None,
+                session_id: body.session_id,
                 path: body.path,
                 limit: body.limit,
             },
@@ -1633,7 +1663,7 @@ pub async fn projects_search_text(req: &mut Request, depot: &mut Depot, res: &mu
             ToolCall::SearchProjectText {
                 project: body.project,
                 pattern: body.pattern,
-                session_id: None,
+                session_id: body.session_id,
                 path: body.path,
                 limit: body.limit,
                 context_before: body.context_before,
@@ -1679,7 +1709,7 @@ pub async fn projects_git_diff_summary(req: &mut Request, depot: &mut Depot, res
         .dispatch_with_auth(
             ToolCall::GitDiffSummary {
                 project: body.project,
-                session_id: None,
+                session_id: body.session_id,
             },
             auth.as_ref(),
         )
@@ -2142,8 +2172,9 @@ mod tests {
         Service::new(build_projects_router(config, db, runtime))
     }
 
-    async fn register_import_agent(
+    async fn register_import_agent_with_capabilities(
         root: &std::path::Path,
+        capabilities: Option<crate::shell_protocol::ShellClientCapabilities>,
     ) -> (Arc<ToolRuntime>, Arc<ShellClientRegistry>) {
         use crate::shell_protocol::{ShellAgentProjectSummary, ShellClientRegisterRequest};
         let registry = Arc::new(ShellClientRegistry::default());
@@ -2154,7 +2185,7 @@ mod tests {
                 display_name: None,
                 owner: None,
                 hostname: None,
-                capabilities: None,
+                capabilities,
                 projects: Some(vec![ShellAgentProjectSummary {
                     id: "demo".to_string(),
                     name: Some("Demo".to_string()),
@@ -2185,6 +2216,48 @@ mod tests {
             Arc::new(crate::tool_runtime::RuntimeInfo::default()),
         ));
         (runtime, registry)
+    }
+
+    async fn register_import_agent(
+        root: &std::path::Path,
+    ) -> (Arc<ToolRuntime>, Arc<ShellClientRegistry>) {
+        register_import_agent_with_capabilities(root, None).await
+    }
+
+    async fn complete_one_agent_request(
+        registry: Arc<ShellClientRegistry>,
+        stdout: impl Into<String>,
+        stderr: impl Into<String>,
+        exit_code: i32,
+    ) {
+        use crate::shell_protocol::{ShellAgentPollRequest, ShellAgentResultRequest};
+        let request = loop {
+            if let Some(request) = registry
+                .poll(ShellAgentPollRequest {
+                    client_id: "importer".to_string(),
+                    agent_instance_id: "inst-import".to_string(),
+                    projects: None,
+                })
+                .await
+                .unwrap()
+            {
+                break request;
+            }
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        };
+        registry
+            .complete(ShellAgentResultRequest {
+                client_id: "importer".to_string(),
+                agent_instance_id: "inst-import".to_string(),
+                request_id: request.request_id,
+                exit_code: Some(exit_code),
+                stdout: Some(stdout.into()),
+                stderr: Some(stderr.into()),
+                duration_ms: Some(1),
+                error: None,
+            })
+            .await
+            .unwrap();
     }
 
     async fn complete_one_save_artifact_request(registry: Arc<ShellClientRegistry>) {
@@ -2527,6 +2600,94 @@ mod tests {
         assert!(body["error"].as_str().unwrap().contains("nope"));
     }
 
+    #[tokio::test]
+    async fn dedicated_read_project_file_with_session_id_records_event() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let mut caps = crate::shell_protocol::ShellClientCapabilities::default();
+        caps.file_read = true;
+        let (runtime, registry) =
+            register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "start_session",
+                "params": {"project": "agent:importer:demo", "title": "dedicated read"}
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+
+        let request = async {
+            TestClient::post("http://localhost/api/projects/read_file")
+                .bearer_auth("secret")
+                .json(&json!({
+                    "project": "agent:importer:demo",
+                    "path": "README.md",
+                    "session_id": session_id,
+                    "limit": 1
+                }))
+                .send(&service)
+                .await
+        };
+        let complete = complete_one_agent_request(registry.clone(), "secret read body\n", "", 0);
+        let (mut resp, _) = tokio::join!(request, complete);
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["output"]["session_recorded"], true);
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "session_summary", "params": {"session_id": session_id}}))
+            .send(&service)
+            .await;
+        let summary: Value = resp.take_json().await.unwrap();
+        assert_eq!(summary["output"]["counts"]["tool_calls"], 1);
+        assert!(summary["output"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["tool_name"] == "read_file" && event["status"] == "succeeded"));
+        let serialized = serde_json::to_string(&summary["output"]["events"]).unwrap();
+        assert!(
+            !serialized.contains("secret read body"),
+            "session event leaked read_file content: {serialized}"
+        );
+    }
+
+    #[tokio::test]
+    async fn dedicated_read_project_file_without_session_id_remains_compatible() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let mut caps = crate::shell_protocol::ShellClientCapabilities::default();
+        caps.file_read = true;
+        let (runtime, registry) =
+            register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let request = async {
+            TestClient::post("http://localhost/api/projects/read_file")
+                .bearer_auth("secret")
+                .json(&json!({"project": "agent:importer:demo", "path": "README.md"}))
+                .send(&service)
+                .await
+        };
+        let complete = complete_one_agent_request(registry.clone(), "hello\n", "", 0);
+        let (mut resp, _) = tokio::join!(request, complete);
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["output"]["content"], "hello");
+        assert!(body["output"].get("session_recorded").is_none());
+    }
+
     // =========================================================================
     // getProjectGitStatus
     // =========================================================================
@@ -2691,6 +2852,59 @@ mod tests {
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["success"], false);
         assert!(body["error"].as_str().unwrap().contains("unknown_project"));
+    }
+
+    #[tokio::test]
+    async fn dedicated_run_shell_with_session_id_records_event() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let caps = crate::shell_protocol::ShellClientCapabilities::default();
+        let (runtime, registry) =
+            register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "start_session", "params": {"project": "agent:importer:demo"}}))
+            .send(&service)
+            .await;
+        let start_body: Value = resp.take_json().await.unwrap();
+        let session_id = start_body["output"]["session_id"].as_str().unwrap();
+
+        let request = async {
+            TestClient::post("http://localhost/api/projects/run_shell")
+                .bearer_auth("secret")
+                .json(&json!({
+                    "project": "agent:importer:demo",
+                    "command": "echo hi",
+                    "session_id": session_id
+                }))
+                .send(&service)
+                .await
+        };
+        let complete = complete_one_agent_request(registry.clone(), "hi\n", "", 0);
+        let (mut resp, _) = tokio::join!(request, complete);
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["output"]["session_recorded"], true);
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "session_summary", "params": {"session_id": session_id}}))
+            .send(&service)
+            .await;
+        let summary: Value = resp.take_json().await.unwrap();
+        assert_eq!(summary["output"]["counts"]["tool_calls"], 1);
+        assert_eq!(summary["output"]["counts"]["shell_like"], 1);
+        assert!(summary["output"]["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|event| event["tool_name"] == "run_shell"
+                && event["status"] == "succeeded"
+                && event["exit_code"] == 0));
     }
 
     // =========================================================================
@@ -4132,6 +4346,49 @@ mod tests {
                 path
             );
         }
+    }
+
+    #[tokio::test]
+    async fn dedicated_write_project_file_unknown_session_fails_before_mutation() {
+        let config = test_config(Some("secret"));
+        let (_tmp, db) = test_db();
+        let tmp_proj = tempfile::tempdir().unwrap();
+        let caps = crate::shell_protocol::ShellClientCapabilities::default();
+        let (runtime, registry) =
+            register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
+        let service = Service::new(build_projects_router(config, db, runtime));
+
+        let mut resp = TestClient::post("http://localhost/api/projects/write_file")
+            .bearer_auth("secret")
+            .json(&json!({
+                "project": "agent:importer:demo",
+                "path": "should-not-exist.txt",
+                "content": "nope",
+                "session_id": "wc_sess_missing"
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert_eq!(body["output"]["error_kind"], "unknown_session_id");
+        assert_eq!(body["output"]["session_id"], "wc_sess_missing");
+        assert!(
+            !tmp_proj.path().join("should-not-exist.txt").exists(),
+            "write_file must fail before mutating for unknown session_id"
+        );
+        let polled = registry
+            .poll(crate::shell_protocol::ShellAgentPollRequest {
+                client_id: "importer".to_string(),
+                agent_instance_id: "inst-import".to_string(),
+                projects: None,
+            })
+            .await
+            .unwrap();
+        assert!(
+            polled.is_none(),
+            "unknown session_id should fail before enqueueing an agent write"
+        );
     }
 
     // =========================================================================

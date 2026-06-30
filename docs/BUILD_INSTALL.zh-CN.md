@@ -44,7 +44,7 @@ webcodex-cli
 npm install -g @yyjeqhc/webcodex
 ```
 
-v0.1.0 release artifacts 当前包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.1.0 不包含 `darwin-x64`、Windows 和其他 targets。
+v0.2.0 release artifacts 当前包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.2.0 不包含 `darwin-x64`、Windows 和其他 targets。
 
 npm package 是 native release artifacts 的 thin wrapper。安装时会下载匹配的 GitHub Release artifact，并使用 manifest 中的 SHA-256 checksum 验证。
 

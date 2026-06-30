@@ -25,7 +25,7 @@ webcodex-cli -h
 webcodex-agent -h
 ```
 
-v0.1.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. Windows and `darwin-x64` artifacts are not included in v0.1.0.
+v0.2.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. Windows and `darwin-x64` artifacts are not included in v0.2.0.
 
 ## 1. First server deployment
 

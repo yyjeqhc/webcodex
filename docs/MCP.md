@@ -97,7 +97,7 @@ restarts. To group MCP tool calls, pass the session id as reserved metadata in
   "name": "read_file",
   "arguments": {
     "_session_id": "wc_sess_example",
-    "project": "agent:special-container:webcodex",
+    "project": "agent:workstation:my-repo",
     "path": "src/mcp.rs",
     "start_line": 1,
     "limit": 20
@@ -126,7 +126,7 @@ Use agent-backed project ids such as:
 agent:<client_id>:<project_id>
 ```
 
-For example, the sg4 smoke test used `agent:ubuntu-client:webcodex`.
+For example, `agent:workstation:my-repo`.
 
 ## Example client configuration
 

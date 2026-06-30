@@ -87,7 +87,7 @@ The documented distribution path uses the npm thin installer/wrapper:
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
-Supported v0.1.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not included in v0.1.0 unless a later release adds artifacts.
+Supported v0.2.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not included in v0.2.0 unless a later release adds artifacts.
 
 
 Initialize the env file:

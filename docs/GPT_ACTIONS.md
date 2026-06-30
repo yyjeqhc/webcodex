@@ -154,7 +154,7 @@ Start a session through the generic Action:
 {
   "tool": "start_session",
   "params": {
-    "project": "agent:special-container:webcodex",
+    "project": "agent:workstation:my-repo",
     "title": "implement show_changes follow-up"
   }
 }
@@ -167,7 +167,7 @@ Pass the returned id as top-level metadata on later generic calls:
   "tool": "read_file",
   "session_id": "wc_sess_example",
   "params": {
-    "project": "agent:special-container:webcodex",
+    "project": "agent:workstation:my-repo",
     "path": "src/mcp.rs",
     "start_line": 1,
     "limit": 20
@@ -182,7 +182,7 @@ state and session activity are returned together:
 {
   "tool": "show_changes",
   "params": {
-    "project": "agent:special-container:webcodex",
+    "project": "agent:workstation:my-repo",
     "session_id": "wc_sess_example",
     "include_diff": false,
     "session_event_limit": 30

@@ -86,7 +86,7 @@ token、`userinfo_endpoint`、`client_credentials` grant、device code 流程，
 npm install -g @yyjeqhc/webcodex
 ```
 
-v0.1.0 release artifacts 当前包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.1.0 不包含 `darwin-x64`、Windows 和其他目标平台。
+v0.2.0 release artifacts 当前包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.2.0 不包含 `darwin-x64`、Windows 和其他目标平台。
 
 初始化 env 文件：
 

@@ -47,6 +47,8 @@ registered project directory
 - 已知目标行号时，优先使用 `replace_line_range`、`insert_at_line` 和 `delete_line_range` 做结构化源码编辑。
 - 在配置完成后，通过结构化 Cargo 工具运行 Rust 相关检查。
 - 在 agent 机器已经安装并认证 Codex CLI 时，可选启动 Codex CLI job。
+- 通过 `start_session`、`session_summary` 和 session-aware `show_changes` 跟踪任务会话。
+- 通过 `ToolMetadata` 和 `ToolKernel` 基础设施，在 REST 和 MCP 之间实现一致的 OAuth scope 检查和会话记录。
 - 区分管理员、账户开通、GPT/MCP token 和 agent token 的凭据边界。
 
 ## WebCodex 不是什么
@@ -66,8 +68,8 @@ registered project directory
 | 结构化行编辑 | 可用；已知目标行号时是推荐的局部源码编辑方式。 |
 | Git/file/patch/shell/Cargo tools | 可用；shell 执行应保持受限并限定在项目内。 |
 | Codex CLI job launcher | 可选；需要 agent 机器上已有 Codex CLI。 |
-| Release artifacts | v0.1.0 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。 |
-| Windows 和 `darwin-x64` binaries | v0.1.0 release artifacts 暂不包含。 |
+| Release artifacts | v0.2.0 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。 |
+| Windows 和 `darwin-x64` binaries | v0.2.0 release artifacts 暂不包含。 |
 
 ## 快速开始
 
@@ -227,6 +229,8 @@ WebCodex 暴露一个远程 MCP endpoint，背后使用与 GPT Actions 相同的
 
 ## 文档
 
+- Release notes：[docs/RELEASE_NOTES_v0.2.0.md](docs/RELEASE_NOTES_v0.2.0.md)
+- 运维指南：[docs/OPERATIONS.md](docs/OPERATIONS.md)
 - 安装与部署：[docs/DEPLOYMENT.zh-CN.md](docs/DEPLOYMENT.zh-CN.md) / [English](docs/DEPLOYMENT.md)
 - 创建 GPT Action：[docs/GPT_ACTIONS.zh-CN.md](docs/GPT_ACTIONS.zh-CN.md) / [English](docs/GPT_ACTIONS.md)
 - 快速开始：[docs/QUICK_START.zh-CN.md](docs/QUICK_START.zh-CN.md) / [English](docs/QUICK_START.md)

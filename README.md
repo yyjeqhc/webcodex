@@ -47,6 +47,8 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 - Prefer structured source edits with `replace_line_range`, `insert_at_line`, and `delete_line_range` when line numbers are known.
 - Run Rust-oriented checks through structured Cargo helpers when configured.
 - Optionally start Codex CLI jobs on an agent machine that already has Codex CLI installed and authenticated.
+- Track task sessions with `start_session`, `session_summary`, and session-aware `show_changes`.
+- Use `ToolMetadata` and `ToolKernel` foundation for consistent OAuth scope checks and session recording across REST and MCP.
 - Separate credentials for admins, account onboarding, GPT/MCP tokens, and agents.
 
 ## What WebCodex is not
@@ -66,8 +68,8 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 | Structured line edits | Working; preferred for scoped source edits with known line numbers. |
 | Git/file/patch/shell/Cargo tools | Working; shell execution should remain bounded and project-scoped. |
 | Codex CLI job launcher | Optional; requires Codex CLI on the agent machine. |
-| Release artifacts | v0.1.0 includes `linux-x64`, `linux-arm64`, and `darwin-arm64`. |
-| Windows and `darwin-x64` binaries | Not included in v0.1.0 release artifacts. |
+| Release artifacts | v0.2.0 includes `linux-x64`, `linux-arm64`, and `darwin-arm64`. |
+| Windows and `darwin-x64` binaries | Not included in v0.2.0 release artifacts. |
 
 ## Quick start
 
@@ -198,7 +200,7 @@ GPT Actions are one of the main reasons to use WebCodex: your GPT gets a structu
 3. Import the OpenAPI schema from `https://your-domain.example/openapi.json`.
 4. Configure authentication as Bearer/API key in the GPT Action settings.
 5. Use a `wc_pat_xxx` personal API token. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
-6. Test `listRuntimeTools` and `callRuntimeTool` against a registered project such as `agent:alice-laptop:my-repo`.
+6. Test `listRuntimeTools` and `callRuntimeTool` against a registered project such as `agent:workstation:my-repo`.
 
 See [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) for the full GPT Action setup guide and supported tool surface.
 
@@ -227,6 +229,8 @@ The server stores only hashes for user-created PATs and agent tokens. See [docs/
 
 ## Documentation
 
+- Release notes: [docs/RELEASE_NOTES_v0.2.0.md](docs/RELEASE_NOTES_v0.2.0.md)
+- Operations guide: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - Install and deploy: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) / [简体中文](docs/DEPLOYMENT.zh-CN.md)
 - Create a GPT Action: [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) / [简体中文](docs/GPT_ACTIONS.zh-CN.md)
 - Quick start: [docs/QUICK_START.md](docs/QUICK_START.md) / [简体中文](docs/QUICK_START.zh-CN.md)

@@ -43,7 +43,7 @@ The documented distribution path uses the npm thin installer/wrapper:
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
-Supported v0.1.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not included in v0.1.0 unless a later release adds artifacts.
+Supported v0.2.0 release artifacts currently include `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not included in v0.2.0 unless a later release adds artifacts.
 
 
 The npm package is a thin wrapper around native release artifacts. During install it downloads the matching GitHub Release artifact and verifies the SHA-256 checksum from the manifest.
@@ -184,7 +184,7 @@ webcodex-cli doctor --strict \
   --agent-config /etc/webcodex/clients/special/agent.toml \
   --server-url https://your-domain.example \
   --user-token-file /etc/webcodex/clients/special/webcodex-user-token \
-  --project agent:oe:webcodex
+  --project agent:workstation:my-repo
 ```
 
 Doctor never prints `init_script` bodies, env values, or tokens. See

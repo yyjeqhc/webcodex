@@ -25,7 +25,7 @@ webcodex-cli -h
 webcodex-agent -h
 ```
 
-v0.1.0 release artifacts 当前包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。v0.1.0 暂不包含 Windows 和 `darwin-x64` artifacts。
+v0.2.0 release artifacts 当前包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。v0.2.0 暂不包含 Windows 和 `darwin-x64` artifacts。
 
 ## 1. 第一次部署服务器
 

@@ -55,6 +55,13 @@ The recommended flow is to issue a user account credential once, then have the u
 
 MCP and GPT Actions share the same `ToolRuntime`. A tool call made through MCP reaches the same runtime, agent registry, project ids, and safety boundaries as a GPT Action call.
 
+Runtime tool discovery includes annotations derived from `ToolMetadata`, a
+lightweight precursor to ToolKernel/ToolProvider. The metadata centralizes
+risk, OAuth scope, read-only/destructive/open-world hints, project requirement,
+and path hint facts without changing dispatch or tool behavior. Future external
+MCP providers must generate equivalent metadata before their tools can be
+listed or called.
+
 Typical MCP tools include:
 
 - Discovery, health, and task tracking: `list_tools`, `start_session`, `session_summary`, `runtime_status`, `list_projects`, `list_agents`.

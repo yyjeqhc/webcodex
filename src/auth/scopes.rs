@@ -6,6 +6,8 @@
 
 use std::collections::HashSet;
 
+use crate::tool_runtime::metadata::lookup_tool_metadata;
+
 // ---------------------------------------------------------------------------
 // Scope constants
 // ---------------------------------------------------------------------------
@@ -275,48 +277,10 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
 }
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
-    match tool_name {
-        "list_tools" | "start_session" | "session_summary" | "runtime_status" | "job_status"
-        | "job_log" | "list_jobs" | "job_tail" | "list_agents" => {
-            OAuthToolScopePolicy::Require(SCOPE_RUNTIME_READ)
-        }
-
-        "list_projects"
-        | "read_file"
-        | "read_project_artifact_metadata"
-        | "read_project_artifact"
-        | "list_project_files"
-        | "search_project_text"
-        | "git_status"
-        | "git_diff"
-        | "git_diff_summary"
-        | "git_diff_hunks"
-        | "show_changes"
-        | "validate_patch" => OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
-
-        "apply_patch"
-        | "apply_patch_checked"
-        | "delete_project_files"
-        | "git_restore_paths"
-        | "discard_untracked"
-        | "replace_in_file"
-        | "replace_exact_block"
-        | "insert_before_pattern"
-        | "insert_after_pattern"
-        | "write_project_file"
-        | "save_project_artifact"
-        | "replace_line_range"
-        | "insert_at_line"
-        | "delete_line_range"
-        | "register_project"
-        | "create_project" => OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
-
-        "run_shell" | "run_job" | "run_codex" | "cargo_fmt" | "cargo_check" | "cargo_test" => {
-            OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)
-        }
-
-        _ => OAuthToolScopePolicy::Unknown,
-    }
+    lookup_tool_metadata(tool_name)
+        .and_then(|metadata| metadata.oauth_scope)
+        .map(OAuthToolScopePolicy::Require)
+        .unwrap_or(OAuthToolScopePolicy::Unknown)
 }
 
 #[allow(dead_code)]
@@ -349,6 +313,8 @@ fn normalize_route_path(path: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::tool_runtime::metadata::lookup_tool_metadata;
+    use crate::tool_runtime::KNOWN_TOOL_NAMES;
 
     #[test]
     fn scopes_include_with_admin_wildcard() {
@@ -645,6 +611,40 @@ mod tests {
             ("cargo_test", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
         ] {
             assert_eq!(oauth_scope_policy_for_runtime_tool(tool), policy, "{tool}");
+        }
+    }
+
+    #[test]
+    fn oauth_route_policy_tool_scope_policy_matches_metadata_for_representative_tools() {
+        for tool in [
+            "list_tools",
+            "start_session",
+            "session_summary",
+            "show_changes",
+            "read_file",
+            "write_project_file",
+            "apply_patch_checked",
+            "run_shell",
+            "cargo_test",
+        ] {
+            let metadata = lookup_tool_metadata(tool).unwrap();
+            assert_eq!(
+                oauth_scope_policy_for_runtime_tool(tool),
+                OAuthToolScopePolicy::Require(metadata.oauth_scope.unwrap()),
+                "{tool}"
+            );
+        }
+    }
+
+    #[test]
+    fn oauth_route_policy_tool_scope_policy_covers_metadata_for_known_tools() {
+        for tool in KNOWN_TOOL_NAMES {
+            let metadata = lookup_tool_metadata(tool).unwrap();
+            assert_eq!(
+                oauth_scope_policy_for_runtime_tool(tool),
+                OAuthToolScopePolicy::Require(metadata.oauth_scope.unwrap()),
+                "{tool}"
+            );
         }
     }
 

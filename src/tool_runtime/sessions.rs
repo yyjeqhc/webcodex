@@ -1,3 +1,4 @@
+use super::metadata::{tool_metadata, ToolPathHint, ToolRisk};
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -332,69 +333,39 @@ pub(crate) fn extract_project(value: &Value) -> Option<String> {
 }
 
 pub(crate) fn risk_class_for_tool(tool_name: &str) -> &'static str {
-    match tool_name {
-        "read_file"
-        | "git_status"
-        | "git_diff"
-        | "git_diff_summary"
-        | "git_diff_hunks"
-        | "list_files"
-        | "list_project_files"
-        | "search"
-        | "search_project_text"
-        | "show_changes"
-        | "validate_patch"
-        | "list_tools"
-        | "list_projects"
-        | "list_agents"
-        | "runtime_status"
-        | "job_status"
-        | "job_log"
-        | "job_tail"
-        | "list_jobs"
-        | "read_project_artifact_metadata"
-        | "read_project_artifact"
-        | "start_session"
-        | "session_summary" => "read_only",
-        "write_project_file"
-        | "replace_line_range"
-        | "insert_at_line"
-        | "delete_line_range"
-        | "apply_patch"
-        | "apply_patch_checked"
-        | "delete_files"
-        | "delete_project_files"
-        | "replace_in_file"
-        | "replace_exact_block"
-        | "insert_before_pattern"
-        | "insert_after_pattern"
-        | "save_project_artifact"
-        | "git_restore_paths"
-        | "discard_untracked"
-        | "register_project"
-        | "create_project" => "project_write",
-        "run_shell" | "run_job" | "run_codex" | "cargo_fmt" | "cargo_check" | "cargo_test" => {
-            "job_run"
-        }
-        _ => "unknown",
-    }
+    tool_metadata(tool_name).risk.session_risk_class()
 }
 
 pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<String> {
-    if risk_class_for_tool(tool_name) != "project_write" {
+    let metadata = tool_metadata(tool_name);
+    if metadata.risk != ToolRisk::ProjectWrite {
         return Vec::new();
     }
     let Some(obj) = arguments.as_object() else {
         return Vec::new();
     };
     let mut paths = Vec::new();
-    if let Some(path) = obj.get("path").and_then(Value::as_str) {
-        push_path(&mut paths, path);
-    }
-    if let Some(values) = obj.get("paths").and_then(Value::as_array) {
-        for path in values.iter().filter_map(Value::as_str) {
-            push_path(&mut paths, path);
+    match metadata.path_hint {
+        ToolPathHint::SinglePath => {
+            if let Some(path) = obj.get("path").and_then(Value::as_str) {
+                push_path(&mut paths, path);
+            }
         }
+        ToolPathHint::PathList => {
+            if let Some(values) = obj.get("paths").and_then(Value::as_array) {
+                for path in values.iter().filter_map(Value::as_str) {
+                    push_path(&mut paths, path);
+                }
+            }
+        }
+        ToolPathHint::Artifact => {
+            for key in ["path", "output_path", "target_path"] {
+                if let Some(path) = obj.get(key).and_then(Value::as_str) {
+                    push_path(&mut paths, path);
+                }
+            }
+        }
+        ToolPathHint::Patch | ToolPathHint::None => {}
     }
     paths
 }
@@ -498,6 +469,56 @@ fn now_ts() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn session_risk_class_uses_metadata() {
+        for (tool, risk_class) in [
+            ("show_changes", "read_only"),
+            ("start_session", "read_only"),
+            ("write_project_file", "project_write"),
+            ("apply_patch_checked", "project_write"),
+            ("run_shell", "job_run"),
+            ("cargo_test", "job_run"),
+            ("definitely_not_a_tool", "unknown"),
+        ] {
+            assert_eq!(risk_class_for_tool(tool), risk_class, "{tool}");
+        }
+    }
+
+    #[test]
+    fn changed_paths_single_path_and_path_list_from_metadata() {
+        assert_eq!(
+            changed_paths_for_tool(
+                "write_project_file",
+                &json!({"project": "demo", "path": " src/lib.rs "}),
+            ),
+            vec!["src/lib.rs".to_string()]
+        );
+        assert_eq!(
+            changed_paths_for_tool(
+                "delete_project_files",
+                &json!({"project": "demo", "paths": ["src/lib.rs", "", "src/lib.rs", "README.md"]}),
+            ),
+            vec!["src/lib.rs".to_string(), "README.md".to_string()]
+        );
+        assert_eq!(
+            changed_paths_for_tool(
+                "save_project_artifact",
+                &json!({"project": "demo", "path": "out/image.png"}),
+            ),
+            vec!["out/image.png".to_string()]
+        );
+        assert!(changed_paths_for_tool(
+            "read_file",
+            &json!({"project": "demo", "path": "src/lib.rs"}),
+        )
+        .is_empty());
+        assert!(changed_paths_for_tool(
+            "apply_patch_checked",
+            &json!({"project": "demo", "patch": "--- a/src/lib.rs\n+++ b/src/lib.rs\n"}),
+        )
+        .is_empty());
+    }
 
     #[test]
     fn session_store_bounds_event_limit() {

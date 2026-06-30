@@ -240,6 +240,12 @@ project inspection to `project:read`, file/patch/artifact/project mutation to
 routes, unknown MCP methods, and unknown runtime tools fail closed for OAuth2
 tokens.
 
+Runtime tool scope policy is now sourced from `ToolMetadata`, the lightweight
+foundation that precedes a future ToolKernel/ToolProvider split. This changes
+where risk and scope facts live, not how tools are dispatched. Future external
+MCP providers must supply equivalent metadata and must not be re-exported
+without explicit risk/scope classification.
+
 `show_changes` is in the project-inspection bucket. OAuth2 access tokens need
 `project:read` to call it through `/api/tools/call` or MCP `tools/call`; the
 tool is read-only and does not clean, stage, commit, restore, or otherwise

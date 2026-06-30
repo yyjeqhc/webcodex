@@ -9,6 +9,7 @@ pub(crate) mod files;
 mod git;
 mod helpers;
 mod jobs;
+pub(crate) mod metadata;
 mod patch;
 mod projects;
 mod registry;
@@ -2652,6 +2653,29 @@ index 1111111..2222222 100644
             assert_eq!(annotations["readOnlyHint"], false);
             assert_eq!(annotations["destructiveHint"], false);
             assert_eq!(annotations["openWorldHint"], false);
+        }
+    }
+
+    #[test]
+    fn mcp_tool_annotations_use_metadata_for_read_write_tools() {
+        let runtime = test_runtime();
+        let specs = runtime.tool_specs();
+        for name in [
+            "show_changes",
+            "write_project_file",
+            "delete_project_files",
+            "run_shell",
+            "cargo_test",
+        ] {
+            let metadata = crate::tool_runtime::metadata::lookup_tool_metadata(name).unwrap();
+            let annotations = &spec_named(&specs, name).annotations;
+            assert_eq!(annotations["readOnlyHint"], metadata.read_only, "{name}");
+            assert_eq!(
+                annotations["destructiveHint"], metadata.destructive,
+                "{name}"
+            );
+            assert_eq!(annotations["openWorldHint"], metadata.shell_like, "{name}");
+            assert_eq!(annotations["idempotentHint"], metadata.read_only, "{name}");
         }
     }
 

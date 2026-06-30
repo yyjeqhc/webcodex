@@ -129,6 +129,11 @@ next actions. Use it before summarizing a task, reviewing, or committing. It
 requires `project:read` and never modifies, cleans, stages, commits, or restores
 the worktree.
 
+Tool risk, OAuth scope, session risk class, MCP annotations, and path hints now
+begin from `ToolMetadata`. This is the metadata-only foundation for a later
+ToolKernel/ToolProvider design; it does not change runtime dispatch, OAuth grant
+management, or the existing tool API.
+
 ## Session tracking
 
 `start_session` and `session_summary` are runtime tools for task tracking

@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+use super::metadata::tool_metadata;
 use super::types::ToolSpec;
 use super::ToolRuntime;
 
@@ -98,66 +99,11 @@ fn default_output_schema() -> Value {
 }
 
 fn tool_annotations(name: &str) -> Value {
-    let read_only = matches!(
-        name,
-        "list_tools"
-            | "start_session"
-            | "session_summary"
-            | "list_projects"
-            | "list_agents"
-            | "runtime_status"
-            | "read_file"
-            | "read_project_artifact_metadata"
-            | "read_project_artifact"
-            | "list_project_files"
-            | "search_project_text"
-            | "git_status"
-            | "git_diff"
-            | "git_diff_summary"
-            | "git_diff_hunks"
-            | "show_changes"
-            | "job_status"
-            | "job_log"
-            | "job_tail"
-            | "list_jobs"
-            | "validate_patch"
-    );
-    let destructive = matches!(
-        name,
-        "run_shell"
-            | "run_job"
-            | "run_codex"
-            | "delete_project_files"
-            | "git_restore_paths"
-            | "discard_untracked"
-            | "register_project"
-            | "create_project"
-    );
-    let open_world = matches!(name, "run_shell" | "run_job" | "run_codex");
-    let idempotent = matches!(
-        name,
-        "list_tools"
-            | "start_session"
-            | "session_summary"
-            | "list_projects"
-            | "list_agents"
-            | "runtime_status"
-            | "read_file"
-            | "read_project_artifact_metadata"
-            | "read_project_artifact"
-            | "list_project_files"
-            | "search_project_text"
-            | "git_status"
-            | "git_diff"
-            | "git_diff_summary"
-            | "git_diff_hunks"
-            | "show_changes"
-            | "job_status"
-            | "job_log"
-            | "job_tail"
-            | "list_jobs"
-            | "validate_patch"
-    );
+    let metadata = tool_metadata(name);
+    let read_only = metadata.read_only;
+    let destructive = metadata.destructive;
+    let open_world = metadata.shell_like;
+    let idempotent = metadata.read_only;
     json!({
         "readOnlyHint": read_only,
         "destructiveHint": destructive,

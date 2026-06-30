@@ -22,11 +22,11 @@ Guide for autonomous agents (Codex, GLM, ChatGPT, MCP, GPT Action) developing ag
 | Do not push. | Never push to any remote. |
 | Do not npm publish. | Never run `npm publish` or equivalent. |
 | Do not create GitHub Releases. | Never create releases via API or CLI. |
-| Do not rewrite history. | No `reset --hard`, `rebase`, `filter-branch`, or `commit --amend` on published commits. |
+| Do not rewrite history. | No `rebase`, `filter-branch`, or `commit --amend` unless explicitly requested; do not use destructive resets on changes you did not create. |
 | Do not rebase/squash unless explicitly requested. | Preserve merge topology. |
 | Do not touch secrets or token files. | Skip `.env`, `.env.*`, credential files, and any file containing tokens. |
 | Do not print token values. | Never echo, log, or include tokens in output. |
-| Do not modify release docs unless explicitly requested. | Leave `RELEASE.md`, changelogs, and version files untouched. |
+| Do not modify release docs unless explicitly requested. | Leave release checklists, changelogs, version docs, and packaging/release files untouched. |
 
 ---
 

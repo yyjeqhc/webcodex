@@ -724,61 +724,60 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced generic entry point for any runtime tool. Prefer dedicated actions. Use listRuntimeTools for names. Send params, arguments, or flattened fields. Explicit session_id records and enforces guards; bind_current_session lets later project tools omit it.",
+                    "Advanced generic entry point for any runtime tool. Prefer dedicated actions. Use listRuntimeTools for names. GPT Actions should use flattened top-level fields; params/arguments remain for non-Action clients. Use recording_session_id to record this generic wrapper call.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
                         "trackedSession": {
-                            "summary": "Start a session and pass session_id on later calls",
+                            "summary": "Start a session with flattened GPT Action fields",
                             "value": {
                                 "tool": "start_session",
-                                "params": {
-                                    "project": "webcodex",
-                                    "title": "implement show_changes follow-up",
-                                    "mode": "read_only"
-                                }
+                                "project": "webcodex",
+                                "title": "implement show_changes follow-up",
+                                "mode": "read_only"
                             }
                         },
-                        "gitStatus": {
-                            "summary": "Call git_status via the generic entry point",
+                        "recordedGitStatus": {
+                            "summary": "Record this wrapper call while passing flattened tool args",
                             "value": {
                                 "tool": "git_status",
+                                "project": "webcodex",
+                                "recording_session_id": "wc_sess_example"
+                            }
+                        },
+                        "sessionSummary": {
+                            "summary": "Read a session summary with top-level business session_id",
+                            "value": {
+                                "tool": "session_summary",
                                 "session_id": "wc_sess_example",
-                                "params": {
-                                    "project": "webcodex"
-                                }
+                                "limit": 20
                             }
                         },
                         "showChanges": {
                             "summary": "Summarize current worktree changes with optional session activity",
                             "value": {
                                 "tool": "show_changes",
-                                "params": {
-                                    "project": "webcodex",
-                                    "session_id": "wc_sess_example",
-                                    "include_diff": false,
-                                    "session_event_limit": 30
-                                }
+                                "project": "webcodex",
+                                "session_id": "wc_sess_example",
+                                "include_diff": false,
+                                "session_event_limit": 30
                             }
                         },
                         "bindCurrentSession": {
                             "summary": "Bind an existing session as current for a project",
                             "value": {
                                 "tool": "bind_current_session",
-                                "params": {
-                                    "project": "webcodex",
-                                    "session_id": "wc_sess_example"
-                                }
+                                "project": "webcodex",
+                                "session_id": "wc_sess_example"
                             }
                         },
                         "readFile": {
-                            "summary": "Call read_file via the generic entry point",
+                            "summary": "Call read_file via flattened GPT Action fields",
                             "value": {
                                 "tool": "read_file",
-                                "params": {
-                                    "project": "webcodex",
-                                    "path": "README.md"
-                                }
+                                "project": "webcodex",
+                                "path": "README.md",
+                                "with_line_numbers": true
                             }
                         },
                         "argumentsAlias": {
@@ -985,30 +984,50 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. `params` carries the tool-specific arguments object. `arguments` is accepted as a compatibility alias; when both `params` and `arguments` are present, `params` wins. Top-level `session_id` is reserved recorder metadata returned by start_session and enforces that session's task guards before execution. Project tools may also accept optional `params.session_id` for explicit tool-level session telemetry and guard enforcement; explicit session_id always wins. Inspect listRuntimeTools for each input schema. When session_id is omitted, project tools use the caller/transport/project current session established by bind_current_session if one exists. GPT Actions may pass tool-specific arguments as top-level fields when params/arguments are not accepted by the Action schema; those flattened fields are used only when `params` and `arguments` are absent. Omit all arguments for argument-less tools like list_tools.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form `params`/`arguments` objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. Omit all arguments for argument-less tools like list_tools.",
             "properties": {
                 "tool": {
                     "type": "string",
                     "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, bind_current_session, current_session, unbind_current_session, list_projects, register_project, create_project, runtime_status, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, show_changes, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail. Use listRuntimeTools for all names."
                 },
+                "recording_session_id": {
+                    "type": "string",
+                    "description": "Optional recorder metadata for the generic wrapper call. Pass a wc_sess_* id from start_session to record this call and enforce that session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id."
+                },
                 "session_id": {
                     "type": "string",
-                    "description": "Reserved recorder metadata. Pass the wc_sess_* value returned by start_session to record this generic call and enforce the session's task guards. It is stripped before concrete tool dispatch and takes precedence over any current session binding. For project tools, `params.session_id` is also accepted as an explicit tool argument and appears in listRuntimeTools schemas."
+                    "description": "Flattened tool-specific argument. For session_summary this is the required session id to read; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
                 },
                 "params": {
                     "type": "object",
-                    "description": "Tool-specific arguments object. Takes precedence over `arguments` when both are present. Omit or send {} for argument-less tools (list_tools, list_projects, list_agents).",
+                    "description": "Tool-specific arguments object for non-Action clients. Takes precedence over `arguments` when both are present. GPT Actions should prefer flattened top-level fields.",
                     "nullable": true,
                     "additionalProperties": true
                 },
                 "arguments": {
                     "type": "object",
-                    "description": "Compatibility alias for `params`. Used only when `params` is absent; ignored otherwise. Useful for MCP-style callers that send `arguments`.",
+                    "description": "Compatibility alias for `params`. Used only when `params` is absent; ignored otherwise.",
                     "nullable": true,
                     "additionalProperties": true
                 },
                 "project": {
                     "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "title": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "mode": {
+                    "type": "string",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "deny_write_tools": {
+                    "type": "boolean",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "deny_shell_tools": {
+                    "type": "boolean",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
                 "path": {
@@ -1043,6 +1062,10 @@ fn schemas() -> Value {
                 },
                 "limit": {
                     "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "include_diff": {
+                    "type": "boolean",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
                 "max_hunks": {
@@ -1095,6 +1118,18 @@ fn schemas() -> Value {
                 },
                 "start_line": {
                     "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "context_before": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "context_after": {
+                    "type": "integer",
+                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "with_line_numbers": {
+                    "type": "boolean",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
                 "end_line": {
@@ -2641,14 +2676,14 @@ mod tests {
         );
         let description = tool_call["description"].as_str().unwrap_or("");
         assert!(
-            description.contains("params.session_id")
-                && description.contains("listRuntimeTools")
-                && description.contains("task guards"),
-            "ToolCallRequest should document tool-level session_id telemetry: {description}"
+            description.contains("recording_session_id")
+                && description.contains("flattened top-level fields"),
+            "ToolCallRequest should document GPT Action flattened fields and recorder metadata: {description}"
         );
         let start_example = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
-            ["application/json"]["examples"]["trackedSession"]["value"]["params"];
+            ["application/json"]["examples"]["trackedSession"]["value"];
         assert_eq!(start_example["mode"], "read_only");
+        assert_eq!(start_example["title"], "implement show_changes follow-up");
         // `tool` remains required; `params` is optional (advanced callers may
         // omit it for argument-less tools).
         let required = tool_call["required"].as_array().unwrap();
@@ -2690,6 +2725,12 @@ mod tests {
 
         for field in [
             "project",
+            "title",
+            "session_id",
+            "recording_session_id",
+            "mode",
+            "deny_write_tools",
+            "deny_shell_tools",
             "path",
             "start_line",
             "end_line",
@@ -2697,6 +2738,10 @@ mod tests {
             "text",
             "old_text",
             "new_text",
+            "include_diff",
+            "context_before",
+            "context_after",
+            "with_line_numbers",
             "content_base64",
             "mime_type",
             "encoding",

@@ -15,11 +15,10 @@ use std::time::Duration;
 /// Generic runtime tool call body. `tool` is required; `params` carries the
 /// tool-specific arguments. `arguments` is accepted as a compatibility alias
 /// for `params` — when both are present, `params` wins. GPT Actions may also
-/// pass tool-specific arguments as top-level fields, so parsing is done
-/// manually in `tools_call` (via `extract_tool_call`) to preserve the
-/// params-over-arguments-over-flattened precedence and the rich error messages
-/// stay explicit. The OpenAPI `ToolCallRequest` schema documents the same wire
-/// shape.
+/// pass tool-specific arguments as flattened top-level fields. Top-level
+/// `recording_session_id` is recorder metadata; top-level `session_id` remains
+/// an ordinary flattened tool argument so tools like `session_summary` can use
+/// it as business input.
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
 struct ToolCallRequest {
@@ -524,7 +523,7 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
             return;
         }
     };
-    let session_id = extract_top_level_session_id(&body);
+    let session_id = extract_recording_session_id(&body);
     let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
     let outcome = runtime
         .call_tool_with_context(
@@ -569,14 +568,16 @@ pub async fn tools_call(req: &mut Request, depot: &mut Depot, res: &mut Response
 /// - `{"tool":"git_diff_summary","params":{"project":"agent:c:p"}}`
 /// - `{"tool":"git_diff_summary","arguments":{"project":"agent:c:p"}}`
 /// - `{"tool":"git_diff_summary","project":"agent:c:p"}`
-/// - `{"tool":"git_diff_summary","session_id":"wc_sess_...","params":{...}}`
+/// - `{"tool":"git_status","project":"agent:c:p","recording_session_id":"wc_sess_..."}`
 ///
 /// When both `params` and `arguments` are present, `params` wins; `arguments`
 /// is only a compatibility alias. When neither is present, every top-level
-/// field except `tool` and reserved metadata like `session_id` is collected
-/// into the params object for GPT Action compatibility. Returns a
-/// human-readable error string (never including the raw body) when the body is
-/// not a JSON object or `tool` is missing/not a non-empty string.
+/// field except `tool` and reserved metadata like `recording_session_id` is
+/// collected into the params object for GPT Action compatibility. Top-level
+/// `session_id` is not reserved here; it remains a normal flattened tool
+/// argument for tools such as `session_summary`. Returns a human-readable error
+/// string (never including the raw body) when the body is not a JSON object or
+/// `tool` is missing/not a non-empty string.
 fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     let obj = body
         .as_object()
@@ -601,7 +602,7 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     } else {
         let mut flattened = serde_json::Map::new();
         for (key, value) in obj {
-            if key != "tool" && key != "session_id" {
+            if key != "tool" && key != "recording_session_id" {
                 flattened.insert(key.clone(), value.clone());
             }
         }
@@ -614,9 +615,9 @@ fn extract_tool_call(body: &Value) -> Result<(String, Value), String> {
     Ok((tool, params))
 }
 
-fn extract_top_level_session_id(body: &Value) -> Option<String> {
+fn extract_recording_session_id(body: &Value) -> Option<String> {
     body.as_object()
-        .and_then(|obj| obj.get("session_id"))
+        .and_then(|obj| obj.get("recording_session_id"))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|s| !s.is_empty())
@@ -3170,11 +3171,20 @@ mod tests {
         let (tool, params) = extract_tool_call(&json!({
             "tool": "git_status",
             "project": "agent:oe:webcodex",
+            "session_id": "wc_sess_tool_arg",
+            "recording_session_id": "wc_sess_recorder",
         }))
         .unwrap();
 
         assert_eq!(tool, "git_status");
-        assert_eq!(params, json!({"project": "agent:oe:webcodex"}));
+        assert_eq!(
+            params,
+            json!({"project": "agent:oe:webcodex", "session_id": "wc_sess_tool_arg"})
+        );
+        assert_eq!(
+            extract_recording_session_id(&json!({"recording_session_id": "wc_sess_recorder"})),
+            Some("wc_sess_recorder".to_string())
+        );
     }
 
     #[test]
@@ -3328,10 +3338,8 @@ mod tests {
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "start_session",
-                "params": {
-                    "project": "demo",
-                    "title": "implement show_changes follow-up"
-                }
+                "project": "demo",
+                "title": "implement show_changes follow-up"
             }))
             .send(&service)
             .await;
@@ -3364,7 +3372,8 @@ mod tests {
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "session_summary",
-                "params": {"session_id": session_id, "limit": 50}
+                "session_id": session_id,
+                "limit": 50
             }))
             .send(&service)
             .await;
@@ -3423,7 +3432,7 @@ mod tests {
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "list_projects",
-                "session_id": session_id,
+                "recording_session_id": session_id,
                 "params": {}
             }))
             .send(&service)
@@ -3466,7 +3475,7 @@ mod tests {
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "read_file",
-                "session_id": session_id,
+                "recording_session_id": session_id,
                 "params": {"project": "demo", "path": "missing.txt"}
             }))
             .send(&service)
@@ -3490,11 +3499,11 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn api_tools_call_still_distinguishes_top_level_session_id_from_params_session_id() {
+    async fn api_tools_call_uses_recording_session_id_for_recorder_metadata() {
         let (_tmp, service) = phase2_service();
         let mut resp = TestClient::post("http://localhost/api/tools/call")
             .bearer_auth("secret")
-            .json(&json!({"tool": "start_session", "params": {"title": "tracking"}}))
+            .json(&json!({"tool": "start_session", "title": "tracking"}))
             .send(&service)
             .await;
         let tracking_body: Value = resp.take_json().await.unwrap();
@@ -3502,7 +3511,7 @@ mod tests {
 
         let mut resp = TestClient::post("http://localhost/api/tools/call")
             .bearer_auth("secret")
-            .json(&json!({"tool": "start_session", "params": {"title": "business"}}))
+            .json(&json!({"tool": "start_session", "title": "business"}))
             .send(&service)
             .await;
         let business_body: Value = resp.take_json().await.unwrap();
@@ -3512,8 +3521,8 @@ mod tests {
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "session_summary",
-                "session_id": tracking_session_id,
-                "params": {"session_id": business_session_id}
+                "session_id": business_session_id,
+                "recording_session_id": tracking_session_id
             }))
             .send(&service)
             .await;
@@ -3521,12 +3530,13 @@ mod tests {
         let body: Value = resp.take_json().await.unwrap();
         assert_eq!(body["output"]["session_id"], business_session_id);
         assert_eq!(body["output"]["title"], "business");
+        assert_eq!(body["output"]["session_recorded"], true);
 
         let mut resp = TestClient::post("http://localhost/api/tools/call")
             .bearer_auth("secret")
             .json(&json!({
                 "tool": "session_summary",
-                "params": {"session_id": tracking_session_id}
+                "session_id": tracking_session_id
             }))
             .send(&service)
             .await;
@@ -3558,7 +3568,7 @@ mod tests {
                 .bearer_auth("secret")
                 .json(&json!({
                     "tool": "list_projects",
-                    "session_id": session_id,
+                    "recording_session_id": session_id,
                     "params": {}
                 }))
                 .send(&service)

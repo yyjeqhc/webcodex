@@ -1114,10 +1114,21 @@ impl ToolRuntime {
                 title,
                 note,
                 include_untracked,
+                kind,
+                labels,
+                validation,
                 session_id: _,
             } => {
-                self.workspace_checkpoint_create(project, title, note, include_untracked)
-                    .await
+                self.workspace_checkpoint_create(
+                    project,
+                    title,
+                    note,
+                    include_untracked,
+                    kind,
+                    labels,
+                    validation,
+                )
+                .await
             }
 
             ToolCall::WorkspaceCheckpointList {

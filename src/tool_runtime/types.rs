@@ -10,6 +10,26 @@ pub fn default_true() -> bool {
     true
 }
 
+pub(crate) const CHECKPOINT_KIND_VALUES: &[&str] = &[
+    "snapshot",
+    "baseline",
+    "before_refactor",
+    "after_refactor",
+    "last_known_good",
+    "rollback_candidate",
+];
+
+pub(crate) const CHECKPOINT_VALIDATION_STATUS_VALUES: &[&str] =
+    &["unknown", "not_run", "passed", "failed"];
+
+pub(crate) fn is_checkpoint_kind(value: &str) -> bool {
+    CHECKPOINT_KIND_VALUES.contains(&value)
+}
+
+pub(crate) fn is_checkpoint_validation_status(value: &str) -> bool {
+    CHECKPOINT_VALIDATION_STATUS_VALUES.contains(&value)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SessionMode {
@@ -68,6 +88,16 @@ pub struct ApplyTextEditInput {
     pub new_text: Option<String>,
     #[serde(default)]
     pub anchor_text: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct CheckpointValidationInput {
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub commands: Vec<String>,
+    #[serde(default)]
+    pub summary: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -160,6 +190,12 @@ pub enum ToolCall {
         note: Option<String>,
         #[serde(default)]
         include_untracked: Option<bool>,
+        #[serde(default)]
+        kind: Option<String>,
+        #[serde(default)]
+        labels: Vec<String>,
+        #[serde(default)]
+        validation: Option<CheckpointValidationInput>,
         #[serde(default)]
         session_id: Option<String>,
     },
@@ -1432,13 +1468,44 @@ impl ToolCall {
                 title,
                 note,
                 include_untracked,
+                kind,
+                labels,
+                validation,
                 ..
-            } => serde_json::json!({
-                "project": project,
-                "title": title,
-                "note_present": note.as_ref().is_some_and(|v| !v.is_empty()),
-                "include_untracked": include_untracked,
-            }),
+            } => {
+                let kind = kind
+                    .as_deref()
+                    .filter(|value| is_checkpoint_kind(value))
+                    .unwrap_or(if kind.is_some() {
+                        "invalid"
+                    } else {
+                        "snapshot"
+                    });
+                let validation_status = validation
+                    .as_ref()
+                    .and_then(|value| value.status.as_deref())
+                    .filter(|value| is_checkpoint_validation_status(value))
+                    .unwrap_or(
+                        if validation
+                            .as_ref()
+                            .and_then(|value| value.status.as_deref())
+                            .is_some()
+                        {
+                            "invalid"
+                        } else {
+                            "unknown"
+                        },
+                    );
+                serde_json::json!({
+                    "project": project,
+                    "title": title,
+                    "note_present": note.as_ref().is_some_and(|v| !v.is_empty()),
+                    "include_untracked": include_untracked,
+                    "kind": kind,
+                    "label_count": labels.len(),
+                    "validation_status": validation_status,
+                })
+            }
             Self::WorkspaceCheckpointList { project, limit, .. } => serde_json::json!({
                 "project": project,
                 "limit": limit,

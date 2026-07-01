@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 
 use super::metadata::tool_metadata;
-use super::types::ToolSpec;
+use super::types::{ToolSpec, CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
 use super::ToolRuntime;
 
 pub(crate) fn object_schema(fields: Vec<(&str, &str, &str, bool)>) -> Value {
@@ -275,6 +275,86 @@ fn checkpoint_project_input_schema(
     fields: Vec<(&'static str, &'static str, &'static str, bool)>,
 ) -> Value {
     object_schema(with_optional_session_id(fields))
+}
+
+fn checkpoint_validation_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": CHECKPOINT_VALIDATION_STATUS_VALUES,
+                "description": "Validation result supplied by the caller. The runtime records metadata only and never runs these commands."
+            },
+            "commands": {
+                "type": "array",
+                "items": { "type": "string", "maxLength": 200 },
+                "maxItems": 20,
+                "description": "Command summaries supplied by the caller. Stdout/stderr and env values are not stored."
+            },
+            "summary": {
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "null" }
+                ],
+                "maxLength": 500,
+                "description": "Short validation summary supplied by the caller."
+            }
+        },
+        "required": [],
+    })
+}
+
+fn checkpoint_labels_schema(description: &str) -> Value {
+    json!({
+        "type": "array",
+        "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "maxItems": 20,
+        "description": description,
+    })
+}
+
+fn checkpoint_create_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Runtime project id."
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional human-readable title."
+            },
+            "note": {
+                "type": "string",
+                "description": "Optional note; not used by restore."
+            },
+            "include_untracked": {
+                "type": "boolean",
+                "description": "Include small non-secret UTF-8 untracked files (default false)."
+            },
+            "kind": {
+                "type": "string",
+                "enum": CHECKPOINT_KIND_VALUES,
+                "description": "Optional semantic checkpoint kind. Defaults to snapshot."
+            },
+            "labels": checkpoint_labels_schema("Optional simple ASCII labels for handoff, filtering, or recovery hints."),
+            "validation": checkpoint_validation_schema("Optional bounded validation metadata supplied by the caller."),
+            "session_id": {
+                "type": "string",
+                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+            }
+        },
+        "required": ["project"],
+        "additionalProperties": false,
+    })
 }
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
@@ -743,6 +823,12 @@ fn output_schema_for_tool(name: &str) -> Value {
             ("project", schema_type("string", "Project input.")),
             ("resolved_project", schema_type("string", "Resolved runtime project id.")),
             ("title", nullable_schema("string", "Optional checkpoint title.")),
+            ("kind", schema_type("string", "Semantic checkpoint kind.")),
+            ("labels", checkpoint_labels_schema("Simple checkpoint labels.")),
+            (
+                "validation",
+                checkpoint_validation_schema("Bounded validation metadata."),
+            ),
             ("head", schema_type("string", "HEAD commit captured by the checkpoint.")),
             ("branch", nullable_schema("string", "Current branch, if attached.")),
             ("created_at", schema_type("integer", "Unix timestamp.")),
@@ -765,6 +851,12 @@ fn output_schema_for_tool(name: &str) -> Value {
             ("project", schema_type("string", "Project input.")),
             ("resolved_project", schema_type("string", "Resolved runtime project id.")),
             ("title", nullable_schema("string", "Optional title.")),
+            ("kind", schema_type("string", "Semantic checkpoint kind.")),
+            ("labels", checkpoint_labels_schema("Simple checkpoint labels.")),
+            (
+                "validation",
+                checkpoint_validation_schema("Bounded validation metadata."),
+            ),
             ("head", schema_type("string", "Checkpoint HEAD commit.")),
             ("branch", nullable_schema("string", "Checkpoint branch, if attached.")),
             ("created_at", schema_type("integer", "Unix timestamp.")),
@@ -1304,12 +1396,7 @@ impl ToolRuntime {
             ToolSpec {
                 name: "workspace_checkpoint_create".to_string(),
                 description: "Create a bounded workspace checkpoint outside the project worktree. Captures HEAD, status, text diffs, and optional small untracked text files.".to_string(),
-                input_schema: checkpoint_project_input_schema(vec![
-                    ("project", "string", "Runtime project id.", true),
-                    ("title", "string", "Optional human-readable title.", false),
-                    ("note", "string", "Optional note; not used by restore.", false),
-                    ("include_untracked", "boolean", "Include small non-secret UTF-8 untracked files (default false).", false),
-                ]),
+                input_schema: checkpoint_create_input_schema(),
                 output_schema: output_schema_for_tool("workspace_checkpoint_create"),
                 annotations: tool_annotations("workspace_checkpoint_create"),
             },

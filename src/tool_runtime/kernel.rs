@@ -1,4 +1,5 @@
 use super::sessions::SessionTransport;
+use super::types::{is_checkpoint_kind, is_checkpoint_validation_status};
 use super::{
     session_guard_denied_result, unknown_session_result, ToolCall, ToolResult, ToolRuntime,
 };
@@ -144,11 +145,13 @@ impl ToolRuntime {
             }
         }
 
+        let session_log_arguments =
+            guard_denial_log_arguments(&request.tool_name, &request.arguments);
         let session_event = self.sessions.record_tool_call_started(
             context.session_id,
             context.transport.into(),
             &request.tool_name,
-            &request.arguments,
+            &session_log_arguments,
         );
 
         if context.record_oauth_scope_denials {
@@ -395,6 +398,44 @@ fn guard_denial_log_arguments(tool_name: &str, arguments: &Value) -> Value {
             out.insert(
                 "note_present".to_string(),
                 Value::Bool(obj.contains_key("note")),
+            );
+            let kind = obj
+                .get("kind")
+                .and_then(Value::as_str)
+                .filter(|value| is_checkpoint_kind(value))
+                .unwrap_or(if obj.get("kind").is_some() {
+                    "invalid"
+                } else {
+                    "snapshot"
+                });
+            out.insert("kind".to_string(), Value::String(kind.to_string()));
+            let label_count = obj
+                .get("labels")
+                .and_then(Value::as_array)
+                .map(Vec::len)
+                .unwrap_or_default();
+            out.insert("label_count".to_string(), Value::from(label_count));
+            let validation_status = obj
+                .get("validation")
+                .and_then(Value::as_object)
+                .and_then(|validation| validation.get("status"))
+                .and_then(Value::as_str)
+                .filter(|value| is_checkpoint_validation_status(value))
+                .unwrap_or(
+                    if obj
+                        .get("validation")
+                        .and_then(Value::as_object)
+                        .and_then(|validation| validation.get("status"))
+                        .is_some()
+                    {
+                        "invalid"
+                    } else {
+                        "unknown"
+                    },
+                );
+            out.insert(
+                "validation_status".to_string(),
+                Value::String(validation_status.to_string()),
             );
         }
         "workspace_checkpoint_list" => {

@@ -1012,7 +1012,36 @@ fn schemas() -> Value {
                 },
                 "kind": {
                     "type": "string",
-                    "description": "Flattened message-board argument. One of note, proposal, question, answer, decision, risk, progress, guidance, todo. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened tool-specific argument. For message-board tools, one of note, proposal, question, answer, decision, risk, progress, guidance, todo. For workspace_checkpoint_create, one of snapshot, baseline, before_refactor, after_refactor, last_known_good, rollback_candidate. Used only when `params` and `arguments` are absent."
+                },
+                "labels": {
+                    "type": "array",
+                    "items": {"type": "string", "maxLength": 64, "pattern": "^[A-Za-z0-9._-]+$"},
+                    "maxItems": 20,
+                    "description": "Flattened workspace_checkpoint_create labels. Used only when `params` and `arguments` are absent."
+                },
+                "validation": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "description": "Flattened workspace_checkpoint_create validation metadata. The runtime records this metadata only and does not run commands.",
+                    "properties": {
+                        "status": {
+                            "type": "string",
+                            "enum": ["unknown", "not_run", "passed", "failed"]
+                        },
+                        "commands": {
+                            "type": "array",
+                            "items": {"type": "string", "maxLength": 200},
+                            "maxItems": 20
+                        },
+                        "summary": {
+                            "anyOf": [
+                                {"type": "string"},
+                                {"type": "null"}
+                            ],
+                            "maxLength": 500
+                        }
+                    }
                 },
                 "message": {
                     "type": "string",

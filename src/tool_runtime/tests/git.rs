@@ -5,6 +5,7 @@ use super::super::helpers::*;
 use super::super::types::*;
 use super::support::*;
 use crate::shell_protocol::{ShellAgentResultRequest, ShellClientCapabilities};
+use crate::tool_runtime::ToolRuntime;
 use serde_json::json;
 use std::fs;
 
@@ -848,4 +849,172 @@ async fn git_or_shell_tools_rejected_without_git_or_shell_capability() {
             "{name} should require shell or git capability: {err}",
         );
     }
+}
+
+#[test]
+fn is_non_git_project_inspection_detects_english_and_localized_fatal() {
+    // English git fatal message.
+    assert!(is_non_git_project_inspection(
+        Some(128),
+        "fatal: not a git repository (or any of the parent directories): .git",
+        "",
+    ));
+    // Localized git fatal message (no English substring) — caught by the
+    // locale-independent structural signal.
+    assert!(is_non_git_project_inspection(
+        Some(128),
+        "fatal: 不是 git 仓库（或者任何父目录）：.git",
+        "",
+    ));
+    // Locale-independent structural signal: non-zero exit and no `## ` branch
+    // header in the porcelain status output.
+    assert!(is_non_git_project_inspection(
+        Some(129),
+        "usage: git diff --no-index ...",
+        "",
+    ));
+    // Real git repo: exit 0 (not flagged regardless of stderr).
+    assert!(!is_non_git_project_inspection(Some(0), "", "## main"));
+    // Real git repo with no commits still emits a `## ` header.
+    assert!(!is_non_git_project_inspection(
+        Some(0),
+        "",
+        "## No commits yet on main",
+    ));
+    // Non-zero exit but a real repo produced a branch header (some other git
+    // issue): not classified as non-git.
+    assert!(!is_non_git_project_inspection(
+        Some(1),
+        "some other error",
+        "## main\n M src/lib.rs",
+    ));
+}
+
+async fn run_show_changes_via_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    session_id: Option<String>,
+) -> ToolResult {
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .show_changes(project, session_id, None, None, None, None)
+            .await
+    });
+    let req = next_patch_agent_request(runtime, client_id)
+        .await
+        .expect("show_changes should enqueue an agent shell request");
+    complete_agent_request_by_running_locally(runtime, client_id, req).await;
+    task.await.unwrap()
+}
+
+#[tokio::test]
+async fn show_changes_degrades_gracefully_for_non_git_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Intentionally do NOT init a git repo.
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(&runtime, "ng", "demo", tmp.path()).await;
+    let result = run_show_changes_via_agent(&runtime, "ng", project, None).await;
+    assert!(
+        result.success,
+        "non-git project must not be a runtime failure: {:?}",
+        result.error
+    );
+    assert_eq!(result.output["non_git_project"], true);
+    assert_eq!(result.output["git_available"], false);
+    let git_error = result.output["git_error"].as_str().unwrap_or_default();
+    assert!(
+        git_error.contains("not a git repository"),
+        "unexpected git_error: {git_error}"
+    );
+    // No full git usage/fatal stderr must leak into the user-facing payload.
+    assert_eq!(result.output["stderr"], "");
+    let serialized = serde_json::to_string(&result.output).unwrap();
+    assert!(
+        !serialized.contains("--no-index"),
+        "leaked git diff usage: {serialized}"
+    );
+    assert!(
+        !serialized.contains("usage") && !serialized.contains("用法"),
+        "leaked git usage: {serialized}"
+    );
+    assert!(result.output["files"].as_array().unwrap().is_empty());
+    assert!(result.output["session"].is_null());
+    let actions = result.output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions
+        .iter()
+        .any(|a| a.as_str().unwrap().contains("unavailable")));
+}
+
+#[tokio::test]
+async fn show_changes_non_git_project_still_returns_session_summary() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(&runtime, "ngs", "demo", tmp.path()).await;
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("task".to_string()));
+    let args = json!({"project": project, "path": "src/foo.rs"});
+    let start = runtime.sessions.record_tool_call_started(
+        Some(&session.session_id),
+        crate::tool_runtime::sessions::SessionTransport::Api,
+        "write_project_file",
+        &args,
+    );
+    runtime
+        .sessions
+        .record_tool_call_finished(start, true, &json!({}), None, None);
+
+    let result =
+        run_show_changes_via_agent(&runtime, "ngs", project, Some(session.session_id.clone()))
+            .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["non_git_project"], true);
+    assert_eq!(result.output["git_available"], false);
+    assert_eq!(result.output["session"]["found"], true);
+    assert_eq!(result.output["session"]["session_id"], session.session_id);
+    assert!(
+        result.output["session"]["recent_events"]
+            .as_array()
+            .unwrap()
+            .len()
+            >= 1
+    );
+    assert_eq!(
+        result.output["session"]["changed_paths"],
+        json!(["src/foo.rs"])
+    );
+    // Session-signal suggestions are layered on top of the git-unavailable hint.
+    let actions = result.output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions
+        .iter()
+        .any(|a| a.as_str().unwrap().contains("unavailable")));
+    assert!(actions
+        .iter()
+        .any(|a| a.as_str().unwrap().contains("review changed paths")));
+}
+
+#[tokio::test]
+async fn show_changes_real_git_repo_marks_git_available_and_reports_status() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "initial");
+    let runtime = test_runtime();
+    let project = register_agent_project_at_path(&runtime, "gr", "demo", tmp.path()).await;
+    let result = run_show_changes_via_agent(&runtime, "gr", project, None).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["non_git_project"], false);
+    assert_eq!(result.output["git_available"], true);
+    assert_eq!(result.output["git_error"], serde_json::Value::Null);
+    assert_eq!(result.output["clean"], true);
+    assert!(result.output["branch"].as_str().is_some());
+    assert!(result.output["head"]["short"].as_str().is_some());
+    assert_eq!(result.output["counts"]["modified"], 0);
+    assert!(result.output["files"].as_array().unwrap().is_empty());
+    // No git-unavailable suggestion for a real repo.
+    let actions = result.output["suggested_next_actions"].as_array().unwrap();
+    assert!(!actions
+        .iter()
+        .any(|a| a.as_str().unwrap().contains("unavailable")));
 }

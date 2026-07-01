@@ -1096,6 +1096,27 @@ fn output_schema_for_tool(name: &str) -> Value {
         "show_changes" => wrapped_output_schema(vec![
             ("project", schema_type("string", "Runtime project id.")),
             (
+                "git_available",
+                schema_type(
+                    "boolean",
+                    "Whether git-backed inspection was available. False for non-git projects.",
+                ),
+            ),
+            (
+                "non_git_project",
+                schema_type(
+                    "boolean",
+                    "True when the project directory is not inside a git repository.",
+                ),
+            ),
+            (
+                "git_error",
+                nullable_schema(
+                    "string",
+                    "Short summary when git-backed inspection is unavailable; null otherwise.",
+                ),
+            ),
+            (
                 "branch",
                 nullable_schema("string", "Current git branch from porcelain status."),
             ),

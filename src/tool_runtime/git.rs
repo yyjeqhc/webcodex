@@ -229,6 +229,77 @@ fn git_log_empty_repo(stderr: &str) -> bool {
     lower.contains("does not have any commits") || lower.contains("no commits yet")
 }
 
+/// Classify whether a failed `show_changes` git inspection is due to the
+/// project directory not being inside a git repository.
+///
+/// Robust across git locales: the English `fatal: not a git repository`
+/// message is matched directly, and a locale-independent structural signal
+/// (non-zero exit with no porcelain branch header) covers localized git
+/// builds where the fatal message is translated (e.g. `不是 git 仓库`). In a
+/// real repository `git status --porcelain=v1 -b` always emits a `## `
+/// branch header — even for a repo with no commits — so its absence combined
+/// with a non-zero exit means git could not inspect the worktree, the common
+/// case being a non-git project directory.
+pub(crate) fn is_non_git_project_inspection(
+    exit_code: Option<i32>,
+    stderr: &str,
+    status_stdout: &str,
+) -> bool {
+    let lower = stderr.to_ascii_lowercase();
+    if lower.contains("not a git repository") {
+        return true;
+    }
+    if exit_code != Some(0) && !status_stdout.lines().any(|line| line.starts_with("## ")) {
+        return true;
+    }
+    false
+}
+
+/// Build the graceful-degradation payload returned by `show_changes` when the
+/// project is not a git repository. Git-backed status/diff is reported as
+/// unavailable without dumping git's noisy stderr/usage; the session
+/// sub-summary is still layered on by the caller via
+/// `apply_show_changes_session`.
+pub(crate) fn non_git_show_changes_payload(
+    project: &str,
+    exit_code: Option<i32>,
+    include_diff: bool,
+) -> serde_json::Value {
+    let mut payload = json!({
+        "project": project,
+        "git_available": false,
+        "non_git_project": true,
+        "git_error": "not a git repository; git-backed diff unavailable",
+        "branch": null,
+        "head": null,
+        "clean": true,
+        "counts": {
+            "modified": 0,
+            "added": 0,
+            "deleted": 0,
+            "renamed": 0,
+            "copied": 0,
+            "untracked": 0,
+            "staged": 0,
+            "unstaged": 0,
+        },
+        "files": [],
+        "diff_stat": "",
+        "warnings": [],
+        "suggested_next_actions": [
+            "git-backed status/diff unavailable; project is not a git repository",
+        ],
+        "session": null,
+        "exit_code": exit_code,
+        "stderr": "",
+    });
+    if include_diff {
+        payload["untracked_previews"] = json!([]);
+        payload["untracked_previews_truncated"] = json!(false);
+    }
+    payload
+}
+
 /// Build the read-only `show_changes` command. It combines the minimal git
 /// inspections needed for a model-facing worktree summary. The optional full
 /// diff is only emitted when the caller asks for bounded hunks.
@@ -477,6 +548,9 @@ pub(crate) fn parse_show_changes_output(
 
     let mut output = json!({
         "project": project,
+        "git_available": true,
+        "non_git_project": false,
+        "git_error": null,
         "branch": branch,
         "head": parse_show_changes_head(head_stdout),
         "clean": clean,
@@ -666,6 +740,26 @@ pub(crate) fn apply_show_changes_session(
 }
 
 fn refresh_show_changes_suggestions(output: &mut Value, session: Option<SessionActionSignals>) {
+    // Non-git projects: keep the git-unavailable message as the primary
+    // suggestion and only append session-signal suggestions. The normal
+    // clean/dirty review suggestions do not apply when git inspection is
+    // unavailable.
+    if output["non_git_project"].as_bool().unwrap_or(false) {
+        let session = session.unwrap_or_default();
+        let mut actions =
+            vec!["git-backed status/diff unavailable; project is not a git repository".to_string()];
+        if session.failed {
+            push_unique_action(&mut actions, "review failed tool calls in session_summary");
+        }
+        if session.write_like {
+            push_unique_action(&mut actions, "review changed paths from this session");
+        }
+        if session.shell_like {
+            push_unique_action(&mut actions, "check command/test results before commit");
+        }
+        output["suggested_next_actions"] = json!(actions);
+        return;
+    }
     let clean = output["clean"].as_bool().unwrap_or(false);
     let has_untracked = output["counts"]["untracked"].as_u64().unwrap_or(0) > 0;
     let has_smoke_warning = output["warnings"]
@@ -1355,6 +1449,22 @@ impl ToolRuntime {
         };
         let (status_stdout, head_stdout, diff_stat, diff_stdout, untracked_preview_stdout) =
             split_show_changes_stdout(&output.stdout, include_diff);
+        // Graceful degradation for non-git projects: when the project directory
+        // is not inside a git repository, git prints a noisy fatal (and
+        // `git diff` dumps its full --no-index usage) once per subcommand and
+        // exits non-zero. Rather than surfacing that as a runtime failure with
+        // full stderr, return a structured success payload that marks
+        // git-backed inspection as unavailable while still reporting the
+        // session sub-summary. Real git repositories are unaffected.
+        if is_non_git_project_inspection(output.exit_code, &output.stderr, &status_stdout) {
+            let mut payload =
+                non_git_show_changes_payload(&project, output.exit_code, include_diff);
+            let session_summary = session_id
+                .as_deref()
+                .and_then(|id| self.sessions.summary(id, Some(session_event_limit)));
+            apply_show_changes_session(&mut payload, session_id.as_deref(), session_summary);
+            return ToolResult::ok(payload);
+        }
         let mut payload = parse_show_changes_output(
             &project,
             &status_stdout,

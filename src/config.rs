@@ -453,6 +453,13 @@ impl Config {
         self.data_dir.join("webcodex.db")
     }
 
+    pub fn session_ledger_path(&self) -> PathBuf {
+        if self.data_dir.is_absolute() {
+            return self.data_dir.join("sessions.json");
+        }
+        runtime_state_dir().join("sessions.json")
+    }
+
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
     }
@@ -471,6 +478,16 @@ impl Config {
             .map(|t| constant_time_eq(t.as_bytes(), token.as_bytes()))
             .unwrap_or(false)
     }
+}
+
+fn runtime_state_dir() -> PathBuf {
+    if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
+        return PathBuf::from(path).join("webcodex");
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".local/state/webcodex");
+    }
+    std::env::temp_dir().join("webcodex")
 }
 
 pub(crate) fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {

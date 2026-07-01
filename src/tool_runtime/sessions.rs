@@ -6,19 +6,23 @@ use super::types::SessionMode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
+use std::fs;
+use std::io;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
 pub(crate) const SESSION_ID_PREFIX: &str = "wc_sess_";
 const EVENT_ID_PREFIX: &str = "evt_";
-const DEFAULT_MAX_SESSIONS: usize = 100;
-const DEFAULT_MAX_EVENTS_PER_SESSION: usize = 200;
+pub(crate) const DEFAULT_MAX_SESSIONS: usize = 100;
+pub(crate) const DEFAULT_MAX_EVENTS_PER_SESSION: usize = 200;
 const DEFAULT_SUMMARY_LIMIT: usize = 50;
 const MAX_SUMMARY_LIMIT: usize = 200;
 const MAX_SUMMARY_STRING_CHARS: usize = 240;
 const MAX_INPUT_STRING_CHARS: usize = 120;
 const MAX_INPUT_OBJECT_KEYS: usize = 16;
 const MAX_INPUT_ARRAY_ITEMS: usize = 8;
+const SESSION_LEDGER_VERSION: u32 = 1;
 pub(crate) const MESSAGE_ID_PREFIX: &str = "wc_msg_";
 pub(crate) const DEFAULT_MAX_MESSAGES_PER_SESSION: usize = 200;
 pub(crate) const DEFAULT_MESSAGE_LIST_LIMIT: usize = 50;
@@ -42,6 +46,14 @@ struct SessionStoreInner {
     lru: VecDeque<String>,
     max_sessions: usize,
     max_events_per_session: usize,
+    persistence: Option<SessionPersistence>,
+}
+
+#[derive(Debug, Clone)]
+struct SessionPersistence {
+    path: PathBuf,
+    restored_sessions: usize,
+    last_persist_error: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -76,6 +88,35 @@ pub(crate) struct SessionCreateOptions {
     pub(crate) mode: SessionMode,
     pub(crate) guards: SessionGuards,
     pub(crate) project_instructions: Option<ProjectInstructionsSnapshot>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionStoreStatus {
+    pub(crate) persistence: String,
+    pub(crate) restored_sessions: usize,
+    pub(crate) max_sessions: usize,
+    pub(crate) max_events_per_session: usize,
+    pub(crate) max_messages_per_session: usize,
+    pub(crate) last_persist_error: Option<String>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedSessionLedger {
+    version: u32,
+    sessions: Vec<PersistedSessionRecord>,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistedSessionRecord {
+    session_id: String,
+    project: Option<String>,
+    title: Option<String>,
+    mode: SessionMode,
+    guards: SessionGuards,
+    created_at: i64,
+    updated_at: i64,
+    events: Vec<SessionEvent>,
+    messages: Vec<SessionMessage>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize, Serialize)]
@@ -135,7 +176,7 @@ impl SessionTransport {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionEvent {
     pub(crate) event_id: String,
     pub(crate) session_id: String,
@@ -199,7 +240,7 @@ impl Default for SessionMessagePriority {
     }
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct SessionMessage {
     pub(crate) message_id: String,
     pub(crate) session_id: String,
@@ -316,6 +357,10 @@ impl Default for SessionStore {
 
 impl SessionStore {
     pub(crate) fn new(max_sessions: usize, max_events_per_session: usize) -> Self {
+        Self::new_in_memory(max_sessions, max_events_per_session)
+    }
+
+    pub(crate) fn new_in_memory(max_sessions: usize, max_events_per_session: usize) -> Self {
         Self {
             inner: Arc::new(Mutex::new(SessionStoreInner {
                 sessions: HashMap::new(),
@@ -323,7 +368,52 @@ impl SessionStore {
                 lru: VecDeque::new(),
                 max_sessions,
                 max_events_per_session,
+                persistence: None,
             })),
+        }
+    }
+
+    pub(crate) fn with_persistence(
+        path: impl Into<PathBuf>,
+        max_sessions: usize,
+        max_events_per_session: usize,
+    ) -> Self {
+        let path = path.into();
+        let (sessions, lru, restored_sessions, last_persist_error) =
+            load_persisted_sessions(&path, max_sessions, max_events_per_session);
+        Self {
+            inner: Arc::new(Mutex::new(SessionStoreInner {
+                sessions,
+                current_sessions: HashMap::new(),
+                lru,
+                max_sessions,
+                max_events_per_session,
+                persistence: Some(SessionPersistence {
+                    path,
+                    restored_sessions,
+                    last_persist_error,
+                }),
+            })),
+        }
+    }
+
+    pub(crate) fn status(&self) -> SessionStoreStatus {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        let (persistence, restored_sessions, last_persist_error) = match &inner.persistence {
+            Some(persistence) => (
+                "enabled".to_string(),
+                persistence.restored_sessions,
+                persistence.last_persist_error.clone(),
+            ),
+            None => ("disabled".to_string(), 0, None),
+        };
+        SessionStoreStatus {
+            persistence,
+            restored_sessions,
+            max_sessions: inner.max_sessions,
+            max_events_per_session: inner.max_events_per_session,
+            max_messages_per_session: DEFAULT_MAX_MESSAGES_PER_SESSION,
+            last_persist_error,
         }
     }
 
@@ -377,13 +467,17 @@ impl SessionStore {
             events: VecDeque::new(),
             project_instructions: opts.project_instructions,
         };
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.sessions.insert(session_id.clone(), record);
-        inner.touch(&session_id);
-        inner.enforce_session_bound();
-        inner
-            .summary(&session_id, Some(DEFAULT_SUMMARY_LIMIT))
-            .expect("newly inserted session must summarize")
+        let summary = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.sessions.insert(session_id.clone(), record);
+            inner.touch(&session_id);
+            inner.enforce_session_bound();
+            inner
+                .summary(&session_id, Some(DEFAULT_SUMMARY_LIMIT))
+                .expect("newly inserted session must summarize")
+        };
+        self.persist_after_mutation();
+        summary
     }
 
     pub(crate) fn summary(&self, session_id: &str, limit: Option<usize>) -> Option<SessionSummary> {
@@ -604,41 +698,45 @@ impl SessionStore {
         &self,
         input: PostSessionMessageInput,
     ) -> Result<SessionMessage, SessionMessageError> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.touch(&input.session_id);
-        let Some(record) = inner.sessions.get_mut(&input.session_id) else {
-            return Err(SessionMessageError::UnknownSession);
-        };
-        let message = validate_message_text(input.message)?;
-        let tags = validate_message_tags(input.tags)?;
-        if let Some(reply_to) = input.reply_to.as_deref() {
-            let found = record
-                .messages
-                .iter()
-                .any(|message| message.message_id == reply_to);
-            if !found {
-                return Err(SessionMessageError::UnknownMessage);
+        let message = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.touch(&input.session_id);
+            let Some(record) = inner.sessions.get_mut(&input.session_id) else {
+                return Err(SessionMessageError::UnknownSession);
+            };
+            let message = validate_message_text(input.message)?;
+            let tags = validate_message_tags(input.tags)?;
+            if let Some(reply_to) = input.reply_to.as_deref() {
+                let found = record
+                    .messages
+                    .iter()
+                    .any(|message| message.message_id == reply_to);
+                if !found {
+                    return Err(SessionMessageError::UnknownMessage);
+                }
             }
-        }
-        let now = now_ts();
-        let message = SessionMessage {
-            message_id: format!("{MESSAGE_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
-            session_id: input.session_id.clone(),
-            created_at: now,
-            kind: input.kind,
-            status: SessionMessageStatus::Open,
-            priority: input.priority,
-            message,
-            tags,
-            reply_to: input.reply_to,
-            resolved_at: None,
-            resolution: None,
+            let now = now_ts();
+            let message = SessionMessage {
+                message_id: format!("{MESSAGE_ID_PREFIX}{}", uuid::Uuid::new_v4().simple()),
+                session_id: input.session_id.clone(),
+                created_at: now,
+                kind: input.kind,
+                status: SessionMessageStatus::Open,
+                priority: input.priority,
+                message,
+                tags,
+                reply_to: input.reply_to,
+                resolved_at: None,
+                resolution: None,
+            };
+            record.updated_at = now;
+            record.messages.push_back(message.clone());
+            while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
+                record.messages.pop_front();
+            }
+            message
         };
-        record.updated_at = now;
-        record.messages.push_back(message.clone());
-        while record.messages.len() > DEFAULT_MAX_MESSAGES_PER_SESSION {
-            record.messages.pop_front();
-        }
+        self.persist_after_mutation();
         Ok(message)
     }
 
@@ -673,31 +771,35 @@ impl SessionStore {
         message_id: &str,
         resolution: Option<String>,
     ) -> Result<SessionMessage, SessionMessageError> {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        inner.touch(session_id);
-        let Some(record) = inner.sessions.get_mut(session_id) else {
-            return Err(SessionMessageError::UnknownSession);
+        let message = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            inner.touch(session_id);
+            let Some(record) = inner.sessions.get_mut(session_id) else {
+                return Err(SessionMessageError::UnknownSession);
+            };
+            let Some(message) = record
+                .messages
+                .iter_mut()
+                .find(|message| message.message_id == message_id)
+            else {
+                return Err(SessionMessageError::UnknownMessage);
+            };
+            let resolution = match resolution {
+                Some(value) => Some(validate_resolution_text(value)?),
+                None => None,
+            };
+            if message.status == SessionMessageStatus::Open {
+                message.status = SessionMessageStatus::Resolved;
+                message.resolved_at = Some(now_ts());
+            }
+            if resolution.is_some() {
+                message.resolution = resolution;
+            }
+            record.updated_at = now_ts();
+            message.clone()
         };
-        let Some(message) = record
-            .messages
-            .iter_mut()
-            .find(|message| message.message_id == message_id)
-        else {
-            return Err(SessionMessageError::UnknownMessage);
-        };
-        let resolution = match resolution {
-            Some(value) => Some(validate_resolution_text(value)?),
-            None => None,
-        };
-        if message.status == SessionMessageStatus::Open {
-            message.status = SessionMessageStatus::Resolved;
-            message.resolved_at = Some(now_ts());
-        }
-        if resolution.is_some() {
-            message.resolution = resolution;
-        }
-        record.updated_at = now_ts();
-        Ok(message.clone())
+        self.persist_after_mutation();
+        Ok(message)
     }
 
     pub(crate) fn discussion_summary(
@@ -717,21 +819,68 @@ impl SessionStore {
     }
 
     fn push_event(&self, event: SessionEvent) {
-        let mut inner = self.inner.lock().expect("session store mutex poisoned");
-        let max_events_per_session = inner.max_events_per_session;
-        if let Some(record) = inner.sessions.get_mut(&event.session_id) {
-            record.updated_at = now_ts();
-            record.events.push_back(event);
-            while record.events.len() > max_events_per_session {
-                record.events.pop_front();
+        let persisted = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            let max_events_per_session = inner.max_events_per_session;
+            if let Some(record) = inner.sessions.get_mut(&event.session_id) {
+                record.updated_at = now_ts();
+                record.events.push_back(event);
+                while record.events.len() > max_events_per_session {
+                    record.events.pop_front();
+                }
+                let session_id = record.session_id.clone();
+                inner.touch(&session_id);
+                true
+            } else {
+                false
             }
-            let session_id = record.session_id.clone();
-            inner.touch(&session_id);
+        };
+        if persisted {
+            self.persist_after_mutation();
         }
+    }
+
+    fn persist_after_mutation(&self) {
+        let Some((path, ledger)) = self.snapshot_for_persistence() else {
+            return;
+        };
+        let result = write_ledger_atomic(&path, &ledger).map_err(|err| {
+            bound_summary_string(&format!("persist_failed: {}: {err}", path.display()))
+        });
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        let Some(persistence) = inner.persistence.as_mut() else {
+            return;
+        };
+        match result {
+            Ok(()) => persistence.last_persist_error = None,
+            Err(error) => {
+                tracing::warn!("session ledger persistence failed: {}", error);
+                persistence.last_persist_error = Some(error);
+            }
+        }
+    }
+
+    fn snapshot_for_persistence(&self) -> Option<(PathBuf, PersistedSessionLedger)> {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        let path = inner.persistence.as_ref()?.path.clone();
+        Some((path, inner.to_persisted_ledger()))
     }
 }
 
 impl SessionStoreInner {
+    fn to_persisted_ledger(&self) -> PersistedSessionLedger {
+        let sessions = self
+            .lru
+            .iter()
+            .filter_map(|session_id| self.sessions.get(session_id))
+            .map(|record| PersistedSessionRecord::from_record(record, self.max_events_per_session))
+            .collect();
+        PersistedSessionLedger {
+            version: SESSION_LEDGER_VERSION,
+            sessions,
+        }
+    }
+
     fn touch(&mut self, session_id: &str) {
         self.lru.retain(|id| id != session_id);
         if self.sessions.contains_key(session_id) {
@@ -808,6 +957,208 @@ impl SessionStoreInner {
             messages: build_messages_summary(record),
         })
     }
+}
+
+impl PersistedSessionRecord {
+    fn from_record(record: &SessionRecord, max_events_per_session: usize) -> Self {
+        let event_skip = record.events.len().saturating_sub(max_events_per_session);
+        let message_skip = record
+            .messages
+            .len()
+            .saturating_sub(DEFAULT_MAX_MESSAGES_PER_SESSION);
+        Self {
+            session_id: record.session_id.clone(),
+            project: record.project.clone(),
+            title: record.title.clone(),
+            mode: record.mode,
+            guards: record.guards,
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+            events: record.events.iter().skip(event_skip).cloned().collect(),
+            messages: record.messages.iter().skip(message_skip).cloned().collect(),
+        }
+    }
+
+    fn into_record(self, max_events_per_session: usize) -> Option<SessionRecord> {
+        let session_id = self.session_id.trim().to_string();
+        if !is_valid_session_id(&session_id) {
+            return None;
+        }
+        let events: VecDeque<SessionEvent> = self
+            .events
+            .into_iter()
+            .filter_map(|event| sanitize_persisted_event(event, &session_id))
+            .rev()
+            .take(max_events_per_session)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        let messages: VecDeque<SessionMessage> = self
+            .messages
+            .into_iter()
+            .filter_map(|message| sanitize_persisted_message(message, &session_id))
+            .rev()
+            .take(DEFAULT_MAX_MESSAGES_PER_SESSION)
+            .collect::<Vec<_>>()
+            .into_iter()
+            .rev()
+            .collect();
+        Some(SessionRecord {
+            session_id,
+            project: self.project.map(|value| bound_summary_string(value.trim())),
+            title: self.title.map(|value| bound_summary_string(value.trim())),
+            mode: self.mode,
+            guards: SessionGuards::effective(self.mode, self.guards),
+            created_at: self.created_at,
+            updated_at: self.updated_at.max(self.created_at),
+            events,
+            messages,
+            project_instructions: None,
+        })
+    }
+}
+
+fn load_persisted_sessions(
+    path: &PathBuf,
+    max_sessions: usize,
+    max_events_per_session: usize,
+) -> (
+    HashMap<String, SessionRecord>,
+    VecDeque<String>,
+    usize,
+    Option<String>,
+) {
+    let content = match fs::read_to_string(path) {
+        Ok(content) => content,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {
+            return (HashMap::new(), VecDeque::new(), 0, None);
+        }
+        Err(err) => {
+            let error = bound_summary_string(&format!("restore_failed: {}: {err}", path.display()));
+            tracing::warn!("session ledger restore failed: {}", error);
+            return (HashMap::new(), VecDeque::new(), 0, Some(error));
+        }
+    };
+    let ledger = match serde_json::from_str::<PersistedSessionLedger>(&content) {
+        Ok(ledger) => ledger,
+        Err(err) => {
+            let error = bound_summary_string(&format!(
+                "restore_failed: invalid session ledger JSON: {err}"
+            ));
+            tracing::warn!("session ledger restore failed: {}", error);
+            return (HashMap::new(), VecDeque::new(), 0, Some(error));
+        }
+    };
+    if ledger.version != SESSION_LEDGER_VERSION {
+        let error = format!(
+            "restore_failed: unsupported session ledger version {}",
+            ledger.version
+        );
+        tracing::warn!("session ledger restore failed: {}", error);
+        return (HashMap::new(), VecDeque::new(), 0, Some(error));
+    }
+    let mut records: Vec<SessionRecord> = ledger
+        .sessions
+        .into_iter()
+        .filter_map(|record| record.into_record(max_events_per_session))
+        .collect();
+    records.sort_by_key(|record| record.updated_at);
+    while records.len() > max_sessions {
+        records.remove(0);
+    }
+    let mut sessions = HashMap::new();
+    let mut lru = VecDeque::new();
+    for record in records {
+        lru.push_back(record.session_id.clone());
+        sessions.insert(record.session_id.clone(), record);
+    }
+    let restored_sessions = sessions.len();
+    (sessions, lru, restored_sessions, None)
+}
+
+fn write_ledger_atomic(path: &PathBuf, ledger: &PersistedSessionLedger) -> io::Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("sessions.json");
+    let tmp_path = path.with_file_name(format!(
+        ".{file_name}.tmp-{}",
+        uuid::Uuid::new_v4().simple()
+    ));
+    let data = serde_json::to_vec_pretty(ledger).map_err(io::Error::other)?;
+    if let Err(err) = fs::write(&tmp_path, data).and_then(|_| fs::rename(&tmp_path, path)) {
+        let _ = fs::remove_file(&tmp_path);
+        return Err(err);
+    }
+    Ok(())
+}
+
+fn sanitize_persisted_event(mut event: SessionEvent, session_id: &str) -> Option<SessionEvent> {
+    if event.session_id != session_id || !event.event_id.starts_with(EVENT_ID_PREFIX) {
+        return None;
+    }
+    event.kind = bound_summary_string(event.kind.trim());
+    event.transport = bound_summary_string(event.transport.trim());
+    event.tool_name = bound_summary_string(event.tool_name.trim());
+    event.project = event
+        .project
+        .map(|value| bound_summary_string(value.trim()));
+    event.resolved_project = event
+        .resolved_project
+        .map(|value| bound_summary_string(value.trim()));
+    event.risk_class = bound_summary_string(event.risk_class.trim());
+    event.status = event.status.map(|value| bound_summary_string(value.trim()));
+    event.failure_kind = event
+        .failure_kind
+        .map(|value| bound_summary_string(value.trim()));
+    event.error_kind = event
+        .error_kind
+        .map(|value| bound_summary_string(value.trim()));
+    event.error_message_summary = event
+        .error_message_summary
+        .map(|value| bound_event_error_summary(value.trim(), event.shell_like));
+    event.changed_paths = event
+        .changed_paths
+        .into_iter()
+        .take(MAX_INPUT_ARRAY_ITEMS)
+        .map(|path| bound_summary_string(path.trim()))
+        .filter(|path| !path.is_empty())
+        .collect();
+    event.job_id = event.job_id.map(|value| bound_summary_string(value.trim()));
+    event.input_summary = event
+        .input_summary
+        .map(|value| redact_and_bound_value(&value));
+    Some(event)
+}
+
+fn sanitize_persisted_message(
+    mut message: SessionMessage,
+    session_id: &str,
+) -> Option<SessionMessage> {
+    if message.session_id != session_id || !message.message_id.starts_with(MESSAGE_ID_PREFIX) {
+        return None;
+    }
+    message.message = bound_chars(message.message.trim(), MAX_MESSAGE_CHARS);
+    message.tags = validate_message_tags(message.tags).unwrap_or_default();
+    message.reply_to = message.reply_to.and_then(|reply_to| {
+        let reply_to = reply_to.trim().to_string();
+        if reply_to.starts_with(MESSAGE_ID_PREFIX) {
+            Some(reply_to)
+        } else {
+            None
+        }
+    });
+    message.resolution = message
+        .resolution
+        .map(|resolution| bound_chars(resolution.trim(), MAX_MESSAGE_RESOLUTION_CHARS));
+    Some(message)
 }
 
 fn validate_message_text(value: String) -> Result<String, SessionMessageError> {
@@ -1289,6 +1640,171 @@ mod tests {
             summary.events[0].input_summary.as_ref().unwrap()["command"],
             "[redacted]"
         );
+    }
+
+    fn persistent_store(path: PathBuf) -> SessionStore {
+        SessionStore::with_persistence(path, 10, 10)
+    }
+
+    #[test]
+    fn session_store_persists_and_restores_basic_session() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session(
+            Some("agent:oe:private-drop".to_string()),
+            Some("persistent work".to_string()),
+        );
+
+        let restored = persistent_store(ledger);
+        let status = restored.status();
+        assert_eq!(status.persistence, "enabled");
+        assert_eq!(status.restored_sessions, 1);
+        assert_eq!(status.last_persist_error, None);
+        let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+        assert_eq!(summary.session_id, session.session_id);
+        assert_eq!(summary.project.as_deref(), Some("agent:oe:private-drop"));
+        assert_eq!(summary.title.as_deref(), Some("persistent work"));
+    }
+
+    #[test]
+    fn session_messages_survive_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session(None, Some("discussion".to_string()));
+        post_message(
+            &store,
+            &session.session_id,
+            SessionMessageKind::Guidance,
+            "keep OpenAPI operation count stable",
+        );
+        post_message(
+            &store,
+            &session.session_id,
+            SessionMessageKind::Progress,
+            "ledger snapshot wired",
+        );
+
+        let restored = persistent_store(ledger);
+        let messages = restored
+            .list_messages(&session.session_id, ListSessionMessagesFilter::default())
+            .unwrap();
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].message, "ledger snapshot wired");
+        assert_eq!(messages[1].kind, SessionMessageKind::Guidance);
+        let discussion = restored
+            .discussion_summary(&session.session_id, Some(10))
+            .unwrap();
+        assert_eq!(discussion.counts.total, 2);
+        assert_eq!(discussion.counts.guidance, 1);
+        assert_eq!(discussion.counts.progress, 1);
+    }
+
+    #[test]
+    fn session_events_survive_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session(None, Some("events".to_string()));
+        let start = store.record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Api,
+            "git_log",
+            &json!({"project": "agent:oe:private-drop", "limit": 1}),
+        );
+        store.record_tool_call_finished(start, true, &json!({}), None, None);
+
+        let restored = persistent_store(ledger);
+        let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+        assert_eq!(summary.events.len(), 2);
+        assert_eq!(summary.counts.tool_calls, 1);
+        assert_eq!(summary.counts.succeeded, 1);
+        assert_eq!(summary.counts.git_like, 1);
+        assert_eq!(summary.events[1].tool_name, "git_log");
+    }
+
+    #[test]
+    fn resolved_message_survives_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session(None, None);
+        let message = post_message(
+            &store,
+            &session.session_id,
+            SessionMessageKind::Todo,
+            "finish persistence tests",
+        );
+        store
+            .resolve_message(
+                &session.session_id,
+                &message.message_id,
+                Some("covered".to_string()),
+            )
+            .unwrap();
+
+        let restored = persistent_store(ledger);
+        let messages = restored
+            .list_messages(
+                &session.session_id,
+                ListSessionMessagesFilter {
+                    kind: Some(SessionMessageKind::Todo),
+                    status: Some(SessionMessageStatus::Resolved),
+                    limit: Some(10),
+                },
+            )
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].status, SessionMessageStatus::Resolved);
+        assert_eq!(messages[0].resolution.as_deref(), Some("covered"));
+        assert!(messages[0].resolved_at.is_some());
+    }
+
+    #[test]
+    fn corrupted_ledger_does_not_panic() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        std::fs::write(&ledger, "{not valid json").unwrap();
+
+        let store = persistent_store(ledger);
+        let status = store.status();
+        assert_eq!(status.persistence, "enabled");
+        assert_eq!(status.restored_sessions, 0);
+        assert!(status
+            .last_persist_error
+            .as_deref()
+            .unwrap()
+            .contains("restore_failed"));
+        assert!(store.summary("wc_sess_missing", None).is_none());
+    }
+
+    #[test]
+    fn project_instructions_content_not_persisted_or_leaked_after_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let secret_body = "secret project rule that must not persist";
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session_with_options(SessionCreateOptions {
+            project: Some("agent:oe:private-drop".to_string()),
+            title: Some("instructions".to_string()),
+            mode: SessionMode::Normal,
+            guards: SessionGuards::default(),
+            project_instructions: Some(ProjectInstructionsSnapshot::from_single_file(
+                "AGENTS.md",
+                secret_body.to_string(),
+                1,
+            )),
+        });
+
+        let serialized = std::fs::read_to_string(&ledger).unwrap();
+        assert!(!serialized.contains(secret_body));
+        assert!(!serialized.contains("project_instructions"));
+        let restored = persistent_store(ledger);
+        let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+        assert!(summary.project_instructions.is_none());
+        let summary_json = serde_json::to_string(&summary).unwrap();
+        assert!(!summary_json.contains(secret_body));
     }
 
     fn post_message(

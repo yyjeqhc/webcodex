@@ -249,12 +249,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let runtime_info = Arc::new(tool_runtime::RuntimeInfo::from_env_with_quic_config(
         &quic_cfg,
     ));
-    let tool_runtime = Arc::new(tool_runtime::ToolRuntime::new(
-        projects_state.clone(),
-        shell_registry.clone(),
-        Arc::new(config.codex.clone()),
-        runtime_info.clone(),
-    ));
+    let tool_runtime = Arc::new(
+        tool_runtime::ToolRuntime::new(
+            projects_state.clone(),
+            shell_registry.clone(),
+            Arc::new(config.codex.clone()),
+            runtime_info.clone(),
+        )
+        .with_session_ledger(config.session_ledger_path()),
+    );
 
     // Custom QUIC agent transport. Default disabled;
     // only starts when WEBCODEX_QUIC_ENABLED=true. Runs a separate quinn UDP

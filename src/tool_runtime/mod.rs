@@ -352,6 +352,15 @@ impl ToolRuntime {
         }
     }
 
+    pub fn with_session_ledger(mut self, path: impl Into<PathBuf>) -> Self {
+        self.sessions = sessions::SessionStore::with_persistence(
+            path,
+            sessions::DEFAULT_MAX_SESSIONS,
+            sessions::DEFAULT_MAX_EVENTS_PER_SESSION,
+        );
+        self
+    }
+
     fn agent_project_runtime_id(client_id: &str, project_id: &str) -> String {
         format!("agent:{}:{}", client_id, project_id)
     }
@@ -1769,6 +1778,7 @@ impl ToolRuntime {
             "agents": agents,
             "jobs": jobs,
             "tools": tools,
+            "session_store": self.sessions.status(),
         });
         if let Some(quic) = quic {
             output["quic"] = quic;

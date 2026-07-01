@@ -792,6 +792,29 @@ pub(crate) fn build_openapi_spec() -> Value {
                                 "with_line_numbers": true
                             }
                         },
+                        "checkpointRestore": {
+                            "summary": "Restore a checkpoint via flattened GPT Action fields",
+                            "value": {
+                                "tool": "workspace_checkpoint_restore",
+                                "project": "webcodex",
+                                "checkpoint_id": "wc_ckpt_abc",
+                                "confirm": true,
+                                "recording_session_id": "wc_sess_record"
+                            }
+                        },
+                        "applyTextEdits": {
+                            "summary": "Atomic multi-block edit via flattened GPT Action fields",
+                            "value": {
+                                "tool": "apply_text_edits",
+                                "project": "webcodex",
+                                "path": "src/lib.rs",
+                                "dry_run": true,
+                                "edits": [
+                                    {"kind": "replace_exact", "old_text": "alpha", "new_text": "beta"}
+                                ],
+                                "expected_file_sha256": "sha256-of-original-file"
+                            }
+                        },
                         "argumentsAlias": {
                             "summary": "MCP-style arguments alias (params wins when both present)",
                             "value": {
@@ -1042,6 +1065,64 @@ fn schemas() -> Value {
                             "maxLength": 500
                         }
                     }
+                },
+                "note": {
+                    "type": "string",
+                    "description": "Flattened workspace_checkpoint_create optional note (not used by restore). Used only when `params` and `arguments` are absent."
+                },
+                "include_untracked": {
+                    "type": "boolean",
+                    "description": "Flattened workspace_checkpoint_create flag to capture small non-secret UTF-8 untracked files (default false). Used only when `params` and `arguments` are absent."
+                },
+                "checkpoint_id": {
+                    "type": "string",
+                    "description": "Flattened workspace_checkpoint_show/restore/delete wc_ckpt_* id. Used only when `params` and `arguments` are absent."
+                },
+                "confirm": {
+                    "type": "boolean",
+                    "description": "Flattened workspace_checkpoint_restore/delete confirm flag; must be true to proceed. Used only when `params` and `arguments` are absent."
+                },
+                "include_diff_stat": {
+                    "type": "boolean",
+                    "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` and `arguments` are absent."
+                },
+                "edits": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 20,
+                    "description": "Flattened apply_text_edits ordered batch of 1..20 atomic edits. Used only when `params` and `arguments` are absent.",
+                    "items": {
+                        "type": "object",
+                        "additionalProperties": false,
+                        "required": ["kind"],
+                        "properties": {
+                            "kind": {
+                                "type": "string",
+                                "enum": ["replace_exact", "insert_after", "insert_before", "delete_exact"],
+                                "description": "Atomic edit kind."
+                            },
+                            "old_text": {
+                                "type": "string",
+                                "description": "Exact text to replace or delete, required by replace_exact/delete_exact."
+                            },
+                            "new_text": {
+                                "type": "string",
+                                "description": "Replacement or inserted text, required by replace_exact/insert_before/insert_after."
+                            },
+                            "anchor_text": {
+                                "type": "string",
+                                "description": "Unique anchor text required by insert_before/insert_after."
+                            }
+                        }
+                    }
+                },
+                "dry_run": {
+                    "type": "boolean",
+                    "description": "Flattened apply_text_edits / validate_patch flag to compute the plan without writing. Used only when `params` and `arguments` are absent."
+                },
+                "expected_file_sha256": {
+                    "type": "string",
+                    "description": "Flattened apply_text_edits optional sha256 guard for the whole original file. Used only when `params` and `arguments` are absent."
                 },
                 "message": {
                     "type": "string",
@@ -2830,6 +2911,14 @@ mod tests {
             "max_bytes",
             "expected_old_prefix",
             "expected_anchor_prefix",
+            "note",
+            "include_untracked",
+            "checkpoint_id",
+            "confirm",
+            "include_diff_stat",
+            "edits",
+            "dry_run",
+            "expected_file_sha256",
         ] {
             assert!(
                 properties.contains_key(field),
@@ -2849,6 +2938,101 @@ mod tests {
             desc_blob.contains("top-level fields") && desc_blob.contains("params/arguments"),
             "ToolCallRequest must document flattened GPT Action compatibility"
         );
+    }
+
+    #[test]
+    fn openapi_call_runtime_tool_declares_checkpoint_flattened_fields() {
+        // Regression: GPT Action wrapper rejected checkpoint note,
+        // include_untracked, checkpoint_id, confirm, and include_diff_stat
+        // because ToolCallRequest.properties did not declare them while
+        // additionalProperties stayed false. Each flattened field must be
+        // an explicit top-level property so GPT Actions accept it.
+        let spec = build_openapi_spec();
+        let properties = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+            .as_object()
+            .unwrap();
+        for field in [
+            "note",
+            "include_untracked",
+            "checkpoint_id",
+            "confirm",
+            "include_diff_stat",
+        ] {
+            assert!(
+                properties.contains_key(field),
+                "ToolCallRequest.properties.{field} must exist for flattened checkpoint GPT Action calls"
+            );
+        }
+        assert_eq!(properties["note"]["type"], "string");
+        assert_eq!(properties["include_untracked"]["type"], "boolean");
+        assert_eq!(properties["checkpoint_id"]["type"], "string");
+        assert_eq!(properties["confirm"]["type"], "boolean");
+        assert_eq!(properties["include_diff_stat"]["type"], "boolean");
+        assert_eq!(
+            spec["components"]["schemas"]["ToolCallRequest"]["additionalProperties"],
+            false
+        );
+        let count: usize = spec["paths"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|m| m.as_object().unwrap().len())
+            .sum();
+        assert_eq!(count, 28, "operation count must stay 28");
+    }
+
+    #[test]
+    fn openapi_call_runtime_tool_declares_apply_text_edits_flattened_fields() {
+        // Regression: GPT Action wrapper rejected apply_text_edits edits,
+        // dry_run, and expected_file_sha256 because ToolCallRequest.properties
+        // did not declare them. `edits` must mirror the runtime input schema
+        // (bounded array of typed items), not a bare free-form object.
+        let spec = build_openapi_spec();
+        let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
+        let properties = tool_call["properties"].as_object().unwrap();
+        for field in ["edits", "dry_run", "expected_file_sha256"] {
+            assert!(
+                properties.contains_key(field),
+                "ToolCallRequest.properties.{field} must exist for flattened apply_text_edits GPT Action calls"
+            );
+        }
+        assert_eq!(properties["dry_run"]["type"], "boolean");
+        assert_eq!(properties["expected_file_sha256"]["type"], "string");
+        let edits = &properties["edits"];
+        assert_eq!(
+            edits["type"], "array",
+            "edits must be an array, not a bare object"
+        );
+        assert_eq!(edits["minItems"], 1);
+        assert_eq!(edits["maxItems"], 20);
+        let items = &edits["items"];
+        assert_eq!(items["type"], "object");
+        assert_eq!(items["additionalProperties"], false);
+        let kind_enum = &items["properties"]["kind"]["enum"]
+            .as_array()
+            .expect("edits.items.kind must be an enum");
+        for variant in [
+            "replace_exact",
+            "insert_after",
+            "insert_before",
+            "delete_exact",
+        ] {
+            assert!(
+                kind_enum.iter().any(|v| v == variant),
+                "edits.items.kind enum must include {variant}"
+            );
+        }
+        assert_eq!(
+            tool_call["additionalProperties"], false,
+            "additionalProperties must stay false"
+        );
+        let count: usize = spec["paths"]
+            .as_object()
+            .unwrap()
+            .values()
+            .map(|m| m.as_object().unwrap().len())
+            .sum();
+        assert_eq!(count, 28, "operation count must stay 28");
     }
 
     #[test]

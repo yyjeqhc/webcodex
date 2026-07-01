@@ -3163,6 +3163,64 @@ mod tests {
     }
 
     #[test]
+    fn extract_tool_call_collects_flattened_checkpoint_restore_fields() {
+        // GPT Action flattened call for workspace_checkpoint_restore: the
+        // recorder metadata (recording_session_id) must be stripped from
+        // params while the business fields (project/checkpoint_id/confirm)
+        // are collected into params for concrete dispatch.
+        let body = json!({
+            "tool": "workspace_checkpoint_restore",
+            "project": "agent:special:test",
+            "checkpoint_id": "wc_ckpt_abc",
+            "confirm": true,
+            "recording_session_id": "wc_sess_record"
+        });
+        let (tool, params) = extract_tool_call(&body).unwrap();
+
+        assert_eq!(tool, "workspace_checkpoint_restore");
+        assert_eq!(params["project"], "agent:special:test");
+        assert_eq!(params["checkpoint_id"], "wc_ckpt_abc");
+        assert_eq!(params["confirm"], true);
+        assert!(
+            params
+                .as_object()
+                .is_some_and(|m| !m.contains_key("recording_session_id")),
+            "recording_session_id must not leak into concrete params"
+        );
+        assert_eq!(
+            extract_recording_session_id(&body),
+            Some("wc_sess_record".to_string()),
+            "recording_session_id must remain available as wrapper recorder metadata"
+        );
+    }
+
+    #[test]
+    fn extract_tool_call_collects_flattened_apply_text_edits_fields() {
+        // GPT Action flattened call for apply_text_edits: nested `edits`
+        // array and scalar flattened fields must be collected into params.
+        let (tool, params) = extract_tool_call(&json!({
+            "tool": "apply_text_edits",
+            "project": "agent:special:test",
+            "path": "a.txt",
+            "dry_run": true,
+            "edits": [
+                {"kind": "replace_exact", "old_text": "a", "new_text": "b"}
+            ]
+        }))
+        .unwrap();
+
+        assert_eq!(tool, "apply_text_edits");
+        assert_eq!(params["project"], "agent:special:test");
+        assert_eq!(params["path"], "a.txt");
+        assert_eq!(params["dry_run"], true);
+        let edits = params["edits"].as_array().unwrap();
+        assert_eq!(edits.len(), 1);
+        assert_eq!(edits[0]["kind"], "replace_exact");
+        assert_eq!(edits[0]["old_text"], "a");
+        assert_eq!(edits[0]["new_text"], "b");
+    }
+
+    #[test]
     fn extract_tool_call_no_argument_tool_keeps_null_params() {
         let (tool, params) = extract_tool_call(&json!({"tool": "list_tools"})).unwrap();
 

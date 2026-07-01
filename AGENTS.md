@@ -172,6 +172,7 @@ If adding or renaming a runtime tool, update **all** of:
 - GPT Actions should prefer **flattened top-level fields** over `params` / `arguments`.
 - Use `recording_session_id` for generic wrapper recorder metadata.
 - Use `session_id` as tool business input.
+- When a runtime-only tool is expected to work through GPT Action `callRuntimeTool` with flattened top-level fields, `ToolCallRequest.properties` must expose **every** flattened field that GPT Actions need. This includes nested object/list payload fields such as `edits`, `validation`, `labels`, `checkpoint_id`, `confirm`, `dry_run`, `include_untracked`, and `include_diff_stat`. Add/update tests that fail when flattened Action fields are missing. Do **not** loosen `additionalProperties` to `true` as a workaround — list the needed flattened fields explicitly.
 
 ---
 

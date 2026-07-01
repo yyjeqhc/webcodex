@@ -6561,6 +6561,27 @@ mod tests {
     }
 
     #[test]
+    fn agent_init_empty_tokens_are_rejected() {
+        let opts = parse_cli_agent_init(&args(&[
+            "--server-url",
+            "https://v4.example.test",
+            "--token",
+            "   ",
+            "--client-id",
+            "alice-laptop",
+            "--owner",
+            "alice",
+            "--allowed-root",
+            "/srv/projects",
+            "--output",
+            "-",
+        ]))
+        .unwrap();
+        let err = run_agent_init(opts).unwrap_err();
+        assert!(err.contains("--token cannot be empty"), "{err}");
+    }
+
+    #[test]
     fn agent_init_allows_empty_allowed_roots_with_home_default() {
         let _guard = agent_init::TEST_ENV_LOCK.lock().unwrap();
         let home = std::env::var_os("HOME");

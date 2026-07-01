@@ -1463,9 +1463,6 @@ fn load_config(path: &Path) -> Result<AgentConfig, String> {
     if cfg.server_url.trim().is_empty() {
         return Err("server_url cannot be empty".to_string());
     }
-    if cfg.token.trim().is_empty() {
-        return Err("token cannot be empty".to_string());
-    }
     if cfg.client_id.trim().is_empty() {
         return Err("client_id cannot be empty".to_string());
     }
@@ -5662,6 +5659,11 @@ fn main() {
             std::process::exit(2);
         }
     };
+    if cfg.token.trim().is_empty() {
+        eprintln!(
+            "webcodex-agent warning: agent token is empty; connecting without Authorization; the server must be started with --open"
+        );
+    }
     if let Err(e) = run_agent(cfg, once) {
         eprintln!("webcodex-agent failed: {}", e);
         std::process::exit(1);
@@ -5994,6 +5996,55 @@ transport = "auto"
         assert!(caps.jobs);
         assert!(caps.async_jobs);
         assert!(caps.async_shell_jobs);
+    }
+
+    #[test]
+    fn empty_tokens_config_parser_accepts_empty_and_whitespace_token() {
+        for token in ["", "   "] {
+            let tmp = tempfile::tempdir().unwrap();
+            let path = tmp.path().join("agent.toml");
+            std::fs::write(
+                &path,
+                format!(
+                    "server_url = \"http://127.0.0.1:8000\"\ntoken = \"{}\"\nclient_id = \"open-agent\"\n[policy]\nallow_cwd_anywhere = true\n",
+                    token
+                ),
+            )
+            .unwrap();
+
+            let cfg = load_config(&path).unwrap();
+            assert_eq!(cfg.token, token);
+            assert_eq!(non_empty_token(&cfg.token), None);
+        }
+    }
+
+    #[test]
+    fn empty_tokens_agent_init_still_rejects_empty_token_sources() {
+        let mut opts = init_opts(PathBuf::from("-"));
+        opts.token = Some("   ".to_string());
+        let err = generated_agent_config_toml(&opts).unwrap_err();
+        assert!(err.contains("--token cannot be empty"), "{err}");
+
+        let tmp = tempfile::tempdir().unwrap();
+        let token_file = tmp.path().join("agent.token");
+        std::fs::write(&token_file, "  \n").unwrap();
+        let mut opts = init_opts(PathBuf::from("-"));
+        opts.token = None;
+        opts.token_file = Some(token_file);
+        let err = generated_agent_config_toml(&opts).unwrap_err();
+        assert!(err.contains("--token-file cannot be empty"), "{err}");
+
+        let _guard = TEST_ENV_LOCK.lock().unwrap();
+        std::env::set_var("WEBCODEX_AGENT_TOKEN", "   ");
+        let mut opts = init_opts(PathBuf::from("-"));
+        opts.token = None;
+        opts.token_file = None;
+        let err = generated_agent_config_toml(&opts).unwrap_err();
+        assert!(
+            err.contains("WEBCODEX_AGENT_TOKEN cannot be empty"),
+            "{err}"
+        );
+        std::env::remove_var("WEBCODEX_AGENT_TOKEN");
     }
 
     #[test]
@@ -8923,6 +8974,50 @@ shell_profile = "../rust"
         assert_eq!(non_empty_token(""), None);
         assert_eq!(non_empty_token("   \t"), None);
         assert_eq!(non_empty_token("  abc123  "), Some("abc123".to_string()));
+    }
+
+    #[test]
+    fn empty_tokens_http_register_omits_authorization_header() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let mut buf = [0u8; 16 * 1024];
+            let n = stream.read(&mut buf).unwrap();
+            let request = String::from_utf8_lossy(&buf[..n]).to_string();
+            assert!(
+                request.starts_with("POST /api/shell/agent/register "),
+                "unexpected request: {request}"
+            );
+            assert!(
+                !request.to_ascii_lowercase().contains("authorization:"),
+                "empty token must not send Authorization header: {request}"
+            );
+            let body = r#"{"success":true,"client":null,"error":null}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .unwrap();
+        });
+
+        let tmp = tempfile::tempdir().unwrap();
+        let mut cfg = test_config(tmp.path().join("projects.d"));
+        cfg.server_url = format!("http://{}", addr);
+        cfg.token = "   \t".to_string();
+
+        let client = Client::builder().no_proxy().build().unwrap();
+        let mut project_cache = AgentProjectCache::default();
+        register(&client, &cfg, &mut project_cache, "inst-empty-token", 0).unwrap();
+        server.join().unwrap();
     }
 
     // ------------------------------------------------------------------------

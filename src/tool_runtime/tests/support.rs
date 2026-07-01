@@ -554,6 +554,54 @@ pub(super) fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate:
     }
 }
 
+pub(super) fn shared_key_auth_context(hash: &str) -> crate::auth::AuthContext {
+    crate::auth::AuthContext {
+        kind: crate::auth::AuthKind::SharedKey,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        api_key_name: None,
+        role: Some("shared-key".to_string()),
+        scopes: vec![
+            crate::auth::SCOPE_RUNTIME_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_WRITE.to_string(),
+            crate::auth::SCOPE_JOB_RUN.to_string(),
+            crate::auth::SCOPE_AGENT_REGISTER.to_string(),
+        ],
+        is_bootstrap: false,
+        token_kind: Some("shared-key".to_string()),
+        allowed_client_id: None,
+        shared_key_hash: Some(hash.to_string()),
+    }
+}
+
+pub(super) fn open_auth_context() -> crate::auth::AuthContext {
+    crate::auth::AuthContext {
+        kind: crate::auth::AuthKind::OpenAnonymous,
+        user_id: Some("open-anonymous".to_string()),
+        username: None,
+        api_key_id: None,
+        api_key_name: None,
+        role: Some("open".to_string()),
+        scopes: vec![
+            crate::auth::SCOPE_RUNTIME_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_WRITE.to_string(),
+            crate::auth::SCOPE_JOB_RUN.to_string(),
+            crate::auth::SCOPE_AGENT_REGISTER.to_string(),
+        ],
+        is_bootstrap: false,
+        token_kind: Some("open".to_string()),
+        allowed_client_id: None,
+        shared_key_hash: None,
+    }
+}
+
+pub(super) fn bootstrap_auth_context() -> crate::auth::AuthContext {
+    auth_context(None, true)
+}
+
 pub(super) fn agent_project_config(path: &str, client_id: &str) -> ProjectConfig {
     ProjectConfig {
         path: path.to_string(),

@@ -9,6 +9,7 @@ use super::types::{
     LocalJobKiller, LocalJobRecord, TerminateOutcome, ToolResult, ACTIVE_LOCAL_STATUSES,
 };
 use super::ToolRuntime;
+use crate::auth::AuthContext;
 use crate::shell_protocol::{ShellJobInfo, ShellJobOpRequest};
 
 fn job_id_for_log(path: &Path) -> String {
@@ -314,6 +315,10 @@ pub(crate) fn stop_local_job(
 }
 
 impl ToolRuntime {
+    pub(crate) fn local_jobs_visible_to_auth(auth: Option<&AuthContext>) -> bool {
+        !auth.map(|auth| auth.is_lightweight()).unwrap_or(false)
+    }
+
     pub(crate) async fn run_job(
         &self,
         project: String,
@@ -452,21 +457,41 @@ impl ToolRuntime {
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn job_status(&self, job_id: String) -> ToolResult {
+        self.job_status_for_auth(job_id, None).await
+    }
+
+    pub(crate) async fn job_status_for_auth(
+        &self,
+        job_id: String,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
         let killer = self.job_killer.as_ref();
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
+            if !Self::local_jobs_visible_to_auth(auth) {
+                return ToolResult::err(format!("unknown job: {}", job_id));
+            }
             return local_job_status(&job_id, &record, killer);
         }
         // Fall through to agent-backed jobs. If the agent registry does not
         // know this job either, attempt local recovery from on-disk metadata
         // so jobs started before a server restart remain queryable.
-        if self.shell_clients.get_job(&job_id).await.is_err() {
+        if self
+            .shell_clients
+            .get_job_for_auth(auth, &job_id)
+            .await
+            .is_err()
+        {
             if let Some(record) = self.recover_local_job(&job_id).await {
+                if !Self::local_jobs_visible_to_auth(auth) {
+                    return ToolResult::err(format!("unknown job: {}", job_id));
+                }
                 return local_job_status(&job_id, &record, killer);
             }
             return ToolResult::err(format!("unknown job: {}", job_id));
         }
-        match self.shell_clients.get_job(&job_id).await {
+        match self.shell_clients.get_job_for_auth(auth, &job_id).await {
             Ok(job) => ToolResult::ok(json!({
                 "job_id": job.job_id,
                 "status": job.status,
@@ -479,29 +504,52 @@ impl ToolRuntime {
                 "command_preview": job.command_preview,
                 "error": job.error,
             })),
-            Err(e) => ToolResult::err(e),
+            Err(_) => ToolResult::err(format!("unknown job: {}", job_id)),
         }
     }
 
+    #[allow(dead_code)]
     pub(crate) async fn job_log(
         &self,
         job_id: String,
         offset: Option<usize>,
         tail_lines: Option<usize>,
     ) -> ToolResult {
+        self.job_log_for_auth(job_id, offset, tail_lines, None)
+            .await
+    }
+
+    pub(crate) async fn job_log_for_auth(
+        &self,
+        job_id: String,
+        offset: Option<usize>,
+        tail_lines: Option<usize>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
         let killer = self.job_killer.as_ref();
         if let Some(record) = self.local_jobs.lock().await.get(&job_id).cloned() {
+            if !Self::local_jobs_visible_to_auth(auth) {
+                return ToolResult::err(format!("unknown job: {}", job_id));
+            }
             return local_job_log(&job_id, &record, killer, offset, tail_lines);
         }
-        if self.shell_clients.get_job(&job_id).await.is_err() {
+        if self
+            .shell_clients
+            .get_job_for_auth(auth, &job_id)
+            .await
+            .is_err()
+        {
             if let Some(record) = self.recover_local_job(&job_id).await {
+                if !Self::local_jobs_visible_to_auth(auth) {
+                    return ToolResult::err(format!("unknown job: {}", job_id));
+                }
                 return local_job_log(&job_id, &record, killer, offset, tail_lines);
             }
             return ToolResult::err(format!("unknown job: {}", job_id));
         }
         match self
             .shell_clients
-            .job_log(&job_id, offset, None, tail_lines.or(Some(500)))
+            .job_log_for_auth(auth, &job_id, offset, None, tail_lines.or(Some(500)))
             .await
         {
             Ok((job, stdout, stderr, next_stdout_line, next_stderr_line)) => {
@@ -514,16 +562,26 @@ impl ToolRuntime {
                     "next_stderr_line": next_stderr_line,
                 }))
             }
-            Err(e) => ToolResult::err(e),
+            Err(_) => ToolResult::err(format!("unknown job: {}", job_id)),
         }
     }
 
     /// `list_jobs`: bounded job summaries across agent and local executors.
     /// Never returns stdout/stderr bodies — only metadata.
+    #[allow(dead_code)]
     pub(crate) async fn list_jobs(
         &self,
         limit: Option<usize>,
         status: Option<String>,
+    ) -> ToolResult {
+        self.list_jobs_for_auth(limit, status, None).await
+    }
+
+    pub(crate) async fn list_jobs_for_auth(
+        &self,
+        limit: Option<usize>,
+        status: Option<String>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
         let max = limit.unwrap_or(20).clamp(1, 100);
         let status_filter = status
@@ -532,7 +590,7 @@ impl ToolRuntime {
         // Agent jobs come pre-bounded to `max` by the registry. Local jobs are
         // collected fully (the in-memory map is small) so truncation can be
         // detected accurately for the common local-only case.
-        let agent_jobs = self.shell_clients.list_jobs(Some(max)).await;
+        let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, Some(max)).await;
         let mut summaries: Vec<Value> = agent_jobs
             .iter()
             .filter(|j| {
@@ -543,12 +601,15 @@ impl ToolRuntime {
             })
             .map(agent_job_summary_value)
             .collect();
-        let local_records: Vec<(String, LocalJobRecord)> = {
+        let local_records: Vec<(String, LocalJobRecord)> = if Self::local_jobs_visible_to_auth(auth)
+        {
             let local_jobs_map = self.local_jobs.lock().await;
             local_jobs_map
                 .iter()
                 .map(|(job_id, record)| (job_id.clone(), record.clone()))
                 .collect()
+        } else {
+            Vec::new()
         };
         for (job_id, record) in &local_records {
             if let Some(summary) = local_job_summary_value(job_id, record, &status_filter) {
@@ -573,9 +634,19 @@ impl ToolRuntime {
     /// `job_tail`: bounded stdout/stderr tails for a job. Reuses the bounded
     /// `job_log` path with a tail-focused default so the console never reads
     /// full logs by default.
+    #[allow(dead_code)]
     pub(crate) async fn job_tail(&self, job_id: String, tail_lines: Option<usize>) -> ToolResult {
+        self.job_tail_for_auth(job_id, tail_lines, None).await
+    }
+
+    pub(crate) async fn job_tail_for_auth(
+        &self,
+        job_id: String,
+        tail_lines: Option<usize>,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
         let tail = tail_lines.unwrap_or(200).clamp(1, 500);
-        self.job_log(job_id, None, Some(tail)).await
+        self.job_log_for_auth(job_id, None, Some(tail), auth).await
     }
 
     /// Stop a local job by terminating its process group and marking it

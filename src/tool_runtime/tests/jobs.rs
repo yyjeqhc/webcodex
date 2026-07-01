@@ -2,8 +2,9 @@
 
 use super::super::helpers::*;
 use super::super::types::*;
+use super::super::ToolRuntime;
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
 use serde_json::json;
 use std::fs;
 
@@ -799,6 +800,305 @@ async fn job_log_recovery_paginates_with_offset() {
     assert!(out2.contains("line 501"));
     assert!(out2.contains("line 600"));
     assert_eq!(second.output["next_stdout_line"], 601);
+}
+
+async fn register_job_agent_for_auth(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project_id: &str,
+    auth: &crate::auth::AuthContext,
+) {
+    let mut caps = ShellClientCapabilities::default();
+    caps.async_shell_jobs = true;
+    runtime
+        .shell_clients
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(caps),
+                projects: Some(vec![registered_project(
+                    project_id,
+                    &format!("/tmp/{project_id}"),
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+            Some(auth),
+        )
+        .await
+        .unwrap();
+}
+
+async fn start_agent_runtime_job(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project_id: &str,
+    auth: &crate::auth::AuthContext,
+) -> String {
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: format!("agent:{client_id}:{project_id}"),
+                command: format!("echo {client_id}"),
+                session_id: None,
+                timeout_secs: None,
+                cwd: None,
+            },
+            Some(auth),
+        )
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    result.output["job_id"].as_str().unwrap().to_string()
+}
+
+fn listed_job_ids(result: &ToolResult) -> Vec<String> {
+    assert!(result.success, "{:?}", result.error);
+    result.output["jobs"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|job| job["job_id"].as_str().unwrap().to_string())
+        .collect()
+}
+
+fn assert_unknown_job(result: ToolResult) {
+    assert!(!result.success, "unexpected success: {:?}", result.output);
+    assert!(
+        result.error.unwrap_or_default().contains("unknown job"),
+        "unauthorized job lookup should be hidden as unknown"
+    );
+}
+
+#[tokio::test]
+async fn runtime_job_tools_filter_agent_jobs_by_auth_group() {
+    let runtime = test_runtime();
+    let shared_a = shared_key_auth_context("hash-a");
+    let shared_b = shared_key_auth_context("hash-b");
+    let open = open_auth_context();
+    let bootstrap = bootstrap_auth_context();
+
+    register_job_agent_for_auth(&runtime, "client-a", "proj-a", &shared_a).await;
+    register_job_agent_for_auth(&runtime, "client-b", "proj-b", &shared_b).await;
+    register_job_agent_for_auth(&runtime, "client-open", "proj-open", &open).await;
+
+    let job_a = start_agent_runtime_job(&runtime, "client-a", "proj-a", &shared_a).await;
+    let job_b = start_agent_runtime_job(&runtime, "client-b", "proj-b", &shared_b).await;
+    let job_open = start_agent_runtime_job(&runtime, "client-open", "proj-open", &open).await;
+
+    let req = next_agent_request_for_instance(&runtime, "client-b", "inst")
+        .await
+        .expect("client-b job request should be queued");
+    complete_patch_agent_request(&runtime, "client-b", &req.request_id, 0, "b-out", "b-err").await;
+
+    let list_a = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            },
+            Some(&shared_a),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&list_a), vec![job_a.clone()]);
+
+    let list_open = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            },
+            Some(&open),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&list_open), vec![job_open.clone()]);
+
+    let list_bootstrap = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            },
+            Some(&bootstrap),
+        )
+        .await;
+    let mut bootstrap_ids = listed_job_ids(&list_bootstrap);
+    bootstrap_ids.sort();
+    let mut expected = vec![job_a.clone(), job_b.clone(), job_open.clone()];
+    expected.sort();
+    assert_eq!(bootstrap_ids, expected);
+
+    assert_unknown_job(
+        runtime
+            .dispatch_with_auth(
+                ToolCall::JobStatus {
+                    job_id: job_b.clone(),
+                },
+                Some(&shared_a),
+            )
+            .await,
+    );
+    assert_unknown_job(
+        runtime
+            .dispatch_with_auth(
+                ToolCall::JobLog {
+                    job_id: job_b.clone(),
+                    offset: None,
+                    tail_lines: None,
+                },
+                Some(&shared_a),
+            )
+            .await,
+    );
+    assert_unknown_job(
+        runtime
+            .dispatch_with_auth(
+                ToolCall::JobTail {
+                    job_id: job_b.clone(),
+                    tail_lines: None,
+                },
+                Some(&shared_a),
+            )
+            .await,
+    );
+
+    let status_b = runtime
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id: job_b.clone(),
+            },
+            Some(&shared_b),
+        )
+        .await;
+    assert!(status_b.success, "{:?}", status_b.error);
+    assert_eq!(status_b.output["job_id"], job_b);
+
+    let log_b = runtime
+        .dispatch_with_auth(
+            ToolCall::JobLog {
+                job_id: job_b.clone(),
+                offset: None,
+                tail_lines: None,
+            },
+            Some(&shared_b),
+        )
+        .await;
+    assert!(log_b.success, "{:?}", log_b.error);
+    assert_eq!(log_b.output["stdout"], "b-out\n");
+
+    let tail_b = runtime
+        .dispatch_with_auth(
+            ToolCall::JobTail {
+                job_id: job_b,
+                tail_lines: Some(10),
+            },
+            Some(&shared_b),
+        )
+        .await;
+    assert!(tail_b.success, "{:?}", tail_b.error);
+    assert_eq!(tail_b.output["stdout"], "b-out\n");
+}
+
+#[tokio::test]
+async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let dir = write_fake_job(
+        root,
+        "job-local",
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        "local-out",
+        "local-err",
+        json!({}),
+    );
+    runtime.local_jobs.lock().await.insert(
+        "job-local".to_string(),
+        LocalJobRecord {
+            project: "demo".to_string(),
+            dir,
+        },
+    );
+    let shared = shared_key_auth_context("hash-local");
+    let open = open_auth_context();
+    let bootstrap = bootstrap_auth_context();
+
+    for auth in [&shared, &open] {
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::ListJobs {
+                    limit: None,
+                    status: None,
+                },
+                Some(auth),
+            )
+            .await;
+        assert!(listed_job_ids(&result).is_empty());
+        assert_unknown_job(
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::JobStatus {
+                        job_id: "job-local".to_string(),
+                    },
+                    Some(auth),
+                )
+                .await,
+        );
+    }
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            },
+            Some(&bootstrap),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&result), vec!["job-local".to_string()]);
+}
+
+#[tokio::test]
+async fn runtime_status_filters_job_counts_by_auth_group() {
+    let runtime = test_runtime();
+    let shared_a = shared_key_auth_context("hash-a");
+    let shared_b = shared_key_auth_context("hash-b");
+    let open = open_auth_context();
+    let bootstrap = bootstrap_auth_context();
+
+    register_job_agent_for_auth(&runtime, "status-a", "proj-a", &shared_a).await;
+    register_job_agent_for_auth(&runtime, "status-b", "proj-b", &shared_b).await;
+    register_job_agent_for_auth(&runtime, "status-open", "proj-open", &open).await;
+
+    let _job_a = start_agent_runtime_job(&runtime, "status-a", "proj-a", &shared_a).await;
+    let _job_b = start_agent_runtime_job(&runtime, "status-b", "proj-b", &shared_b).await;
+    let _job_open = start_agent_runtime_job(&runtime, "status-open", "proj-open", &open).await;
+
+    let status_a = runtime
+        .dispatch_with_auth(ToolCall::RuntimeStatus, Some(&shared_a))
+        .await;
+    assert!(status_a.success, "{:?}", status_a.error);
+    assert_eq!(status_a.output["jobs"]["agent_known_count"], 1);
+    assert_eq!(status_a.output["jobs"]["active_count"], 1);
+
+    let status_open = runtime
+        .dispatch_with_auth(ToolCall::RuntimeStatus, Some(&open))
+        .await;
+    assert!(status_open.success, "{:?}", status_open.error);
+    assert_eq!(status_open.output["jobs"]["agent_known_count"], 1);
+    assert_eq!(status_open.output["jobs"]["active_count"], 1);
+
+    let status_bootstrap = runtime
+        .dispatch_with_auth(ToolCall::RuntimeStatus, Some(&bootstrap))
+        .await;
+    assert!(status_bootstrap.success, "{:?}", status_bootstrap.error);
+    assert_eq!(status_bootstrap.output["jobs"]["agent_known_count"], 3);
+    assert_eq!(status_bootstrap.output["jobs"]["active_count"], 3);
 }
 
 #[tokio::test]

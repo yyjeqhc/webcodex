@@ -372,7 +372,6 @@ fn server_up_usage() -> &'static str {
        --open               Allow anonymous GPT/MCP and client access\n\
        --data-dir DIR       Data directory [default: user/state dependent]\n\
        --env-file PATH      Env file path [default: user/config dependent]\n\
-       --foreground         Reserved; currently returns an explicit not implemented error\n\
        --json               Print machine-readable output\n\
        -h, --help           Print help and exit\n\n\
      Default (no --open): anonymous denied, shared-key clients allowed,\n\
@@ -8369,7 +8368,7 @@ transport = "websocket"
         let out = cli_exit(["server", "up", "--help"]).unwrap();
         assert!(out.contains("Usage: webcodex-cli server up"));
         assert!(out.contains("--open"));
-        assert!(out.contains("--foreground"));
+        assert!(!out.contains("--foreground"));
     }
 
     #[test]

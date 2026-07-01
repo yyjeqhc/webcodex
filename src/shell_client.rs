@@ -275,6 +275,21 @@ fn assert_shell_client_access(
     assert_shell_client_owner(auth, &client.client_id, client.owner.as_deref())
 }
 
+fn shell_job_visible_to_auth(
+    auth: Option<&crate::auth::AuthContext>,
+    inner: &ShellClientRegistryInner,
+    client_id: &str,
+) -> bool {
+    let Some(auth) = auth else {
+        return true;
+    };
+    inner
+        .clients
+        .get(client_id)
+        .map(|client| assert_shell_client_access(Some(auth), client).is_ok())
+        .unwrap_or(false)
+}
+
 /// Enforce the owner/auth boundary at registration time. Mirrors
 /// [`assert_shell_client_owner`] but is intentionally a no-op when no
 /// `AuthContext` is present (unit tests that do not install `AuthMiddleware`).
@@ -1782,22 +1797,46 @@ impl ShellClientRegistry {
     }
 
     pub async fn get_job(&self, job_id: &str) -> Result<ShellJobInfo, String> {
+        self.get_job_for_auth(None, job_id).await
+    }
+
+    pub(crate) async fn get_job_for_auth(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+        job_id: &str,
+    ) -> Result<ShellJobInfo, String> {
         validate_id(job_id, "job_id")?;
         let mut inner = self.inner.lock().await;
         refresh_job_status_locked(&mut inner, job_id);
         let Some(job) = inner.jobs_by_id.get(job_id) else {
             return Err(format!("unknown shell job: {}", job_id));
         };
+        if !shell_job_visible_to_auth(auth, &inner, &job.client_id) {
+            return Err(format!("unknown shell job: {}", job_id));
+        }
         Ok(job_view(job))
     }
 
     pub async fn list_jobs(&self, limit: Option<usize>) -> Vec<ShellJobInfo> {
+        self.list_jobs_for_auth(None, limit).await
+    }
+
+    pub(crate) async fn list_jobs_for_auth(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+        limit: Option<usize>,
+    ) -> Vec<ShellJobInfo> {
         let mut inner = self.inner.lock().await;
         let job_ids = inner.jobs_by_id.keys().cloned().collect::<Vec<_>>();
         for job_id in job_ids {
             refresh_job_status_locked(&mut inner, &job_id);
         }
-        let mut jobs = inner.jobs_by_id.values().cloned().collect::<Vec<_>>();
+        let mut jobs = inner
+            .jobs_by_id
+            .values()
+            .filter(|job| shell_job_visible_to_auth(auth, &inner, &job.client_id))
+            .cloned()
+            .collect::<Vec<_>>();
         jobs.sort_by(|a, b| b.created_at.cmp(&a.created_at));
         jobs.into_iter()
             .take(limit.unwrap_or(20).clamp(1, 100))
@@ -1842,12 +1881,33 @@ impl ShellClientRegistry {
         since_stderr_line: Option<usize>,
         tail_lines: Option<usize>,
     ) -> Result<(ShellJobInfo, Option<String>, Option<String>, usize, usize), String> {
+        self.job_log_for_auth(
+            None,
+            job_id,
+            since_stdout_line,
+            since_stderr_line,
+            tail_lines,
+        )
+        .await
+    }
+
+    pub(crate) async fn job_log_for_auth(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+        job_id: &str,
+        since_stdout_line: Option<usize>,
+        since_stderr_line: Option<usize>,
+        tail_lines: Option<usize>,
+    ) -> Result<(ShellJobInfo, Option<String>, Option<String>, usize, usize), String> {
         validate_id(job_id, "job_id")?;
         let mut inner = self.inner.lock().await;
         refresh_job_status_locked(&mut inner, job_id);
         let Some(job) = inner.jobs_by_id.get(job_id) else {
             return Err(format!("unknown shell job: {}", job_id));
         };
+        if !shell_job_visible_to_auth(auth, &inner, &job.client_id) {
+            return Err(format!("unknown shell job: {}", job_id));
+        }
         let (stdout, next_stdout_line) =
             select_lines(job.stdout.as_ref(), since_stdout_line, tail_lines);
         let (stderr, next_stderr_line) =

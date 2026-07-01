@@ -1478,13 +1478,16 @@ impl ToolRuntime {
                 .await
             }
 
-            ToolCall::JobStatus { job_id } => self.job_status(job_id).await,
+            ToolCall::JobStatus { job_id } => self.job_status_for_auth(job_id, auth).await,
 
             ToolCall::JobLog {
                 job_id,
                 offset,
                 tail_lines,
-            } => self.job_log(job_id, offset, tail_lines).await,
+            } => {
+                self.job_log_for_auth(job_id, offset, tail_lines, auth)
+                    .await
+            }
 
             ToolCall::ListProjectFiles {
                 project,
@@ -1547,9 +1550,13 @@ impl ToolRuntime {
                     .await
             }
 
-            ToolCall::ListJobs { limit, status } => self.list_jobs(limit, status).await,
+            ToolCall::ListJobs { limit, status } => {
+                self.list_jobs_for_auth(limit, status, auth).await
+            }
 
-            ToolCall::JobTail { job_id, tail_lines } => self.job_tail(job_id, tail_lines).await,
+            ToolCall::JobTail { job_id, tail_lines } => {
+                self.job_tail_for_auth(job_id, tail_lines, auth).await
+            }
 
             ToolCall::ReplaceInFile {
                 project,
@@ -1878,14 +1885,16 @@ impl ToolRuntime {
         // -- jobs summary -----------------------------------------------------
         // Agent-known jobs come from the registry; local jobs come from the
         // in-memory map. Active = running/queued/agent_queued/stop_requested.
-        let agent_jobs = self.shell_clients.list_jobs(None).await;
+        let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, None).await;
         let agent_known_count = agent_jobs.len();
-        let local_job_dirs: Vec<PathBuf> = {
+        let local_job_dirs: Vec<PathBuf> = if Self::local_jobs_visible_to_auth(auth) {
             let local_jobs_map = self.local_jobs.lock().await;
             local_jobs_map
                 .values()
                 .map(|record| record.dir.clone())
                 .collect()
+        } else {
+            Vec::new()
         };
         let local_known_count = local_job_dirs.len();
         // Avoid double-counting: agent jobs are tracked separately from local

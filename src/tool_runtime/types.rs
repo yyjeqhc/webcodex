@@ -743,6 +743,20 @@ pub enum ToolCall {
     /// secrets, full env, or stdout/stderr. It returns service metadata,
     /// project config status, agent client summaries, and job counts.
     RuntimeStatus,
+
+    /// Return a compact, bounded tool manifest with categories, risk summary,
+    /// and recommended flows. Intended as a lightweight alternative to
+    /// `list_tools` for long-running tasks where the full input/output schemas
+    /// cause ResponseTooLargeError. Read-only runtime introspection; never
+    /// exposes schemas, tokens, secrets, or internal paths.
+    ToolManifest {
+        #[serde(default)]
+        category: Option<String>,
+        #[serde(default = "default_true")]
+        include_recommended_flows: bool,
+        #[serde(default = "default_true")]
+        include_risk_summary: bool,
+    },
 }
 
 /// The exact, ordered set of runtime tool names accepted by
@@ -808,6 +822,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "create_project",
     "list_agents",
     "runtime_status",
+    "tool_manifest",
 ];
 
 /// Returns `true` if `name` is a recognized runtime tool name. Public so the
@@ -913,6 +928,7 @@ impl ToolCall {
             Self::CreateProject { .. } => "create_project",
             Self::ListAgents => "list_agents",
             Self::RuntimeStatus => "runtime_status",
+            Self::ToolManifest { .. } => "tool_manifest",
         }
     }
 
@@ -1495,6 +1511,15 @@ impl ToolCall {
             Self::SessionDiscussionSummary { session_id, limit } => serde_json::json!({
                 "session_id": session_id,
                 "limit": limit,
+            }),
+            Self::ToolManifest {
+                category,
+                include_recommended_flows,
+                include_risk_summary,
+            } => serde_json::json!({
+                "category": category,
+                "include_recommended_flows": include_recommended_flows,
+                "include_risk_summary": include_risk_summary,
             }),
             _ => serde_json::json!({}),
         }

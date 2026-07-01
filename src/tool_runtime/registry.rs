@@ -512,6 +512,58 @@ fn output_schema_for_tool(name: &str) -> Value {
             ),
             ("count", schema_type("integer", "Tool count.")),
         ]),
+        "tool_manifest" => wrapped_output_schema(vec![
+            (
+                "schema_version",
+                schema_type("integer", "Manifest schema version."),
+            ),
+            (
+                "tool_count",
+                schema_type("integer", "Total number of tools in the runtime."),
+            ),
+            (
+                "filtered_count",
+                schema_type(
+                    "integer",
+                    "Number of tools after applying the optional category filter.",
+                ),
+            ),
+            (
+                "category",
+                nullable_schema(
+                    "string",
+                    "Requested category filter, or null when no filter was applied.",
+                ),
+            ),
+            (
+                "categories",
+                open_object_schema(
+                    "Map of category name to the list of tool names in that category.",
+                ),
+            ),
+            (
+                "tools",
+                array_schema(
+                    open_object_schema(
+                        "Compact tool entry: name, category, provider, risk, read_only, requires_project, path_hint, destructive, shell_like, oauth_scope.",
+                    ),
+                    "Compact tool entries without input/output schemas.",
+                ),
+            ),
+            (
+                "risk_summary",
+                open_object_schema(
+                    "Counts of tools grouped by risk class (read_only, project_write, job_run, etc.).",
+                ),
+            ),
+            (
+                "recommended_flows",
+                array_schema(
+                    open_object_schema("Recommended tool flow with name, purpose, and tools."),
+                    "Short list of recommended tool flows for common tasks.",
+                ),
+            ),
+        ]),
         "start_session" => wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             ("session_id", schema_type("string", "Opaque session id.")),
@@ -1371,6 +1423,34 @@ impl ToolRuntime {
                 annotations: tool_annotations("runtime_status"),
             },
             ToolSpec {
+                name: "tool_manifest".to_string(),
+                description: "Return a compact, bounded tool manifest with categories, risk "
+                    .to_string()
+                    + "summary, and recommended flows. Lightweight alternative to list_tools for "
+                    + "long tasks. Read-only; never exposes schemas, tokens, or internal paths.",
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "description": "Optional category filter (e.g. session, edit, git, checkpoint, runtime, job, validation)."
+                        },
+                        "include_recommended_flows": {
+                            "type": "boolean",
+                            "description": "Include recommended_flows in the output (default true)."
+                        },
+                        "include_risk_summary": {
+                            "type": "boolean",
+                            "description": "Include risk_summary in the output (default true)."
+                        }
+                    },
+                    "required": [],
+                    "additionalProperties": false,
+                }),
+                output_schema: output_schema_for_tool("tool_manifest"),
+                annotations: tool_annotations("tool_manifest"),
+            },
+            ToolSpec {
                 name: "run_shell".to_string(),
                 description: "Run checks, builds, tests, read-only diagnostics, or necessary commands in a project. "
                     .to_string()
@@ -2058,7 +2138,7 @@ impl ToolRuntime {
                 "workspace_checkpoint_create", "workspace_checkpoint_list",
                 "workspace_checkpoint_show", "workspace_checkpoint_restore",
                 "workspace_checkpoint_delete",
-                "list_projects", "list_agents", "runtime_status"
+                "list_projects", "list_agents", "runtime_status", "tool_manifest"
             ]),
             "cleanup": pick(&[
                 "delete_project_files", "git_restore_paths", "discard_untracked",

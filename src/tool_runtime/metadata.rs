@@ -651,6 +651,16 @@ pub(crate) const TOOL_METADATA: &[ToolMetadata] = &[
         false,
         false,
     ),
+    metadata(
+        "tool_manifest",
+        "control",
+        ToolRisk::ReadOnly,
+        Some(RUNTIME_READ),
+        false,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
 ];
 
 pub(crate) fn lookup_tool_metadata(name: &str) -> Option<&'static ToolMetadata> {

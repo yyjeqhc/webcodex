@@ -641,6 +641,7 @@ impl ToolRuntime {
             | ToolCall::CreateProject { .. }
             | ToolCall::ListAgents
             | ToolCall::RuntimeStatus
+            | ToolCall::ToolManifest { .. }
             | ToolCall::JobStatus { .. }
             | ToolCall::JobLog { .. }
             | ToolCall::ListJobs { .. }
@@ -1210,6 +1211,15 @@ impl ToolRuntime {
             ToolCall::ListAgents => self.list_agents().await,
 
             ToolCall::RuntimeStatus => self.runtime_status().await,
+
+            ToolCall::ToolManifest {
+                category,
+                include_recommended_flows,
+                include_risk_summary,
+            } => {
+                self.tool_manifest(category, include_recommended_flows, include_risk_summary)
+                    .await
+            }
 
             ToolCall::RunShell {
                 project,
@@ -1858,6 +1868,214 @@ impl ToolRuntime {
         }
         ToolResult::ok(output)
     }
+
+    /// Return a compact, bounded tool manifest with categories, risk summary,
+    /// and recommended flows. Read-only runtime introspection; never exposes
+    /// full input/output schemas, tokens, secrets, or internal paths.
+    /// Intended as a lightweight alternative to `list_tools` for long-running
+    /// tasks where the full schemas cause ResponseTooLargeError.
+    async fn tool_manifest(
+        &self,
+        category: Option<String>,
+        include_recommended_flows: bool,
+        include_risk_summary: bool,
+    ) -> ToolResult {
+        let specs = self.tool_specs();
+        let tool_count = specs.len();
+
+        // Build compact tool entries from metadata — no input/output schemas,
+        // no long descriptions.
+        let all_tools: Vec<Value> = specs
+            .iter()
+            .map(|spec| {
+                let name = spec.name.as_str();
+                let m = metadata::tool_metadata(name);
+                json!({
+                    "name": name,
+                    "category": tool_manifest_category(name),
+                    "provider": m.provider_id,
+                    "risk": m.risk.session_risk_class(),
+                    "read_only": m.read_only,
+                    "requires_project": m.requires_project,
+                    "path_hint": path_hint_str(m.path_hint),
+                    "destructive": m.destructive,
+                    "shell_like": m.shell_like,
+                    "oauth_scope": m.oauth_scope,
+                })
+            })
+            .collect();
+
+        // Build the categories map from the full tool set so the caller can
+        // always see valid categories even when filtering.
+        let categories = build_manifest_categories(&all_tools);
+
+        // Apply the optional category filter.
+        let filtered_tools: Vec<Value> = match &category {
+            Some(cat) => all_tools
+                .iter()
+                .filter(|t| t["category"].as_str() == Some(cat.as_str()))
+                .cloned()
+                .collect(),
+            None => all_tools,
+        };
+        let filtered_count = filtered_tools.len();
+
+        let mut output = json!({
+            "schema_version": 1,
+            "tool_count": tool_count,
+            "filtered_count": filtered_count,
+            "category": category,
+            "categories": categories,
+            "tools": filtered_tools,
+        });
+
+        if include_risk_summary {
+            output["risk_summary"] =
+                build_risk_summary(output["tools"].as_array().unwrap_or(&Vec::new()));
+        }
+
+        if include_recommended_flows {
+            output["recommended_flows"] = Value::Array(tool_manifest_recommended_flows());
+        }
+
+        ToolResult::ok(output)
+    }
+}
+
+/// Map a tool name to its primary manifest category. This is the single
+/// centralized classification function for `tool_manifest`; it must cover
+/// every name in `KNOWN_TOOL_NAMES`.
+fn tool_manifest_category(name: &str) -> &'static str {
+    match name {
+        // Runtime introspection / discovery
+        "list_tools" | "tool_manifest" | "runtime_status" | "list_agents" => "runtime",
+        // Session lifecycle and messaging
+        "start_session"
+        | "session_summary"
+        | "post_session_message"
+        | "list_session_messages"
+        | "resolve_session_message"
+        | "session_discussion_summary"
+        | "bind_current_session"
+        | "current_session"
+        | "unbind_current_session" => "session",
+        // Workspace checkpoints
+        "workspace_checkpoint_create"
+        | "workspace_checkpoint_list"
+        | "workspace_checkpoint_show"
+        | "workspace_checkpoint_restore"
+        | "workspace_checkpoint_delete" => "checkpoint",
+        // Git read / review
+        "git_status" | "git_diff" | "git_diff_hunks" | "git_log" | "git_diff_summary"
+        | "show_changes" => "git",
+        // Structured file edits
+        "replace_in_file"
+        | "replace_exact_block"
+        | "insert_before_pattern"
+        | "insert_after_pattern"
+        | "write_project_file"
+        | "replace_line_range"
+        | "insert_at_line"
+        | "delete_line_range"
+        | "apply_text_edits" => "edit",
+        // File read / list / search
+        "read_file" | "list_project_files" | "search_project_text" => "file",
+        // Patch apply / validate
+        "apply_patch" | "apply_patch_checked" | "validate_patch" => "patch",
+        // Validation
+        "cargo_fmt" | "cargo_check" | "cargo_test" => "validation",
+        // Shell / job execution
+        "run_shell" | "run_job" | "job_status" | "job_log" | "list_jobs" | "job_tail" => "job",
+        // Project management
+        "list_projects" | "register_project" | "create_project" => "project",
+        // Artifacts
+        "save_project_artifact" | "read_project_artifact_metadata" | "read_project_artifact" => {
+            "artifact"
+        }
+        // Cleanup / destructive
+        "delete_project_files" | "git_restore_paths" | "discard_untracked" => "cleanup",
+        // Codex delegation
+        "run_codex" => "codex",
+        _ => "other",
+    }
+}
+
+/// String representation of a `ToolPathHint` for the compact manifest.
+fn path_hint_str(hint: metadata::ToolPathHint) -> &'static str {
+    match hint {
+        metadata::ToolPathHint::None => "none",
+        metadata::ToolPathHint::SinglePath => "single_path",
+        metadata::ToolPathHint::PathList => "path_list",
+        metadata::ToolPathHint::Patch => "patch",
+        metadata::ToolPathHint::Artifact => "artifact",
+    }
+}
+
+/// Build the categories map from the compact tool entries. Each category
+/// maps to a sorted list of tool names.
+fn build_manifest_categories(tools: &[Value]) -> Value {
+    let mut map: std::collections::BTreeMap<&str, Vec<String>> = std::collections::BTreeMap::new();
+    for tool in tools {
+        let name = tool["name"].as_str().unwrap_or("");
+        let category = tool["category"].as_str().unwrap_or("other");
+        map.entry(category).or_default().push(name.to_string());
+    }
+    let result: serde_json::Map<String, Value> = map
+        .into_iter()
+        .map(|(k, v)| {
+            (
+                k.to_string(),
+                Value::Array(v.into_iter().map(Value::String).collect()),
+            )
+        })
+        .collect();
+    Value::Object(result)
+}
+
+/// Build the risk summary map from the compact tool entries.
+fn build_risk_summary(tools: &[Value]) -> Value {
+    let mut counts: std::collections::BTreeMap<&str, u64> = std::collections::BTreeMap::new();
+    for tool in tools {
+        let risk = tool["risk"].as_str().unwrap_or("unknown");
+        *counts.entry(risk).or_insert(0) += 1;
+    }
+    let result: serde_json::Map<String, Value> = counts
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), Value::from(v)))
+        .collect();
+    Value::Object(result)
+}
+
+/// Short, bounded list of recommended tool flows for common tasks. Each
+/// entry references only known tool names. Kept under 10 entries.
+fn tool_manifest_recommended_flows() -> Vec<Value> {
+    vec![
+        json!({
+            "name": "large_refactor",
+            "purpose": "Safely perform large single-file refactors.",
+            "tools": ["workspace_checkpoint_create", "read_file", "apply_text_edits", "cargo_test", "show_changes"]
+        }),
+        json!({
+            "name": "deployment_smoke",
+            "purpose": "Check runtime health and persistent session behavior.",
+            "tools": ["runtime_status", "start_session", "post_session_message", "git_log", "session_summary"]
+        }),
+        json!({
+            "name": "small_line_edit",
+            "purpose": "Make small targeted edits by stable line numbers.",
+            "tools": ["read_file", "replace_line_range", "insert_at_line", "delete_line_range", "show_changes"]
+        }),
+        json!({
+            "name": "patch_review",
+            "purpose": "Validate a patch before applying it safely.",
+            "tools": ["validate_patch", "apply_patch_checked", "show_changes", "cargo_test"]
+        }),
+        json!({
+            "name": "discovery",
+            "purpose": "Discover projects, agents, and available tools.",
+            "tools": ["tool_manifest", "list_projects", "runtime_status"]
+        }),
+    ]
 }
 
 /// Build the sanitized policy summary JSON exposed in `runtime_status` and

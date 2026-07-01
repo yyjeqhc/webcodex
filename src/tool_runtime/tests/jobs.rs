@@ -1,0 +1,945 @@
+//! Jobs tests for tool_runtime.
+
+use super::super::cargo::*;
+use super::super::codex::*;
+use super::super::files::*;
+use super::super::git::*;
+use super::super::helpers::*;
+use super::super::patch::*;
+use super::super::types::*;
+use super::super::*;
+use super::support::*;
+use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
+use crate::shell_client::ShellClientRegistry;
+use crate::shell_protocol::{
+    AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
+    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
+};
+use serde_json::{json, Value};
+use std::collections::{BTreeSet, HashMap};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+#[tokio::test]
+async fn run_shell_session_events_record_exit_without_stdio_bodies() {
+    let runtime = runtime_with_agent_project("telemetry-shell");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "telemetry-shell", None, caps).await;
+    let project = agent_test_project_id("telemetry-shell");
+    let session = runtime.sessions.start_session(None, None);
+
+    let ok_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session.session_id.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunShell {
+                        project,
+                        command: "printf shell-secret-out; printf shell-secret-err >&2".to_string(),
+                        session_id: Some(session_id),
+                        timeout_secs: Some(30),
+                        cwd: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "telemetry-shell")
+        .await
+        .expect("run_shell should enqueue success request");
+    complete_patch_agent_request(
+        &runtime,
+        "telemetry-shell",
+        &req.request_id,
+        0,
+        "shell-secret-out",
+        "shell-secret-err",
+    )
+    .await;
+    let ok = ok_task.await.unwrap();
+    assert!(ok.success, "{:?}", ok.error);
+    assert_eq!(ok.output["session_recorded"], true);
+
+    let fail_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session.session_id.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::RunShell {
+                        project,
+                        command: "printf fail-secret-out; printf fail-secret-err >&2; exit 7"
+                            .to_string(),
+                        session_id: Some(session_id),
+                        timeout_secs: Some(30),
+                        cwd: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "telemetry-shell")
+        .await
+        .expect("run_shell should enqueue failure request");
+    complete_patch_agent_request(
+        &runtime,
+        "telemetry-shell",
+        &req.request_id,
+        7,
+        "fail-secret-out",
+        "fail-secret-err",
+    )
+    .await;
+    let fail = fail_task.await.unwrap();
+    assert!(!fail.success);
+    assert_eq!(fail.output["failure_kind"], "command_exit_nonzero");
+    assert_eq!(fail.output["session_recorded"], true);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    assert_eq!(summary.counts.tool_calls, 2);
+    assert_eq!(summary.counts.succeeded, 1);
+    assert_eq!(summary.counts.failed, 1);
+    assert_eq!(summary.counts.shell_like, 2);
+    let failed = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.tool_name == "run_shell"
+                && event.status.as_deref() == Some("failed")
+        })
+        .unwrap();
+    assert_eq!(failed.exit_code, Some(7));
+    assert_eq!(failed.failure_kind.as_deref(), Some("command_exit_nonzero"));
+    assert_eq!(failed.error_kind.as_deref(), Some("command_exit_nonzero"));
+    let serialized = serde_json::to_string(&summary.events).unwrap();
+    for leaked in [
+        "shell-secret-out",
+        "shell-secret-err",
+        "fail-secret-out",
+        "fail-secret-err",
+    ] {
+        assert!(
+            !serialized.contains(leaked),
+            "session event leaked shell output {leaked}: {serialized}"
+        );
+    }
+    assert!(serialized.contains("\"command_present\":true"));
+}
+
+#[test]
+fn is_safe_job_id_rejects_path_traversal_and_separators() {
+    assert!(is_safe_job_id("11111111-2222-3333-4444-555555555555"));
+    assert!(is_safe_job_id("job.1_2-3"));
+    assert!(!is_safe_job_id("../escape"));
+    assert!(!is_safe_job_id("a/b"));
+    assert!(!is_safe_job_id("a\\b"));
+    assert!(!is_safe_job_id(".."));
+    assert!(!is_safe_job_id("a..b/../c"));
+    assert!(!is_safe_job_id(""));
+    assert!(!is_safe_job_id("a\0b"));
+}
+
+#[test]
+fn normalize_local_status_maps_known_and_unknown_values() {
+    assert_eq!(normalize_local_status("running"), "running");
+    assert_eq!(normalize_local_status("completed"), "completed");
+    assert_eq!(normalize_local_status("failed"), "failed");
+    assert_eq!(normalize_local_status("stopped"), "stopped");
+    assert_eq!(normalize_local_status("queued"), "queued");
+    assert_eq!(normalize_local_status("  failed  "), "failed");
+    assert_eq!(normalize_local_status(""), "running");
+    assert_eq!(normalize_local_status("weird-state"), "lost");
+}
+
+#[test]
+fn read_lines_from_is_bounded_by_default() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("stdout.log");
+    let content = (1..=1000)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, &content).unwrap();
+    let (text, next) = read_lines_from(path, None, None);
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines.len() <= MAX_LOCAL_LOG_LINES);
+    assert_eq!(lines.len(), MAX_LOCAL_LOG_LINES);
+    // Default is tail: last 500 lines.
+    assert_eq!(lines[0], "line 501");
+    assert_eq!(lines.last().unwrap(), &"line 1000");
+    assert_eq!(next, 1001);
+}
+
+#[test]
+fn read_lines_from_supports_offset_pagination() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("stdout.log");
+    let content = (1..=600)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, &content).unwrap();
+    let (text, next) = read_lines_from(path.clone(), Some(1), None);
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), MAX_LOCAL_LOG_LINES);
+    assert_eq!(lines[0], "line 1");
+    assert_eq!(lines.last().unwrap(), &"line 500");
+    assert_eq!(next, 501);
+
+    let (text2, next2) = read_lines_from(path, Some(501), None);
+    let lines2: Vec<&str> = text2.lines().collect();
+    assert_eq!(lines2.len(), 100);
+    assert_eq!(lines2[0], "line 501");
+    assert_eq!(lines2.last().unwrap(), &"line 600");
+    assert_eq!(next2, 601);
+}
+
+#[test]
+fn read_lines_from_supports_tail_lines() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("stdout.log");
+    let content = (1..=1000)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, &content).unwrap();
+    let (text, _next) = read_lines_from(path, None, Some(10));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), 10);
+    assert_eq!(lines[0], "line 991");
+    assert_eq!(lines.last().unwrap(), &"line 1000");
+}
+
+#[test]
+fn read_lines_from_tail_is_capped_to_max() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("stdout.log");
+    let content = (1..=1000)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    fs::write(&path, &content).unwrap();
+    // Requesting more than MAX returns at most MAX.
+    let (text, _) = read_lines_from(path, None, Some(5000));
+    let lines: Vec<&str> = text.lines().collect();
+    assert_eq!(lines.len(), MAX_LOCAL_LOG_LINES);
+}
+
+#[tokio::test]
+async fn recover_local_job_status_after_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let project_id = "demo";
+    let runtime = runtime_with_project(root, project_id);
+    let job_id = "11111111-2222-3333-4444-555555555555";
+    write_fake_job(
+        root,
+        job_id,
+        project_id,
+        &root.to_string_lossy(),
+        "completed",
+        "hello\n",
+        "",
+        json!({}),
+    );
+    // local_jobs is empty (simulating restart); recovery should find it.
+    assert!(runtime.local_jobs.lock().await.is_empty());
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["status"], "completed");
+    assert_eq!(result.output["project"], project_id);
+    assert_eq!(result.output["executor"], "local");
+    assert_eq!(result.output["kind"], "shell");
+    // Recovered job is now cached in memory.
+    assert!(runtime.local_jobs.lock().await.contains_key(job_id));
+}
+
+#[tokio::test]
+async fn recover_local_job_log_after_restart() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let job_id = "22222222-3333-4444-5555-666666666666";
+    write_fake_job(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        "stdout line\n",
+        "stderr line\n",
+        json!({}),
+    );
+    let result = runtime.job_log(job_id.to_string(), None, None).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stdout"], "stdout line");
+    assert_eq!(result.output["stderr"], "stderr line");
+    assert!(result.output["next_stdout_line"].is_number());
+}
+
+#[tokio::test]
+async fn recover_local_job_rejects_unsafe_job_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = runtime_with_project(tmp.path(), "demo");
+    // Path-traversal job ids must not reach the filesystem.
+    let result = runtime.job_status("../escape".to_string()).await;
+    assert!(!result.success);
+    assert!(result.error.unwrap().contains("unknown job"));
+}
+
+#[tokio::test]
+async fn recover_local_job_rejects_metadata_project_mismatch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let job_id = "33333333-4444-5555-6666-777777777777";
+    // Metadata claims project "other"; configured project is "demo".
+    write_fake_job(
+        root,
+        job_id,
+        "other",
+        &root.to_string_lossy(),
+        "running",
+        "",
+        "",
+        json!({}),
+    );
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(!result.success, "mismatched metadata must not be recovered");
+}
+
+#[tokio::test]
+async fn recover_local_job_rejects_metadata_path_mismatch() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let job_id = "44444444-5555-6666-7777-888888888888";
+    // Metadata path points elsewhere even though project id matches.
+    write_fake_job(
+        root,
+        job_id,
+        "demo",
+        "/some/other/path",
+        "running",
+        "",
+        "",
+        json!({}),
+    );
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(
+        !result.success,
+        "mismatched metadata path must not be recovered"
+    );
+}
+
+#[tokio::test]
+async fn recover_local_job_unknown_when_no_metadata_anywhere() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = runtime_with_project(tmp.path(), "demo");
+    let result = runtime
+        .job_status("55555555-6666-7777-8888-999999999999".to_string())
+        .await;
+    assert!(!result.success);
+    assert!(result.error.unwrap().contains("unknown job"));
+}
+
+#[tokio::test]
+async fn run_shell_failure_reports_command_started_and_output_tail() {
+    let runtime = runtime_with_agent_project("shell-failer");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "shell-failer", None, caps).await;
+    let project = agent_test_project_id("shell-failer");
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .run_shell(
+                project,
+                "printf run-shell-out; printf run-shell-err >&2; exit 7".to_string(),
+                Some(30),
+                None,
+            )
+            .await
+    });
+    let req = next_patch_agent_request(&runtime, "shell-failer")
+        .await
+        .expect("run_shell should enqueue a shell command");
+    complete_patch_agent_request(
+        &runtime,
+        "shell-failer",
+        &req.request_id,
+        7,
+        "run-shell-out",
+        "run-shell-err",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or("");
+    assert!(error.contains("Command exited with status 7"));
+    assert!(error.contains("No files were modified by WebCodex itself"));
+    assert!(error.contains("stdout_tail"));
+    assert!(error.contains("stderr_tail"));
+    assert!(error.contains("Retry guidance"));
+    assert_eq!(result.output["exit_code"], 7);
+    assert_eq!(result.output["stdout_tail"], "run-shell-out");
+    assert_eq!(result.output["stderr_tail"], "run-shell-err");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["command_ok"], false);
+    assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
+    assert_eq!(result.output["tool_failure"], false);
+}
+
+#[tokio::test]
+async fn run_shell_rejection_reports_not_started_and_no_files_modified() {
+    let result = test_runtime()
+        .run_shell(
+            "agent:missing:missing".to_string(),
+            "printf should-not-run".to_string(),
+            Some(30),
+            None,
+        )
+        .await;
+    assert!(!result.success);
+    let error = result.error.as_deref().unwrap_or("");
+    assert!(error.contains("Rejected before starting command"));
+    assert!(error.contains("No command was started"));
+    assert!(error.contains("No files were modified"));
+    assert!(error.contains("Retry guidance"));
+    assert_eq!(result.output["command_started"], false);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["command_ok"], false);
+    assert_eq!(result.output["failure_kind"], "agent_offline");
+    assert_eq!(result.output["tool_failure"], true);
+}
+
+#[tokio::test]
+async fn run_shell_exit_zero_reports_structured_command_success() {
+    let runtime = runtime_with_agent_project("shell-ok");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "shell-ok", None, caps).await;
+    let project = agent_test_project_id("shell-ok");
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .run_shell(
+                project,
+                "printf ok; printf err >&2".to_string(),
+                Some(30),
+                None,
+            )
+            .await
+    });
+    let req = next_patch_agent_request(&runtime, "shell-ok")
+        .await
+        .expect("run_shell should enqueue a shell command");
+    complete_patch_agent_request(&runtime, "shell-ok", &req.request_id, 0, "ok", "err").await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["exit_code"], 0);
+    assert_eq!(result.output["stdout"], "ok");
+    assert_eq!(result.output["stderr"], "err");
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["command_ok"], true);
+    assert!(result.output["failure_kind"].is_null());
+    assert_eq!(result.output["tool_failure"], false);
+}
+
+#[tokio::test]
+async fn run_shell_exit_seven_reports_structured_command_nonzero() {
+    let runtime = runtime_with_agent_project("shell-seven");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "shell-seven", None, caps).await;
+    let project = agent_test_project_id("shell-seven");
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .run_shell(
+                project,
+                "printf out; printf err >&2; exit 7".to_string(),
+                Some(30),
+                None,
+            )
+            .await
+    });
+    let req = next_patch_agent_request(&runtime, "shell-seven")
+        .await
+        .expect("run_shell should enqueue a shell command");
+    complete_patch_agent_request(&runtime, "shell-seven", &req.request_id, 7, "out", "err").await;
+    let result = task.await.unwrap();
+
+    assert!(!result.success);
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], true);
+    assert_eq!(result.output["command_ok"], false);
+    assert_eq!(result.output["exit_code"], 7);
+    assert_eq!(result.output["failure_kind"], "command_exit_nonzero");
+    assert_eq!(result.output["tool_failure"], false);
+    assert_eq!(result.output["stdout_tail"], "out");
+    assert_eq!(result.output["stderr_tail"], "err");
+}
+
+#[tokio::test]
+async fn run_shell_timeout_reports_structured_timeout_failure_kind() {
+    let runtime = runtime_with_agent_project("shell-timeout");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "shell-timeout", None, caps).await;
+    let project = agent_test_project_id("shell-timeout");
+    let runtime_for_task = runtime.clone();
+    let task = tokio::spawn(async move {
+        runtime_for_task
+            .run_shell(project, "sleep 2".to_string(), Some(1), None)
+            .await
+    });
+    let _req = next_patch_agent_request(&runtime, "shell-timeout")
+        .await
+        .expect("run_shell should enqueue a shell command");
+    let result = task.await.unwrap();
+
+    assert!(!result.success);
+    assert_eq!(result.output["command_started"], true);
+    assert_eq!(result.output["command_completed"], false);
+    assert_eq!(result.output["command_ok"], false);
+    assert!(result.output["exit_code"].is_null());
+    assert_eq!(result.output["failure_kind"], "timeout");
+    assert_eq!(result.output["tool_failure"], true);
+}
+
+#[tokio::test]
+async fn local_job_status_marks_over_time_running_job_lost() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let job_id = "66666666-7777-8888-9999-000000000000";
+    let past = chrono::Utc::now().timestamp() - 100_000;
+    write_fake_job(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        "",
+        "",
+        json!({ "started_at": past, "max_runtime_secs": 60 }),
+    );
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(result.success);
+    assert_eq!(result.output["status"], "lost");
+}
+
+#[tokio::test]
+async fn local_job_status_keeps_completed_job_completed() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let job_id = "77777777-8888-9999-0000-111111111111";
+    let past = chrono::Utc::now().timestamp() - 100_000;
+    // Completed jobs stay completed even if max_runtime would have passed.
+    write_fake_job(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "completed",
+        "",
+        "",
+        json!({ "started_at": past, "max_runtime_secs": 60 }),
+    );
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(result.success);
+    assert_eq!(result.output["status"], "completed");
+}
+
+#[tokio::test]
+async fn run_job_rejects_server_configured_project_without_local_spawn() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let result = runtime
+        .run_job("demo".to_string(), "true".to_string(), Some(10), None)
+        .await;
+    assert!(!result.success);
+    assert!(result.error.unwrap().contains("unknown_project"));
+    assert!(runtime.local_jobs.lock().await.is_empty());
+}
+
+#[tokio::test]
+async fn timeout_terminates_recorded_process_group() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let job_id = "12121212-3434-5656-7878-909090909090";
+    let past = chrono::Utc::now().timestamp() - 100_000;
+    let dir = write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        12345,
+        json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 12345 }),
+    );
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["status"], "lost");
+    assert!(result.output["note"]
+        .as_str()
+        .unwrap()
+        .contains("process group 12345"));
+    // The recorded pgid was targeted for termination.
+    assert_eq!(killer.calls(), vec![(12345, 12345)]);
+    // Terminal state persisted to disk.
+    assert_eq!(read_trim(dir.join("status")).unwrap(), "lost");
+    assert!(read_trim(dir.join("finished_at")).is_some());
+}
+
+#[tokio::test]
+async fn timeout_without_pid_only_marks_lost_no_kill() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let job_id = "13131313-4545-6767-8989-101010101010";
+    let past = chrono::Utc::now().timestamp() - 100_000;
+    // No pid file, no process_group_id — simulates very old metadata that
+    // predates pid/pgid tracking. We must NOT guess a pid to kill.
+    write_fake_job(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        "",
+        "",
+        json!({ "started_at": past, "max_runtime_secs": 60 }),
+    );
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["status"], "lost");
+    // No kill attempted because no pid/pgid was recorded.
+    assert!(killer.calls().is_empty());
+    assert!(result.output["note"].as_str().unwrap().contains("no pid"));
+}
+
+#[tokio::test]
+async fn job_log_also_reclaims_timeout_process_group() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let job_id = "14141414-5656-7878-9090-111111111111";
+    let past = chrono::Utc::now().timestamp() - 100_000;
+    write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        4242,
+        json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 4242 }),
+    );
+    let result = runtime.job_log(job_id.to_string(), None, None).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["status"], "lost");
+    assert_eq!(killer.calls(), vec![(4242, 4242)]);
+}
+
+#[tokio::test]
+async fn timeout_does_not_affect_completed_job() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let job_id = "15151515-6767-8989-1010-121212121212";
+    let past = chrono::Utc::now().timestamp() - 100_000;
+    write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "completed",
+        9999,
+        json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 9999 }),
+    );
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["status"], "completed");
+    assert!(killer.calls().is_empty());
+}
+
+#[tokio::test]
+async fn stop_job_terminates_process_group() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let job_id = "16161616-7878-9090-1111-131313131313";
+    let now = chrono::Utc::now().timestamp();
+    let dir = write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        7777,
+        json!({ "started_at": now, "max_runtime_secs": 3600, "process_group_id": 7777 }),
+    );
+    let result = runtime.stop_job(job_id.to_string()).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["status"], "stopped");
+    assert_eq!(killer.calls(), vec![(7777, 7777)]);
+    assert_eq!(read_trim(dir.join("status")).unwrap(), "stopped");
+    assert!(read_trim(dir.join("finished_at")).is_some());
+}
+
+#[tokio::test]
+async fn stop_job_leaves_completed_job_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let job_id = "17171717-8989-1010-1212-141414141414";
+    let past = chrono::Utc::now().timestamp() - 100_000;
+    write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "completed",
+        8888,
+        json!({ "started_at": past, "max_runtime_secs": 60, "process_group_id": 8888 }),
+    );
+    let result = runtime.stop_job(job_id.to_string()).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["status"], "completed");
+    assert!(killer.calls().is_empty());
+}
+
+#[tokio::test]
+async fn stop_job_rejects_unsafe_job_id() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, _killer) = runtime_with_fake_killer(tmp.path(), "demo");
+    let result = runtime.stop_job("../escape".to_string()).await;
+    assert!(!result.success);
+    assert!(result.error.unwrap().contains("invalid job id"));
+}
+
+#[tokio::test]
+async fn stop_job_unknown_job_returns_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let (runtime, _killer) = runtime_with_fake_killer(tmp.path(), "demo");
+    let result = runtime
+        .stop_job("55555555-6666-7777-8888-999999999999".to_string())
+        .await;
+    assert!(!result.success);
+    assert!(result.error.unwrap().contains("unknown job"));
+}
+
+#[tokio::test]
+async fn job_log_recovery_returns_bounded_output() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let job_id = "88888888-9999-0000-1111-222222222222";
+    let stdout = (1..=1000)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_fake_job(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        &stdout,
+        "",
+        json!({}),
+    );
+    let result = runtime.job_log(job_id.to_string(), None, None).await;
+    assert!(result.success);
+    let out = result.output["stdout"].as_str().unwrap();
+    let lines: Vec<&str> = out.lines().collect();
+    assert!(lines.len() <= MAX_LOCAL_LOG_LINES);
+    assert!(out.contains("line 1000"));
+    assert!(!out.contains("line 1\n"));
+}
+
+#[tokio::test]
+async fn job_log_recovery_paginates_with_offset() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let job_id = "99999999-0000-1111-2222-333333333333";
+    let stdout = (1..=600)
+        .map(|i| format!("line {}", i))
+        .collect::<Vec<_>>()
+        .join("\n");
+    write_fake_job(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        &stdout,
+        "",
+        json!({}),
+    );
+    let first = runtime.job_log(job_id.to_string(), Some(1), None).await;
+    assert!(first.success);
+    let out = first.output["stdout"].as_str().unwrap();
+    assert!(out.contains("line 1"));
+    assert!(out.contains("line 500"));
+    assert!(!out.contains("line 501"));
+    assert_eq!(first.output["next_stdout_line"], 501);
+
+    let second = runtime.job_log(job_id.to_string(), Some(501), None).await;
+    assert!(second.success);
+    let out2 = second.output["stdout"].as_str().unwrap();
+    assert!(out2.contains("line 501"));
+    assert!(out2.contains("line 600"));
+    assert_eq!(second.output["next_stdout_line"], 601);
+}
+
+#[tokio::test]
+async fn list_jobs_returns_bounded_summaries_without_stdout_stderr() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    // Seed a local job whose on-disk logs contain sensitive-looking text.
+    let dir = write_fake_job(
+        root,
+        "job-secret",
+        "demo",
+        &root.to_string_lossy(),
+        "completed",
+        "WEBCODEX_TOKEN=supersecret\nline2",
+        "Authorization: Bearer xyz",
+        json!({}),
+    );
+    runtime.local_jobs.lock().await.insert(
+        "job-secret".to_string(),
+        LocalJobRecord {
+            project: "demo".to_string(),
+            dir,
+        },
+    );
+    let result = runtime
+        .dispatch(ToolCall::ListJobs {
+            limit: None,
+            status: None,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let jobs = result.output["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), 1);
+    let job = &jobs[0];
+    assert_eq!(job["job_id"], "job-secret");
+    assert_eq!(job["status"], "completed");
+    assert_eq!(job["executor"], "local");
+    // Summaries must never carry stdout/stderr bodies.
+    assert!(
+        job.get("stdout").is_none(),
+        "list_jobs summary must not include stdout"
+    );
+    assert!(
+        job.get("stderr").is_none(),
+        "list_jobs summary must not include stderr"
+    );
+    // And the serialized summary must not leak the secret log text.
+    let serialized = serde_json::to_string(job).unwrap();
+    assert!(
+        !serialized.contains("supersecret"),
+        "list_jobs summary leaked stdout secret: {}",
+        serialized
+    );
+    assert!(
+        !serialized.contains("Bearer xyz"),
+        "list_jobs summary leaked stderr secret: {}",
+        serialized
+    );
+}
+
+#[tokio::test]
+async fn list_jobs_respects_limit_bound() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    for i in 0..5 {
+        let dir = write_fake_job(
+            root,
+            &format!("job-{}", i),
+            "demo",
+            &root.to_string_lossy(),
+            "completed",
+            "",
+            "",
+            json!({}),
+        );
+        runtime.local_jobs.lock().await.insert(
+            format!("job-{}", i),
+            LocalJobRecord {
+                project: "demo".to_string(),
+                dir,
+            },
+        );
+    }
+    let result = runtime
+        .dispatch(ToolCall::ListJobs {
+            limit: Some(2),
+            status: None,
+        })
+        .await;
+    assert!(result.success);
+    let jobs = result.output["jobs"].as_array().unwrap();
+    assert_eq!(jobs.len(), 2);
+    assert_eq!(result.output["truncated"], true);
+}
+
+#[tokio::test]
+async fn list_jobs_requires_no_agent_capability() {
+    // list_jobs has no project and no agent capability requirement, so it
+    // succeeds even with no registered agent.
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ListJobs {
+            limit: None,
+            status: None,
+        })
+        .await;
+    assert!(result.success);
+    assert!(result.output["jobs"].is_array());
+}
+
+#[tokio::test]
+async fn job_tail_reaches_job_logic_without_agent_auth() {
+    // job_tail bypasses agent authorization (no project). An unknown job
+    // returns a structured "unknown job" error, proving it reached the job
+    // layer rather than an authorization gate.
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::JobTail {
+            job_id: "no-such-job".to_string(),
+            tail_lines: None,
+        })
+        .await;
+    assert!(!result.success);
+    assert!(
+        result.error.unwrap().contains("unknown job"),
+        "job_tail should report unknown job"
+    );
+}

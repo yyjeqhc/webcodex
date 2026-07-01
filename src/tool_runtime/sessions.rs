@@ -37,6 +37,7 @@ const SUMMARY_MESSAGE_GROUP_LIMIT: usize = 5;
 #[derive(Debug, Clone)]
 pub(crate) struct SessionStore {
     inner: Arc<Mutex<SessionStoreInner>>,
+    persistence_write_mutex: Arc<Mutex<()>>,
 }
 
 #[derive(Debug)]
@@ -370,6 +371,7 @@ impl SessionStore {
                 max_events_per_session,
                 persistence: None,
             })),
+            persistence_write_mutex: Arc::new(Mutex::new(())),
         }
     }
 
@@ -394,6 +396,7 @@ impl SessionStore {
                     last_persist_error,
                 }),
             })),
+            persistence_write_mutex: Arc::new(Mutex::new(())),
         }
     }
 
@@ -841,10 +844,28 @@ impl SessionStore {
     }
 
     fn persist_after_mutation(&self) {
-        let Some((path, ledger)) = self.snapshot_for_persistence() else {
+        self.persist_after_mutation_with(write_ledger_atomic);
+    }
+
+    fn persist_after_mutation_with(
+        &self,
+        write_ledger: impl FnOnce(&PathBuf, &PersistedSessionLedger) -> io::Result<()>,
+    ) {
+        let _write_guard = self
+            .persistence_write_mutex
+            .lock()
+            .expect("session persistence mutex poisoned");
+        let Some((path, ledger)) = ({
+            let inner = self.inner.lock().expect("session store mutex poisoned");
+            let path = inner
+                .persistence
+                .as_ref()
+                .map(|persistence| persistence.path.clone());
+            path.map(|path| (path, inner.to_persisted_ledger()))
+        }) else {
             return;
         };
-        let result = write_ledger_atomic(&path, &ledger).map_err(|err| {
+        let result = write_ledger(&path, &ledger).map_err(|err| {
             bound_summary_string(&format!("persist_failed: {}: {err}", path.display()))
         });
         let mut inner = self.inner.lock().expect("session store mutex poisoned");
@@ -858,12 +879,6 @@ impl SessionStore {
                 persistence.last_persist_error = Some(error);
             }
         }
-    }
-
-    fn snapshot_for_persistence(&self) -> Option<(PathBuf, PersistedSessionLedger)> {
-        let inner = self.inner.lock().expect("session store mutex poisoned");
-        let path = inner.persistence.as_ref()?.path.clone();
-        Some((path, inner.to_persisted_ledger()))
     }
 }
 
@@ -1777,6 +1792,64 @@ mod tests {
             .unwrap()
             .contains("restore_failed"));
         assert!(store.summary("wc_sess_missing", None).is_none());
+    }
+
+    #[test]
+    fn concurrent_persistence_reloads_current_snapshot_before_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session(None, Some("ordered writes".to_string()));
+        let (old_snapshot_ready_tx, old_snapshot_ready_rx) = std::sync::mpsc::channel();
+        let (allow_old_write_tx, allow_old_write_rx) = std::sync::mpsc::channel();
+
+        let delayed_store = store.clone();
+        let delayed_write = std::thread::spawn(move || {
+            delayed_store.persist_after_mutation_with(|path, ledger| {
+                old_snapshot_ready_tx.send(()).unwrap();
+                allow_old_write_rx.recv().unwrap();
+                write_ledger_atomic(path, ledger)
+            });
+        });
+        old_snapshot_ready_rx.recv().unwrap();
+
+        let newer_store = store.clone();
+        let newer_session_id = session.session_id.clone();
+        let newer_mutation = std::thread::spawn(move || {
+            post_message(
+                &newer_store,
+                &newer_session_id,
+                SessionMessageKind::Progress,
+                "newer mutation",
+            );
+        });
+
+        let mut newer_message_visible = false;
+        for _ in 0..100 {
+            let messages = store
+                .list_messages(&session.session_id, ListSessionMessagesFilter::default())
+                .unwrap();
+            if messages
+                .iter()
+                .any(|message| message.message == "newer mutation")
+            {
+                newer_message_visible = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(newer_message_visible);
+
+        allow_old_write_tx.send(()).unwrap();
+        delayed_write.join().unwrap();
+        newer_mutation.join().unwrap();
+
+        let restored = persistent_store(ledger);
+        let messages = restored
+            .list_messages(&session.session_id, ListSessionMessagesFilter::default())
+            .unwrap();
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].message, "newer mutation");
     }
 
     #[test]

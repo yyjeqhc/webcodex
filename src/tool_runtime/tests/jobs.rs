@@ -1,25 +1,11 @@
 //! Jobs tests for tool_runtime.
 
-use super::super::cargo::*;
-use super::super::codex::*;
-use super::super::files::*;
-use super::super::git::*;
 use super::super::helpers::*;
-use super::super::patch::*;
 use super::super::types::*;
-use super::super::*;
 use super::support::*;
-use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
-use crate::shell_client::ShellClientRegistry;
-use crate::shell_protocol::{
-    AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-};
-use serde_json::{json, Value};
-use std::collections::{BTreeSet, HashMap};
+use crate::shell_protocol::ShellClientCapabilities;
+use serde_json::json;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 #[tokio::test]
 async fn run_shell_session_events_record_exit_without_stdio_bodies() {

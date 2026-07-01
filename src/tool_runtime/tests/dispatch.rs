@@ -2,23 +2,16 @@
 
 use super::super::cargo::*;
 use super::super::codex::*;
-use super::super::files::*;
-use super::super::git::*;
 use super::super::helpers::*;
 use super::super::patch::*;
 use super::super::types::*;
 use super::super::*;
 use super::support::*;
-use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
-use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
-    AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
+    ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
+    ShellClientRegisterRequest,
 };
-use serde_json::{json, Value};
-use std::collections::{BTreeSet, HashMap};
-use std::fs;
-use std::path::{Path, PathBuf};
+use serde_json::json;
 use std::sync::Arc;
 
 #[test]

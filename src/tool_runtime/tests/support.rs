@@ -1,20 +1,16 @@
 //! Shared test helpers for tool_runtime tests.
 
-use super::super::cargo::*;
-use super::super::codex::*;
-use super::super::files::*;
 use super::super::git::*;
 use super::super::helpers::*;
-use super::super::patch::*;
 use super::super::types::*;
 use super::super::*;
 use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
 use crate::shell_client::ShellClientRegistry;
 use crate::shell_protocol::{
-    AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
+    ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
     ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::HashMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -462,13 +458,6 @@ pub(super) struct FakeJobKiller {
 impl FakeJobKiller {
     pub(super) fn calls(&self) -> Vec<(i64, i64)> {
         self.calls.lock().unwrap().clone()
-    }
-
-    pub(super) fn terminate_group(&self, pid: i64, pgid: i64) -> TerminateOutcome {
-        self.calls.lock().unwrap().push((pid, pgid));
-        // Fake pids are never alive; report AlreadyGone. The runtime still
-        // persists a terminal status, which is what the tests assert.
-        TerminateOutcome::AlreadyGone
     }
 }
 

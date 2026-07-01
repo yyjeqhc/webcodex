@@ -1,25 +1,10 @@
 //! Schema tests for tool_runtime.
 
-use super::super::cargo::*;
-use super::super::codex::*;
-use super::super::files::*;
-use super::super::git::*;
-use super::super::helpers::*;
-use super::super::patch::*;
 use super::super::types::*;
 use super::super::*;
 use super::support::*;
-use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};
-use crate::shell_client::ShellClientRegistry;
-use crate::shell_protocol::{
-    AgentPolicySummary, ShellAgentPollRequest, ShellAgentProjectSummary, ShellAgentResultRequest,
-    ShellAgentShellRequest, ShellClientCapabilities, ShellClientRegisterRequest,
-};
-use serde_json::{json, Value};
-use std::collections::{BTreeSet, HashMap};
-use std::fs;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use serde_json::Value;
+use std::collections::BTreeSet;
 
 #[test]
 fn tool_specs_and_metadata_are_synchronized() {

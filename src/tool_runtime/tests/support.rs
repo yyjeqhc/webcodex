@@ -579,7 +579,7 @@ pub(super) fn shared_key_auth_context(hash: &str) -> crate::auth::AuthContext {
 pub(super) fn open_auth_context() -> crate::auth::AuthContext {
     crate::auth::AuthContext {
         kind: crate::auth::AuthKind::OpenAnonymous,
-        user_id: Some("open-anonymous".to_string()),
+        user_id: None,
         username: None,
         api_key_id: None,
         api_key_name: None,
@@ -874,11 +874,26 @@ pub(super) async fn complete_patch_agent_request(
     stdout: &str,
     stderr: &str,
 ) {
+    complete_patch_agent_request_for_instance(
+        runtime, client_id, "inst", request_id, exit_code, stdout, stderr,
+    )
+    .await;
+}
+
+pub(super) async fn complete_patch_agent_request_for_instance(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    agent_instance_id: &str,
+    request_id: &str,
+    exit_code: i32,
+    stdout: &str,
+    stderr: &str,
+) {
     runtime
         .shell_clients
         .complete(ShellAgentResultRequest {
             client_id: client_id.to_string(),
-            agent_instance_id: "inst".to_string(),
+            agent_instance_id: agent_instance_id.to_string(),
             request_id: request_id.to_string(),
             exit_code: Some(exit_code),
             stdout: Some(stdout.to_string()),

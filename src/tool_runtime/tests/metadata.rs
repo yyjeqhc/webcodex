@@ -169,6 +169,90 @@ async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
         .collect();
     assert_eq!(ids, vec!["agent:client-open:proj-open"]);
 
+    let open_read = tokio::spawn({
+        let runtime = runtime.clone();
+        let open = open.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project: "agent:client-open:proj-open".to_string(),
+                        path: "README.md".to_string(),
+                        session_id: None,
+                        start_line: None,
+                        limit: Some(1),
+                        with_line_numbers: None,
+                    },
+                    Some(&open),
+                )
+                .await
+        }
+    });
+    let req = next_agent_request_for_client(&runtime, "client-open")
+        .await
+        .expect("open read_file should enqueue for the open agent");
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        "client-open",
+        "inst-client-open",
+        &req.request_id,
+        0,
+        "open\n",
+        "",
+    )
+    .await;
+    let result = open_read.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_ne!(result.output["error_kind"], "current_session_unavailable");
+
+    let open_git = tokio::spawn({
+        let runtime = runtime.clone();
+        let open = open.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::GitStatus {
+                        project: "agent:client-open:proj-open".to_string(),
+                        session_id: None,
+                    },
+                    Some(&open),
+                )
+                .await
+        }
+    });
+    let req = next_agent_request_for_client(&runtime, "client-open")
+        .await
+        .expect("open git_status should enqueue for the open agent");
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        "client-open",
+        "inst-client-open",
+        &req.request_id,
+        0,
+        "",
+        "",
+    )
+    .await;
+    let result = open_git.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_ne!(result.output["error_kind"], "current_session_unavailable");
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReadFile {
+                project: "agent:client-a:proj-a".to_string(),
+                path: "README.md".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            Some(&open),
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_project");
+
     let result = runtime
         .dispatch_with_auth(ToolCall::ListProjects, Some(&bootstrap))
         .await;

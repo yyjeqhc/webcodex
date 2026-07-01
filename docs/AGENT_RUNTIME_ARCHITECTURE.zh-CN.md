@@ -39,6 +39,14 @@ WebCodex 有自己的 runtime model：
 
 WebCodex-native instruction layer 应该描述这个环境。它可以叫 **Agent Operating Contract** 或 **WebCodex Runtime Instruction**。它不是 `AGENTS.md`、项目 instructions 或用户任务 prompt 的替代品，而是 WebCodex runtime 注入的稳定行为契约，让模型知道如何通过这个 runtime 安全行动。
 
+## Access and onboarding modes
+
+WebCodex 的接入模式分三层，避免把临时便利路径误当成生产身份系统：
+
+- **Open demo mode:** server 必须显式 `--open` 或 `WEBCODEX_ALLOW_ANONYMOUS=true`，client 使用 `connect --open`。生成的 agent token 为空，agent、GPT Actions 和 MCP 都不发送 Authorization。它只适合 localhost、可信 LAN 和临时 demo；open anonymous caller 共享一个 demo current-session principal。
+- **Shared-key quick start mode:** `server up` 默认不允许匿名访问，并启用 shared-key quick start。agent 和 GPT/MCP 使用同一个 Bearer key，server 按 `shared_key_hash` 分组；同 key group 可见，不同 key group 隔离。shared-key 不是 admin，也不是 managed user。
+- **Managed production mode:** 使用 pairing、`setup single-user`、`wc_pat_*` 和 `wc_agent_*`。它适合多用户、可撤销 token、scope 和生产审计，不应该被 shared-key 替代。
+
 ## Agent Operating Contract
 
 operating contract 应该让模型遵守稳定 workflow：

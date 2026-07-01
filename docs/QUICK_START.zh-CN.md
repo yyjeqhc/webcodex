@@ -19,40 +19,41 @@
 
 ### A. 共享密钥（推荐早期体验）
 
-启动 server —— 自动生成 bootstrap/admin 密钥并启用共享密钥客户端：
+启动 server。`server up` 默认不允许匿名访问，并启用共享密钥 quick-start 路径：
 
 ```bash
-webcodex-cli server up --public-url https://sg4.yyjeqhc.cn
+webcodex-cli server up --public-url <URL>
 ```
 
-从项目目录连接客户端：
+从项目目录用同一个共享密钥连接 agent；这个密钥也会给 GPT Actions 或 MCP 使用：
 
 ```bash
-webcodex-cli connect https://sg4.yyjeqhc.cn --key abc123 --root ~/git/project
+webcodex-cli connect <URL> --key <KEY> --root <PROJECT>
 ```
 
 GPT Action / MCP 使用同一个密钥：
 
 ```text
-Authorization: Bearer abc123
+Authorization: Bearer <KEY>
 ```
 
-Client 和 GPT/MCP 使用同一个密钥，server 会把它们匹配到同一组。共享密钥不是管理员，不能管理 server 全局资源。如需生产级 IAM、scope 和 token 轮换，请使用下方第 1-4 节的 managed mode。
+server 按 `shared_key_hash` 给共享密钥 caller 分组：使用同一个 key 的 agent 和 GPT/MCP caller 可以互相可见，不同 key 的 group 互不可见。共享密钥是非管理员 quick-start auth；它不是 managed user，也不应被当作生产 IAM。
 
-### B. Open（匿名，仅限临时 demo）
+### B. Open demo mode（匿名，仅限临时 demo）
 
 ```bash
-webcodex-cli server up --open
-webcodex-cli connect http://127.0.0.1:8080 --open --root .
+webcodex-cli server up --open --public-url <URL>
+webcodex-cli connect <URL> --open --root <PROJECT>
+webcodex-agent --config <generated-agent.toml>
 ```
 
-GPT Action / MCP：不填 token。
+server 必须显式使用 `--open`（`WEBCODEX_ALLOW_ANONYMOUS=true`），client 也必须显式使用 `connect --open`。生成的 agent config 使用 `token = ""`；`webcodex-agent` 会把它当作不发送 Authorization，GPT Actions / MCP 也应留空 Authorization。
 
-> **警告：** `--open` 是匿名测试模式。server 和 client 都必须显式使用 `--open`。不要在不可信公网使用 `--open`。
+Open demo mode 只适合 localhost、可信 LAN 和临时 demo。不要把它作为长期公网模式使用。匿名 open caller 共享同一个 demo current-session principal，因此 open group 内的 session state 是共享的。
 
-### C. 生产 / managed mode
+### C. Managed production mode
 
-使用 `wc_pat_*` 和 `wc_agent_*` token、pairing 和 systemd service 的完整 managed 流程保留在下方第 1-4 节。适用于需要每用户 scope、token 轮换和审计的生产部署。
+生产部署使用 pairing、`setup single-user`、`wc_pat_*` user token 和 `wc_agent_*` agent token。Managed mode 支持多用户、可撤销 token、每用户 scope 和更适合审计的 ownership。完整 managed 流程保留在下方第 1-4 节。
 
 ## 0. 安装 binaries
 
@@ -384,7 +385,12 @@ curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
 
 然后在 GPT Actions 或 MCP 中使用同一个 `wc_pat_xxx` token。
 
-## 6. 应该选择哪种模式？
+## 6. Runtime 注意点
+
+- 使用 project-scoped current session 时，请在 `start_session` 时传入 `project`。`project = null` 创建的 session 不能后续绑定到某个具体 project；返回 `session_project_mismatch` 是预期审计语义，不代表 runtime 故障。
+- 如果 `runtime_status` 显示 server project config not configured，只表示 server-side `projects.toml` 未配置。通过已连接 agent 注册的 projects 仍然可以正常可用；用 `list_projects` 查看当前 runtime surface。
+
+## 7. 应该选择哪种模式？
 
 | 模式 | 适用场景 | 说明 |
 | --- | --- | --- |
@@ -392,7 +398,7 @@ curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
 | Agent systemd service | 长期运行的可信 client 或服务器侧 worker | 推荐用于稳定机器。注意配置 shell profiles，因为 systemd 不读 `.bashrc`。 |
 | Agent no-service 前台/后台模式 | 临时 client、容器、smoke test 或无 systemd 主机 | 先用前台模式观察日志；确认后可用 `nohup` 让它在终端关闭后继续运行。 |
 
-## 7. 下一步文档
+## 8. 下一步文档
 
 - 完整部署细节：[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)
 - Agent projects：[AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md)

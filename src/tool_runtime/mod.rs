@@ -322,14 +322,17 @@ fn current_session_principal(auth: Option<&AuthContext>) -> Result<(String, Stri
                 .to_string(),
         ));
     }
-    let id = auth
-        .api_key_id
-        .as_deref()
-        .or(auth.user_id.as_deref())
-        .or(auth.username.as_deref())
-        .or(auth.allowed_client_id.as_deref())
-        .or(auth.shared_key_hash.as_deref())
-        .map(str::to_string);
+    let id = if matches!(auth.kind, crate::auth::AuthKind::OpenAnonymous) {
+        Some("open-anonymous".to_string())
+    } else {
+        auth.api_key_id
+            .as_deref()
+            .or(auth.user_id.as_deref())
+            .or(auth.username.as_deref())
+            .or(auth.allowed_client_id.as_deref())
+            .or(auth.shared_key_hash.as_deref())
+            .map(str::to_string)
+    };
     let Some(principal_id) = id else {
         return Err(
             "current_session_unavailable: authenticated caller has no stable principal id"

@@ -73,7 +73,7 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 
 ## Quick start
 
-This local demo runs on one machine without `sudo`, `/etc`, systemd, HTTPS, Nginx, or QUIC. It is meant for evaluation. For a real deployment with services, HTTPS, remote agents, and GPT Actions, use [docs/QUICK_START.md](docs/QUICK_START.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+This local demo runs on one machine without `sudo`, `/etc`, systemd, HTTPS, Nginx, or QUIC. It is meant for evaluation. For shared-key quick start, temporary open demo mode, managed services, HTTPS, remote agents, and GPT Actions, use [docs/QUICK_START.md](docs/QUICK_START.md) and [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
 ### 1. Install
 

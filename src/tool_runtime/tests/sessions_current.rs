@@ -1,9 +1,21 @@
 //! Current-session binding tests: bind, unbind, isolation, stale eviction.
 
-use super::super::{kernel, sessions, ToolCall};
+use super::super::{current_session_principal, kernel, sessions, ToolCall};
 use super::support::*;
-use crate::shell_protocol::ShellClientCapabilities;
+use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
 use serde_json::json;
+
+#[test]
+fn open_anonymous_current_session_principal_is_stable() {
+    let open = open_auth_context();
+    assert_eq!(open.user_id, None);
+    assert_eq!(open.api_key_id, None);
+    assert_eq!(open.shared_key_hash, None);
+
+    let (principal_kind, principal_id) = current_session_principal(Some(&open)).unwrap();
+    assert_eq!(principal_kind, "open");
+    assert_eq!(principal_id, "open-anonymous");
+}
 
 #[tokio::test]
 async fn bind_current_session_success_and_lookup() {
@@ -225,6 +237,108 @@ async fn bound_current_session_records_project_tool_without_session_id() {
         finished_event(&summary, "read_file").status.as_deref(),
         Some("succeeded")
     );
+}
+
+#[tokio::test]
+async fn open_anonymous_can_bind_current_session_and_record_project_read() {
+    let runtime = test_runtime();
+    let open = open_auth_context();
+    runtime
+        .shell_clients
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                client_id: "open-current".to_string(),
+                agent_instance_id: "inst-open-current".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    file_read: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![registered_project("agent-proj", "/tmp/open-current")]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+            Some(&open),
+        )
+        .await
+        .unwrap();
+    let project = agent_test_project_id("open-current");
+
+    let started = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_session",
+                json!({"project": project, "title": "open current"}),
+            )
+            .unwrap(),
+            Some(&open),
+        )
+        .await;
+    assert!(started.success, "{:?}", started.error);
+    let session_id = started.output["session_id"].as_str().unwrap().to_string();
+
+    let bound = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "bind_current_session",
+                json!({"project": project, "session_id": session_id}),
+            )
+            .unwrap(),
+            Some(&open),
+        )
+        .await;
+    assert!(bound.success, "{:?}", bound.error);
+    assert_eq!(bound.output["bound"], true);
+
+    let current = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name("current_session", json!({"project": project})).unwrap(),
+            Some(&open),
+        )
+        .await;
+    assert!(current.success, "{:?}", current.error);
+    assert_eq!(current.output["found"], true);
+    assert_eq!(current.output["session_id"], session_id);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let open = open.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project,
+                        path: "README.md".to_string(),
+                        session_id: None,
+                        start_line: None,
+                        limit: Some(1),
+                        with_line_numbers: None,
+                    },
+                    Some(&open),
+                )
+                .await
+        }
+    });
+    let req = next_agent_request_for_instance(&runtime, "open-current", "inst-open-current")
+        .await
+        .expect("open read_file should enqueue with current session");
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        "open-current",
+        "inst-open-current",
+        &req.request_id,
+        0,
+        "hello\n",
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["session_recorded"], true);
+    assert_eq!(result.output["session_id"], session_id);
 }
 
 #[tokio::test]

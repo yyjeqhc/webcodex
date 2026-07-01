@@ -2487,18 +2487,56 @@ mod tests {
     // =========================================================================
 
     #[tokio::test]
-    async fn http_projects_list_requires_bearer_auth() {
+    async fn all_project_endpoints_require_bearer_auth() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let tmp_proj = tempfile::tempdir().unwrap();
         let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
         let service = Service::new(build_projects_router(config, db, runtime));
 
-        let resp = TestClient::post("http://localhost/api/projects/list")
-            .json(&json!({}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
+        let endpoints: Vec<(&str, Value)> = vec![
+            ("/api/projects/list", json!({})),
+            (
+                "/api/projects/read_file",
+                json!({"project": "demo", "path": "README.md"}),
+            ),
+            ("/api/projects/git_status", json!({"project": "demo"})),
+            ("/api/projects/git_diff", json!({"project": "demo"})),
+            (
+                "/api/projects/apply_patch",
+                json!({"project": "demo", "patch": "diff"}),
+            ),
+            (
+                "/api/projects/run_shell",
+                json!({"project": "demo", "command": "echo hi"}),
+            ),
+            (
+                "/api/projects/validate_patch",
+                json!({"project": "demo", "patch": "diff"}),
+            ),
+            ("/api/tools/list", json!({})),
+            ("/api/tools/call", json!({"tool": "list_tools"})),
+            ("/api/runtime/status", json!({})),
+            (
+                "/api/projects/register",
+                json!({"client_id": "oe", "id": "my-project", "name": "My Project", "path": "/root/git/my-project"}),
+            ),
+            (
+                "/api/projects/create",
+                json!({"client_id": "oe", "id": "hello", "name": "Hello", "path": "/root/git/hello"}),
+            ),
+        ];
+        for (path, body) in &endpoints {
+            let resp = TestClient::post(&format!("http://localhost{path}"))
+                .json(body)
+                .send(&service)
+                .await;
+            assert_eq!(
+                effective_status(&resp),
+                StatusCode::UNAUTHORIZED,
+                "{path} should require bearer auth"
+            );
+        }
     }
 
     #[tokio::test]
@@ -2545,22 +2583,6 @@ mod tests {
     // =========================================================================
     // readProjectFile
     // =========================================================================
-
-    #[tokio::test]
-    async fn http_projects_read_file_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        std::fs::write(tmp_proj.path().join("README.md"), "hello").unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/read_file")
-            .json(&json!({"project": "demo", "path": "README.md"}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
 
     #[tokio::test]
     async fn http_projects_read_file_rejects_server_configured_project() {
@@ -2694,21 +2716,6 @@ mod tests {
     // =========================================================================
 
     #[tokio::test]
-    async fn http_projects_git_status_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/git_status")
-            .json(&json!({"project": "demo"}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
     async fn http_projects_git_status_rejects_server_configured_project() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
@@ -2740,21 +2747,6 @@ mod tests {
     // =========================================================================
 
     #[tokio::test]
-    async fn http_projects_git_diff_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/git_diff")
-            .json(&json!({"project": "demo"}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
     async fn http_projects_git_diff_rejects_server_configured_project() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
@@ -2784,21 +2776,6 @@ mod tests {
     // =========================================================================
 
     #[tokio::test]
-    async fn http_projects_apply_patch_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/apply_patch")
-            .json(&json!({"project": "demo", "patch": "diff"}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
     async fn http_projects_apply_patch_rejects_server_configured_project() {
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
@@ -2820,21 +2797,6 @@ mod tests {
     // =========================================================================
     // runProjectShellCommand
     // =========================================================================
-
-    #[tokio::test]
-    async fn http_projects_run_shell_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/run_shell")
-            .json(&json!({"project": "demo", "command": "echo hi"}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
 
     #[tokio::test]
     async fn http_projects_run_shell_rejects_server_configured_project() {
@@ -2911,21 +2873,6 @@ mod tests {
     // =========================================================================
     // getRuntimeStatus / /api/runtime/status
     // =========================================================================
-
-    #[tokio::test]
-    async fn http_runtime_status_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/runtime/status")
-            .json(&json!({}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
 
     #[tokio::test]
     async fn http_runtime_status_rejects_wrong_bearer() {
@@ -3058,21 +3005,6 @@ mod tests {
     // =========================================================================
     // validateProjectPatch (POST /api/projects/validate_patch)
     // =========================================================================
-
-    #[tokio::test]
-    async fn http_projects_validate_patch_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/validate_patch")
-            .json(&json!({"project": "demo", "patch": "diff"}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
 
     #[tokio::test]
     async fn http_projects_validate_patch_dispatches_to_runtime() {
@@ -3274,16 +3206,6 @@ mod tests {
         // names and tools must stay in sync.
         let tools_count = body["tools"].as_array().unwrap().len();
         assert_eq!(tools_count, names.len());
-    }
-
-    #[tokio::test]
-    async fn http_tools_list_requires_bearer_auth() {
-        let (_tmp, service) = phase2_service();
-        let resp = TestClient::post("http://localhost/api/tools/list")
-            .json(&json!({}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
@@ -3999,16 +3921,6 @@ mod tests {
         assert_eq!(body["output"]["session"]["title"], "api show changes");
     }
 
-    #[tokio::test]
-    async fn http_tools_call_requires_bearer_auth() {
-        let (_tmp, service) = phase2_service();
-        let resp = TestClient::post("http://localhost/api/tools/call")
-            .json(&json!({"tool": "list_tools"}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
-
     async fn oauth_tools_call(
         service: &Service,
         token: &str,
@@ -4600,46 +4512,6 @@ mod tests {
     // =========================================================================
     // register_project / create_project REST endpoints
     // =========================================================================
-
-    #[tokio::test]
-    async fn http_projects_register_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/register")
-            .json(&json!({
-                "client_id": "oe",
-                "id": "my-project",
-                "name": "My Project",
-                "path": "/root/git/my-project"
-            }))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn http_projects_create_requires_bearer_auth() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/create")
-            .json(&json!({
-                "client_id": "oe",
-                "id": "hello",
-                "name": "Hello",
-                "path": "/root/git/hello"
-            }))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
 
     #[tokio::test]
     async fn http_projects_register_rejects_unknown_client_id() {

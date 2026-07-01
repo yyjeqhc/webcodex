@@ -2877,6 +2877,23 @@ mod tests {
             "delete_project_files",
             "git_restore_paths",
             "discard_untracked",
+            // Phase A: read-only console tools
+            "list_project_files",
+            "search_project_text",
+            "list_jobs",
+            "job_tail",
+            // Phase 4: file edit tools
+            "replace_in_file",
+            "replace_exact_block",
+            "insert_before_pattern",
+            "insert_after_pattern",
+            "write_project_file",
+            "replace_line_range",
+            "insert_at_line",
+            "delete_line_range",
+            // Project management
+            "register_project",
+            "create_project",
         ] {
             assert!(
                 names.iter().any(|n| n == expected),
@@ -2925,37 +2942,47 @@ mod tests {
     }
 
     #[test]
-    fn tool_specs_apply_patch_checked_schema() {
+    fn tool_specs_schema_spot_checks() {
+        // Table-driven: each entry is (tool_name, required_fields, forbidden_fields).
+        // Required fields are checked via exact equality to catch unexpected additions.
+        let cases: Vec<(&str, Vec<&str>, Vec<&str>)> = vec![
+            (
+                "apply_patch_checked",
+                vec!["project", "patch"],
+                vec!["deny_sensitive_paths"],
+            ),
+            (
+                "validate_patch",
+                vec!["project", "patch"],
+                vec!["deny_sensitive_paths"],
+            ),
+            ("git_diff_summary", vec!["project"], vec![]),
+        ];
         let runtime = test_runtime();
         let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "apply_patch_checked");
-        let required = required_fields(spec);
-        assert!(required.contains(&"project".to_string()));
-        assert!(required.contains(&"patch".to_string()));
-        assert!(!required.contains(&"deny_sensitive_paths".to_string()));
-        assert!(spec.description.chars().count() <= 300);
-    }
-
-    #[test]
-    fn tool_specs_validate_patch_schema() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "validate_patch");
-        let required = required_fields(spec);
-        assert!(required.contains(&"project".to_string()));
-        assert!(required.contains(&"patch".to_string()));
-        assert!(!required.contains(&"deny_sensitive_paths".to_string()));
-        assert!(spec.description.chars().count() <= 300);
-    }
-
-    #[test]
-    fn tool_specs_git_diff_summary_schema() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "git_diff_summary");
-        let required = required_fields(spec);
-        assert_eq!(required, vec!["project".to_string()]);
-        assert!(spec.description.chars().count() <= 300);
+        for (name, expected_required, expected_forbidden) in &cases {
+            let spec = spec_named(&specs, name);
+            let required = required_fields(spec);
+            let mut expected_sorted: Vec<String> =
+                expected_required.iter().map(|s| s.to_string()).collect();
+            expected_sorted.sort();
+            let mut actual_sorted = required.clone();
+            actual_sorted.sort();
+            assert_eq!(
+                actual_sorted, expected_sorted,
+                "{name}: required fields mismatch (expected exactly {expected_sorted:?}, got {required:?})"
+            );
+            for field in expected_forbidden {
+                assert!(
+                    !required.contains(&field.to_string()),
+                    "{name}: field '{field}' should not be required"
+                );
+            }
+            assert!(
+                spec.description.chars().count() <= 300,
+                "{name}: description too long"
+            );
+        }
     }
 
     #[test]
@@ -3850,102 +3877,62 @@ index 1111111..2222222 100644
     }
 
     #[test]
-    fn tool_specs_delete_project_files_schema() {
+    fn tool_specs_schema_spot_checks_extended() {
+        // Table-driven: (tool_name, required_fields, forbidden_fields).
+        // Required fields are checked via exact equality to catch unexpected additions.
+        let cases: Vec<(&str, Vec<&str>, Vec<&str>)> = vec![
+            ("delete_project_files", vec!["project", "paths"], vec![]),
+            ("git_restore_paths", vec!["project", "paths"], vec![]),
+            ("discard_untracked", vec!["project", "paths"], vec![]),
+            ("list_project_files", vec!["project"], vec!["path", "limit"]),
+            (
+                "search_project_text",
+                vec!["project", "pattern"],
+                vec!["path", "limit", "context_before", "context_after"],
+            ),
+            (
+                "read_file",
+                vec!["project", "path"],
+                vec!["with_line_numbers"],
+            ),
+            ("list_jobs", vec![], vec![]),
+            ("job_tail", vec!["job_id"], vec!["tail_lines"]),
+        ];
         let runtime = test_runtime();
         let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "delete_project_files");
-        let required = required_fields(spec);
-        assert!(required.contains(&"project".to_string()));
-        assert!(required.contains(&"paths".to_string()));
-        assert!(spec.description.chars().count() <= 300);
-    }
+        for (name, expected_required, expected_forbidden) in &cases {
+            let spec = spec_named(&specs, name);
+            let required = required_fields(spec);
+            let mut expected_sorted: Vec<String> =
+                expected_required.iter().map(|s| s.to_string()).collect();
+            expected_sorted.sort();
+            let mut actual_sorted = required.clone();
+            actual_sorted.sort();
+            assert_eq!(
+                actual_sorted, expected_sorted,
+                "{name}: required fields mismatch (expected exactly {expected_sorted:?}, got {required:?})"
+            );
+            for field in expected_forbidden {
+                assert!(
+                    !required.contains(&field.to_string()),
+                    "{name}: field '{field}' should not be required"
+                );
+            }
+            assert!(
+                spec.description.chars().count() <= 300,
+                "{name}: description too long"
+            );
+        }
 
-    #[test]
-    fn tool_specs_git_restore_paths_schema() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "git_restore_paths");
-        let required = required_fields(spec);
-        assert!(required.contains(&"project".to_string()));
-        assert!(required.contains(&"paths".to_string()));
-        assert!(spec.description.chars().count() <= 300);
-    }
-
-    #[test]
-    fn tool_specs_discard_untracked_schema() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "discard_untracked");
-        let required = required_fields(spec);
-        assert!(required.contains(&"project".to_string()));
-        assert!(required.contains(&"paths".to_string()));
-        assert!(spec.description.chars().count() <= 300);
-    }
-
-    #[test]
-    fn tool_specs_list_project_files_schema() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "list_project_files");
-        let required = required_fields(spec);
-        assert_eq!(required, vec!["project".to_string()]);
-        // path/limit are optional.
-        assert!(!required.contains(&"path".to_string()));
-        assert!(!required.contains(&"limit".to_string()));
-        assert!(spec.description.chars().count() <= 300);
-    }
-
-    #[test]
-    fn tool_specs_search_project_text_schema() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
+        // Extra property checks for tools with richer schemas.
         let spec = spec_named(&specs, "search_project_text");
-        let required = required_fields(spec);
-        assert!(required.contains(&"project".to_string()));
-        assert!(required.contains(&"pattern".to_string()));
-        assert!(!required.contains(&"path".to_string()));
-        assert!(!required.contains(&"limit".to_string()));
-        assert!(!required.contains(&"context_before".to_string()));
-        assert!(!required.contains(&"context_after".to_string()));
         let props = spec.input_schema["properties"].as_object().unwrap();
         assert!(props.contains_key("context_before"));
         assert!(props.contains_key("context_after"));
-        assert!(spec.description.chars().count() <= 300);
-    }
 
-    #[test]
-    fn tool_specs_read_file_schema_includes_optional_line_numbers() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
         let spec = spec_named(&specs, "read_file");
-        let required = required_fields(spec);
-        assert!(required.contains(&"project".to_string()));
-        assert!(required.contains(&"path".to_string()));
-        assert!(!required.contains(&"with_line_numbers".to_string()));
         let props = spec.input_schema["properties"].as_object().unwrap();
         assert!(props.contains_key("with_line_numbers"));
-    }
-
-    #[test]
-    fn tool_specs_list_jobs_schema() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "list_jobs");
-        let required = required_fields(spec);
-        // list_jobs has only optional fields.
-        assert!(required.is_empty());
-        assert!(spec.description.chars().count() <= 300);
-    }
-
-    #[test]
-    fn tool_specs_job_tail_schema() {
-        let runtime = test_runtime();
-        let specs = runtime.tool_specs();
-        let spec = spec_named(&specs, "job_tail");
-        let required = required_fields(spec);
-        assert_eq!(required, vec!["job_id".to_string()]);
-        assert!(!required.contains(&"tail_lines".to_string()));
-        assert!(spec.description.chars().count() <= 300);
     }
 
     #[test]
@@ -10646,30 +10633,6 @@ new file mode 100644\n\
         assert!(matches!(call, ToolCall::ListJobs { .. }));
     }
 
-    #[test]
-    fn tool_specs_include_phase_a_tools() {
-        let runtime = test_runtime();
-        let names: Vec<String> = runtime
-            .tool_specs()
-            .iter()
-            .map(|s| s.name.clone())
-            .collect();
-        for expected in [
-            "list_project_files",
-            "search_project_text",
-            "git_diff_summary",
-            "list_jobs",
-            "job_tail",
-        ] {
-            assert!(
-                names.iter().any(|n| n == expected),
-                "tool_specs must include '{}': {:?}",
-                expected,
-                names
-            );
-        }
-    }
-
     // =========================================================================
     // validate_patch (patch preflight / dry-run)
     // =========================================================================
@@ -10747,21 +10710,6 @@ new file mode 100644\n\
         .unwrap();
         assert!(
             matches!(call, ToolCall::ValidatePatch { project, patch, .. } if project == "agent:c:p" && patch == "diff")
-        );
-    }
-
-    #[test]
-    fn tool_specs_include_validate_patch() {
-        let runtime = test_runtime();
-        let names: Vec<String> = runtime
-            .tool_specs()
-            .iter()
-            .map(|s| s.name.clone())
-            .collect();
-        assert!(
-            names.iter().any(|n| n == "validate_patch"),
-            "tool_specs must include validate_patch: {:?}",
-            names
         );
     }
 
@@ -11224,58 +11172,37 @@ new file mode 100644\n\
     }
 
     #[tokio::test]
-    async fn git_diff_summary_requires_git_or_shell_capability() {
+    async fn git_or_shell_tools_rejected_without_git_or_shell_capability() {
         let runtime = runtime_with_agent_project("oe");
         let mut caps = ShellClientCapabilities::default();
-        caps.shell = false;
+        caps.shell = false; // git stays false by default
         register_agent(&runtime, "oe", None, caps).await;
         let bootstrap = auth_context(None, true);
-        let result = runtime
-            .dispatch_with_auth(
-                ToolCall::GitDiffSummary {
-                    project: agent_test_project_id("oe"),
-                    session_id: None,
-                },
-                Some(&bootstrap),
-            )
-            .await;
-        assert!(!result.success);
-        // GitOrShell accepts `shell` or `git`; with both off it is rejected.
-        let err = result.error.unwrap();
-        assert!(
-            err.contains("shell") || err.contains("git"),
-            "git_diff_summary should require shell or git capability: {}",
-            err
-        );
-    }
 
-    #[tokio::test]
-    async fn show_changes_requires_git_or_shell_capability() {
-        let runtime = runtime_with_agent_project("oe");
-        let mut caps = ShellClientCapabilities::default();
-        caps.shell = false;
-        register_agent(&runtime, "oe", None, caps).await;
-        let bootstrap = auth_context(None, true);
-        let result = runtime
-            .dispatch_with_auth(
-                ToolCall::ShowChanges {
-                    project: agent_test_project_id("oe"),
-                    session_id: None,
-                    include_diff: None,
-                    max_hunks: None,
-                    max_hunk_lines: None,
-                    session_event_limit: None,
-                },
-                Some(&bootstrap),
-            )
-            .await;
-        assert!(!result.success);
-        let err = result.error.unwrap();
-        assert!(
-            err.contains("shell") || err.contains("git"),
-            "show_changes should require shell or git capability: {}",
-            err
-        );
+        let calls = [
+            ToolCall::GitDiffSummary {
+                project: agent_test_project_id("oe"),
+                session_id: None,
+            },
+            ToolCall::ShowChanges {
+                project: agent_test_project_id("oe"),
+                session_id: None,
+                include_diff: None,
+                max_hunks: None,
+                max_hunk_lines: None,
+                session_event_limit: None,
+            },
+        ];
+        for call in calls {
+            let name = format!("{:?}", call);
+            let result = runtime.dispatch_with_auth(call, Some(&bootstrap)).await;
+            assert!(!result.success, "{name} should be rejected");
+            let err = result.error.unwrap();
+            assert!(
+                err.contains("shell") || err.contains("git"),
+                "{name} should require shell or git capability: {err}",
+            );
+        }
     }
 
     #[tokio::test]
@@ -11554,18 +11481,6 @@ new file mode 100644\n\
     }
 
     #[test]
-    fn known_tool_names_includes_phase4_edit_tools() {
-        assert!(KNOWN_TOOL_NAMES.contains(&"replace_in_file"));
-        assert!(KNOWN_TOOL_NAMES.contains(&"replace_exact_block"));
-        assert!(KNOWN_TOOL_NAMES.contains(&"insert_before_pattern"));
-        assert!(KNOWN_TOOL_NAMES.contains(&"insert_after_pattern"));
-        assert!(KNOWN_TOOL_NAMES.contains(&"write_project_file"));
-        assert!(KNOWN_TOOL_NAMES.contains(&"replace_line_range"));
-        assert!(KNOWN_TOOL_NAMES.contains(&"insert_at_line"));
-        assert!(KNOWN_TOOL_NAMES.contains(&"delete_line_range"));
-    }
-
-    #[test]
     fn tool_specs_include_anchor_edit_tools() {
         let runtime = test_runtime();
         let specs = runtime.tool_specs();
@@ -11583,41 +11498,6 @@ new file mode 100644\n\
                 spec.description.contains("no regex"),
                 "{}",
                 spec.description
-            );
-        }
-    }
-
-    #[test]
-    fn tool_specs_include_phase4_edit_tools() {
-        let runtime = test_runtime();
-        let names: Vec<String> = runtime
-            .tool_specs()
-            .iter()
-            .map(|s| s.name.clone())
-            .collect();
-        for required in [
-            "replace_in_file",
-            "replace_exact_block",
-            "insert_before_pattern",
-            "insert_after_pattern",
-            "write_project_file",
-            "replace_line_range",
-            "insert_at_line",
-            "delete_line_range",
-        ] {
-            assert!(
-                names.iter().any(|n| n == required),
-                "tool_specs must include {}: {:?}",
-                required,
-                names
-            );
-        }
-        for spec in runtime.tool_specs() {
-            assert!(
-                spec.description.chars().count() <= 300,
-                "{} description too long ({} chars)",
-                spec.name,
-                spec.description.chars().count()
             );
         }
     }
@@ -12259,10 +12139,11 @@ new file mode 100644\n\
     }
 
     #[tokio::test]
-    async fn replace_in_file_requires_shell_capability() {
+    async fn edit_tools_rejected_without_required_capability() {
         let runtime = runtime_with_agent_project("editor");
-        // Register WITHOUT shell capability (default has shell=true, so set
-        // shell=false explicitly).
+        // ReplaceInFile requires shell; ReplaceLineRange requires file_write.
+        // Default caps have shell=true, file_write=false, so register once and
+        // test both: ReplaceInFile with shell=false, ReplaceLineRange with defaults.
         register_agent(
             &runtime,
             "editor",
@@ -12273,6 +12154,9 @@ new file mode 100644\n\
             },
         )
         .await;
+        let auth = auth_context(None, true);
+
+        // replace_in_file: requires shell
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::ReplaceInFile {
@@ -12284,17 +12168,13 @@ new file mode 100644\n\
                     expected_replacements: None,
                     allow_multiple: None,
                 },
-                Some(&auth_context(None, true)),
+                Some(&auth),
             )
             .await;
         assert!(!result.success);
         assert!(result.error.unwrap().contains("shell"));
-    }
 
-    #[tokio::test]
-    async fn line_edit_tools_require_file_write_capability() {
-        let runtime = runtime_with_agent_project("editor");
-        register_agent(&runtime, "editor", None, ShellClientCapabilities::default()).await;
+        // line edit tools: requires file_write
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::ReplaceLineRange {
@@ -12307,7 +12187,7 @@ new file mode 100644\n\
                     expected_old_sha256: None,
                     expected_old_prefix: None,
                 },
-                Some(&auth_context(None, true)),
+                Some(&auth),
             )
             .await;
         assert!(!result.success);
@@ -12965,36 +12845,8 @@ new file mode 100644\n\
     // =========================================================================
 
     #[test]
-    fn known_tool_names_includes_project_management_tools() {
-        assert!(
-            KNOWN_TOOL_NAMES.contains(&"register_project"),
-            "KNOWN_TOOL_NAMES must include register_project"
-        );
-        assert!(
-            KNOWN_TOOL_NAMES.contains(&"create_project"),
-            "KNOWN_TOOL_NAMES must include create_project"
-        );
-    }
-
-    #[test]
-    fn tool_specs_include_project_management_tools() {
+    fn project_management_tools_require_expected_fields() {
         let runtime = test_runtime();
-        let names: Vec<String> = runtime
-            .tool_specs()
-            .iter()
-            .map(|s| s.name.clone())
-            .collect();
-        assert!(
-            names.iter().any(|n| n == "register_project"),
-            "tool_specs must include register_project: {:?}",
-            names
-        );
-        assert!(
-            names.iter().any(|n| n == "create_project"),
-            "tool_specs must include create_project: {:?}",
-            names
-        );
-        // Verify the specs carry the required-field schema.
         for spec in runtime.tool_specs() {
             if spec.name == "register_project" || spec.name == "create_project" {
                 let required = spec.input_schema["required"]

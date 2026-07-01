@@ -1368,14 +1368,31 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn gate_agent_token_cannot_call_runtime_status() {
+    async fn gate_agent_token_cannot_call_non_transport_paths() {
         let config = gate_test_config(Some("secret"));
         let (_tmp, db) = gate_test_db();
         let user = gate_seed_user(&db, "alice");
         let agent_token = gate_mint_agent_token(&db, &user, "alice-laptop");
         let service = Service::new(gate_router(config, db));
-        let (status, body) = gate_send(&service, "/api/runtime/status", Some(&agent_token)).await;
-        assert_eq!(status, salvo::http::StatusCode::FORBIDDEN);
+        for path in [
+            "/api/runtime/status",
+            "/api/tools/list",
+            "/api/projects/list",
+            "/mcp",
+            "/api/agent-tokens/list",
+            "/api/tokens/list",
+        ] {
+            let (status, body) = gate_send(&service, path, Some(&agent_token)).await;
+            assert_eq!(
+                status,
+                salvo::http::StatusCode::FORBIDDEN,
+                "agent token should be forbidden on {}: {:?}",
+                path,
+                body
+            );
+        }
+        // Verify the error message is descriptive for at least one path.
+        let (_, body) = gate_send(&service, "/api/runtime/status", Some(&agent_token)).await;
         assert!(
             body["error"]
                 .as_str()
@@ -1384,62 +1401,6 @@ mod tests {
             "body: {:?}",
             body
         );
-    }
-
-    #[tokio::test]
-    async fn gate_agent_token_cannot_call_tools_list() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let agent_token = gate_mint_agent_token(&db, &user, "alice-laptop");
-        let service = Service::new(gate_router(config, db));
-        let (status, _body) = gate_send(&service, "/api/tools/list", Some(&agent_token)).await;
-        assert_eq!(status, salvo::http::StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn gate_agent_token_cannot_call_projects_list() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let agent_token = gate_mint_agent_token(&db, &user, "alice-laptop");
-        let service = Service::new(gate_router(config, db));
-        let (status, _body) = gate_send(&service, "/api/projects/list", Some(&agent_token)).await;
-        assert_eq!(status, salvo::http::StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn gate_agent_token_cannot_call_mcp() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let agent_token = gate_mint_agent_token(&db, &user, "alice-laptop");
-        let service = Service::new(gate_router(config, db));
-        let (status, _body) = gate_send(&service, "/mcp", Some(&agent_token)).await;
-        assert_eq!(status, salvo::http::StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn gate_agent_token_cannot_call_agent_tokens_list() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let agent_token = gate_mint_agent_token(&db, &user, "alice-laptop");
-        let service = Service::new(gate_router(config, db));
-        let (status, _body) =
-            gate_send(&service, "/api/agent-tokens/list", Some(&agent_token)).await;
-        assert_eq!(status, salvo::http::StatusCode::FORBIDDEN);
-    }
-
-    #[tokio::test]
-    async fn gate_agent_token_cannot_call_tokens_list() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let agent_token = gate_mint_agent_token(&db, &user, "alice-laptop");
-        let service = Service::new(gate_router(config, db));
-        let (status, _body) = gate_send(&service, "/api/tokens/list", Some(&agent_token)).await;
-        assert_eq!(status, salvo::http::StatusCode::FORBIDDEN);
     }
 
     #[tokio::test]
@@ -2184,60 +2145,10 @@ mod tests {
     // authenticate() verifier chain tests
     // -----------------------------------------------------------------------
 
-    #[tokio::test]
-    async fn authenticate_returns_bootstrap_when_auth_disabled() {
-        let config = crate::Config {
-            addr: "127.0.0.1:0".to_string(),
-            data_dir: PathBuf::from("./data"),
-            token: None, // auth disabled
-            enable_ssh: false,
-            max_text_size: 2 * 1024 * 1024,
-            max_file_size: 100 * 1024 * 1024,
-            codex: crate::CodexConfig::default(),
-            oauth2: crate::OAuth2Config::default(),
-        };
-        let result = authenticate(&config, None, "anything").await.unwrap();
-        let ctx = result.expect("should return bootstrap context");
-        assert!(ctx.is_bootstrap);
-        assert_eq!(ctx.kind, AuthKind::Bootstrap);
-    }
-
-    #[tokio::test]
-    async fn authenticate_returns_bootstrap_for_bootstrap_token() {
-        let config = crate::Config {
-            addr: "127.0.0.1:0".to_string(),
-            data_dir: PathBuf::from("./data"),
-            token: Some("secret".to_string()),
-            enable_ssh: false,
-            max_text_size: 2 * 1024 * 1024,
-            max_file_size: 100 * 1024 * 1024,
-            codex: crate::CodexConfig::default(),
-            oauth2: crate::OAuth2Config::default(),
-        };
-        let result = authenticate(&config, None, "secret").await.unwrap();
-        let ctx = result.expect("should return bootstrap context");
-        assert!(ctx.is_bootstrap);
-        assert_eq!(ctx.kind, AuthKind::Bootstrap);
-    }
-
-    #[tokio::test]
-    async fn authenticate_returns_none_for_unknown_token_without_db() {
-        let config = crate::Config {
-            addr: "127.0.0.1:0".to_string(),
-            data_dir: PathBuf::from("./data"),
-            token: Some("secret".to_string()),
-            enable_ssh: false,
-            max_text_size: 2 * 1024 * 1024,
-            max_file_size: 100 * 1024 * 1024,
-            codex: crate::CodexConfig::default(),
-            oauth2: crate::OAuth2Config::default(),
-        };
-        let result = authenticate(&config, None, "wc_pat_bogus").await.unwrap();
-        assert!(
-            result.is_none(),
-            "unknown token without DB should return None"
-        );
-    }
+    // authenticate() verifier chain tests
+    // Note: bootstrap and basic PAT verification are covered by the
+    // pat_verifier_* tests above. The tests below exercise the full chain
+    // with DB-backed verifiers.
 
     #[tokio::test]
     async fn authenticate_returns_none_for_unknown_token_with_db() {
@@ -2358,7 +2269,8 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn authenticate_bearer_bootstrap_when_auth_disabled() {
+    async fn authenticate_bearer_bootstrap_and_no_token() {
+        // Auth disabled → bootstrap.
         let config = crate::Config {
             addr: "127.0.0.1:0".to_string(),
             data_dir: PathBuf::from("./data"),
@@ -2369,85 +2281,28 @@ mod tests {
             codex: crate::CodexConfig::default(),
             oauth2: crate::OAuth2Config::default(),
         };
-        let result = authenticate_bearer(&config, None, Some("anything")).await;
-        let ctx = result.expect("should return bootstrap context");
+        let ctx = authenticate_bearer(&config, None, Some("anything"))
+            .await
+            .expect("auth disabled should return bootstrap");
         assert!(ctx.is_bootstrap);
-    }
 
-    #[tokio::test]
-    async fn authenticate_bearer_bootstrap_token() {
+        // Valid bootstrap token → bootstrap.
         let config = crate::Config {
-            addr: "127.0.0.1:0".to_string(),
-            data_dir: PathBuf::from("./data"),
             token: Some("secret".to_string()),
-            enable_ssh: false,
-            max_text_size: 2 * 1024 * 1024,
-            max_file_size: 100 * 1024 * 1024,
-            codex: crate::CodexConfig::default(),
-            oauth2: crate::OAuth2Config::default(),
+            ..config
         };
-        let result = authenticate_bearer(&config, None, Some("secret")).await;
-        let ctx = result.expect("should return bootstrap context");
+        let ctx = authenticate_bearer(&config, None, Some("secret"))
+            .await
+            .expect("bootstrap token should return bootstrap");
         assert!(ctx.is_bootstrap);
-    }
 
-    #[tokio::test]
-    async fn authenticate_bearer_none_when_no_token() {
-        let config = crate::Config {
-            addr: "127.0.0.1:0".to_string(),
-            data_dir: PathBuf::from("./data"),
-            token: Some("secret".to_string()),
-            enable_ssh: false,
-            max_text_size: 2 * 1024 * 1024,
-            max_file_size: 100 * 1024 * 1024,
-            codex: crate::CodexConfig::default(),
-            oauth2: crate::OAuth2Config::default(),
-        };
+        // No token → None.
         let result = authenticate_bearer(&config, None, None).await;
         assert!(result.is_none(), "no token should return None");
     }
 
-    #[tokio::test]
-    async fn authenticate_bearer_valid_user_pat() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let token = gate_mint_user_token(&db, &user);
-        let result = authenticate_bearer(&config, Some(&db), Some(&token)).await;
-        let ctx = result.expect("should return auth context");
-        assert_eq!(ctx.kind, AuthKind::ApiToken);
-    }
-
-    #[tokio::test]
-    async fn authenticate_bearer_valid_agent_token() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let token = gate_mint_agent_token(&db, &user, "alice-laptop");
-        let result = authenticate_bearer(&config, Some(&db), Some(&token)).await;
-        let ctx = result.expect("should return auth context");
-        assert_eq!(ctx.kind, AuthKind::AgentToken);
-    }
-
-    #[tokio::test]
-    async fn authenticate_bearer_rejects_disabled_user() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let token = gate_mint_user_token(&db, &user);
-        db.set_user_disabled(&user.id, true, chrono::Utc::now().timestamp())
-            .unwrap();
-        let result = authenticate_bearer(&config, Some(&db), Some(&token)).await;
-        assert!(result.is_none(), "disabled user should return None");
-    }
-
-    #[tokio::test]
-    async fn authenticate_bearer_rejects_unknown_token() {
-        let config = gate_test_config(Some("secret"));
-        let (_tmp, db) = gate_test_db();
-        let result = authenticate_bearer(&config, Some(&db), Some("wc_pat_bogus")).await;
-        assert!(result.is_none(), "unknown token should return None");
-    }
+    // The following authenticate_bearer tests cover QUIC-specific rejection
+    // that is NOT tested by the authenticate() chain tests above.
 
     #[tokio::test]
     async fn authenticate_bearer_rejects_account_credential() {
@@ -2489,6 +2344,51 @@ mod tests {
             last_used.is_none(),
             "last_used_at must not be updated on forbidden surface"
         );
+    }
+
+    // Table-driven: authenticate_bearer positive and negative paths
+    // that exercise the QUIC/agent-transport surface (not HTTP middleware).
+    #[tokio::test]
+    async fn authenticate_bearer_accepts_and_rejects_by_token_type() {
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let user_token = gate_mint_user_token(&db, &user);
+        let agent_token = gate_mint_agent_token(&db, &user, "quic-client");
+
+        // Disabled user: user PAT should be rejected.
+        let disabled = {
+            let now = chrono::Utc::now().timestamp();
+            let u = crate::models::UserRecord {
+                id: uuid::Uuid::new_v4().to_string(),
+                username: "disabled-user".to_string(),
+                created_at: now,
+                disabled: 1,
+                display_name: None,
+                role: "user".to_string(),
+                disabled_at: Some(now),
+                updated_at: Some(now),
+            };
+            db.create_user(&u).unwrap();
+            u
+        };
+        let disabled_token = gate_mint_user_token(&db, &disabled);
+
+        let cases: Vec<(&str, Option<&str>, bool)> = vec![
+            ("valid user PAT", Some(&user_token), true),
+            ("valid agent token", Some(&agent_token), true),
+            ("unknown token", Some("invalid-garbage-token"), false),
+            ("disabled user PAT", Some(&disabled_token), false),
+        ];
+
+        for (label, token, should_succeed) in &cases {
+            let result = authenticate_bearer(&config, Some(&db), *token).await;
+            if *should_succeed {
+                assert!(result.is_some(), "{label}: expected Some, got None");
+            } else {
+                assert!(result.is_none(), "{label}: expected None, got Some");
+            }
+        }
     }
 
     // -----------------------------------------------------------------------

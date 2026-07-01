@@ -3711,7 +3711,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn authorize_rejects_oauth2_access_token_without_issuing_code() {
+    async fn authorize_rejects_non_user_tokens_without_issuing_code() {
         let config = test_config(oauth2_enabled());
         let (_tmp, db) = test_db();
         let user = seed_user(&db, "alice");
@@ -3721,62 +3721,29 @@ mod tests {
             "https://example.com/callback",
             "runtime:read",
         );
-        let (_record, token) = seed_access_token(&db, &client, &user, "runtime:read");
         let service = Service::new(build_router(config, db.clone()));
         let url = valid_authorize_url(&client, "https://example.com/callback");
-        let before = auth_code_count(&db);
 
-        let resp = authorized_get(&url, &token).send(&service).await;
-
-        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
-        assert_no_location(&resp);
-        assert_eq!(auth_code_count(&db), before);
-    }
-
-    #[tokio::test]
-    async fn authorize_rejects_agent_token_without_issuing_code() {
-        let config = test_config(oauth2_enabled());
-        let (_tmp, db) = test_db();
-        let user = seed_user(&db, "alice");
-        let token = seed_agent_token(&db, &user);
-        let client = seed_client_with_redirects_and_scopes(
-            &db,
-            &user,
-            "https://example.com/callback",
-            "runtime:read",
-        );
-        let service = Service::new(build_router(config, db.clone()));
-        let url = valid_authorize_url(&client, "https://example.com/callback");
-        let before = auth_code_count(&db);
-
-        let resp = authorized_get(&url, &token).send(&service).await;
-
-        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
-        assert_no_location(&resp);
-        assert_eq!(auth_code_count(&db), before);
-    }
-
-    #[tokio::test]
-    async fn authorize_rejects_account_credential_without_issuing_code() {
-        let config = test_config(oauth2_enabled());
-        let (_tmp, db) = test_db();
-        let user = seed_user(&db, "alice");
-        let token = seed_account_credential(&db, &user);
-        let client = seed_client_with_redirects_and_scopes(
-            &db,
-            &user,
-            "https://example.com/callback",
-            "runtime:read",
-        );
-        let service = Service::new(build_router(config, db.clone()));
-        let url = valid_authorize_url(&client, "https://example.com/callback");
-        let before = auth_code_count(&db);
-
-        let resp = authorized_get(&url, &token).send(&service).await;
-
-        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
-        assert_no_location(&resp);
-        assert_eq!(auth_code_count(&db), before);
+        // Each token type must be rejected with 403, no redirect, no code issued.
+        let tokens: Vec<String> = vec![
+            {
+                let (_record, token) = seed_access_token(&db, &client, &user, "runtime:read");
+                token
+            },
+            seed_agent_token(&db, &user),
+            seed_account_credential(&db, &user),
+        ];
+        for token in &tokens {
+            let before = auth_code_count(&db);
+            let resp = authorized_get(&url, token).send(&service).await;
+            assert_eq!(
+                resp.status_code,
+                Some(StatusCode::FORBIDDEN),
+                "token should be rejected"
+            );
+            assert_no_location(&resp);
+            assert_eq!(auth_code_count(&db), before, "no code should be issued");
+        }
     }
 
     #[tokio::test]
@@ -4855,81 +4822,78 @@ mod tests {
     // -----------------------------------------------------------------------
 
     #[tokio::test]
-    async fn wrong_client_secret_returns_invalid_client() {
+    async fn token_endpoint_rejects_invalid_client_credentials() {
         let config = test_config(oauth2_enabled_no_pkce());
-        let (_tmp, db) = test_db();
-        let user = seed_user(&db, "alice");
-        let (client, _) = seed_client(&db, &user, "Test App");
-        let (_, code) = seed_auth_code(
-            &db,
-            &client,
-            &user,
-            "https://example.com/callback",
-            "runtime:read",
-            None,
-            None,
-        );
 
-        let service = Service::new(build_router(config, db));
-        let body = form_body(&[
-            ("grant_type", "authorization_code"),
-            ("code", &code),
-            ("redirect_uri", "https://example.com/callback"),
-            ("client_id", &client.client_id),
-            ("client_secret", "wrong-secret"),
-        ]);
-        let mut resp = post_form("http://localhost/oauth/token", body)
-            .send(&service)
-            .await;
-        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
-        let json: serde_json::Value = resp.take_json().await.unwrap();
-        assert_eq!(json["error"], "invalid_client");
-    }
-
-    #[tokio::test]
-    async fn unknown_client_id_returns_invalid_client() {
-        let config = test_config(oauth2_enabled_no_pkce());
-        let (_tmp, db) = test_db();
-
-        let service = Service::new(build_router(config, db));
-        let body = form_body(&[
-            ("grant_type", "authorization_code"),
-            ("code", "wc_oac_dummy"),
-            ("redirect_uri", "https://example.com/callback"),
-            ("client_id", "wc_client_nonexistent"),
-            ("client_secret", "some-secret"),
-        ]);
-        let mut resp = post_form("http://localhost/oauth/token", body)
-            .send(&service)
-            .await;
-        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
-        let json: serde_json::Value = resp.take_json().await.unwrap();
-        assert_eq!(json["error"], "invalid_client");
-    }
-
-    #[tokio::test]
-    async fn revoked_client_returns_invalid_client() {
-        let config = test_config(oauth2_enabled_no_pkce());
-        let (_tmp, db) = test_db();
-        let user = seed_user(&db, "alice");
-        let (client, secret) = seed_client(&db, &user, "Test App");
-        let now = chrono::Utc::now().timestamp();
-        db.revoke_oauth_client(&client.id, now).unwrap();
-
-        let service = Service::new(build_router(config, db));
-        let body = form_body(&[
-            ("grant_type", "authorization_code"),
-            ("code", "wc_oac_dummy"),
-            ("redirect_uri", "https://example.com/callback"),
-            ("client_id", &client.client_id),
-            ("client_secret", &secret),
-        ]);
-        let mut resp = post_form("http://localhost/oauth/token", body)
-            .send(&service)
-            .await;
-        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
-        let json: serde_json::Value = resp.take_json().await.unwrap();
-        assert_eq!(json["error"], "invalid_client");
+        // Case 1: wrong client_secret.
+        {
+            let (_tmp, db) = test_db();
+            let user = seed_user(&db, "alice");
+            let (client, _) = seed_client(&db, &user, "Test App");
+            let (_, code) = seed_auth_code(
+                &db,
+                &client,
+                &user,
+                "https://example.com/callback",
+                "runtime:read",
+                None,
+                None,
+            );
+            let service = Service::new(build_router(config.clone(), db));
+            let body = form_body(&[
+                ("grant_type", "authorization_code"),
+                ("code", &code),
+                ("redirect_uri", "https://example.com/callback"),
+                ("client_id", &client.client_id),
+                ("client_secret", "wrong-secret"),
+            ]);
+            let mut resp = post_form("http://localhost/oauth/token", body)
+                .send(&service)
+                .await;
+            assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+            let json: serde_json::Value = resp.take_json().await.unwrap();
+            assert_eq!(json["error"], "invalid_client");
+        }
+        // Case 2: unknown client_id.
+        {
+            let (_tmp, db) = test_db();
+            let service = Service::new(build_router(config.clone(), db));
+            let body = form_body(&[
+                ("grant_type", "authorization_code"),
+                ("code", "wc_oac_dummy"),
+                ("redirect_uri", "https://example.com/callback"),
+                ("client_id", "wc_client_nonexistent"),
+                ("client_secret", "some-secret"),
+            ]);
+            let mut resp = post_form("http://localhost/oauth/token", body)
+                .send(&service)
+                .await;
+            assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+            let json: serde_json::Value = resp.take_json().await.unwrap();
+            assert_eq!(json["error"], "invalid_client");
+        }
+        // Case 3: revoked client.
+        {
+            let (_tmp, db) = test_db();
+            let user = seed_user(&db, "alice");
+            let (client, secret) = seed_client(&db, &user, "Test App");
+            let now = chrono::Utc::now().timestamp();
+            db.revoke_oauth_client(&client.id, now).unwrap();
+            let service = Service::new(build_router(config.clone(), db));
+            let body = form_body(&[
+                ("grant_type", "authorization_code"),
+                ("code", "wc_oac_dummy"),
+                ("redirect_uri", "https://example.com/callback"),
+                ("client_id", &client.client_id),
+                ("client_secret", &secret),
+            ]);
+            let mut resp = post_form("http://localhost/oauth/token", body)
+                .send(&service)
+                .await;
+            assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+            let json: serde_json::Value = resp.take_json().await.unwrap();
+            assert_eq!(json["error"], "invalid_client");
+        }
     }
 
     // -----------------------------------------------------------------------

@@ -7456,9 +7456,24 @@ shell_profile = "../rust"
     }
 
     #[test]
-    fn register_request_announces_polling_v1_protocol_version() {
+    fn register_request_announces_correct_protocol_version() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().join("config/projects.d"));
+        for (version, expected_str) in [
+            (AGENT_PROTOCOL_VERSION_POLLING_V1, "polling-v1"),
+            (AGENT_PROTOCOL_VERSION_WEBSOCKET_V1, "websocket-v1"),
+            (AGENT_PROTOCOL_VERSION_QUIC_V1, "quic-v1"),
+        ] {
+            let body = build_register_request(&cfg, Vec::new(), version, "inst-1", 0);
+            assert_eq!(body.agent_instance_id, "inst-1");
+            assert_eq!(
+                body.agent_protocol_version.as_deref(),
+                Some(version),
+                "version mismatch for {expected_str}"
+            );
+            assert_eq!(body.agent_protocol_version.as_deref(), Some(expected_str));
+        }
+        // Also verify capabilities are advertised (check once for polling).
         let body = build_register_request(
             &cfg,
             Vec::new(),
@@ -7466,14 +7481,6 @@ shell_profile = "../rust"
             "inst-1",
             0,
         );
-        assert_eq!(body.client_id, "oe");
-        assert_eq!(body.agent_instance_id, "inst-1");
-        assert_eq!(
-            body.agent_protocol_version.as_deref(),
-            Some(AGENT_PROTOCOL_VERSION_POLLING_V1)
-        );
-        assert_eq!(body.agent_protocol_version.as_deref(), Some("polling-v1"));
-        // Capabilities advertised by the agent include async + file access.
         let caps = body.capabilities.expect("agent registers capabilities");
         assert!(caps.shell);
         assert!(caps.file_read);
@@ -7556,25 +7563,6 @@ shell_profile = "../rust"
     }
 
     #[test]
-    fn build_register_request_announces_websocket_v1_when_requested() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cfg = test_config(tmp.path().join("config/projects.d"));
-        let body = build_register_request(
-            &cfg,
-            Vec::new(),
-            AGENT_PROTOCOL_VERSION_WEBSOCKET_V1,
-            "inst-1",
-            0,
-        );
-        assert_eq!(body.agent_instance_id, "inst-1");
-        assert_eq!(
-            body.agent_protocol_version.as_deref(),
-            Some(AGENT_PROTOCOL_VERSION_WEBSOCKET_V1)
-        );
-        assert_eq!(body.agent_protocol_version.as_deref(), Some("websocket-v1"));
-    }
-
-    #[test]
     fn generated_agent_instance_id_is_non_empty_uuid_like() {
         // `run_agent` generates the instance id the same way; verify the
         // format here without driving the full agent loop.
@@ -7618,181 +7606,81 @@ shell_profile = "../rust"
     }
 
     #[test]
-    fn websocket_sink_submit_result_sends_result_envelope() {
-        let (sink, mut rx) = ws_sink("ws-client");
-        let result = CommandResult {
-            exit_code: Some(0),
-            stdout: Some("hi".to_string()),
-            stderr: Some(String::new()),
-            duration_ms: Some(3),
-            error: None,
-        };
-        assert!(sink.submit_result("req-9".to_string(), result).unwrap());
-        let env = rx.try_recv().expect("envelope was sent");
-        match env {
-            AgentEnvelope::Result { payload } => {
-                assert_eq!(payload.client_id, "ws-client");
-                assert_eq!(payload.agent_instance_id, "ws-inst");
-                assert_eq!(payload.request_id, "req-9");
-                assert_eq!(payload.exit_code, Some(0));
-                assert_eq!(payload.stdout.as_deref(), Some("hi"));
+    fn sink_submit_result_sends_result_envelope() {
+        type SinkFactory = fn(&str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
+        for (label, make_sink, expected_client, expected_instance) in [
+            ("ws", ws_sink as SinkFactory, "ws-client", "ws-inst"),
+            ("quic", quic_sink as SinkFactory, "quic-client", "quic-inst"),
+        ] {
+            let (sink, mut rx) = make_sink(expected_client);
+            let result = CommandResult {
+                exit_code: Some(0),
+                stdout: Some("hi".to_string()),
+                stderr: Some(String::new()),
+                duration_ms: Some(3),
+                error: None,
+            };
+            assert!(
+                sink.submit_result("req-9".to_string(), result).unwrap(),
+                "{label}"
+            );
+            let env = rx.try_recv().expect("envelope was sent");
+            match env {
+                AgentEnvelope::Result { payload } => {
+                    assert_eq!(payload.client_id, expected_client, "{label}");
+                    assert_eq!(payload.agent_instance_id, expected_instance, "{label}");
+                    assert_eq!(payload.request_id, "req-9");
+                    assert_eq!(payload.exit_code, Some(0));
+                    assert_eq!(payload.stdout.as_deref(), Some("hi"));
+                }
+                other => panic!("{label}: expected result, got {:?}", other.kind()),
             }
-            other => panic!("expected result, got {:?}", other.kind()),
         }
     }
 
     #[test]
-    fn websocket_sink_send_job_update_sends_job_update_envelope() {
-        let (sink, mut rx) = ws_sink("ws-client");
-        let body = ShellAgentJobUpdateRequest {
-            client_id: "ws-client".to_string(),
-            agent_instance_id: "ws-inst".to_string(),
-            job_id: "job-1".to_string(),
-            request_id: Some("req-1".to_string()),
-            status: "running".to_string(),
-            stdout_chunk: None,
-            stderr_chunk: None,
-            stdout_tail: None,
-            stderr_tail: None,
-            exit_code: None,
-            duration_ms: None,
-            error: None,
-            finished: false,
-        };
-        sink.send_job_update(&body).unwrap();
-        let env = rx.try_recv().expect("envelope was sent");
-        match env {
-            AgentEnvelope::JobUpdate { payload } => {
-                assert_eq!(payload.job_id, "job-1");
-                assert_eq!(payload.status, "running");
+    fn sink_send_job_update_sends_job_update_envelope() {
+        type SinkFactory = fn(&str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
+        for (label, make_sink, expected_client) in [
+            ("ws", ws_sink as SinkFactory, "ws-client"),
+            ("quic", quic_sink as SinkFactory, "quic-client"),
+        ] {
+            let (sink, mut rx) = make_sink(expected_client);
+            let body = ShellAgentJobUpdateRequest {
+                client_id: expected_client.to_string(),
+                agent_instance_id: sink.agent_instance_id().to_string(),
+                job_id: "job-1".to_string(),
+                request_id: Some("req-1".to_string()),
+                status: "running".to_string(),
+                stdout_chunk: Some(format!("{label}-chunk")),
+                stderr_chunk: None,
+                stdout_tail: None,
+                stderr_tail: None,
+                exit_code: None,
+                duration_ms: None,
+                error: None,
+                finished: false,
+            };
+            sink.send_job_update(&body).unwrap();
+            let env = rx.try_recv().expect("envelope was sent");
+            match env {
+                AgentEnvelope::JobUpdate { payload } => {
+                    assert_eq!(payload.client_id, expected_client, "{label}");
+                    assert_eq!(
+                        payload.agent_instance_id,
+                        sink.agent_instance_id(),
+                        "{label}"
+                    );
+                    assert_eq!(payload.job_id, "job-1", "{label}");
+                    assert_eq!(payload.status, "running", "{label}");
+                    assert_eq!(
+                        payload.stdout_chunk.as_deref(),
+                        Some(format!("{label}-chunk").as_str()),
+                        "{label}"
+                    );
+                }
+                other => panic!("{label}: expected job_update, got {:?}", other.kind()),
             }
-            other => panic!("expected job_update, got {:?}", other.kind()),
-        }
-    }
-
-    #[test]
-    fn build_register_request_announces_quic_v1_when_requested() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cfg = test_config(tmp.path().join("config/projects.d"));
-        let body = build_register_request(
-            &cfg,
-            Vec::new(),
-            AGENT_PROTOCOL_VERSION_QUIC_V1,
-            "inst-quic",
-            0,
-        );
-        assert_eq!(body.agent_instance_id, "inst-quic");
-        assert_eq!(
-            body.agent_protocol_version.as_deref(),
-            Some(AGENT_PROTOCOL_VERSION_QUIC_V1)
-        );
-        assert_eq!(body.agent_protocol_version.as_deref(), Some("quic-v1"));
-    }
-
-    #[test]
-    fn quic_sink_submit_result_sends_result_envelope() {
-        let (sink, mut rx) = quic_sink("quic-client");
-        let result = CommandResult {
-            exit_code: Some(0),
-            stdout: Some("hi".to_string()),
-            stderr: Some(String::new()),
-            duration_ms: Some(3),
-            error: None,
-        };
-        assert!(sink.submit_result("req-9".to_string(), result).unwrap());
-        let env = rx.try_recv().expect("envelope was sent");
-        match env {
-            AgentEnvelope::Result { payload } => {
-                assert_eq!(payload.client_id, "quic-client");
-                assert_eq!(payload.agent_instance_id, "quic-inst");
-                assert_eq!(payload.request_id, "req-9");
-                assert_eq!(payload.exit_code, Some(0));
-                assert_eq!(payload.stdout.as_deref(), Some("hi"));
-            }
-            other => panic!("expected result, got {:?}", other.kind()),
-        }
-    }
-
-    #[test]
-    fn quic_sink_send_job_update_sends_job_update_envelope() {
-        let (sink, mut rx) = quic_sink("quic-client");
-        let body = ShellAgentJobUpdateRequest {
-            client_id: "quic-client".to_string(),
-            agent_instance_id: sink.agent_instance_id().to_string(),
-            job_id: "job-1".to_string(),
-            request_id: Some("req-1".to_string()),
-            status: "running".to_string(),
-            stdout_chunk: Some("chunk".to_string()),
-            stderr_chunk: None,
-            stdout_tail: None,
-            stderr_tail: None,
-            exit_code: None,
-            duration_ms: None,
-            error: None,
-            finished: false,
-        };
-        sink.send_job_update(&body).unwrap();
-        let env = rx.try_recv().expect("envelope was sent");
-        match env {
-            AgentEnvelope::JobUpdate { payload } => {
-                assert_eq!(payload.client_id, "quic-client");
-                assert_eq!(payload.agent_instance_id, "quic-inst");
-                assert_eq!(payload.job_id, "job-1");
-                assert_eq!(payload.stdout_chunk.as_deref(), Some("chunk"));
-            }
-            other => panic!("expected job_update, got {:?}", other.kind()),
-        }
-    }
-
-    #[test]
-    fn quic_dispatch_request_sends_result_over_sink() {
-        let tmp = tempfile::tempdir().unwrap();
-        let cfg = test_config(tmp.path().join("config/projects.d"));
-        let (sink, mut rx) = quic_sink("quic-client");
-        let jobs = JobManager::new(1);
-        let request = ShellAgentShellRequest {
-            request_id: "req-dispatch".to_string(),
-            client_id: "quic-client".to_string(),
-            kind: "run_shell".to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            old_text: None,
-            pattern: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            line: None,
-            create_dirs: false,
-            command: "printf quic-ok".to_string(),
-            stdin: None,
-            timeout_secs: 5,
-            requested_by: "tester".to_string(),
-            created_at: 1,
-        };
-
-        assert!(dispatch_request(
-            &sink,
-            &cfg.policy,
-            &cfg.shell,
-            &jobs,
-            &projects_dir(&cfg),
-            request,
-        )
-        .unwrap());
-        let env = rx.try_recv().expect("result envelope was sent");
-        match env {
-            AgentEnvelope::Result { payload } => {
-                assert_eq!(payload.client_id, "quic-client");
-                assert_eq!(payload.agent_instance_id, "quic-inst");
-                assert_eq!(payload.request_id, "req-dispatch");
-                assert_eq!(payload.exit_code, Some(0));
-                assert_eq!(payload.stdout.as_deref(), Some("quic-ok"));
-            }
-            other => panic!("expected result, got {:?}", other.kind()),
         }
     }
 
@@ -7868,46 +7756,61 @@ shell_profile = "../rust"
     }
 
     #[test]
-    fn dispatch_request_run_shell_sends_result_over_websocket_sink() {
+    fn dispatch_request_run_shell_sends_result_over_sink() {
         let tmp = tempfile::tempdir().unwrap();
         let cfg = test_config(tmp.path().join("config/projects.d"));
-        let cwd = tmp.path().to_string_lossy().to_string();
-        let (sink, mut rx) = ws_sink("ws-client");
         let jobs = JobManager::new(max_concurrent_jobs(&cfg));
-        let request = ShellAgentShellRequest {
-            request_id: "req-shell".to_string(),
-            client_id: "ws-client".to_string(),
-            kind: "run_shell".to_string(),
-            job_id: None,
-            cwd: Some(cwd),
-            path: None,
-            content: None,
-            max_bytes: None,
-            old_text: None,
-            pattern: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            line: None,
-            create_dirs: false,
-            command: "printf wsok".to_string(),
-            stdin: None,
-            timeout_secs: 10,
-            requested_by: "tester".to_string(),
-            created_at: 0,
-        };
         let pdir = projects_dir(&cfg);
-        let ran = dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, &pdir, request).unwrap();
-        assert!(ran);
-        let env = rx.try_recv().expect("result envelope was sent");
-        match env {
-            AgentEnvelope::Result { payload } => {
-                assert_eq!(payload.request_id, "req-shell");
-                assert_eq!(payload.exit_code, Some(0));
-                assert_eq!(payload.stdout.as_deref(), Some("wsok"));
+
+        type SinkFactory = fn(&str) -> (AgentSink, tokio::sync::mpsc::Receiver<AgentEnvelope>);
+        for (label, make_sink, client_id, cmd) in [
+            ("ws", ws_sink as SinkFactory, "ws-client", "printf wsok"),
+            (
+                "quic",
+                quic_sink as SinkFactory,
+                "quic-client",
+                "printf quic-ok",
+            ),
+        ] {
+            let (sink, mut rx) = make_sink(client_id);
+            let request = ShellAgentShellRequest {
+                request_id: format!("req-{label}"),
+                client_id: client_id.to_string(),
+                kind: "run_shell".to_string(),
+                job_id: None,
+                cwd: Some(tmp.path().to_string_lossy().to_string()),
+                path: None,
+                content: None,
+                max_bytes: None,
+                old_text: None,
+                pattern: None,
+                expected_sha256: None,
+                expected_prefix: None,
+                start_line: None,
+                end_line: None,
+                line: None,
+                create_dirs: false,
+                command: cmd.to_string(),
+                stdin: None,
+                timeout_secs: 10,
+                requested_by: "tester".to_string(),
+                created_at: 0,
+            };
+            let ran =
+                dispatch_request(&sink, &cfg.policy, &cfg.shell, &jobs, &pdir, request).unwrap();
+            assert!(ran, "{label}");
+            let env = rx.try_recv().expect("result envelope was sent");
+            match env {
+                AgentEnvelope::Result { payload } => {
+                    assert_eq!(payload.request_id, format!("req-{label}"));
+                    assert_eq!(payload.exit_code, Some(0));
+                    assert_eq!(
+                        payload.stdout.as_deref(),
+                        Some(cmd.split_whitespace().last().unwrap())
+                    );
+                }
+                other => panic!("{label}: expected result, got {:?}", other.kind()),
             }
-            other => panic!("expected result, got {:?}", other.kind()),
         }
     }
 

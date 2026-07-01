@@ -384,10 +384,11 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
         | "delete_line_range"
         | "replace_exact_block"
         | "insert_before_pattern"
-        | "insert_after_pattern" => {}
+        | "insert_after_pattern"
+        | "apply_text_edits" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern"
+                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, apply_text_edits"
                     .to_string(),
             )
         }
@@ -454,10 +455,11 @@ fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), String> {
         if body.op != "write"
             && body.op != "replace_line_range"
             && body.op != "insert_at_line"
+            && body.op != "apply_text_edits"
             && !anchor_edit
         {
             return Err(
-                "content is only allowed for op=write, line edit insert/replace, or anchor edit tools"
+                "content is only allowed for op=write, line edit insert/replace, apply_text_edits, or anchor edit tools"
                     .to_string(),
             );
         }

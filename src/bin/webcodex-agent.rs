@@ -2322,6 +2322,7 @@ fn is_line_edit_request_kind(kind: &str) -> bool {
             | "file_replace_exact_block"
             | "file_insert_before_pattern"
             | "file_insert_after_pattern"
+            | "file_apply_text_edits"
     )
 }
 
@@ -2820,6 +2821,428 @@ fn handle_line_edit_file_request(
     line_edit_stdout(out, start)
 }
 
+/// Maximum file size accepted by `file_apply_text_edits` on the agent side.
+const APPLY_TEXT_EDITS_MAX_FILE_BYTES: usize = 2 * 1024 * 1024; // 2 MiB
+/// Maximum number of edits in one `file_apply_text_edits` batch.
+const APPLY_TEXT_EDITS_MAX_EDITS: usize = 20;
+/// Maximum byte size of a single edit field on the agent side.
+const APPLY_TEXT_EDITS_MAX_FIELD_BYTES: usize = 512 * 1024; // 512 KiB
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "snake_case")]
+enum AgentTextEditKind {
+    ReplaceExact,
+    InsertAfter,
+    InsertBefore,
+    DeleteExact,
+}
+
+impl AgentTextEditKind {
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::ReplaceExact => "replace_exact",
+            Self::InsertAfter => "insert_after",
+            Self::InsertBefore => "insert_before",
+            Self::DeleteExact => "delete_exact",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentTextEdit {
+    kind: AgentTextEditKind,
+    #[serde(default)]
+    old_text: Option<String>,
+    #[serde(default)]
+    new_text: Option<String>,
+    #[serde(default)]
+    anchor_text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AgentApplyTextEditsPayload {
+    edits: Vec<AgentTextEdit>,
+    #[serde(default)]
+    dry_run: Option<bool>,
+    #[serde(default)]
+    expected_file_sha256: Option<String>,
+}
+
+fn handle_apply_text_edits_file_request(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let payload_json = request.content.as_deref().unwrap_or_default();
+    let payload: AgentApplyTextEditsPayload = match serde_json::from_str(payload_json) {
+        Ok(p) => p,
+        Err(e) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "error": format!("invalid edits payload: {}", e),
+                }),
+                start,
+            );
+        }
+    };
+    let dry_run = payload.dry_run.unwrap_or(false);
+    if payload.edits.is_empty() {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": "edits must contain at least one edit",
+            }),
+            start,
+        );
+    }
+    if payload.edits.len() > APPLY_TEXT_EDITS_MAX_EDITS {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": format!(
+                    "too many edits; maximum is {}",
+                    APPLY_TEXT_EDITS_MAX_EDITS
+                ),
+            }),
+            start,
+        );
+    }
+
+    // Read + UTF-8 validate the original file.
+    let bytes = match std::fs::read(resolved) {
+        Ok(b) => b,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "error": "file not found",
+                }),
+                start,
+            );
+        }
+        Err(e) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "error": format!("read failed: {}", e),
+                }),
+                start,
+            );
+        }
+    };
+    if bytes.len() > APPLY_TEXT_EDITS_MAX_FILE_BYTES {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": format!(
+                    "file too large; maximum is {} bytes",
+                    APPLY_TEXT_EDITS_MAX_FILE_BYTES
+                ),
+            }),
+            start,
+        );
+    }
+    let original = match String::from_utf8(bytes) {
+        Ok(s) => s,
+        Err(_) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "error": "file is not valid UTF-8",
+                }),
+                start,
+            );
+        }
+    };
+    if original.contains('\0') {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "error": "file contains NUL bytes",
+            }),
+            start,
+        );
+    }
+
+    let old_sha256 = sha256_hex_bytes(original.as_bytes());
+    if let Some(expected) = payload.expected_file_sha256.as_deref() {
+        if old_sha256 != expected {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "dry_run": dry_run,
+                    "old_sha256": old_sha256,
+                    "error": "Rejected before write: expected_file_sha256 mismatch.\nNo files were modified.\nRetry guidance: read the file again to refresh context, then retry with the current file sha256.",
+                }),
+                start,
+            );
+        }
+    }
+
+    // Resolve each edit to (start, end, replacement, index) against original.
+    let mut ops: Vec<(usize, usize, String, usize)> = Vec::with_capacity(payload.edits.len());
+    for (index, edit) in payload.edits.iter().enumerate() {
+        let kind = &edit.kind;
+        let (needle, replacement): (&str, String) = match kind {
+            AgentTextEditKind::ReplaceExact => {
+                let old = match edit.old_text.as_deref().filter(|v| !v.is_empty()) {
+                    Some(v) => v,
+                    None => {
+                        return apply_text_edits_error(
+                            path,
+                            index,
+                            kind.as_str(),
+                            "old_text must be non-empty",
+                            start,
+                        );
+                    }
+                };
+                let new = edit.new_text.clone().unwrap_or_default();
+                (old, new)
+            }
+            AgentTextEditKind::DeleteExact => {
+                let old = match edit.old_text.as_deref().filter(|v| !v.is_empty()) {
+                    Some(v) => v,
+                    None => {
+                        return apply_text_edits_error(
+                            path,
+                            index,
+                            kind.as_str(),
+                            "old_text must be non-empty",
+                            start,
+                        );
+                    }
+                };
+                (old, String::new())
+            }
+            AgentTextEditKind::InsertBefore | AgentTextEditKind::InsertAfter => {
+                let anchor = match edit.anchor_text.as_deref().filter(|v| !v.is_empty()) {
+                    Some(v) => v,
+                    None => {
+                        return apply_text_edits_error(
+                            path,
+                            index,
+                            kind.as_str(),
+                            "anchor_text must be non-empty",
+                            start,
+                        );
+                    }
+                };
+                let new = match edit.new_text.as_deref().filter(|v| !v.is_empty()) {
+                    Some(v) => v.to_string(),
+                    None => {
+                        return apply_text_edits_error(
+                            path,
+                            index,
+                            kind.as_str(),
+                            "new_text must be non-empty",
+                            start,
+                        );
+                    }
+                };
+                (anchor, new)
+            }
+        };
+        if needle.contains('\0') {
+            return apply_text_edits_error(
+                path,
+                index,
+                kind.as_str(),
+                "match text cannot contain NUL bytes",
+                start,
+            );
+        }
+        if needle.len() > APPLY_TEXT_EDITS_MAX_FIELD_BYTES
+            || replacement.len() > APPLY_TEXT_EDITS_MAX_FIELD_BYTES
+        {
+            return apply_text_edits_error(path, index, kind.as_str(), "field too large", start);
+        }
+        let matches = original.matches(needle).count();
+        if matches == 0 {
+            return apply_text_edits_error(
+                path,
+                index,
+                kind.as_str(),
+                "match text was not found",
+                start,
+            );
+        }
+        if matches > 1 {
+            return apply_text_edits_error(
+                path,
+                index,
+                kind.as_str(),
+                &format!(
+                    "match text matched {} times; refusing ambiguous edit",
+                    matches
+                ),
+                start,
+            );
+        }
+        let start_off = original.find(needle).expect("unique match already counted");
+        let end_off = start_off + needle.len();
+        let (range_start, range_end) = match kind {
+            AgentTextEditKind::InsertBefore => (start_off, start_off),
+            AgentTextEditKind::InsertAfter => (end_off, end_off),
+            _ => (start_off, end_off),
+        };
+        ops.push((range_start, range_end, replacement, index));
+    }
+
+    ops.sort_by_key(|&(s, e, _, i)| (s, e, i));
+    for w in ops.windows(2) {
+        let (_, e1, _, _) = w[0];
+        let (s2, _, _, _) = w[1];
+        if s2 < e1 {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "path": path,
+                    "dry_run": dry_run,
+                    "error": "Rejected before write: edits overlap; refusing ambiguous atomic edit batch.\nNo files were modified.\nRetry guidance: read the file again and ensure edit match ranges do not overlap.",
+                }),
+                start,
+            );
+        }
+    }
+
+    // Build the new content by slicing the original at op boundaries.
+    let mut new_content = String::with_capacity(original.len() + 64);
+    let mut cursor = 0usize;
+    let mut edit_summaries: Vec<serde_json::Value> = Vec::with_capacity(ops.len());
+    for &(start_off, end_off, ref replacement, index) in &ops {
+        new_content.push_str(&original[cursor..start_off]);
+        new_content.push_str(replacement);
+        cursor = end_off;
+        let edit = &payload.edits[index];
+        let old_start_line = 1 + original[..start_off].matches('\n').count();
+        let mut old_end_line = 1 + original[..end_off].matches('\n').count();
+        if end_off > start_off
+            && end_off <= original.len()
+            && original.as_bytes()[end_off - 1] == b'\n'
+        {
+            old_end_line = old_end_line.saturating_sub(1).max(old_start_line);
+        }
+        if end_off == start_off {
+            old_end_line = old_start_line;
+        }
+        let new_line_count = if replacement.is_empty() {
+            0
+        } else {
+            replacement.lines().count()
+        };
+        edit_summaries.push(serde_json::json!({
+            "index": index,
+            "kind": edit.kind.as_str(),
+            "old_start_line": old_start_line,
+            "old_end_line": old_end_line,
+            "new_line_count": new_line_count,
+        }));
+    }
+    new_content.push_str(&original[cursor..]);
+
+    let new_sha256 = sha256_hex_bytes(new_content.as_bytes());
+    let changed = new_content != original;
+
+    if dry_run {
+        return line_edit_stdout(
+            serde_json::json!({
+                "path": path,
+                "dry_run": true,
+                "applied_count": payload.edits.len(),
+                "old_sha256": old_sha256,
+                "new_sha256": new_sha256,
+                "changed": false,
+                "would_change": changed,
+                "edits": edit_summaries,
+                "changed_paths": [path],
+            }),
+            start,
+        );
+    }
+
+    if !changed {
+        return line_edit_stdout(
+            serde_json::json!({
+                "path": path,
+                "dry_run": false,
+                "applied_count": payload.edits.len(),
+                "old_sha256": old_sha256,
+                "new_sha256": new_sha256,
+                "changed": false,
+                "would_change": false,
+                "edits": edit_summaries,
+                "changed_paths": [],
+            }),
+            start,
+        );
+    }
+
+    if let Err(e) = write_file_atomic(resolved, &new_content) {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "dry_run": false,
+                "old_sha256": old_sha256,
+                "error": format!("write failed: {}", e),
+            }),
+            start,
+        );
+    }
+    line_edit_stdout(
+        serde_json::json!({
+            "path": path,
+            "dry_run": false,
+            "applied_count": payload.edits.len(),
+            "old_sha256": old_sha256,
+            "new_sha256": new_sha256,
+            "changed": true,
+            "would_change": true,
+            "edits": edit_summaries,
+            "changed_paths": [path],
+        }),
+        start,
+    )
+}
+
+fn apply_text_edits_error(
+    path: &str,
+    index: usize,
+    kind: &str,
+    msg: &str,
+    start: Instant,
+) -> CommandResult {
+    line_edit_stdout(
+        serde_json::json!({
+            "changed": false,
+            "path": path,
+            "error_kind": match kind {
+                "replace_exact" | "delete_exact" => "match_error",
+                _ => "match_error",
+            },
+            "edit_index": index,
+            "kind": kind,
+            "message": format!(
+                "Rejected before write: edit {} ({}): {}.\nNo files were modified.\nRetry guidance: read the file again to refresh context, then retry with a more exact match text.",
+                index, kind, msg
+            ),
+        }),
+        start,
+    )
+}
+
 fn merge_json_object(target: &mut serde_json::Value, source: serde_json::Value) {
     if let (Some(target), Some(source)) = (target.as_object_mut(), source.as_object()) {
         for (key, value) in source {
@@ -3016,6 +3439,7 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         | "file_replace_exact_block"
         | "file_insert_before_pattern"
         | "file_insert_after_pattern" => handle_line_edit_file_request(request, &resolved, start),
+        "file_apply_text_edits" => handle_apply_text_edits_file_request(request, &resolved, start),
         "file_read" => handle_file_read_request(policy, request, &resolved, start),
         "file_write" => {
             let content = request.content.clone().unwrap_or_default();

@@ -1065,6 +1065,44 @@ fn output_schema_for_tool(name: &str) -> Value {
                 schema_type("boolean", "Whether file contents changed."),
             ),
         ]),
+        "apply_text_edits" => wrapped_output_schema(vec![
+            ("path", schema_type("string", "Project-relative path.")),
+            (
+                "dry_run",
+                schema_type("boolean", "Whether this was a dry-run (no write)."),
+            ),
+            (
+                "applied_count",
+                schema_type("integer", "Number of edits applied in the batch."),
+            ),
+            (
+                "old_sha256",
+                schema_type("string", "sha256 of the original file content."),
+            ),
+            (
+                "new_sha256",
+                schema_type("string", "sha256 of the file after all edits."),
+            ),
+            (
+                "changed",
+                schema_type("boolean", "Whether file contents changed."),
+            ),
+            (
+                "would_change",
+                schema_type("boolean", "Whether the batch would change the file."),
+            ),
+            (
+                "edits",
+                schema_type(
+                    "array",
+                    "Per-edit summary objects (index, kind, line counts).",
+                ),
+            ),
+            (
+                "changed_paths",
+                schema_type("array", "Paths touched by the edit batch."),
+            ),
+        ]),
         "insert_at_line" => wrapped_output_schema(vec![
             ("path", schema_type("string", "Project-relative path.")),
             ("line", schema_type("integer", "1-based insertion line.")),
@@ -1944,6 +1982,19 @@ impl ToolRuntime {
                 output_schema: output_schema_for_tool("delete_line_range"),
                 annotations: tool_annotations("delete_line_range"),
             },
+            ToolSpec {
+                name: "apply_text_edits".to_string(),
+                description: "Atomic multi-block text edit tool for large refactors. Applies a bounded batch of exact-match edits (replace/insert/delete) to one UTF-8 file. Each match must be unique and non-overlapping; the file is written atomically only when all edits validate. Supports dry_run and a sha256 guard.".to_string(),
+                input_schema: object_schema(with_optional_session_id(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative file path.", true),
+                    ("edits", "array", "Ordered list of 1..20 atomic edits. Each edit: {kind, old_text?, new_text?, anchor_text?}.", true),
+                    ("dry_run", "boolean", "If true, compute the plan without writing.", false),
+                    ("expected_file_sha256", "string", "Optional sha256 guard for the whole original file.", false),
+                ])),
+                output_schema: output_schema_for_tool("apply_text_edits"),
+                annotations: tool_annotations("apply_text_edits"),
+            },
         ]
     }
 
@@ -1991,6 +2042,7 @@ impl ToolRuntime {
                 "write_project_file", "save_project_artifact",
                 "read_project_artifact_metadata", "read_project_artifact",
                 "replace_line_range", "insert_at_line", "delete_line_range",
+                "apply_text_edits",
                 "apply_patch_checked"
             ]),
             "shell": pick(&["run_shell", "run_job", "cargo_fmt", "cargo_check", "cargo_test"]),

@@ -36,6 +36,40 @@ impl SessionMode {
 // Tool input — one variant per tool
 // =============================================================================
 
+/// Kind of atomic text edit performed by `apply_text_edits`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplyTextEditKind {
+    ReplaceExact,
+    InsertAfter,
+    InsertBefore,
+    DeleteExact,
+}
+
+impl ApplyTextEditKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ReplaceExact => "replace_exact",
+            Self::InsertAfter => "insert_after",
+            Self::InsertBefore => "insert_before",
+            Self::DeleteExact => "delete_exact",
+        }
+    }
+}
+
+/// A single atomic text edit against one file. Only the fields relevant to the
+/// `kind` are required; the runtime validates presence before dispatch.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct ApplyTextEditInput {
+    pub kind: ApplyTextEditKind,
+    #[serde(default)]
+    pub old_text: Option<String>,
+    #[serde(default)]
+    pub new_text: Option<String>,
+    #[serde(default)]
+    pub anchor_text: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "params", rename_all = "snake_case")]
 pub enum ToolCall {
@@ -628,6 +662,27 @@ pub enum ToolCall {
         expected_old_prefix: Option<String>,
     },
 
+    /// Apply a bounded batch of atomic text edits to a single UTF-8 file via
+    /// the owning agent. Intended for large-block refactors (whole function
+    /// clusters) where line-number edits cause drift and structural pollution.
+    /// Every edit is validated against the original file before any write: each
+    /// `old_text`/`anchor_text` must match exactly once, edits must not overlap
+    /// ambiguously, and an optional `expected_file_sha256` guards the whole
+    /// file. Only when all edits validate is the file replaced atomically.
+    /// `dry_run` computes the plan without writing. Exposed only through
+    /// runtime tools / MCP / `callRuntimeTool` (no dedicated OpenAPI op).
+    ApplyTextEdits {
+        project: String,
+        path: String,
+        edits: Vec<ApplyTextEditInput>,
+        #[serde(default)]
+        dry_run: Option<bool>,
+        #[serde(default)]
+        expected_file_sha256: Option<String>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// List all agent-registered runtime projects.
     ListProjects,
 
@@ -729,6 +784,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "replace_line_range",
     "insert_at_line",
     "delete_line_range",
+    "apply_text_edits",
     "git_status",
     "git_diff",
     "git_diff_hunks",
@@ -851,6 +907,7 @@ impl ToolCall {
             Self::ReplaceLineRange { .. } => "replace_line_range",
             Self::InsertAtLine { .. } => "insert_at_line",
             Self::DeleteLineRange { .. } => "delete_line_range",
+            Self::ApplyTextEdits { .. } => "apply_text_edits",
             Self::ListProjects => "list_projects",
             Self::RegisterProject { .. } => "register_project",
             Self::CreateProject { .. } => "create_project",
@@ -893,6 +950,7 @@ impl ToolCall {
             | Self::ReplaceLineRange { session_id, .. }
             | Self::InsertAtLine { session_id, .. }
             | Self::DeleteLineRange { session_id, .. }
+            | Self::ApplyTextEdits { session_id, .. }
             | Self::WorkspaceCheckpointCreate { session_id, .. }
             | Self::WorkspaceCheckpointList { session_id, .. }
             | Self::WorkspaceCheckpointShow { session_id, .. }
@@ -936,6 +994,7 @@ impl ToolCall {
             | Self::ReplaceLineRange { session_id, .. }
             | Self::InsertAtLine { session_id, .. }
             | Self::DeleteLineRange { session_id, .. }
+            | Self::ApplyTextEdits { session_id, .. }
             | Self::WorkspaceCheckpointCreate { session_id, .. }
             | Self::WorkspaceCheckpointList { session_id, .. }
             | Self::WorkspaceCheckpointShow { session_id, .. }
@@ -984,6 +1043,7 @@ impl ToolCall {
             | Self::ReplaceLineRange { project, .. }
             | Self::InsertAtLine { project, .. }
             | Self::DeleteLineRange { project, .. }
+            | Self::ApplyTextEdits { project, .. }
             | Self::BindCurrentSession { project, .. }
             | Self::CurrentSession { project }
             | Self::UnbindCurrentSession { project }
@@ -1330,6 +1390,27 @@ impl ToolCall {
                 "expected_old_sha256_present": expected_old_sha256.as_ref().is_some_and(|v| !v.is_empty()),
                 "expected_old_prefix_present": expected_old_prefix.as_ref().is_some_and(|v| !v.is_empty()),
             }),
+            Self::ApplyTextEdits {
+                project,
+                path,
+                edits,
+                dry_run,
+                expected_file_sha256,
+                ..
+            } => {
+                let kind_list: Vec<&str> = edits.iter().map(|e| e.kind.as_str()).collect();
+                serde_json::json!({
+                    "project": project,
+                    "path": path,
+                    "edit_count": edits.len(),
+                    "kinds": kind_list,
+                    "old_text_present": edits.iter().any(|e| e.old_text.as_ref().is_some_and(|v| !v.is_empty())),
+                    "new_text_present": edits.iter().any(|e| e.new_text.as_ref().is_some_and(|v| !v.is_empty())),
+                    "anchor_text_present": edits.iter().any(|e| e.anchor_text.as_ref().is_some_and(|v| !v.is_empty())),
+                    "dry_run": dry_run,
+                    "expected_file_sha256_present": expected_file_sha256.as_ref().is_some_and(|v| !v.is_empty()),
+                })
+            }
             Self::WorkspaceCheckpointCreate {
                 project,
                 title,

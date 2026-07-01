@@ -489,6 +489,13 @@ pub(crate) const MAX_EXPECTED_PREFIX_BYTES: usize = 64 * 1024; // 64 KiB
 /// without coupling this module to that private constant.
 pub(crate) const RUN_HELPER_STDIN_BUDGET: usize = 15 * 1024 * 1024; // 15 MiB
 
+/// Maximum number of edits accepted by a single `apply_text_edits` call.
+pub(crate) const MAX_APPLY_TEXT_EDITS: usize = 20;
+
+/// Maximum byte size of a single `old_text`/`new_text`/`anchor_text` field in
+/// an `apply_text_edits` edit.
+pub(crate) const MAX_APPLY_TEXT_EDIT_FIELD_BYTES: usize = 512 * 1024; // 512 KiB
+
 fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
     format!(
         "Rejected before write: {}.\nNo files were modified.\nRetry guidance: read the file again to refresh line numbers/context, then retry with updated guards.",
@@ -778,6 +785,200 @@ pub(crate) fn apply_line_edit_content(
     }
     let _ = new_text;
     Ok((new_content, output))
+}
+
+/// Pure, allocation-only computation of an `apply_text_edits` plan against
+/// `original` UTF-8 content. Performs every semantic validation (unique
+/// match, no overlap, whole-file sha guard) and returns the new content plus
+/// a structured summary. Never touches the filesystem — the runtime/agent
+/// layer decides whether to write. Used directly by unit tests; the agent
+/// handler mirrors these exact semantics for the production write path.
+#[cfg(test)]
+pub(crate) fn apply_text_edits_to_string(
+    original: &str,
+    path: &str,
+    edits: &[super::types::ApplyTextEditInput],
+    expected_file_sha256: Option<&str>,
+    dry_run: bool,
+) -> Result<(String, Value), String> {
+    use super::types::ApplyTextEditKind;
+    if edits.is_empty() {
+        return Err("edits must contain at least one edit".to_string());
+    }
+    if edits.len() > MAX_APPLY_TEXT_EDITS {
+        return Err(format!(
+            "too many edits; maximum is {}",
+            MAX_APPLY_TEXT_EDITS
+        ));
+    }
+    let old_sha256 = sha256_hex_bytes(original.as_bytes());
+    if let Some(expected) = expected_file_sha256 {
+        if old_sha256 != expected {
+            return Err(recoverable_write_rejection("expected_file_sha256 mismatch"));
+        }
+    }
+
+    // Resolve each edit to a (start, end, replacement, index) op against the
+    // original content. start/end are byte offsets; inserts are zero-width.
+    let mut ops: Vec<(usize, usize, String, usize)> = Vec::with_capacity(edits.len());
+    for (index, edit) in edits.iter().enumerate() {
+        let kind = edit.kind;
+        let (needle, replacement): (&str, String) = match kind {
+            ApplyTextEditKind::ReplaceExact => {
+                let old = edit
+                    .old_text
+                    .as_deref()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| edit_field_error(index, kind, "old_text must be non-empty"))?;
+                let new = edit.new_text.clone().unwrap_or_default();
+                (old, new)
+            }
+            ApplyTextEditKind::DeleteExact => {
+                let old = edit
+                    .old_text
+                    .as_deref()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| edit_field_error(index, kind, "old_text must be non-empty"))?;
+                (old, String::new())
+            }
+            ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter => {
+                let anchor = edit
+                    .anchor_text
+                    .as_deref()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| {
+                        edit_field_error(index, kind, "anchor_text must be non-empty")
+                    })?;
+                let new = edit
+                    .new_text
+                    .as_deref()
+                    .filter(|v| !v.is_empty())
+                    .ok_or_else(|| edit_field_error(index, kind, "new_text must be non-empty"))?;
+                (anchor, new.to_string())
+            }
+        };
+        if needle.contains('\0') {
+            return Err(edit_field_error(
+                index,
+                kind,
+                "match text cannot contain NUL bytes",
+            ));
+        }
+        if replacement.contains('\0') {
+            return Err(edit_field_error(
+                index,
+                kind,
+                "replacement text cannot contain NUL bytes",
+            ));
+        }
+        let matches = original.matches(needle).count();
+        if matches == 0 {
+            return Err(edit_match_error(index, kind, "match text was not found"));
+        }
+        if matches > 1 {
+            return Err(edit_match_error(
+                index,
+                kind,
+                &format!(
+                    "match text matched {} times; refusing ambiguous edit",
+                    matches
+                ),
+            ));
+        }
+        let start = original.find(needle).expect("unique match already counted");
+        let end = start + needle.len();
+        let (range_start, range_end) = match kind {
+            ApplyTextEditKind::InsertBefore => (start, start),
+            ApplyTextEditKind::InsertAfter => (end, end),
+            _ => (start, end),
+        };
+        ops.push((range_start, range_end, replacement, index));
+    }
+
+    // Stable sort by (start, end, original index) so the slice build is
+    // deterministic and ties (e.g. multiple inserts at one point) keep caller
+    // order.
+    ops.sort_by_key(|&(s, e, _, i)| (s, e, i));
+
+    // Reject overlapping edits: a later op must not start before an earlier
+    // op ends. Zero-width ops (inserts) never trigger this because their
+    // start == end.
+    for w in ops.windows(2) {
+        let (_, e1, _, _) = w[0];
+        let (s2, _, _, _) = w[1];
+        if s2 < e1 {
+            return Err(recoverable_write_rejection(
+                "edits overlap; refusing ambiguous atomic edit batch",
+            ));
+        }
+    }
+
+    // Build the new content by slicing the original at op boundaries.
+    let mut new_content = String::with_capacity(original.len() + 64);
+    let mut cursor = 0usize;
+    let mut edit_summaries: Vec<Value> = Vec::with_capacity(ops.len());
+    for &(start, end, ref replacement, index) in &ops {
+        new_content.push_str(&original[cursor..start]);
+        new_content.push_str(replacement);
+        cursor = end;
+        let edit = &edits[index];
+        let old_start_line = 1 + original[..start].matches('\n').count();
+        let mut old_end_line = 1 + original[..end].matches('\n').count();
+        if end > start && end <= original.len() && original.as_bytes()[end - 1] == b'\n' {
+            old_end_line = old_end_line.saturating_sub(1).max(old_start_line);
+        }
+        if end == start {
+            old_end_line = old_start_line;
+        }
+        let new_line_count = if replacement.is_empty() {
+            0
+        } else {
+            replacement.lines().count()
+        };
+        edit_summaries.push(json!({
+            "index": index,
+            "kind": edit.kind.as_str(),
+            "old_start_line": old_start_line,
+            "old_end_line": old_end_line,
+            "new_line_count": new_line_count,
+        }));
+    }
+    new_content.push_str(&original[cursor..]);
+
+    let new_sha256 = sha256_hex_bytes(new_content.as_bytes());
+    let changed = new_content != original;
+    let output = json!({
+        "path": path,
+        "dry_run": dry_run,
+        "applied_count": edits.len(),
+        "old_sha256": old_sha256,
+        "new_sha256": new_sha256,
+        "changed": changed,
+        "would_change": changed,
+        "edits": edit_summaries,
+        "changed_paths": [path],
+    });
+    Ok((new_content, output))
+}
+
+#[cfg(test)]
+fn edit_field_error(index: usize, kind: super::types::ApplyTextEditKind, msg: &str) -> String {
+    format!(
+        "Rejected before write: edit {} ({}): {}.\nNo files were modified.\nRetry guidance: read the file again to refresh context, then retry with corrected edit fields.",
+        index,
+        kind.as_str(),
+        msg
+    )
+}
+
+#[cfg(test)]
+fn edit_match_error(index: usize, kind: super::types::ApplyTextEditKind, msg: &str) -> String {
+    format!(
+        "Rejected before write: edit {} ({}): {}.\nNo files were modified.\nRetry guidance: read the file again to refresh context, then retry with a more exact match text.",
+        index,
+        kind.as_str(),
+        msg
+    )
 }
 
 /// Fixed python3 helper run on the owning agent for `replace_in_file`.
@@ -1969,11 +2170,235 @@ impl ToolRuntime {
         .await
     }
 
-    /// Run a fixed agent-side helper `command` with a JSON `payload` on stdin
-    /// and return the parsed JSON object the helper prints on stdout. Shared by
-    /// `replace_in_file` and `write_project_file` so the enqueue/timeout/error
-    /// handling stays in one place. The command is always a compile-time
-    /// constant supplied by the caller; only the JSON payload varies.
+    /// Apply a bounded batch of atomic text edits to a single UTF-8 file via
+    /// the owning agent. All input validation (path safety, edit count, field
+    /// sizes, sha format, field presence per kind) happens server-side before
+    /// any agent request is enqueued. The edits, dry_run flag, and optional
+    /// whole-file sha guard travel to the agent as a JSON payload in the file
+    /// op `content` field; the agent reads the file, enforces unique-match /
+    /// no-overlap semantics, and writes atomically (temp + rename) only when
+    /// every edit validates.
+    pub(crate) async fn apply_text_edits(
+        &self,
+        project: String,
+        path: String,
+        edits: Vec<super::types::ApplyTextEditInput>,
+        dry_run: Option<bool>,
+        expected_file_sha256: Option<String>,
+    ) -> ToolResult {
+        use super::types::ApplyTextEditKind;
+        if let Err(e) = validate_edit_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        if edits.is_empty() {
+            return ToolResult::err("edits must contain at least one edit");
+        }
+        if edits.len() > MAX_APPLY_TEXT_EDITS {
+            return ToolResult::err(format!(
+                "too many edits; maximum is {}",
+                MAX_APPLY_TEXT_EDITS
+            ));
+        }
+        for (index, edit) in edits.iter().enumerate() {
+            let kind = edit.kind;
+            let index_str = index;
+            // Bound + NUL check for a single optional field; returns an error
+            // message on failure.
+            let validate_field = |label: &str, value: &Option<String>| -> Option<String> {
+                if let Some(v) = value {
+                    if v.contains('\0') {
+                        return Some(format!(
+                            "edit {} ({}): {} cannot contain NUL bytes",
+                            index_str,
+                            kind.as_str(),
+                            label
+                        ));
+                    }
+                    if v.len() > MAX_APPLY_TEXT_EDIT_FIELD_BYTES {
+                        return Some(format!(
+                            "edit {} ({}): {} too large; maximum is {} bytes",
+                            index_str,
+                            kind.as_str(),
+                            label,
+                            MAX_APPLY_TEXT_EDIT_FIELD_BYTES
+                        ));
+                    }
+                }
+                None
+            };
+            match kind {
+                ApplyTextEditKind::ReplaceExact => {
+                    if let Some(msg) = validate_field("old_text", &edit.old_text) {
+                        return ToolResult::err(msg);
+                    }
+                    if let Some(msg) = validate_field("new_text", &edit.new_text) {
+                        return ToolResult::err(msg);
+                    }
+                    if edit.old_text.as_deref().filter(|v| !v.is_empty()).is_none() {
+                        return ToolResult::err(format!(
+                            "edit {} (replace_exact): old_text must be non-empty",
+                            index
+                        ));
+                    }
+                }
+                ApplyTextEditKind::DeleteExact => {
+                    if let Some(msg) = validate_field("old_text", &edit.old_text) {
+                        return ToolResult::err(msg);
+                    }
+                    if edit.old_text.as_deref().filter(|v| !v.is_empty()).is_none() {
+                        return ToolResult::err(format!(
+                            "edit {} (delete_exact): old_text must be non-empty",
+                            index
+                        ));
+                    }
+                }
+                ApplyTextEditKind::InsertBefore | ApplyTextEditKind::InsertAfter => {
+                    if let Some(msg) = validate_field("anchor_text", &edit.anchor_text) {
+                        return ToolResult::err(msg);
+                    }
+                    if let Some(msg) = validate_field("new_text", &edit.new_text) {
+                        return ToolResult::err(msg);
+                    }
+                    if edit
+                        .anchor_text
+                        .as_deref()
+                        .filter(|v| !v.is_empty())
+                        .is_none()
+                    {
+                        return ToolResult::err(format!(
+                            "edit {} ({}): anchor_text must be non-empty",
+                            index,
+                            kind.as_str()
+                        ));
+                    }
+                    if edit.new_text.as_deref().filter(|v| !v.is_empty()).is_none() {
+                        return ToolResult::err(format!(
+                            "edit {} ({}): new_text must be non-empty",
+                            index,
+                            kind.as_str()
+                        ));
+                    }
+                }
+            }
+        }
+        if let Some(hash) = expected_file_sha256.as_deref() {
+            if !is_hex_sha256(hash) {
+                return ToolResult::err(
+                    "expected_file_sha256 must be a lowercase 64-char hex sha256 digest",
+                );
+            }
+        }
+
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err(
+                "apply_text_edits requires an agent-registered project; \
+                 server-configured projects are not supported",
+            );
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+
+        // Serialize the full edit payload into the file-op `content` field so
+        // no shell-protocol field additions are needed. The agent handler for
+        // `file_apply_text_edits` deserializes this one field.
+        let payload = json!({
+            "edits": edits,
+            "dry_run": dry_run.unwrap_or(false),
+            "expected_file_sha256": expected_file_sha256,
+        });
+        let serialized = match serde_json::to_string(&payload) {
+            Ok(s) => s,
+            Err(e) => return ToolResult::err(format!("failed to serialize edits payload: {}", e)),
+        };
+
+        let wait_timeout = 60_u64;
+        let (request_id, rx) = match self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: "apply_text_edits".to_string(),
+                    client_id,
+                    path: path.clone(),
+                    cwd: Some(proj.path.clone()),
+                    content: Some(serialized),
+                    max_bytes: None,
+                    old_text: None,
+                    pattern: None,
+                    expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: wait_timeout,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await
+        {
+            Ok(r) => r,
+            Err(e) => return ToolResult::err(recoverable_write_rejection(e)),
+        };
+        let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return ToolResult::err("agent apply_text_edits request was dropped");
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return ToolResult::err("timed out waiting for agent apply_text_edits");
+            }
+        };
+        if let Some(e) = resp.error {
+            return ToolResult::err(recoverable_write_rejection(e));
+        }
+        if resp.exit_code != Some(0) {
+            return ToolResult::err(recoverable_write_rejection(resp.stderr.unwrap_or_else(
+                || {
+                    format!(
+                        "agent apply_text_edits failed with code {:?}",
+                        resp.exit_code
+                    )
+                },
+            )));
+        }
+        let stdout = resp.stdout.unwrap_or_default();
+        let stdout = stdout.trim();
+        let obj: Value = match serde_json::from_str(stdout) {
+            Ok(v) => v,
+            Err(e) => {
+                return ToolResult::err(format!(
+                    "agent apply_text_edits returned invalid JSON: {} (got: {})",
+                    e,
+                    &stdout[..stdout.len().min(200)]
+                ))
+            }
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(recoverable_write_rejection(err)),
+            };
+        }
+        let mut obj = obj;
+        if obj.get("path").is_none() {
+            obj["path"] = json!(path);
+        }
+        ToolResult::ok(obj)
+    }
+
     pub(crate) async fn run_agent_helper(
         &self,
         client_id: String,

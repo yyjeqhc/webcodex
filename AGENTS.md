@@ -30,7 +30,7 @@ Guide for autonomous agents (Codex, GLM, ChatGPT, MCP, GPT Action) developing ag
 
 ---
 
-## 3. Editing Rules
+## 3. Editing and Refactoring Rules
 
 - **Prefer structured WebCodex line-edit tools** for source edits when available:
   - `replace_line_range`
@@ -39,7 +39,11 @@ Guide for autonomous agents (Codex, GLM, ChatGPT, MCP, GPT Action) developing ag
 - **Do not** use shell `sed`/`perl`/`python` as the primary editing mechanism.
 - Use shell for inspection, tests, and bounded diagnostics only.
 - Keep changes scoped to the requested task.
-- Avoid broad refactors unless explicitly requested.
+- Necessary structural refactors are allowed when they reduce coupling, clarify ownership, or keep modules/test files from growing without bound.
+- Do not preserve obsolete compatibility layers by default. Keep backward compatibility only when it is part of an external public contract, release artifact, documented API, or explicitly requested migration path.
+- Prefer small, reviewable refactor commits over conservative accretion. If a file has become a dumping ground, split it rather than adding more local exceptions.
+- Do not mix behavior changes with mechanical moves unless unavoidable; when unavoidable, report the semantic change explicitly.
+- Avoid broad refactors only when they are unrelated to the task or would obscure an active feature/fix.
 
 ---
 
@@ -125,7 +129,21 @@ Required only before merging to `main`, after broad core changes, or when explic
 
 ---
 
-## 6. Architecture Invariants
+## 6. Test Organization Rules
+
+- Do not add large ordinary test blocks to production `mod.rs` files when a `tests/` submodule exists or can be created.
+- `src/tool_runtime/mod.rs` must remain a runtime module, not a test warehouse. New tool-runtime tests should live under `src/tool_runtime/tests/` and be grouped by domain such as `schema`, `tool_call`, `dispatch`, `sessions`, `checkpoint`, `files`, `git`, `jobs`, and `metadata`.
+- Shared test setup belongs in `tests/support.rs` or a narrow domain helper, not copied across many tests.
+- Prefer table-driven tests for repeated schema, parser, route, and auth matrix coverage, but keep exact assertions for security, destructive actions, schema required fields, session guards, and transport envelopes.
+- Do not reduce test line count by deleting critical assertions, skipping tools from consistency tests, or weakening schema/serialization checks.
+- Slow tests should be made deterministic first: replace sleeps/polling with channels, notifications, bounded retries, or direct state inspection when possible.
+- Use `#[ignore]` only for tests that require real external dependencies, long-running network behavior, or intentionally heavy integration coverage. Document why the test is ignored.
+- Suggested size limits: if a test file exceeds roughly 2,000 lines or mixes unrelated domains, split it; if a test function exceeds roughly 80 lines, extract fixtures or use a table.
+- After moving tests mechanically, keep names and assertions stable first. Do semantic cleanup or deduplication in a separate commit.
+
+---
+
+## 7. Architecture Invariants
 
 Tool metadata, registry, OAuth scope policy, MCP `tools/list`, and OpenAPI `callRuntimeTool` names **must stay synchronized**.
 
@@ -157,7 +175,7 @@ If adding or renaming a runtime tool, update **all** of:
 
 ---
 
-## 7. Session Invariants
+## 8. Session Invariants
 
 - **Explicit `session_id` always wins** over current session.
 - **Unknown explicit `session_id`** must return `unknown_session_id` — never silently fall back to current session.
@@ -169,7 +187,7 @@ If adding or renaming a runtime tool, update **all** of:
 
 ---
 
-## 8. Final Response Requirements
+## 9. Final Response Requirements
 
 Every agent final response must include:
 

@@ -45,6 +45,71 @@ fn with_optional_session_id(
     fields
 }
 
+fn apply_text_edits_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Agent-registered project id."
+            },
+            "path": {
+                "type": "string",
+                "description": "Project-relative file path."
+            },
+            "edits": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "description": "Ordered list of 1..20 atomic edits.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": [
+                                "replace_exact",
+                                "insert_after",
+                                "insert_before",
+                                "delete_exact"
+                            ],
+                            "description": "Atomic edit kind."
+                        },
+                        "old_text": {
+                            "type": "string",
+                            "description": "Exact text to replace or delete, required by replace_exact/delete_exact."
+                        },
+                        "new_text": {
+                            "type": "string",
+                            "description": "Replacement or inserted text, required by replace_exact/insert_before/insert_after."
+                        },
+                        "anchor_text": {
+                            "type": "string",
+                            "description": "Unique anchor text required by insert_before/insert_after."
+                        }
+                    },
+                    "required": ["kind"]
+                }
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "If true, compute the plan without writing."
+            },
+            "expected_file_sha256": {
+                "type": "string",
+                "description": "Optional sha256 guard for the whole original file."
+            },
+            "session_id": {
+                "type": "string",
+                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+            }
+        },
+        "required": ["project", "path", "edits"],
+        "additionalProperties": false
+    })
+}
+
 fn schema_type(kind: &str, description: &str) -> Value {
     json!({
         "type": kind,
@@ -2152,13 +2217,7 @@ impl ToolRuntime {
             ToolSpec {
                 name: "apply_text_edits".to_string(),
                 description: "Atomic multi-block text edit tool for large refactors. Applies a bounded batch of exact-match edits (replace/insert/delete) to one UTF-8 file. Each match must be unique and non-overlapping; the file is written atomically only when all edits validate. Supports dry_run and a sha256 guard.".to_string(),
-                input_schema: object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative file path.", true),
-                    ("edits", "array", "Ordered list of 1..20 atomic edits. Each edit: {kind, old_text?, new_text?, anchor_text?}.", true),
-                    ("dry_run", "boolean", "If true, compute the plan without writing.", false),
-                    ("expected_file_sha256", "string", "Optional sha256 guard for the whole original file.", false),
-                ])),
+                input_schema: apply_text_edits_input_schema(),
                 output_schema: output_schema_for_tool("apply_text_edits"),
                 annotations: tool_annotations("apply_text_edits"),
             },

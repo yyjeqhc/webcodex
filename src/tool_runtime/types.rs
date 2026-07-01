@@ -116,6 +116,60 @@ pub enum ToolCall {
     /// Remove the caller's current session binding for a project. Idempotent.
     UnbindCurrentSession { project: String },
 
+    /// Create a bounded last-known-good workspace checkpoint outside the
+    /// project worktree.
+    WorkspaceCheckpointCreate {
+        project: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        note: Option<String>,
+        #[serde(default)]
+        include_untracked: Option<bool>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// List checkpoint metadata for a project without returning diffs.
+    WorkspaceCheckpointList {
+        project: String,
+        #[serde(default)]
+        limit: Option<usize>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Show bounded checkpoint metadata and file lists without full diff
+    /// content.
+    WorkspaceCheckpointShow {
+        project: String,
+        checkpoint_id: String,
+        #[serde(default)]
+        include_diff_stat: Option<bool>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Restore a workspace checkpoint after explicit confirmation.
+    WorkspaceCheckpointRestore {
+        project: String,
+        checkpoint_id: String,
+        #[serde(default)]
+        confirm: Option<bool>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Delete a persisted checkpoint file after explicit confirmation.
+    WorkspaceCheckpointDelete {
+        project: String,
+        checkpoint_id: String,
+        #[serde(default)]
+        confirm: Option<bool>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Execute a shell command in a project directory (sync, short-lived).
     RunShell {
         project: String,
@@ -654,6 +708,11 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "bind_current_session",
     "current_session",
     "unbind_current_session",
+    "workspace_checkpoint_create",
+    "workspace_checkpoint_list",
+    "workspace_checkpoint_show",
+    "workspace_checkpoint_restore",
+    "workspace_checkpoint_delete",
     "run_shell",
     "apply_patch",
     "apply_patch_checked",
@@ -753,6 +812,11 @@ impl ToolCall {
             Self::BindCurrentSession { .. } => "bind_current_session",
             Self::CurrentSession { .. } => "current_session",
             Self::UnbindCurrentSession { .. } => "unbind_current_session",
+            Self::WorkspaceCheckpointCreate { .. } => "workspace_checkpoint_create",
+            Self::WorkspaceCheckpointList { .. } => "workspace_checkpoint_list",
+            Self::WorkspaceCheckpointShow { .. } => "workspace_checkpoint_show",
+            Self::WorkspaceCheckpointRestore { .. } => "workspace_checkpoint_restore",
+            Self::WorkspaceCheckpointDelete { .. } => "workspace_checkpoint_delete",
             Self::RunShell { .. } => "run_shell",
             Self::ApplyPatch { .. } => "apply_patch",
             Self::ApplyPatchChecked { .. } => "apply_patch_checked",
@@ -830,7 +894,12 @@ impl ToolCall {
             | Self::ReadProjectArtifact { session_id, .. }
             | Self::ReplaceLineRange { session_id, .. }
             | Self::InsertAtLine { session_id, .. }
-            | Self::DeleteLineRange { session_id, .. } => session_id.as_deref(),
+            | Self::DeleteLineRange { session_id, .. }
+            | Self::WorkspaceCheckpointCreate { session_id, .. }
+            | Self::WorkspaceCheckpointList { session_id, .. }
+            | Self::WorkspaceCheckpointShow { session_id, .. }
+            | Self::WorkspaceCheckpointRestore { session_id, .. }
+            | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
             _ => None,
         }
     }
@@ -868,7 +937,12 @@ impl ToolCall {
             | Self::ReadProjectArtifact { session_id, .. }
             | Self::ReplaceLineRange { session_id, .. }
             | Self::InsertAtLine { session_id, .. }
-            | Self::DeleteLineRange { session_id, .. } => {
+            | Self::DeleteLineRange { session_id, .. }
+            | Self::WorkspaceCheckpointCreate { session_id, .. }
+            | Self::WorkspaceCheckpointList { session_id, .. }
+            | Self::WorkspaceCheckpointShow { session_id, .. }
+            | Self::WorkspaceCheckpointRestore { session_id, .. }
+            | Self::WorkspaceCheckpointDelete { session_id, .. } => {
                 if session_id.is_none() {
                     *session_id = Some(effective_session_id);
                 }
@@ -914,7 +988,12 @@ impl ToolCall {
             | Self::DeleteLineRange { project, .. }
             | Self::BindCurrentSession { project, .. }
             | Self::CurrentSession { project }
-            | Self::UnbindCurrentSession { project } => Some(project.as_str()),
+            | Self::UnbindCurrentSession { project }
+            | Self::WorkspaceCheckpointCreate { project, .. }
+            | Self::WorkspaceCheckpointList { project, .. }
+            | Self::WorkspaceCheckpointShow { project, .. }
+            | Self::WorkspaceCheckpointRestore { project, .. }
+            | Self::WorkspaceCheckpointDelete { project, .. } => Some(project.as_str()),
             _ => None,
         }
     }
@@ -1253,6 +1332,52 @@ impl ToolCall {
                 "expected_old_sha256_present": expected_old_sha256.as_ref().is_some_and(|v| !v.is_empty()),
                 "expected_old_prefix_present": expected_old_prefix.as_ref().is_some_and(|v| !v.is_empty()),
             }),
+            Self::WorkspaceCheckpointCreate {
+                project,
+                title,
+                note,
+                include_untracked,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "title": title,
+                "note_present": note.as_ref().is_some_and(|v| !v.is_empty()),
+                "include_untracked": include_untracked,
+            }),
+            Self::WorkspaceCheckpointList { project, limit, .. } => serde_json::json!({
+                "project": project,
+                "limit": limit,
+            }),
+            Self::WorkspaceCheckpointShow {
+                project,
+                checkpoint_id,
+                include_diff_stat,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "checkpoint_id": checkpoint_id,
+                "include_diff_stat": include_diff_stat,
+            }),
+            Self::WorkspaceCheckpointRestore {
+                project,
+                checkpoint_id,
+                confirm,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "checkpoint_id": checkpoint_id,
+                "confirm": confirm,
+            }),
+            Self::WorkspaceCheckpointDelete {
+                project,
+                checkpoint_id,
+                confirm,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "checkpoint_id": checkpoint_id,
+                "confirm": confirm,
+            }),
             Self::PostSessionMessage {
                 session_id,
                 kind,
@@ -1471,6 +1596,9 @@ impl LocalJobKiller for SystemJobKiller {
 /// capability flag it needs on the agent client.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AgentCapability {
+    /// Project-scoped native tools that do not require an agent capability but
+    /// still need the agent owner boundary when the project is agent-backed.
+    OwnerOnly,
     /// `run_shell`, `apply_patch` (agent path runs `git apply` via shell).
     Shell,
     /// `read_file` (agent path uses the file_read request kind).

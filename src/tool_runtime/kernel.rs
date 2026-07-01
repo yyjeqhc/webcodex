@@ -390,6 +390,22 @@ fn guard_denial_log_arguments(tool_name: &str, arguments: &Value) -> Value {
         "delete_project_files" | "git_restore_paths" | "discard_untracked" => {
             copy_keys(obj, &mut out, &["paths"]);
         }
+        "workspace_checkpoint_create" => {
+            copy_keys(obj, &mut out, &["title", "include_untracked"]);
+            out.insert(
+                "note_present".to_string(),
+                Value::Bool(obj.contains_key("note")),
+            );
+        }
+        "workspace_checkpoint_list" => {
+            copy_keys(obj, &mut out, &["limit"]);
+        }
+        "workspace_checkpoint_show" => {
+            copy_keys(obj, &mut out, &["checkpoint_id", "include_diff_stat"]);
+        }
+        "workspace_checkpoint_restore" | "workspace_checkpoint_delete" => {
+            copy_keys(obj, &mut out, &["checkpoint_id", "confirm"]);
+        }
         _ => return arguments.clone(),
     }
     Value::Object(out)

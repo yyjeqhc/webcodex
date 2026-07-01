@@ -1396,6 +1396,8 @@ fn is_git_like_tool(tool_name: &str) -> bool {
             | "show_changes"
             | "git_restore_paths"
             | "discard_untracked"
+            | "workspace_checkpoint_create"
+            | "workspace_checkpoint_restore"
     )
 }
 

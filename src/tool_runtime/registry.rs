@@ -271,6 +271,12 @@ fn current_session_input_schema(require_session_id: bool) -> Value {
     object_schema(fields)
 }
 
+fn checkpoint_project_input_schema(
+    fields: Vec<(&'static str, &'static str, &'static str, bool)>,
+) -> Value {
+    object_schema(with_optional_session_id(fields))
+}
+
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
 
 fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
@@ -679,6 +685,56 @@ fn output_schema_for_tool(name: &str) -> Value {
                 "resolved_project",
                 schema_type("string", "Canonical runtime project id used in the binding key."),
             ),
+        ]),
+        "workspace_checkpoint_create" => wrapped_output_schema(vec![
+            ("checkpoint_id", schema_type("string", "Created wc_ckpt_* id.")),
+            ("project", schema_type("string", "Project input.")),
+            ("resolved_project", schema_type("string", "Resolved runtime project id.")),
+            ("title", nullable_schema("string", "Optional checkpoint title.")),
+            ("head", schema_type("string", "HEAD commit captured by the checkpoint.")),
+            ("branch", nullable_schema("string", "Current branch, if attached.")),
+            ("created_at", schema_type("integer", "Unix timestamp.")),
+            ("tracked_diff_bytes", schema_type("integer", "Unstaged tracked diff size in bytes.")),
+            ("staged_diff_bytes", schema_type("integer", "Staged diff size in bytes.")),
+            ("untracked_files", array_schema(open_object_schema("Stored untracked file metadata."), "Stored untracked file metadata.")),
+            ("skipped_files", array_schema(open_object_schema("Skipped file metadata."), "Skipped files and reasons.")),
+            ("status_summary", open_object_schema("Parsed git status summary.")),
+            ("complete", schema_type("boolean", "True when checkpoint content is complete and restorable.")),
+            ("storage_path", schema_type("string", "Server state-dir checkpoint path, outside the project worktree.")),
+        ]),
+        "workspace_checkpoint_list" => wrapped_output_schema(vec![
+            ("project", schema_type("string", "Project input.")),
+            ("resolved_project", schema_type("string", "Resolved runtime project id.")),
+            ("limit", schema_type("integer", "Effective list limit.")),
+            ("checkpoints", array_schema(open_object_schema("Checkpoint metadata."), "Checkpoint metadata without full diff/content.")),
+        ]),
+        "workspace_checkpoint_show" => wrapped_output_schema(vec![
+            ("checkpoint_id", schema_type("string", "Checkpoint id.")),
+            ("project", schema_type("string", "Project input.")),
+            ("resolved_project", schema_type("string", "Resolved runtime project id.")),
+            ("title", nullable_schema("string", "Optional title.")),
+            ("head", schema_type("string", "Checkpoint HEAD commit.")),
+            ("branch", nullable_schema("string", "Checkpoint branch, if attached.")),
+            ("created_at", schema_type("integer", "Unix timestamp.")),
+            ("files", array_schema(open_object_schema("Tracked/untracked file metadata."), "Checkpoint file list without full diff/content.")),
+            ("skipped_files", array_schema(open_object_schema("Skipped file metadata."), "Skipped files and reasons.")),
+            ("status_summary", open_object_schema("Parsed git status summary.")),
+            ("storage_path", schema_type("string", "Server state-dir checkpoint path, outside the project worktree.")),
+        ]),
+        "workspace_checkpoint_restore" => wrapped_output_schema(vec![
+            ("restored", schema_type("boolean", "True when restore completed.")),
+            ("checkpoint_id", schema_type("string", "Restored checkpoint id.")),
+            ("project", schema_type("string", "Project input.")),
+            ("resolved_project", schema_type("string", "Resolved runtime project id.")),
+            ("changed_paths", array_schema(schema_type("string", "Project-relative path."), "Paths restored from the checkpoint.")),
+            ("warnings", array_schema(open_object_schema("Warning."), "Warnings emitted during restore.")),
+        ]),
+        "workspace_checkpoint_delete" => wrapped_output_schema(vec![
+            ("deleted", schema_type("boolean", "True when checkpoint file was deleted.")),
+            ("checkpoint_id", schema_type("string", "Deleted checkpoint id.")),
+            ("project", schema_type("string", "Project input.")),
+            ("resolved_project", schema_type("string", "Resolved runtime project id.")),
+            ("storage_path", schema_type("string", "Deleted checkpoint path.")),
         ]),
         "read_file" => wrapped_output_schema(vec![
             ("content", schema_type("string", "File content.")),
@@ -1154,6 +1210,61 @@ impl ToolRuntime {
                 input_schema: current_session_input_schema(false),
                 output_schema: output_schema_for_tool("unbind_current_session"),
                 annotations: tool_annotations("unbind_current_session"),
+            },
+            ToolSpec {
+                name: "workspace_checkpoint_create".to_string(),
+                description: "Create a bounded workspace checkpoint outside the project worktree. Captures HEAD, status, text diffs, and optional small untracked text files.".to_string(),
+                input_schema: checkpoint_project_input_schema(vec![
+                    ("project", "string", "Runtime project id.", true),
+                    ("title", "string", "Optional human-readable title.", false),
+                    ("note", "string", "Optional note; not used by restore.", false),
+                    ("include_untracked", "boolean", "Include small non-secret UTF-8 untracked files (default false).", false),
+                ]),
+                output_schema: output_schema_for_tool("workspace_checkpoint_create"),
+                annotations: tool_annotations("workspace_checkpoint_create"),
+            },
+            ToolSpec {
+                name: "workspace_checkpoint_list".to_string(),
+                description: "List checkpoint metadata for a project without returning full diffs or saved file content.".to_string(),
+                input_schema: checkpoint_project_input_schema(vec![
+                    ("project", "string", "Runtime project id.", true),
+                    ("limit", "integer", "Maximum checkpoints to return (default 20, max 100).", false),
+                ]),
+                output_schema: output_schema_for_tool("workspace_checkpoint_list"),
+                annotations: tool_annotations("workspace_checkpoint_list"),
+            },
+            ToolSpec {
+                name: "workspace_checkpoint_show".to_string(),
+                description: "Show bounded checkpoint metadata, file list, skipped files, and optional diff stat. Does not return full diff/content by default.".to_string(),
+                input_schema: checkpoint_project_input_schema(vec![
+                    ("project", "string", "Runtime project id.", true),
+                    ("checkpoint_id", "string", "wc_ckpt_* id returned by workspace_checkpoint_create.", true),
+                    ("include_diff_stat", "boolean", "Include tracked/staged diff stat strings (default false).", false),
+                ]),
+                output_schema: output_schema_for_tool("workspace_checkpoint_show"),
+                annotations: tool_annotations("workspace_checkpoint_show"),
+            },
+            ToolSpec {
+                name: "workspace_checkpoint_restore".to_string(),
+                description: "Restore a checkpoint after confirm=true. Requires matching HEAD and refuses unsafe current state rather than half-restoring.".to_string(),
+                input_schema: checkpoint_project_input_schema(vec![
+                    ("project", "string", "Runtime project id.", true),
+                    ("checkpoint_id", "string", "wc_ckpt_* id to restore.", true),
+                    ("confirm", "boolean", "Must be true to restore.", true),
+                ]),
+                output_schema: output_schema_for_tool("workspace_checkpoint_restore"),
+                annotations: tool_annotations("workspace_checkpoint_restore"),
+            },
+            ToolSpec {
+                name: "workspace_checkpoint_delete".to_string(),
+                description: "Delete one checkpoint JSON file after confirm=true. Does not touch the project worktree.".to_string(),
+                input_schema: checkpoint_project_input_schema(vec![
+                    ("project", "string", "Runtime project id.", true),
+                    ("checkpoint_id", "string", "wc_ckpt_* id to delete.", true),
+                    ("confirm", "boolean", "Must be true to delete.", true),
+                ]),
+                output_schema: output_schema_for_tool("workspace_checkpoint_delete"),
+                annotations: tool_annotations("workspace_checkpoint_delete"),
             },
             ToolSpec {
                 name: "list_projects".to_string(),
@@ -1857,16 +1968,18 @@ impl ToolRuntime {
                 "list_tools", "list_projects", "list_agents", "runtime_status",
                 "read_file", "list_project_files", "search_project_text",
                 "git_status", "git_diff", "git_diff_summary", "git_diff_hunks", "git_log",
-                "show_changes"
+                "show_changes", "workspace_checkpoint_list", "workspace_checkpoint_show"
             ]),
             "projects": pick(&["list_projects", "register_project", "create_project"]),
             "git": pick(&[
                 "git_status", "git_diff", "git_diff_summary", "git_diff_hunks", "git_log",
                 "show_changes",
-                "git_restore_paths", "discard_untracked"
+                "git_restore_paths", "discard_untracked",
+                "workspace_checkpoint_create", "workspace_checkpoint_restore"
             ]),
             "review": pick(&[
-                "show_changes", "git_diff_hunks", "git_diff_summary", "git_log", "git_status", "git_diff"
+                "show_changes", "git_diff_hunks", "git_diff_summary", "git_log", "git_status", "git_diff",
+                "workspace_checkpoint_show", "workspace_checkpoint_list"
             ]),
             "validation": pick(&[
                 "cargo_fmt", "cargo_check", "cargo_test", "validate_patch"
@@ -1890,10 +2003,19 @@ impl ToolRuntime {
                 "post_session_message", "list_session_messages",
                 "resolve_session_message", "session_discussion_summary",
                 "bind_current_session", "current_session", "unbind_current_session",
+                "workspace_checkpoint_create", "workspace_checkpoint_list",
+                "workspace_checkpoint_show", "workspace_checkpoint_restore",
+                "workspace_checkpoint_delete",
                 "list_projects", "list_agents", "runtime_status"
             ]),
             "cleanup": pick(&[
-                "delete_project_files", "git_restore_paths", "discard_untracked"
+                "delete_project_files", "git_restore_paths", "discard_untracked",
+                "workspace_checkpoint_delete"
+            ]),
+            "checkpoint": pick(&[
+                "workspace_checkpoint_create", "workspace_checkpoint_list",
+                "workspace_checkpoint_show", "workspace_checkpoint_restore",
+                "workspace_checkpoint_delete"
             ]),
         })
     }
@@ -1908,6 +2030,7 @@ impl ToolRuntime {
             "Source code edit: inspect with read_file/search_project_text; prefer replace_line_range/insert_at_line/delete_line_range with guards. apply_patch_checked for broad diffs; run_shell not primary; validate with cargo tools.",
             "Rust validation: use cargo_fmt, cargo_check, cargo_test before run_shell for common checks.",
             "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",
+            "Checkpoint: after tests pass, call workspace_checkpoint_create before broad edits; use show/list to inspect, restore with confirm=true only when HEAD still matches.",
             "Cleanup: use delete_project_files / git_restore_paths / discard_untracked instead of ad hoc rm.",
             "Codex: run_codex is optional delegation only when explicitly requested and Codex CLI is configured; otherwise use direct WebCodex tools.",
         ]

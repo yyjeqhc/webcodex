@@ -256,6 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Arc::new(config.codex.clone()),
             runtime_info.clone(),
         )
+        .with_checkpoint_state_dir(config.runtime_state_dir())
         .with_session_ledger(config.session_ledger_path()),
     );
 

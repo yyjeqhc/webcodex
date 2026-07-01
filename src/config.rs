@@ -460,6 +460,13 @@ impl Config {
         runtime_state_dir().join("sessions.json")
     }
 
+    pub fn runtime_state_dir(&self) -> PathBuf {
+        if self.data_dir.is_absolute() {
+            return self.data_dir.clone();
+        }
+        runtime_state_dir()
+    }
+
     pub fn uploads_dir(&self) -> PathBuf {
         self.data_dir.join("uploads")
     }
@@ -480,7 +487,7 @@ impl Config {
     }
 }
 
-fn runtime_state_dir() -> PathBuf {
+pub(crate) fn runtime_state_dir() -> PathBuf {
     if let Some(path) = std::env::var_os("XDG_STATE_HOME") {
         return PathBuf::from(path).join("webcodex");
     }

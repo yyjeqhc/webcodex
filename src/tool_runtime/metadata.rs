@@ -172,6 +172,56 @@ pub(crate) const TOOL_METADATA: &[ToolMetadata] = &[
         false,
     ),
     metadata(
+        "workspace_checkpoint_create",
+        "native",
+        ToolRisk::ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
+        "workspace_checkpoint_list",
+        "native",
+        ToolRisk::ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
+        "workspace_checkpoint_show",
+        "native",
+        ToolRisk::ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
+        "workspace_checkpoint_restore",
+        "native",
+        ToolRisk::ProjectWrite,
+        Some(PROJECT_WRITE),
+        true,
+        ToolPathHint::Patch,
+        false,
+        false,
+    ),
+    metadata(
+        "workspace_checkpoint_delete",
+        "native",
+        ToolRisk::ProjectWrite,
+        Some(PROJECT_WRITE),
+        true,
+        ToolPathHint::None,
+        true,
+        false,
+    ),
+    metadata(
         "run_shell",
         "agent",
         ToolRisk::JobRun,
@@ -699,6 +749,33 @@ mod tests {
     }
 
     #[test]
+    fn checkpoint_metadata_uses_project_read_and_write_scopes() {
+        for name in [
+            "workspace_checkpoint_create",
+            "workspace_checkpoint_list",
+            "workspace_checkpoint_show",
+        ] {
+            let metadata = lookup_tool_metadata(name).unwrap();
+            assert_eq!(metadata.provider_id, "native", "{name}");
+            assert_eq!(metadata.risk, ToolRisk::ReadOnly, "{name}");
+            assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_READ), "{name}");
+            assert!(metadata.requires_project, "{name}");
+            assert!(metadata.read_only, "{name}");
+        }
+        for name in [
+            "workspace_checkpoint_restore",
+            "workspace_checkpoint_delete",
+        ] {
+            let metadata = lookup_tool_metadata(name).unwrap();
+            assert_eq!(metadata.provider_id, "native", "{name}");
+            assert_eq!(metadata.risk, ToolRisk::ProjectWrite, "{name}");
+            assert_eq!(metadata.oauth_scope, Some(SCOPE_PROJECT_WRITE), "{name}");
+            assert!(metadata.requires_project, "{name}");
+            assert!(!metadata.read_only, "{name}");
+        }
+    }
+
+    #[test]
     fn tool_metadata_write_tools_are_project_write() {
         for name in [
             "write_project_file",
@@ -715,6 +792,8 @@ mod tests {
             "save_project_artifact",
             "git_restore_paths",
             "discard_untracked",
+            "workspace_checkpoint_restore",
+            "workspace_checkpoint_delete",
             "register_project",
             "create_project",
         ] {

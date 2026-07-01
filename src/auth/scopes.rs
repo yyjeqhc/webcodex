@@ -627,6 +627,14 @@ mod tests {
                 "show_changes",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
             ),
+            (
+                "workspace_checkpoint_create",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ),
+            ),
+            (
+                "workspace_checkpoint_restore",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
+            ),
             ("git_log", OAuthToolScopePolicy::Require(SCOPE_PROJECT_READ)),
             (
                 "write_project_file",
@@ -656,6 +664,8 @@ mod tests {
             "bind_current_session",
             "current_session",
             "unbind_current_session",
+            "workspace_checkpoint_create",
+            "workspace_checkpoint_restore",
             "show_changes",
             "read_file",
             "write_project_file",

@@ -4,6 +4,7 @@
 //! No HTTP framework types here — pure Rust input/output.
 
 mod cargo;
+mod checkpoint;
 mod codex;
 pub(crate) mod files;
 mod git;
@@ -48,6 +49,7 @@ pub struct ToolRuntime {
     pub shell_clients: Arc<ShellClientRegistry>,
     pub codex: Arc<CodexConfig>,
     pub runtime_info: Arc<RuntimeInfo>,
+    pub(crate) checkpoint_store: checkpoint::CheckpointStore,
     pub(crate) sessions: sessions::SessionStore,
     local_jobs: Arc<Mutex<HashMap<String, LocalJobRecord>>>,
     job_killer: Arc<dyn LocalJobKiller>,
@@ -346,6 +348,7 @@ impl ToolRuntime {
             shell_clients,
             codex,
             runtime_info,
+            checkpoint_store: checkpoint::CheckpointStore::default(),
             sessions: sessions::SessionStore::default(),
             local_jobs: Arc::new(Mutex::new(HashMap::new())),
             job_killer: Arc::new(SystemJobKiller),
@@ -613,6 +616,11 @@ impl ToolRuntime {
             | ToolCall::GitLog { .. }
             | ToolCall::GitDiffSummary { .. }
             | ToolCall::ShowChanges { .. } => Some(AgentCapability::GitOrShell),
+            ToolCall::WorkspaceCheckpointCreate { .. }
+            | ToolCall::WorkspaceCheckpointRestore { .. } => Some(AgentCapability::Shell),
+            ToolCall::WorkspaceCheckpointList { .. }
+            | ToolCall::WorkspaceCheckpointShow { .. }
+            | ToolCall::WorkspaceCheckpointDelete { .. } => Some(AgentCapability::OwnerOnly),
             ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }
             | ToolCall::CargoTest { .. } => Some(AgentCapability::Shell),
@@ -677,9 +685,13 @@ impl ToolRuntime {
         // Otherwise the API key username must match the agent's declared owner.
         crate::shell_client::assert_shell_client_owner(auth, &client_id, view.owner.as_deref())
             .map_err(ToolResult::err)?;
+        if matches!(required, AgentCapability::OwnerOnly) {
+            return Ok(());
+        }
         // Capability check via the registry helper so the requirement is
         // expressed as a named capability, not a raw struct field access.
         let supported = match required {
+            AgentCapability::OwnerOnly => true,
             AgentCapability::Shell => self
                 .shell_clients
                 .client_supports(&client_id, "shell")
@@ -720,6 +732,7 @@ impl ToolRuntime {
         };
         if !supported {
             let label = match required {
+                AgentCapability::OwnerOnly => "owner boundary",
                 AgentCapability::Shell => "shell",
                 AgentCapability::FileRead => "file_read",
                 AgentCapability::FileWrite => "file_write",
@@ -1092,6 +1105,53 @@ impl ToolRuntime {
                     "project": project,
                     "resolved_project": resolved.resolved_id,
                 }))
+            }
+
+            ToolCall::WorkspaceCheckpointCreate {
+                project,
+                title,
+                note,
+                include_untracked,
+                session_id: _,
+            } => {
+                self.workspace_checkpoint_create(project, title, note, include_untracked)
+                    .await
+            }
+
+            ToolCall::WorkspaceCheckpointList {
+                project,
+                limit,
+                session_id: _,
+            } => self.workspace_checkpoint_list(project, limit).await,
+
+            ToolCall::WorkspaceCheckpointShow {
+                project,
+                checkpoint_id,
+                include_diff_stat,
+                session_id: _,
+            } => {
+                self.workspace_checkpoint_show(project, checkpoint_id, include_diff_stat)
+                    .await
+            }
+
+            ToolCall::WorkspaceCheckpointRestore {
+                project,
+                checkpoint_id,
+                confirm,
+                session_id: _,
+            } => {
+                self.workspace_checkpoint_restore(project, checkpoint_id, confirm)
+                    .await
+            }
+
+            ToolCall::WorkspaceCheckpointDelete {
+                project,
+                checkpoint_id,
+                confirm,
+                session_id: _,
+            } => {
+                self.workspace_checkpoint_delete(project, checkpoint_id, confirm)
+                    .await
             }
 
             ToolCall::ListProjects => self.list_projects().await,
@@ -1960,6 +2020,8 @@ mod tests {
             "prompt" => json!("summarize"),
             "job_id" => json!("job_123"),
             "session_id" => json!("wc_sess_existing"),
+            "checkpoint_id" => json!("wc_ckpt_1234"),
+            "confirm" => json!(true),
             "client_id" => json!("oe"),
             "id" => json!("private-drop"),
             "name" => json!("Private Drop"),
@@ -2432,6 +2494,31 @@ mod tests {
                 ToolRisk::ReadOnly,
                 AgentCapability::GitOrShell,
             ),
+            (
+                "workspace_checkpoint_create",
+                ToolRisk::ReadOnly,
+                AgentCapability::Shell,
+            ),
+            (
+                "workspace_checkpoint_restore",
+                ToolRisk::ProjectWrite,
+                AgentCapability::Shell,
+            ),
+            (
+                "workspace_checkpoint_list",
+                ToolRisk::ReadOnly,
+                AgentCapability::OwnerOnly,
+            ),
+            (
+                "workspace_checkpoint_show",
+                ToolRisk::ReadOnly,
+                AgentCapability::OwnerOnly,
+            ),
+            (
+                "workspace_checkpoint_delete",
+                ToolRisk::ProjectWrite,
+                AgentCapability::OwnerOnly,
+            ),
         ];
 
         let runtime = test_runtime();
@@ -2440,7 +2527,9 @@ mod tests {
             .iter()
             .filter_map(|spec| {
                 let metadata = lookup_tool_metadata(&spec.name).unwrap();
-                (metadata.provider_id == "agent" && metadata.requires_project)
+                ((metadata.provider_id == "agent"
+                    || spec.name.starts_with("workspace_checkpoint_"))
+                    && metadata.requires_project)
                     .then_some(spec.name.as_str())
             })
             .collect::<BTreeSet<_>>();
@@ -2777,6 +2866,11 @@ mod tests {
             "git_diff_hunks",
             "git_log",
             "show_changes",
+            "workspace_checkpoint_create",
+            "workspace_checkpoint_list",
+            "workspace_checkpoint_show",
+            "workspace_checkpoint_restore",
+            "workspace_checkpoint_delete",
             "apply_patch",
             "apply_patch_checked",
             "validate_patch",
@@ -4166,6 +4260,119 @@ index 1111111..2222222 100644
         stdout
     }
 
+    async fn register_agent_project_at_path(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        project_id: &str,
+        root: &Path,
+    ) -> String {
+        let project_path = root.to_string_lossy().to_string();
+        runtime
+            .shell_clients
+            .register(ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: "inst".to_string(),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    git: true,
+                    ..Default::default()
+                }),
+                projects: Some(vec![registered_project(project_id, &project_path)]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            })
+            .await
+            .unwrap();
+        ToolRuntime::agent_project_runtime_id(client_id, project_id)
+    }
+
+    fn run_agent_shell_request_locally(req: &ShellAgentShellRequest) -> (i32, String, String) {
+        let mut command = std::process::Command::new("sh");
+        command.arg("-c").arg(&req.command);
+        if let Some(cwd) = req.cwd.as_deref() {
+            command.current_dir(cwd);
+        }
+        if req.stdin.is_some() {
+            command.stdin(std::process::Stdio::piped());
+        }
+        let mut child = command
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .expect("spawn agent shell request");
+        if let Some(stdin) = req.stdin.as_deref() {
+            use std::io::Write;
+            child
+                .stdin
+                .take()
+                .expect("agent shell request stdin")
+                .write_all(stdin.as_bytes())
+                .unwrap();
+        }
+        let output = child.wait_with_output().unwrap();
+        (
+            output.status.code().unwrap_or(-1),
+            String::from_utf8_lossy(&output.stdout).to_string(),
+            String::from_utf8_lossy(&output.stderr).to_string(),
+        )
+    }
+
+    async fn complete_agent_request_by_running_locally(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        req: ShellAgentShellRequest,
+    ) {
+        let (exit_code, stdout, stderr) = run_agent_shell_request_locally(&req);
+        complete_patch_agent_request(
+            runtime,
+            client_id,
+            &req.request_id,
+            exit_code,
+            &stdout,
+            &stderr,
+        )
+        .await;
+    }
+
+    async fn dispatch_checkpoint_with_local_agent(
+        runtime: &ToolRuntime,
+        client_id: &str,
+        call: ToolCall,
+    ) -> ToolResult {
+        let task = tokio::spawn({
+            let runtime = runtime.clone();
+            async move {
+                let bootstrap = auth_context(None, true);
+                runtime.dispatch_with_auth(call, Some(&bootstrap)).await
+            }
+        });
+        let mut req = None;
+        for _ in 0..200 {
+            req = next_patch_agent_request(runtime, client_id).await;
+            if req.is_some() || task.is_finished() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        let req = match req {
+            Some(req) => req,
+            None => {
+                let result = task.await.unwrap();
+                panic!("checkpoint helper did not enqueue an agent shell request: {result:?}");
+            }
+        };
+        assert!(
+            req.command.starts_with("python3 -c "),
+            "unexpected checkpoint helper command: {}",
+            req.command
+        );
+        complete_agent_request_by_running_locally(runtime, client_id, req).await;
+        task.await.unwrap()
+    }
+
     fn output_has_file(output: &Value, path: &str) -> bool {
         output["files"]
             .as_array()
@@ -4229,6 +4436,486 @@ index 1111111..2222222 100644
                     summary.events
                 )
             })
+    }
+
+    #[tokio::test]
+    async fn checkpoint_create_lists_and_shows_metadata() {
+        if !python3_available() {
+            eprintln!("skipping checkpoint_create_lists_and_shows_metadata: python3 unavailable");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "base\n", "base commit");
+        fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
+        let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+        let project =
+            register_agent_project_at_path(&runtime, "ckpt-create", "agent-proj", root).await;
+
+        let created = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-create",
+            ToolCall::WorkspaceCheckpointCreate {
+                project: project.clone(),
+                title: Some("before refactor".to_string()),
+                note: Some("last known good".to_string()),
+                include_untracked: Some(false),
+                session_id: None,
+            },
+        )
+        .await;
+        assert!(created.success, "{:?}", created.error);
+        let checkpoint_id = created.output["checkpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(checkpoint_id.starts_with("wc_ckpt_"));
+        assert_eq!(created.output["project"], project);
+        assert_eq!(created.output["title"], "before refactor");
+        assert!(created.output["tracked_diff_bytes"].as_u64().unwrap() > 0);
+        assert!(created.output.get("tracked_diff").is_none());
+
+        let listed = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointList {
+                    project: project.clone(),
+                    limit: Some(20),
+                    session_id: None,
+                },
+                Some(&auth_context(None, true)),
+            )
+            .await;
+        assert!(listed.success, "{:?}", listed.error);
+        let checkpoints = listed.output["checkpoints"].as_array().unwrap();
+        assert_eq!(checkpoints.len(), 1);
+        assert_eq!(checkpoints[0]["checkpoint_id"], checkpoint_id);
+        assert_eq!(checkpoints[0]["title"], "before refactor");
+        assert!(checkpoints[0].get("tracked_diff").is_none());
+
+        let shown = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointShow {
+                    project: project.clone(),
+                    checkpoint_id,
+                    include_diff_stat: Some(true),
+                    session_id: None,
+                },
+                Some(&auth_context(None, true)),
+            )
+            .await;
+        assert!(shown.success, "{:?}", shown.error);
+        assert!(shown.output["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "a.txt" && file["kind"] == "tracked"));
+        assert!(shown.output["diff_stat"]["tracked"]
+            .as_str()
+            .unwrap()
+            .contains("a.txt"));
+        assert!(shown.output.get("tracked_diff").is_none());
+        assert!(shown.output.get("staged_diff").is_none());
+    }
+
+    #[tokio::test]
+    async fn checkpoint_restore_tracked_changes() {
+        if !python3_available() {
+            eprintln!("skipping checkpoint_restore_tracked_changes: python3 unavailable");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "base\n", "base commit");
+        fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
+        let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+        let project =
+            register_agent_project_at_path(&runtime, "ckpt-restore", "agent-proj", root).await;
+        let created = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-restore",
+            ToolCall::WorkspaceCheckpointCreate {
+                project: project.clone(),
+                title: Some("safe".to_string()),
+                note: None,
+                include_untracked: Some(false),
+                session_id: None,
+            },
+        )
+        .await;
+        assert!(created.success, "{:?}", created.error);
+        let checkpoint_id = created.output["checkpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let session = runtime.sessions.start_session_with_guards(
+            Some(project.clone()),
+            Some("restore checkpoint".to_string()),
+            SessionMode::Normal,
+            crate::tool_runtime::sessions::SessionGuards::default(),
+        );
+
+        fs::write(root.join("a.txt"), "polluted\n").unwrap();
+        let restored = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-restore",
+            ToolCall::WorkspaceCheckpointRestore {
+                project,
+                checkpoint_id: checkpoint_id.clone(),
+                confirm: Some(true),
+                session_id: Some(session.session_id.clone()),
+            },
+        )
+        .await;
+        assert!(restored.success, "{:?}", restored.error);
+        assert_eq!(restored.output["restored"], true);
+        assert_eq!(restored.output["checkpoint_id"], checkpoint_id);
+        assert_eq!(restored.output["session_recorded"], true);
+        assert_eq!(
+            fs::read_to_string(root.join("a.txt")).unwrap(),
+            "checkpoint\n"
+        );
+        let summary = runtime
+            .sessions
+            .summary(&session.session_id, Some(20))
+            .unwrap();
+        let event = finished_event(&summary, "workspace_checkpoint_restore");
+        assert_eq!(event.status.as_deref(), Some("succeeded"));
+        assert!(event.write_like);
+        assert!(!event.read_like);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_restore_requires_confirm() {
+        let runtime = test_runtime();
+        let tmp = tempfile::tempdir().unwrap();
+        let project =
+            register_agent_project_at_path(&runtime, "ckpt-confirm", "agent-proj", tmp.path())
+                .await;
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointRestore {
+                    project,
+                    checkpoint_id: "wc_ckpt_missing".to_string(),
+                    confirm: None,
+                    session_id: None,
+                },
+                Some(&auth_context(None, true)),
+            )
+            .await;
+        assert!(!result.success);
+        assert_eq!(result.output["error_kind"], "confirm_required");
+        assert_eq!(result.output["restored"], false);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_restore_rejects_head_mismatch() {
+        if !python3_available() {
+            eprintln!("skipping checkpoint_restore_rejects_head_mismatch: python3 unavailable");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "base\n", "base commit");
+        let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+        let project =
+            register_agent_project_at_path(&runtime, "ckpt-head", "agent-proj", root).await;
+        let created = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-head",
+            ToolCall::WorkspaceCheckpointCreate {
+                project: project.clone(),
+                title: None,
+                note: None,
+                include_untracked: Some(false),
+                session_id: None,
+            },
+        )
+        .await;
+        assert!(created.success, "{:?}", created.error);
+        let checkpoint_id = created.output["checkpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        commit_file(root, "b.txt", "new head\n", "advance head");
+
+        let restored = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-head",
+            ToolCall::WorkspaceCheckpointRestore {
+                project,
+                checkpoint_id,
+                confirm: Some(true),
+                session_id: None,
+            },
+        )
+        .await;
+        assert!(!restored.success);
+        assert_eq!(restored.output["error_kind"], "head_mismatch");
+        assert_eq!(
+            fs::read_to_string(root.join("b.txt")).unwrap(),
+            "new head\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_untracked_text_file_roundtrip() {
+        if !python3_available() {
+            eprintln!("skipping checkpoint_untracked_text_file_roundtrip: python3 unavailable");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "base\n", "base commit");
+        fs::write(root.join("notes.txt"), "safe untracked\n").unwrap();
+        let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+        let project =
+            register_agent_project_at_path(&runtime, "ckpt-untracked", "agent-proj", root).await;
+        let created = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-untracked",
+            ToolCall::WorkspaceCheckpointCreate {
+                project: project.clone(),
+                title: None,
+                note: None,
+                include_untracked: Some(true),
+                session_id: None,
+            },
+        )
+        .await;
+        assert!(created.success, "{:?}", created.error);
+        assert!(created.output["untracked_files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "notes.txt"));
+        let checkpoint_id = created.output["checkpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        fs::remove_file(root.join("notes.txt")).unwrap();
+        let restored = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-untracked",
+            ToolCall::WorkspaceCheckpointRestore {
+                project,
+                checkpoint_id,
+                confirm: Some(true),
+                session_id: None,
+            },
+        )
+        .await;
+        assert!(restored.success, "{:?}", restored.error);
+        assert_eq!(
+            fs::read_to_string(root.join("notes.txt")).unwrap(),
+            "safe untracked\n"
+        );
+    }
+
+    #[tokio::test]
+    async fn checkpoint_skips_large_or_binary_untracked() {
+        if !python3_available() {
+            eprintln!("skipping checkpoint_skips_large_or_binary_untracked: python3 unavailable");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "base\n", "base commit");
+        fs::write(root.join("big.txt"), vec![b'a'; 256 * 1024 + 1]).unwrap();
+        fs::write(root.join("binary.bin"), b"abc\0def").unwrap();
+        fs::write(root.join(".env.local"), "TOKEN=secret\n").unwrap();
+        let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+        let project =
+            register_agent_project_at_path(&runtime, "ckpt-skip", "agent-proj", root).await;
+        let created = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-skip",
+            ToolCall::WorkspaceCheckpointCreate {
+                project,
+                title: None,
+                note: None,
+                include_untracked: Some(true),
+                session_id: None,
+            },
+        )
+        .await;
+        assert!(created.success, "{:?}", created.error);
+        let untracked = created.output["untracked_files"].as_array().unwrap();
+        assert!(!untracked.iter().any(|file| file["path"] == "big.txt"));
+        assert!(!untracked.iter().any(|file| file["path"] == "binary.bin"));
+        assert!(!untracked.iter().any(|file| file["path"] == ".env.local"));
+        let skipped = created.output["skipped_files"].as_array().unwrap();
+        assert!(skipped
+            .iter()
+            .any(|file| file["path"] == "big.txt" && file["reason"] == "too_large"));
+        assert!(skipped.iter().any(|file| {
+            file["path"] == "binary.bin" && file["reason"] == "binary_or_non_utf8"
+        }));
+        assert!(skipped.iter().any(|file| {
+            file["path"] == ".env.local" && file["reason"] == "sensitive_or_invalid_path"
+        }));
+    }
+
+    #[tokio::test]
+    async fn checkpoint_does_not_persist_inside_worktree() {
+        if !python3_available() {
+            eprintln!("skipping checkpoint_does_not_persist_inside_worktree: python3 unavailable");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "base\n", "base commit");
+        let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+        let project =
+            register_agent_project_at_path(&runtime, "ckpt-path", "agent-proj", root).await;
+        let created = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-path",
+            ToolCall::WorkspaceCheckpointCreate {
+                project,
+                title: None,
+                note: None,
+                include_untracked: Some(false),
+                session_id: None,
+            },
+        )
+        .await;
+        assert!(created.success, "{:?}", created.error);
+        let storage_path = PathBuf::from(created.output["storage_path"].as_str().unwrap())
+            .canonicalize()
+            .unwrap();
+        let root = root.canonicalize().unwrap();
+        assert!(!storage_path.starts_with(&root));
+        assert!(storage_path.starts_with(runtime.checkpoint_state_dir()));
+    }
+
+    #[tokio::test]
+    async fn checkpoint_session_guards() {
+        if !python3_available() {
+            eprintln!("skipping checkpoint_session_guards: python3 unavailable");
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+        let state = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        init_git_repo(root);
+        commit_file(root, "a.txt", "base\n", "base commit");
+        fs::write(root.join("a.txt"), "checkpoint\n").unwrap();
+        let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+        let project =
+            register_agent_project_at_path(&runtime, "ckpt-guard", "agent-proj", root).await;
+        let bootstrap = auth_context(None, true);
+
+        let read_only = runtime
+            .dispatch_with_auth(
+                ToolCall::StartSession {
+                    project: Some(project.clone()),
+                    title: Some("read only".to_string()),
+                    mode: SessionMode::ReadOnly,
+                    deny_write_tools: false,
+                    deny_shell_tools: false,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(read_only.success, "{:?}", read_only.error);
+        let read_only_session = read_only.output["session_id"].as_str().unwrap().to_string();
+
+        let created = dispatch_checkpoint_with_local_agent(
+            &runtime,
+            "ckpt-guard",
+            ToolCall::WorkspaceCheckpointCreate {
+                project: project.clone(),
+                title: Some("safe".to_string()),
+                note: None,
+                include_untracked: Some(false),
+                session_id: Some(read_only_session.clone()),
+            },
+        )
+        .await;
+        assert!(created.success, "{:?}", created.error);
+        assert_eq!(created.output["session_recorded"], true);
+        let checkpoint_id = created.output["checkpoint_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+
+        let listed = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointList {
+                    project: project.clone(),
+                    limit: Some(10),
+                    session_id: Some(read_only_session.clone()),
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(listed.success, "{:?}", listed.error);
+        assert_eq!(listed.output["session_recorded"], true);
+
+        let shown = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointShow {
+                    project: project.clone(),
+                    checkpoint_id: checkpoint_id.clone(),
+                    include_diff_stat: Some(false),
+                    session_id: Some(read_only_session.clone()),
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(shown.success, "{:?}", shown.error);
+        assert_eq!(shown.output["session_recorded"], true);
+
+        let restore_denied = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointRestore {
+                    project: project.clone(),
+                    checkpoint_id: checkpoint_id.clone(),
+                    confirm: Some(true),
+                    session_id: Some(read_only_session.clone()),
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!restore_denied.success);
+        assert_eq!(restore_denied.output["error_kind"], "session_guard_denied");
+        assert_eq!(restore_denied.output["session_recorded"], true);
+
+        let delete_denied = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointDelete {
+                    project: project.clone(),
+                    checkpoint_id: checkpoint_id.clone(),
+                    confirm: Some(true),
+                    session_id: Some(read_only_session.clone()),
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!delete_denied.success);
+        assert_eq!(delete_denied.output["error_kind"], "session_guard_denied");
+        assert_eq!(delete_denied.output["session_recorded"], true);
+
+        let summary = runtime
+            .sessions
+            .summary(&read_only_session, Some(20))
+            .unwrap();
+        let restore_event = finished_event(&summary, "workspace_checkpoint_restore");
+        assert_eq!(restore_event.status.as_deref(), Some("failed"));
+        assert!(restore_event.write_like);
     }
 
     #[tokio::test]
@@ -9058,6 +9745,30 @@ new file mode 100644\n\
     }
 
     #[tokio::test]
+    async fn checkpoint_create_requires_agent_shell_capability() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = false;
+        register_agent(&runtime, "oe", None, caps).await;
+        let bootstrap = auth_context(None, true);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointCreate {
+                    project: agent_test_project_id("oe"),
+                    title: None,
+                    note: None,
+                    include_untracked: None,
+                    session_id: None,
+                },
+                Some(&bootstrap),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("does not support shell"), "{}", err);
+    }
+
+    #[tokio::test]
     async fn agent_tool_unknown_client_returns_unknown_project_error() {
         // Project points at client "ghost" which never registered.
         let runtime = runtime_with_agent_project("ghost");
@@ -9098,6 +9809,29 @@ new file mode 100644\n\
                     session_id: None,
                     timeout_secs: None,
                     cwd: None,
+                },
+                Some(&bob),
+            )
+            .await;
+        assert!(!result.success);
+        let err = result.error.unwrap();
+        assert!(err.contains("owned by alice"), "{}", err);
+        assert!(err.contains("belongs to bob"), "{}", err);
+    }
+
+    #[tokio::test]
+    async fn checkpoint_metadata_tools_enforce_agent_owner_boundary() {
+        let runtime = runtime_with_agent_project("oe");
+        let mut caps = ShellClientCapabilities::default();
+        caps.shell = false;
+        register_agent(&runtime, "oe", Some("alice"), caps).await;
+        let bob = auth_context(Some("bob"), false);
+        let result = runtime
+            .dispatch_with_auth(
+                ToolCall::WorkspaceCheckpointList {
+                    project: agent_test_project_id("oe"),
+                    limit: Some(5),
+                    session_id: None,
                 },
                 Some(&bob),
             )

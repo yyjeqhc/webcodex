@@ -141,7 +141,10 @@ async fn handle_agent_ws(
     // 2. Register into the shared registry (same path as polling register),
     //    then flip the transport label and install a push notifier so the
     //    request pump can be woken on enqueue.
-    if let Err(e) = registry.register(register_payload).await {
+    if let Err(e) = registry
+        .register_with_auth(register_payload, auth.as_ref())
+        .await
+    {
         send_envelope_or_log(
             &mut ws,
             AgentEnvelope::Error {

@@ -13,6 +13,103 @@ use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+fn shared_key_auth(hash: &str) -> crate::auth::AuthContext {
+    crate::auth::AuthContext {
+        kind: crate::auth::AuthKind::SharedKey,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        api_key_name: None,
+        role: Some("shared-key".to_string()),
+        scopes: vec![
+            crate::auth::SCOPE_RUNTIME_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_WRITE.to_string(),
+            crate::auth::SCOPE_JOB_RUN.to_string(),
+            crate::auth::SCOPE_AGENT_REGISTER.to_string(),
+        ],
+        is_bootstrap: false,
+        token_kind: Some("shared-key".to_string()),
+        allowed_client_id: None,
+        shared_key_hash: Some(hash.to_string()),
+    }
+}
+
+fn open_auth() -> crate::auth::AuthContext {
+    crate::auth::AuthContext {
+        kind: crate::auth::AuthKind::OpenAnonymous,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        api_key_name: None,
+        role: Some("open".to_string()),
+        scopes: vec![
+            crate::auth::SCOPE_RUNTIME_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_READ.to_string(),
+            crate::auth::SCOPE_PROJECT_WRITE.to_string(),
+            crate::auth::SCOPE_JOB_RUN.to_string(),
+            crate::auth::SCOPE_AGENT_REGISTER.to_string(),
+        ],
+        is_bootstrap: false,
+        token_kind: Some("open".to_string()),
+        allowed_client_id: None,
+        shared_key_hash: None,
+    }
+}
+
+fn bootstrap_auth() -> crate::auth::AuthContext {
+    crate::auth::AuthContext {
+        kind: crate::auth::AuthKind::Bootstrap,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        api_key_name: None,
+        role: Some("admin".to_string()),
+        scopes: vec![crate::auth::SCOPE_ADMIN.to_string()],
+        is_bootstrap: true,
+        token_kind: None,
+        allowed_client_id: None,
+        shared_key_hash: None,
+    }
+}
+
+async fn register_agent_projects_for_auth(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    auth: &crate::auth::AuthContext,
+    project_id: &str,
+) {
+    runtime
+        .shell_clients
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{}", client_id),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(ShellClientCapabilities {
+                    shell: true,
+                    file_read: true,
+                    file_write: true,
+                    git: true,
+                    jobs: true,
+                    async_jobs: true,
+                    async_shell_jobs: true,
+                }),
+                projects: Some(vec![registered_project(
+                    project_id,
+                    &format!("/tmp/{}", project_id),
+                )]),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+            Some(auth),
+        )
+        .await
+        .unwrap();
+}
+
 #[tokio::test]
 async fn list_projects_returns_agent_registered_projects_without_server_config() {
     let runtime = test_runtime();
@@ -33,6 +130,95 @@ async fn list_projects_returns_agent_registered_projects_without_server_config()
     assert_eq!(projects[0]["agent_project_id"], "webcodex");
     assert_eq!(projects[0]["executor"], "agent");
     assert_eq!(projects[0]["source"], "agent_registered");
+}
+
+#[tokio::test]
+async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
+    let runtime = test_runtime();
+    let shared_a = shared_key_auth("hash-a");
+    let shared_b = shared_key_auth("hash-b");
+    let open = open_auth();
+    let bootstrap = bootstrap_auth();
+
+    register_agent_projects_for_auth(&runtime, "client-a", &shared_a, "proj-a").await;
+    register_agent_projects_for_auth(&runtime, "client-b", &shared_b, "proj-b").await;
+    register_agent_projects_for_auth(&runtime, "client-open", &open, "proj-open").await;
+
+    let result = runtime
+        .dispatch_with_auth(ToolCall::ListProjects, Some(&shared_a))
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let ids: Vec<&str> = result
+        .output
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|project| project["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["agent:client-a:proj-a"]);
+
+    let result = runtime
+        .dispatch_with_auth(ToolCall::ListProjects, Some(&open))
+        .await;
+    let ids: Vec<&str> = result
+        .output
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|project| project["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["agent:client-open:proj-open"]);
+
+    let result = runtime
+        .dispatch_with_auth(ToolCall::ListProjects, Some(&bootstrap))
+        .await;
+    let ids: Vec<&str> = result
+        .output
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|project| project["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        ids,
+        vec![
+            "agent:client-a:proj-a",
+            "agent:client-b:proj-b",
+            "agent:client-open:proj-open",
+        ]
+    );
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReadFile {
+                project: "agent:client-b:proj-b".to_string(),
+                path: "README.md".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            Some(&shared_a),
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_project");
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReadFile {
+                project: "agent:client-open:proj-open".to_string(),
+                path: "README.md".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            Some(&shared_a),
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_project");
 }
 
 #[tokio::test]

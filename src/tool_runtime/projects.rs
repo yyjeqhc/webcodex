@@ -136,17 +136,21 @@ impl ToolRuntime {
         }
 
         // -- owner boundary + client existence --------------------------------
-        let view = match self.shell_clients.get_client_view(&client_id).await {
-            Some(v) => v,
-            None => {
-                return ToolResult::err(format!(
-                    "unknown agent client '{}'. Call listAgents to discover registered client_ids.",
-                    client_id
-                ))
-            }
-        };
-        if let Err(e) =
-            crate::shell_client::assert_shell_client_owner(auth, &client_id, view.owner.as_deref())
+        if self
+            .shell_clients
+            .get_client_view(&client_id)
+            .await
+            .is_none()
+        {
+            return ToolResult::err(format!(
+                "unknown agent client '{}'. Call listAgents to discover registered client_ids.",
+                client_id
+            ));
+        }
+        if let Err(e) = self
+            .shell_clients
+            .assert_client_access(auth, &client_id)
+            .await
         {
             return ToolResult::err(e);
         }

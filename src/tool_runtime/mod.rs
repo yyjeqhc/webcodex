@@ -423,9 +423,12 @@ impl ToolRuntime {
         });
     }
 
-    async fn agent_project_candidates(&self) -> Vec<ProjectResolverCandidate> {
+    async fn agent_project_candidates_for_auth(
+        &self,
+        auth: Option<&AuthContext>,
+    ) -> Vec<ProjectResolverCandidate> {
         let mut candidates = Vec::new();
-        for client in self.shell_clients.list_clients().await {
+        for client in self.shell_clients.list_clients_for_auth(auth).await {
             for project in client.projects.iter().filter(|project| !project.disabled) {
                 candidates.push(Self::project_candidate_from_view(&client, project));
             }
@@ -434,20 +437,21 @@ impl ToolRuntime {
         candidates
     }
 
-    async fn resolve_project_input(
+    async fn resolve_project_input_for_auth(
         &self,
         project: &str,
+        auth: Option<&AuthContext>,
     ) -> Result<ResolvedProject, ProjectResolverError> {
         let raw = project.trim();
         if raw.is_empty() {
             return Err(ProjectResolverError {
                 kind: ProjectResolverErrorKind::UnknownProject,
                 project: project.to_string(),
-                candidates: self.agent_project_candidates().await,
+                candidates: self.agent_project_candidates_for_auth(auth).await,
             });
         }
 
-        let all_candidates = self.agent_project_candidates().await;
+        let all_candidates = self.agent_project_candidates_for_auth(auth).await;
 
         if raw.starts_with("agent:") {
             let Some(rest) = raw.strip_prefix("agent:") else {
@@ -584,8 +588,25 @@ impl ToolRuntime {
         }
     }
 
+    async fn resolve_project_input(
+        &self,
+        project: &str,
+    ) -> Result<ResolvedProject, ProjectResolverError> {
+        self.resolve_project_input_for_auth(project, None).await
+    }
+
     async fn resolve_project(&self, project: &str) -> Result<ProjectConfig, ProjectResolverError> {
         self.resolve_project_input(project)
+            .await
+            .map(|resolved| resolved.config)
+    }
+
+    async fn resolve_project_for_auth(
+        &self,
+        project: &str,
+        auth: Option<&AuthContext>,
+    ) -> Result<ProjectConfig, ProjectResolverError> {
+        self.resolve_project_input_for_auth(project, auth)
             .await
             .map(|resolved| resolved.config)
     }
@@ -685,21 +706,27 @@ impl ToolRuntime {
             None => return Ok(()),
         };
         let proj = self
-            .resolve_project(project)
+            .resolve_project_for_auth(project, auth)
             .await
             .map_err(ProjectResolverError::into_tool_result)?;
         if !proj.is_agent() {
             return Ok(());
         }
         let client_id = proj.agent_client_id().map_err(ToolResult::err)?.to_string();
-        let view = self
+        if self
             .shell_clients
-            .get_client_view(&client_id)
+            .get_client_view_for_auth(&client_id, auth)
             .await
-            .ok_or_else(|| ToolResult::err(format!("unknown shell client: {}", client_id)))?;
-        // Owner boundary: bootstrap tokens and dev mode (auth disabled) pass.
-        // Otherwise the API key username must match the agent's declared owner.
-        crate::shell_client::assert_shell_client_owner(auth, &client_id, view.owner.as_deref())
+            .is_none()
+        {
+            return Err(ToolResult::err(format!(
+                "unknown shell client: {}",
+                client_id
+            )));
+        }
+        self.shell_clients
+            .assert_client_access(auth, &client_id)
+            .await
             .map_err(ToolResult::err)?;
         if matches!(required, AgentCapability::OwnerOnly) {
             return Ok(());
@@ -806,7 +833,10 @@ impl ToolRuntime {
         use_current_session: bool,
     ) -> ToolResult {
         let mut resolved_project = match call.project() {
-            Some(project) => self.resolve_project_input(project).await.ok(),
+            Some(project) => self
+                .resolve_project_input_for_auth(project, auth)
+                .await
+                .ok(),
             None => None,
         };
         if use_current_session && call.session_id().is_none() && is_current_session_eligible(&call)
@@ -903,7 +933,10 @@ impl ToolRuntime {
                 deny_shell_tools,
             } => {
                 let resolved = match project {
-                    Some(project_input) => match self.resolve_project_input(&project_input).await {
+                    Some(project_input) => match self
+                        .resolve_project_input_for_auth(&project_input, auth)
+                        .await
+                    {
                         Ok(resolved) => Some(resolved),
                         Err(err) => return err.into_tool_result(),
                     },
@@ -1060,7 +1093,7 @@ impl ToolRuntime {
                 project,
                 session_id,
             } => {
-                let resolved = match self.resolve_project_input(&project).await {
+                let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
                     Ok(resolved) => resolved,
                     Err(err) => return err.into_tool_result(),
                 };
@@ -1097,7 +1130,7 @@ impl ToolRuntime {
             }
 
             ToolCall::CurrentSession { project } => {
-                let resolved = match self.resolve_project_input(&project).await {
+                let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
                     Ok(resolved) => resolved,
                     Err(err) => return err.into_tool_result(),
                 };
@@ -1123,7 +1156,7 @@ impl ToolRuntime {
             }
 
             ToolCall::UnbindCurrentSession { project } => {
-                let resolved = match self.resolve_project_input(&project).await {
+                let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
                     Ok(resolved) => resolved,
                     Err(err) => return err.into_tool_result(),
                 };
@@ -1198,7 +1231,7 @@ impl ToolRuntime {
                     .await
             }
 
-            ToolCall::ListProjects => self.list_projects().await,
+            ToolCall::ListProjects => self.list_projects(auth).await,
 
             ToolCall::RegisterProject {
                 client_id,
@@ -1250,9 +1283,9 @@ impl ToolRuntime {
                 .await
             }
 
-            ToolCall::ListAgents => self.list_agents().await,
+            ToolCall::ListAgents => self.list_agents(auth).await,
 
-            ToolCall::RuntimeStatus => self.runtime_status().await,
+            ToolCall::RuntimeStatus => self.runtime_status(auth).await,
 
             ToolCall::ToolManifest {
                 category,
@@ -1699,9 +1732,9 @@ impl ToolRuntime {
         }
     }
 
-    async fn list_projects(&self) -> ToolResult {
+    async fn list_projects(&self, auth: Option<&AuthContext>) -> ToolResult {
         let mut list: Vec<Value> = Vec::new();
-        for client in self.shell_clients.list_clients().await {
+        for client in self.shell_clients.list_clients_for_auth(auth).await {
             // Sanitized shell-profiles summary for this agent (carried inside
             // the registration policy). Used to resolve which profile a project
             // actually uses and whether that profile is configured. `None` for
@@ -1740,8 +1773,8 @@ impl ToolRuntime {
         ToolResult::ok(Value::Array(list))
     }
 
-    async fn list_agents(&self) -> ToolResult {
-        let clients = self.shell_clients.list_clients().await;
+    async fn list_agents(&self, auth: Option<&AuthContext>) -> ToolResult {
+        let clients = self.shell_clients.list_clients_for_auth(auth).await;
         let agents: Vec<Value> = clients
             .iter()
             .map(|c| {
@@ -1773,7 +1806,7 @@ impl ToolRuntime {
     /// tokens, api keys, full env, complete project path lists, or
     /// stdout/stderr. Returns a structured JSON object with service metadata,
     /// project config status, agent client summaries, and job counts.
-    async fn runtime_status(&self) -> ToolResult {
+    async fn runtime_status(&self, auth: Option<&AuthContext>) -> ToolResult {
         // -- projects summary -------------------------------------------------
         let (projects_configured, projects_count, projects_load_error) =
             match self.projects.config.as_ref() {
@@ -1800,7 +1833,7 @@ impl ToolRuntime {
         // unix timestamp (seconds) of the most recent heartbeat/result; the
         // console uses it to render how stale an agent is and to make a
         // websocket agent flipping `online` -> `stale` visually obvious.
-        let clients = self.shell_clients.list_clients().await;
+        let clients = self.shell_clients.list_clients_for_auth(auth).await;
         let agent_count = clients.len();
         let online_count = clients.iter().filter(|c| c.connected).count();
         // `stale_count` = registered agents whose `last_seen` is older than the

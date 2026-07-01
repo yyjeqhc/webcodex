@@ -429,9 +429,11 @@ where
     R: serde::de::DeserializeOwned,
 {
     let url = format!("{}{}", server_url.trim_end_matches('/'), path);
-    let resp = client
-        .post(url)
-        .bearer_auth(token)
+    let mut req = client.post(url);
+    if !token.trim().is_empty() {
+        req = req.bearer_auth(token.trim());
+    }
+    let resp = req
         .json(body)
         .send()
         .map_err(|e| format!("request {} failed: {}", path, e))?;
@@ -443,6 +445,15 @@ where
         return Err(format!("{} returned {}: {}", path, status, text));
     }
     serde_json::from_str(&text).map_err(|e| format!("failed to parse response {}: {}", path, e))
+}
+
+fn non_empty_token(token: &str) -> Option<String> {
+    let token = token.trim();
+    if token.is_empty() {
+        None
+    } else {
+        Some(token.to_string())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1789,9 +1800,11 @@ where
     T: serde::Serialize + ?Sized,
     R: serde::de::DeserializeOwned,
 {
-    let resp = client
-        .post(endpoint(cfg, path))
-        .bearer_auth(&cfg.token)
+    let mut req = client.post(endpoint(cfg, path));
+    if !cfg.token.trim().is_empty() {
+        req = req.bearer_auth(cfg.token.trim());
+    }
+    let resp = req
         .json(body)
         .send()
         .map_err(|e| format!("request {} failed: {}", path, e))?;
@@ -5108,7 +5121,7 @@ async fn quic_session(
     );
     let reg_env = AgentEnvelope::Register {
         payload: register_payload,
-        auth_token: Some(cfg.token.clone()),
+        auth_token: non_empty_token(&cfg.token),
     };
     write_quic_frame(&mut send, &reg_env)
         .await
@@ -5310,8 +5323,9 @@ fn server_url_to_ws(server_url: &str, path: &str) -> Result<String, String> {
     Ok(ws)
 }
 
-/// Build a WebSocket handshake request carrying the Bearer token in the
-/// `Authorization` header, matching the server `AuthMiddleware`.
+/// Build a WebSocket handshake request, carrying a Bearer token only when the
+/// configured token is non-empty. Open-mode agents intentionally send no
+/// credential so the server must have explicit anonymous mode enabled.
 fn build_ws_request(
     ws_url: &str,
     token: &str,
@@ -5320,13 +5334,15 @@ fn build_ws_request(
     let mut request = ws_url
         .into_client_request()
         .map_err(|e| format!("invalid websocket url: {}", e))?;
-    let value = format!("Bearer {}", token);
-    let header_value = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&value)
-        .map_err(|e| format!("invalid token header value: {}", e))?;
-    request.headers_mut().insert(
-        tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
-        header_value,
-    );
+    if let Some(token) = non_empty_token(token) {
+        let value = format!("Bearer {}", token);
+        let header_value = tokio_tungstenite::tungstenite::http::HeaderValue::from_str(&value)
+            .map_err(|e| format!("invalid token header value: {}", e))?;
+        request.headers_mut().insert(
+            tokio_tungstenite::tungstenite::http::header::AUTHORIZATION,
+            header_value,
+        );
+    }
     Ok(request)
 }
 
@@ -8886,6 +8902,27 @@ shell_profile = "../rust"
         });
         assert_eq!(sink.client_id(), "oe");
         assert_eq!(sink.agent_instance_id(), "inst-1");
+    }
+
+    #[test]
+    fn empty_tokens_are_not_sent_as_credentials() {
+        use tokio_tungstenite::tungstenite::http::header::AUTHORIZATION;
+
+        let request = build_ws_request("ws://127.0.0.1:8080/api/agents/ws", "").unwrap();
+        assert!(request.headers().get(AUTHORIZATION).is_none());
+
+        let request = build_ws_request("ws://127.0.0.1:8080/api/agents/ws", "   \t").unwrap();
+        assert!(request.headers().get(AUTHORIZATION).is_none());
+
+        let request = build_ws_request("ws://127.0.0.1:8080/api/agents/ws", "  abc123  ").unwrap();
+        assert_eq!(
+            request.headers().get(AUTHORIZATION).unwrap(),
+            "Bearer abc123"
+        );
+
+        assert_eq!(non_empty_token(""), None);
+        assert_eq!(non_empty_token("   \t"), None);
+        assert_eq!(non_empty_token("  abc123  "), Some("abc123".to_string()));
     }
 
     // ------------------------------------------------------------------------

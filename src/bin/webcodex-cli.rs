@@ -372,7 +372,7 @@ fn server_up_usage() -> &'static str {
        --open               Allow anonymous GPT/MCP and client access\n\
        --data-dir DIR       Data directory [default: user/state dependent]\n\
        --env-file PATH      Env file path [default: user/config dependent]\n\
-       --foreground         Start the server in the foreground after writing env\n\
+       --foreground         Reserved; currently returns an explicit not implemented error\n\
        --json               Print machine-readable output\n\
        -h, --help           Print help and exit\n\n\
      Default (no --open): anonymous denied, shared-key clients allowed,\n\
@@ -1210,7 +1210,12 @@ fn parse_server_up(args: &[String]) -> Result<ServerUpOptions, String> {
             "--open" => opts.open = true,
             "--data-dir" => opts.data_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
             "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
-            "--foreground" => opts.foreground = true,
+            "--foreground" => {
+                return Err(
+                    "--foreground is not implemented yet; load the printed env command and run webcodex"
+                        .to_string(),
+                )
+            }
             "--json" => opts.json = true,
             "-h" | "--help" => return Err(server_up_usage().to_string()),
             other => return Err(format!("unknown server up flag: {}", other)),
@@ -4441,19 +4446,9 @@ fn run_server_up(opts: ServerUpOptions) -> Result<String, String> {
             "env_file": env_file.to_string_lossy(),
             "listen": listen,
             "data_dir": data_dir.to_string_lossy(),
-            "public_url": opts.public_url,
             "open": opts.open,
             "token_generated": token_was_generated,
             "token_prefix": token_prefix(&token),
-            "next_steps": if opts.foreground {
-                vec!["server starting in foreground".to_string()]
-            } else {
-                vec![
-                    format!("source the env file: set -a && . {} && set +a", env_file.display()),
-                    "run the server: webcodex".to_string(),
-                    "connect a client: webcodex-cli connect <URL> --key <KEY>".to_string(),
-                ]
-            },
         });
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
     }
@@ -4469,14 +4464,17 @@ fn run_server_up(opts: ServerUpOptions) -> Result<String, String> {
         out.push_str("  public URL:   not configured\n");
     }
     if token_was_generated {
-        out.push_str(&format!("  admin key:    {}\n", token));
-        out.push_str("  (saved to env file; do not share on untrusted networks)\n");
+        out.push_str(&format!(
+            "  admin key:    generated and saved to {}\n",
+            env_file.display()
+        ));
     } else {
         out.push_str(&format!(
             "  admin key:    (reused from {})\n",
             env_file.display()
         ));
     }
+    out.push_str(&format!("  token prefix: {}\n", token_prefix(&token)));
     out.push_str(&format!(
         "  open mode:    {}\n",
         if opts.open {
@@ -4499,19 +4497,13 @@ fn run_server_up(opts: ServerUpOptions) -> Result<String, String> {
         out.push_str("  - Anonymous (no token): denied\n");
     }
     out.push_str("\nNext steps:\n");
-    if opts.foreground {
-        out.push_str("  Starting server in foreground...\n");
-    } else {
-        out.push_str(&format!(
-            "  1. Load the env:  set -a && . {} && set +a\n",
-            env_file.display()
-        ));
-        out.push_str("  2. Start server:  webcodex\n");
-        out.push_str(
-            "  3. Connect client: webcodex-cli connect <URL> --key <KEY> --root <PROJECT>\n",
-        );
-        out.push_str("  4. GPT/MCP:       use the same --key value as a Bearer token\n");
-    }
+    out.push_str(&format!(
+        "  1. Load the env:  set -a && . {} && set +a\n",
+        env_file.display()
+    ));
+    out.push_str("  2. Start server:  webcodex\n");
+    out.push_str("  3. Connect client: webcodex-cli connect <URL> --key <KEY> --root <PROJECT>\n");
+    out.push_str("  4. GPT/MCP:       use the same --key value as a Bearer token\n");
     Ok(out)
 }
 
@@ -4631,8 +4623,9 @@ fn run_connect(opts: ConnectOptions) -> Result<String, String> {
     );
     write_text_file(&project_file, &project_toml, opts.overwrite, false)?;
 
-    // Write a top-level projects.toml that includes the projects.d directory
-    // entries, so the server-side PROJECTS_CONFIG can resolve this project.
+    // Write a legacy top-level projects.toml for operators who still want a
+    // server-side project config. Quick-start does not require it: the agent
+    // reads projects.d and reports those projects during register/poll.
     let projects_toml_path = output_dir.join("projects.toml");
     let projects_toml = format!(
         "# Generated by webcodex-cli connect.\n\
@@ -4659,12 +4652,11 @@ fn run_connect(opts: ConnectOptions) -> Result<String, String> {
             "output_dir": output_dir.to_string_lossy(),
             "agent_config": agent_config.to_string_lossy(),
             "projects_dir": projects_dir.to_string_lossy(),
-            "projects_toml": projects_toml_path.to_string_lossy(),
             "gpt_mcp_auth": gpt_token_hint,
             "next_steps": [
                 "start the agent: webcodex-agent --config <agent_config>",
-                "register the project on the server (merge projects.toml or use the runtime API)",
                 format!("configure GPT/MCP: {}", gpt_token_hint),
+                "the project should appear after the agent registers",
             ],
         });
         return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
@@ -4679,10 +4671,6 @@ fn run_connect(opts: ConnectOptions) -> Result<String, String> {
     out.push_str(&format!("  project id:    {}\n", project_id));
     out.push_str(&format!("  agent config:  {}\n", agent_config.display()));
     out.push_str(&format!("  projects dir:  {}\n", projects_dir.display()));
-    out.push_str(&format!(
-        "  projects.toml: {}\n",
-        projects_toml_path.display()
-    ));
     out.push_str("\nGPT Action / MCP configuration:\n");
     out.push_str(&format!("  {}\n", gpt_token_hint));
     if matches!(opts.mode, ConnectMode::Open) {
@@ -4696,10 +4684,8 @@ fn run_connect(opts: ConnectOptions) -> Result<String, String> {
         "  1. Start the agent:  webcodex-agent --config {}\n",
         agent_config.display()
     ));
-    out.push_str(
-        "  2. Register the project on the server (merge projects.toml or use the runtime API)\n",
-    );
-    out.push_str(&format!("  3. Configure GPT/MCP: {}\n", gpt_token_hint));
+    out.push_str(&format!("  2. Configure GPT/MCP: {}\n", gpt_token_hint));
+    out.push_str("  3. The project should appear after the agent registers\n");
     Ok(out)
 }
 
@@ -5765,6 +5751,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::fs;
     use std::io::{Read, Write};
     use std::net::TcpListener;
     use std::thread;
@@ -8411,6 +8398,104 @@ transport = "websocket"
             }
             other => panic!("expected ServerUp, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn server_up_foreground_reports_not_implemented() {
+        let err = cli_exit(["server", "up", "--foreground"]).unwrap_err();
+        assert!(
+            err.contains("--foreground is not implemented yet"),
+            "err was: {err}"
+        );
+        assert!(
+            !err.contains("Starting server in foreground"),
+            "foreground must not imply a server was started"
+        );
+    }
+
+    #[test]
+    fn server_up_output_hides_full_admin_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("webcodex.env");
+        let out = match cli_action([
+            "server",
+            "up",
+            "--env-file",
+            env_file.to_str().unwrap(),
+            "--data-dir",
+            tmp.path().join("data").to_str().unwrap(),
+        ]) {
+            CliAction::ServerUp(opts) => run_server_up(opts).unwrap(),
+            other => panic!("expected ServerUp, got {other:?}"),
+        };
+        let env_content = fs::read_to_string(&env_file).unwrap();
+        let token = read_env_file_value(&env_file, "WEBCODEX_TOKEN")
+            .unwrap()
+            .unwrap();
+        assert!(env_content.contains(&token));
+        assert!(
+            !out.contains(&token),
+            "stdout must not contain full admin key"
+        );
+        assert!(out.contains("admin key:"));
+        assert!(out.contains("token prefix:"));
+    }
+
+    #[test]
+    fn server_up_json_hides_full_admin_key() {
+        let tmp = tempfile::tempdir().unwrap();
+        let env_file = tmp.path().join("webcodex.env");
+        let out = match cli_action([
+            "server",
+            "up",
+            "--json",
+            "--env-file",
+            env_file.to_str().unwrap(),
+            "--data-dir",
+            tmp.path().join("data").to_str().unwrap(),
+        ]) {
+            CliAction::ServerUp(opts) => run_server_up(opts).unwrap(),
+            other => panic!("expected ServerUp, got {other:?}"),
+        };
+        let token = read_env_file_value(&env_file, "WEBCODEX_TOKEN")
+            .unwrap()
+            .unwrap();
+        assert!(
+            !out.contains(&token),
+            "json must not contain full admin key"
+        );
+        let value: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(value["token_generated"], true);
+        assert!(value["token_prefix"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_boot"));
+        assert!(value.get("token").is_none());
+    }
+
+    #[test]
+    fn connect_output_uses_agent_registration_quick_start_model() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("repo");
+        fs::create_dir_all(&root).unwrap();
+        let output_dir = tmp.path().join("client");
+        let out = match cli_action([
+            "connect",
+            "http://127.0.0.1:8080",
+            "--key",
+            "abc123",
+            "--root",
+            root.to_str().unwrap(),
+            "--output-dir",
+            output_dir.to_str().unwrap(),
+        ]) {
+            CliAction::Connect(opts) => run_connect(opts).unwrap(),
+            other => panic!("expected Connect, got {other:?}"),
+        };
+        assert!(out.contains("The project should appear after the agent registers"));
+        assert!(!out.contains("merge projects.toml"));
+        assert!(!out.contains("use the runtime API"));
+        assert!(!out.contains("Register the project on the server"));
     }
 
     #[test]

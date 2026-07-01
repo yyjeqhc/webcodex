@@ -329,7 +329,10 @@ async fn handle_quic_connection(
     // 4. Register into the shared registry (same path as polling/ws), then
     //    flip the transport label to "quic". QUIC v1 is the full envelope flow
     //    and keeps the agent's real capabilities.
-    if let Err(e) = registry.register(register_payload).await {
+    if let Err(e) = registry
+        .register_with_auth(register_payload, Some(&auth))
+        .await
+    {
         tracing::warn!(
             client_id = %client_id,
             error = %e,

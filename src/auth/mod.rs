@@ -679,10 +679,11 @@ pub(crate) async fn authenticate_bearer(
         }
         Ok(None) => {
             // Unknown bearer token: treat as a lightweight shared key only
-            // when quick-start mode is enabled and the token does not look
-            // like a WebCodex managed credential.
-            if shared_key_enabled() && !is_managed_token_prefix(token) {
-                Some(shared_key_context(token))
+            // when quick-start mode is enabled, the token is non-empty after
+            // trimming, and it does not look like a WebCodex managed credential.
+            let trimmed = token.trim();
+            if shared_key_enabled() && !trimmed.is_empty() && !is_managed_token_prefix(trimmed) {
+                Some(shared_key_context(trimmed))
             } else {
                 None
             }
@@ -1053,11 +1054,13 @@ impl Handler for AuthMiddleware {
                 // like a WebCodex managed credential (wc_*), treat it as a
                 // lightweight shared key. Managed-prefix tokens that failed
                 // verification are always rejected.
+                let trimmed = token.trim();
                 if config.is_auth_enabled()
                     && shared_key_enabled()
-                    && !is_managed_token_prefix(&token)
+                    && !trimmed.is_empty()
+                    && !is_managed_token_prefix(trimmed)
                 {
-                    let ctx = shared_key_context(&token);
+                    let ctx = shared_key_context(trimmed);
                     if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
                         res.status_code(status);
                         res.render(Json(serde_json::json!({"error": msg})));
@@ -2410,6 +2413,13 @@ mod tests {
         let r = authenticate_bearer(&config, None, Some("wc_pat_invalid")).await;
         assert!(r.is_none(), "wc_ prefix invalid token must be rejected");
 
+        // Empty or whitespace-only bearer values must not become sha256("")
+        // shared-key groups.
+        let r = authenticate_bearer(&config, None, Some("")).await;
+        assert!(r.is_none(), "empty token must be rejected");
+        let r = authenticate_bearer(&config, None, Some("   \t")).await;
+        assert!(r.is_none(), "whitespace token must be rejected");
+
         std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
     }
 
@@ -3048,6 +3058,43 @@ mod tests {
             "WWW-Authenticate should use issuer URL, got: {}",
             challenge
         );
+    }
+
+    #[tokio::test]
+    async fn auth_middleware_lightweight_empty_and_open_paths() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let service = salvo::Service::new(gate_router(config.clone(), db.clone()));
+
+        std::env::set_var("WEBCODEX_SHARED_KEY_ENABLED", "true");
+        std::env::remove_var("WEBCODEX_ALLOW_ANONYMOUS");
+
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .add_header("authorization", "Bearer ", true)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .add_header("authorization", "Bearer    ", true)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+
+        std::env::set_var("WEBCODEX_ALLOW_ANONYMOUS", "true");
+        let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+
+        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
+        std::env::remove_var("WEBCODEX_ALLOW_ANONYMOUS");
     }
 
     #[tokio::test]

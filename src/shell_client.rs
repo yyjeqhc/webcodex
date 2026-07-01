@@ -76,6 +76,25 @@ struct ShellClientRecord {
     /// older agents that did not report a policy. Exposed in
     /// `runtime_status` / `listAgents`; never carries token/env/init_script.
     policy: Option<AgentPolicySummary>,
+    /// Lightweight quick-start isolation group captured at registration. This
+    /// is intentionally not exposed in `ShellClientView`.
+    auth_group: Option<ShellClientAuthGroup>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ShellClientAuthGroup {
+    SharedKey(String),
+    OpenAnonymous,
+}
+
+impl ShellClientAuthGroup {
+    pub(crate) fn from_auth(auth: &crate::auth::AuthContext) -> Option<Self> {
+        match auth.kind {
+            crate::auth::AuthKind::SharedKey => auth.shared_key_hash.clone().map(Self::SharedKey),
+            crate::auth::AuthKind::OpenAnonymous => Some(Self::OpenAnonymous),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -222,6 +241,40 @@ pub(crate) fn assert_shell_client_owner(
     ))
 }
 
+fn lightweight_group_matches(
+    auth: Option<&crate::auth::AuthContext>,
+    group: Option<&ShellClientAuthGroup>,
+) -> bool {
+    match group {
+        Some(group) => auth.and_then(ShellClientAuthGroup::from_auth).as_ref() == Some(group),
+        None => auth.and_then(ShellClientAuthGroup::from_auth).is_none(),
+    }
+}
+
+fn shell_client_visible_to_auth(
+    auth: Option<&crate::auth::AuthContext>,
+    client: &ShellClientRecord,
+) -> bool {
+    match auth {
+        None => true,
+        Some(auth) if auth.is_admin() => true,
+        Some(_) => lightweight_group_matches(auth, client.auth_group.as_ref()),
+    }
+}
+
+fn assert_shell_client_access(
+    auth: Option<&crate::auth::AuthContext>,
+    client: &ShellClientRecord,
+) -> Result<(), String> {
+    if !shell_client_visible_to_auth(auth, client) {
+        return Err(format!("unknown shell client: {}", client.client_id));
+    }
+    if client.auth_group.is_some() {
+        return Ok(());
+    }
+    assert_shell_client_owner(auth, &client.client_id, client.owner.as_deref())
+}
+
 /// Enforce the owner/auth boundary at registration time. Mirrors
 /// [`assert_shell_client_owner`] but is intentionally a no-op when no
 /// `AuthContext` is present (unit tests that do not install `AuthMiddleware`).
@@ -256,6 +309,9 @@ pub(crate) fn enforce_register_owner(
     };
     // Bootstrap may register any owner.
     if auth.is_bootstrap {
+        return Ok(());
+    }
+    if auth.is_lightweight() {
         return Ok(());
     }
     // Phase 3: agent tokens are bound to an allowed_client_id and an owner.
@@ -326,6 +382,9 @@ pub(crate) fn enforce_agent_transport(
     if auth.is_bootstrap {
         return Ok(());
     }
+    if auth.is_lightweight() {
+        return Ok(());
+    }
     if auth.is_agent_token() {
         match auth.allowed_client_id.as_deref() {
             Some(allowed) if allowed == client_id => Ok(()),
@@ -349,10 +408,10 @@ pub(crate) fn require_agent_transport_scope(
     let Some(auth) = auth else {
         return Ok(());
     };
-    if auth.is_bootstrap {
+    if auth.is_admin() {
         return Ok(());
     }
-    if auth.is_agent_token() && auth.scopes.iter().any(|s| s == scope) {
+    if (auth.is_agent_token() || auth.is_lightweight()) && auth.scopes.iter().any(|s| s == scope) {
         Ok(())
     } else {
         Err(format!("missing required scope: {}", scope))
@@ -917,9 +976,18 @@ fn refresh_job_status_locked(inner: &mut ShellClientRegistryInner, job_id: &str)
 }
 
 impl ShellClientRegistry {
+    #[allow(dead_code)]
     pub async fn register(
         &self,
         body: ShellClientRegisterRequest,
+    ) -> Result<ShellClientView, String> {
+        self.register_with_auth(body, None).await
+    }
+
+    pub(crate) async fn register_with_auth(
+        &self,
+        body: ShellClientRegisterRequest,
+        auth: Option<&crate::auth::AuthContext>,
     ) -> Result<ShellClientView, String> {
         validate_id(&body.client_id, "client_id")?;
         validate_agent_instance_id(&body.agent_instance_id)?;
@@ -945,6 +1013,7 @@ impl ShellClientRegistry {
                 .unwrap_or_else(|| "unknown".to_string()),
             transport: TRANSPORT_POLLING.to_string(),
             policy: body.policy,
+            auth_group: auth.and_then(ShellClientAuthGroup::from_auth),
         };
         let mut inner = self.inner.lock().await;
 
@@ -1197,9 +1266,54 @@ impl ShellClientRegistry {
             .collect()
     }
 
+    pub(crate) async fn list_clients_for_auth(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Vec<ShellClientView> {
+        let inner = self.inner.lock().await;
+        let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
+        ids.sort();
+        ids.into_iter()
+            .filter(|id| {
+                inner
+                    .clients
+                    .get(id)
+                    .map(|client| shell_client_visible_to_auth(auth, client))
+                    .unwrap_or(false)
+            })
+            .filter_map(|id| Self::client_view_locked(&inner, &id))
+            .collect()
+    }
+
     pub async fn get_client_view(&self, client_id: &str) -> Option<ShellClientView> {
         let inner = self.inner.lock().await;
         Self::client_view_locked(&inner, client_id)
+    }
+
+    pub(crate) async fn get_client_view_for_auth(
+        &self,
+        client_id: &str,
+        auth: Option<&crate::auth::AuthContext>,
+    ) -> Option<ShellClientView> {
+        let inner = self.inner.lock().await;
+        let client = inner.clients.get(client_id)?;
+        if !shell_client_visible_to_auth(auth, client) {
+            return None;
+        }
+        Self::client_view_locked(&inner, client_id)
+    }
+
+    pub(crate) async fn assert_client_access(
+        &self,
+        auth: Option<&crate::auth::AuthContext>,
+        client_id: &str,
+    ) -> Result<(), String> {
+        let inner = self.inner.lock().await;
+        let client = inner
+            .clients
+            .get(client_id)
+            .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
+        assert_shell_client_access(auth, client)
     }
 
     /// Return the capabilities advertised by a registered agent client.
@@ -1937,14 +2051,23 @@ async fn assert_registry_client_owner(
     auth: Option<&crate::auth::AuthContext>,
     client_id: &str,
 ) -> Result<(), (StatusCode, String)> {
-    let Some(client) = registry.get_client_view(client_id).await else {
+    if registry.get_client_view(client_id).await.is_none() {
         return Err((
             StatusCode::BAD_REQUEST,
             format!("unknown shell client: {}", client_id),
         ));
-    };
-    assert_shell_client_owner(auth, client_id, client.owner.as_deref())
-        .map_err(|e| (StatusCode::FORBIDDEN, e))
+    }
+    registry
+        .assert_client_access(auth, client_id)
+        .await
+        .map_err(|e| {
+            let status = if e.contains("unknown shell client") {
+                StatusCode::BAD_REQUEST
+            } else {
+                StatusCode::FORBIDDEN
+            };
+            (status, e)
+        })
 }
 
 fn record_shell_run_action(
@@ -2205,7 +2328,7 @@ pub async fn shell_agent_register(req: &mut Request, depot: &mut Depot, res: &mu
     // own username; bootstrap keeps the request body owner.
     let mut body = body;
     body.owner = effective_register_owner(auth.as_ref(), body.owner.as_deref());
-    match registry.register(body).await {
+    match registry.register_with_auth(body, auth.as_ref()).await {
         Ok(client) => res.render(Json(ShellClientRegisterResponse {
             success: true,
             client: Some(client),
@@ -2264,6 +2387,18 @@ pub async fn shell_agent_poll(req: &mut Request, depot: &mut Depot, res: &mut Re
         }));
         return;
     }
+    if let Err(e) = registry
+        .assert_client_access(auth.as_ref(), &body.client_id)
+        .await
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentPollResponse {
+            success: false,
+            request: None,
+            error: Some(e),
+        }));
+        return;
+    }
     match registry.poll(body).await {
         Ok(request) => res.render(Json(ShellAgentPollResponse {
             success: true,
@@ -2312,6 +2447,17 @@ pub async fn shell_agent_result(req: &mut Request, depot: &mut Depot, res: &mut 
         return;
     }
     if let Err(e) = enforce_agent_transport(auth.as_ref(), &body.client_id) {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentResultResponse {
+            success: false,
+            error: Some(e),
+        }));
+        return;
+    }
+    if let Err(e) = registry
+        .assert_client_access(auth.as_ref(), &body.client_id)
+        .await
+    {
         res.status_code(StatusCode::FORBIDDEN);
         res.render(Json(ShellAgentResultResponse {
             success: false,
@@ -2850,14 +2996,13 @@ pub async fn shell_job(req: &mut Request, depot: &mut Depot, res: &mut Response)
             let limit = body.limit.unwrap_or(20).clamp(1, 100);
             let mut jobs = Vec::new();
             for job in registry.list_jobs(Some(100)).await {
-                if auth.as_ref().map(|auth| auth.is_bootstrap).unwrap_or(false) {
+                if auth.as_ref().map(|auth| auth.is_admin()).unwrap_or(false) {
                     jobs.push(job);
                     continue;
                 }
-                let Some(client) = registry.get_client_view(&job.client_id).await else {
-                    continue;
-                };
-                if assert_shell_client_owner(auth.as_ref(), &job.client_id, client.owner.as_deref())
+                if registry
+                    .assert_client_access(auth.as_ref(), &job.client_id)
+                    .await
                     .is_ok()
                 {
                     jobs.push(job);
@@ -3305,6 +3450,18 @@ pub async fn shell_agent_job_update(req: &mut Request, depot: &mut Depot, res: &
         }));
         return;
     }
+    if let Err(e) = registry
+        .assert_client_access(auth.as_ref(), &body.client_id)
+        .await
+    {
+        res.status_code(StatusCode::FORBIDDEN);
+        res.render(Json(ShellAgentJobUpdateResponse {
+            success: false,
+            job: None,
+            error: Some(e),
+        }));
+        return;
+    }
     match registry.update_job(body).await {
         Ok(job) => res.render(Json(ShellAgentJobUpdateResponse {
             success: true,
@@ -3374,6 +3531,48 @@ mod tests {
             is_bootstrap: false,
             token_kind: Some("agent".to_string()),
             allowed_client_id: Some(allowed_client_id.to_string()),
+            shared_key_hash: None,
+        }
+    }
+
+    fn shared_key_auth_context(hash: &str) -> crate::auth::AuthContext {
+        crate::auth::AuthContext {
+            kind: crate::auth::AuthKind::SharedKey,
+            user_id: None,
+            username: None,
+            api_key_id: None,
+            api_key_name: None,
+            role: Some("shared-key".to_string()),
+            scopes: vec![
+                crate::auth::SCOPE_AGENT_REGISTER.to_string(),
+                crate::auth::SCOPE_AGENT_POLL.to_string(),
+                crate::auth::SCOPE_AGENT_RESULT.to_string(),
+                crate::auth::SCOPE_AGENT_JOB_UPDATE.to_string(),
+            ],
+            is_bootstrap: false,
+            token_kind: Some("shared-key".to_string()),
+            allowed_client_id: None,
+            shared_key_hash: Some(hash.to_string()),
+        }
+    }
+
+    fn open_auth_context() -> crate::auth::AuthContext {
+        crate::auth::AuthContext {
+            kind: crate::auth::AuthKind::OpenAnonymous,
+            user_id: None,
+            username: None,
+            api_key_id: None,
+            api_key_name: None,
+            role: Some("open".to_string()),
+            scopes: vec![
+                crate::auth::SCOPE_AGENT_REGISTER.to_string(),
+                crate::auth::SCOPE_AGENT_POLL.to_string(),
+                crate::auth::SCOPE_AGENT_RESULT.to_string(),
+                crate::auth::SCOPE_AGENT_JOB_UPDATE.to_string(),
+            ],
+            is_bootstrap: false,
+            token_kind: Some("open".to_string()),
+            allowed_client_id: None,
             shared_key_hash: None,
         }
     }
@@ -3470,6 +3669,94 @@ mod tests {
         req.end_line = Some(10);
         let err = validate_file_request(&req).unwrap_err();
         assert_eq!(err, "invalid line range");
+    }
+
+    #[tokio::test]
+    async fn registry_filters_lightweight_clients_by_auth_group() {
+        let registry = ShellClientRegistry::default();
+        let shared_a = shared_key_auth_context("hash-a");
+        let shared_b = shared_key_auth_context("hash-b");
+        let open = open_auth_context();
+        let bootstrap = auth_context(None, true);
+
+        for (client_id, auth) in [
+            ("shared-a", &shared_a),
+            ("shared-b", &shared_b),
+            ("open", &open),
+        ] {
+            registry
+                .register_with_auth(
+                    ShellClientRegisterRequest {
+                        client_id: client_id.to_string(),
+                        agent_instance_id: format!("inst-{}", client_id),
+                        display_name: None,
+                        owner: None,
+                        hostname: None,
+                        capabilities: Some(async_job_capabilities()),
+                        projects: Some(vec![project_summary(client_id, "/tmp/project")]),
+                        agent_protocol_version: None,
+                        policy: None,
+                    },
+                    Some(auth),
+                )
+                .await
+                .unwrap();
+        }
+        registry
+            .register(ShellClientRegisterRequest {
+                client_id: "managed".to_string(),
+                agent_instance_id: "inst-managed".to_string(),
+                display_name: None,
+                owner: Some("alice".to_string()),
+                hostname: None,
+                capabilities: Some(async_job_capabilities()),
+                projects: Some(vec![project_summary("managed", "/tmp/managed")]),
+                agent_protocol_version: None,
+                policy: None,
+            })
+            .await
+            .unwrap();
+
+        let visible_to_a: Vec<String> = registry
+            .list_clients_for_auth(Some(&shared_a))
+            .await
+            .into_iter()
+            .map(|c| c.client_id)
+            .collect();
+        assert_eq!(visible_to_a, vec!["shared-a"]);
+        assert!(registry
+            .assert_client_access(Some(&shared_a), "shared-a")
+            .await
+            .is_ok());
+        assert!(registry
+            .assert_client_access(Some(&shared_a), "shared-b")
+            .await
+            .unwrap_err()
+            .contains("unknown shell client"));
+        assert!(registry
+            .assert_client_access(Some(&shared_a), "open")
+            .await
+            .unwrap_err()
+            .contains("unknown shell client"));
+
+        let visible_to_open: Vec<String> = registry
+            .list_clients_for_auth(Some(&open))
+            .await
+            .into_iter()
+            .map(|c| c.client_id)
+            .collect();
+        assert_eq!(visible_to_open, vec!["open"]);
+
+        let visible_to_bootstrap: Vec<String> = registry
+            .list_clients_for_auth(Some(&bootstrap))
+            .await
+            .into_iter()
+            .map(|c| c.client_id)
+            .collect();
+        assert_eq!(
+            visible_to_bootstrap,
+            vec!["managed", "open", "shared-a", "shared-b"]
+        );
     }
 
     #[test]

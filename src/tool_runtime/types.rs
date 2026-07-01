@@ -154,8 +154,7 @@ pub enum ToolCall {
     WorkspaceCheckpointRestore {
         project: String,
         checkpoint_id: String,
-        #[serde(default)]
-        confirm: Option<bool>,
+        confirm: bool,
         #[serde(default)]
         session_id: Option<String>,
     },
@@ -164,8 +163,7 @@ pub enum ToolCall {
     WorkspaceCheckpointDelete {
         project: String,
         checkpoint_id: String,
-        #[serde(default)]
-        confirm: Option<bool>,
+        confirm: bool,
         #[serde(default)]
         session_id: Option<String>,
     },

@@ -761,9 +761,9 @@ impl ToolRuntime {
         &self,
         project: String,
         checkpoint_id: String,
-        confirm: Option<bool>,
+        confirm: bool,
     ) -> ToolResult {
-        if confirm != Some(true) {
+        if !confirm {
             return ToolResult::err_with_output(
                 "confirm must be true to restore a workspace checkpoint",
                 json!({
@@ -823,9 +823,9 @@ impl ToolRuntime {
         &self,
         project: String,
         checkpoint_id: String,
-        confirm: Option<bool>,
+        confirm: bool,
     ) -> ToolResult {
-        if confirm != Some(true) {
+        if !confirm {
             return ToolResult::err_with_output(
                 "confirm must be true to delete a workspace checkpoint",
                 json!({

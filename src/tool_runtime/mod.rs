@@ -2025,6 +2025,9 @@ mod tests {
             "client_id" => json!("oe"),
             "id" => json!("private-drop"),
             "name" => json!("Private Drop"),
+            "kind" => json!("note"),
+            "message" => json!("hello"),
+            "message_id" => json!("wc_msg_0001"),
             other => panic!("missing sample value for required field {other}"),
         }
     }
@@ -2739,6 +2742,24 @@ mod tests {
         }
     }
 
+    /// Build a placeholder value for a required field from its JSON Schema
+    /// property definition.  When the property carries an `enum` constraint the
+    /// first allowed value is used so that serde deserialization succeeds.
+    fn placeholder_from_prop(prop: &Value) -> Value {
+        if let Some(vals) = prop["enum"].as_array() {
+            if let Some(first) = vals.first() {
+                return first.clone();
+            }
+        }
+        let kind = prop["type"].as_str().unwrap_or("string");
+        match kind {
+            "integer" => json!(1),
+            "array" => json!([]),
+            "boolean" => json!(true),
+            _ => json!("value"),
+        }
+    }
+
     #[test]
     fn tool_specs_required_fields_match_deserialization() {
         // For every tool spec, building arguments with only the required
@@ -2759,13 +2780,7 @@ mod tests {
             let properties = spec.input_schema["properties"].as_object().unwrap();
             for field in &required {
                 let prop = &properties[field.as_str()];
-                let kind = prop["type"].as_str().unwrap_or("string");
-                let placeholder = match kind {
-                    "integer" => json!(1),
-                    "array" => json!([]),
-                    "boolean" => json!(true),
-                    _ => json!("value"),
-                };
+                let placeholder = placeholder_from_prop(prop);
                 minimal.insert(field.clone(), placeholder);
             }
             let args = Value::Object(minimal);
@@ -2778,13 +2793,7 @@ mod tests {
                 for f in &required {
                     if f != field {
                         let prop = &properties[f.as_str()];
-                        let kind = prop["type"].as_str().unwrap_or("string");
-                        let placeholder = match kind {
-                            "integer" => json!(1),
-                            "array" => json!([]),
-                            "boolean" => json!(true),
-                            _ => json!("value"),
-                        };
+                        let placeholder = placeholder_from_prop(prop);
                         partial.insert(f.clone(), placeholder);
                     }
                 }
@@ -4552,7 +4561,7 @@ index 1111111..2222222 100644
             ToolCall::WorkspaceCheckpointRestore {
                 project,
                 checkpoint_id: checkpoint_id.clone(),
-                confirm: Some(true),
+                confirm: true,
                 session_id: Some(session.session_id.clone()),
             },
         )
@@ -4587,7 +4596,7 @@ index 1111111..2222222 100644
                 ToolCall::WorkspaceCheckpointRestore {
                     project,
                     checkpoint_id: "wc_ckpt_missing".to_string(),
-                    confirm: None,
+                    confirm: false,
                     session_id: None,
                 },
                 Some(&auth_context(None, true)),
@@ -4637,7 +4646,7 @@ index 1111111..2222222 100644
             ToolCall::WorkspaceCheckpointRestore {
                 project,
                 checkpoint_id,
-                confirm: Some(true),
+                confirm: true,
                 session_id: None,
             },
         )
@@ -4695,7 +4704,7 @@ index 1111111..2222222 100644
             ToolCall::WorkspaceCheckpointRestore {
                 project,
                 checkpoint_id,
-                confirm: Some(true),
+                confirm: true,
                 session_id: None,
             },
         )
@@ -4871,7 +4880,7 @@ index 1111111..2222222 100644
                 ToolCall::WorkspaceCheckpointRestore {
                     project: project.clone(),
                     checkpoint_id: checkpoint_id.clone(),
-                    confirm: Some(true),
+                    confirm: true,
                     session_id: Some(read_only_session.clone()),
                 },
                 Some(&bootstrap),
@@ -4886,7 +4895,7 @@ index 1111111..2222222 100644
                 ToolCall::WorkspaceCheckpointDelete {
                     project: project.clone(),
                     checkpoint_id: checkpoint_id.clone(),
-                    confirm: Some(true),
+                    confirm: true,
                     session_id: Some(read_only_session.clone()),
                 },
                 Some(&bootstrap),

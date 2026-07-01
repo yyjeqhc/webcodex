@@ -291,6 +291,38 @@ fn session_discussion_summary_input_schema() -> Value {
     })
 }
 
+fn session_handoff_summary_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id to summarize. This is business input; the tool never implicitly uses the current session."
+            },
+            "project": {
+                "type": "string",
+                "description": "Optional runtime project id. When provided, the handoff includes a bounded workspace summary and checkpoint candidates."
+            },
+            "include_workspace": {
+                "type": "boolean",
+                "description": "Include a bounded workspace (git status) summary. Defaults to true. Only effective when project is provided."
+            },
+            "include_checkpoints": {
+                "type": "boolean",
+                "description": "Include bounded checkpoint candidates, especially the latest last_known_good. Defaults to true. Only effective when project is provided."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum items per bounded section. Defaults to 20 and is clamped to 1..100."
+            }
+        },
+        "required": ["session_id"],
+        "additionalProperties": false,
+    })
+}
+
 fn start_session_input_schema() -> Value {
     json!({
         "type": "object",
@@ -844,6 +876,56 @@ fn output_schema_for_tool(name: &str) -> Value {
             (
                 "recent_decisions",
                 array_schema(open_object_schema("Recent decision message."), "Bounded newest-first decision messages."),
+            ),
+        ]),
+        "session_handoff_summary" => wrapped_output_schema(vec![
+            ("session_id", schema_type("string", "Business session id being handed off.")),
+            ("project", nullable_schema("string", "Optional runtime project id, when provided.")),
+            ("title", nullable_schema("string", "Optional session title.")),
+            ("mode", session_mode_schema("Session mode.")),
+            ("guards", session_guards_schema("Effective session guards.")),
+            ("created_at", schema_type("integer", "Session creation unix timestamp.")),
+            ("updated_at", schema_type("integer", "Session last-update unix timestamp.")),
+            ("counts", open_object_schema("Bounded structured counts: events, failed_tool_calls, messages, open_todos, open_risks, open_questions, open_guidance.")),
+            (
+                "open_todos",
+                array_schema(open_object_schema("Bounded open todo message."), "Bounded newest-first open todos."),
+            ),
+            (
+                "open_risks",
+                array_schema(open_object_schema("Bounded open risk message."), "Bounded newest-first open risks."),
+            ),
+            (
+                "open_questions",
+                array_schema(open_object_schema("Bounded open question message."), "Bounded newest-first open questions."),
+            ),
+            (
+                "open_guidance",
+                array_schema(open_object_schema("Bounded open guidance message."), "Bounded newest-first open guidance."),
+            ),
+            (
+                "recent_progress",
+                array_schema(open_object_schema("Bounded recent progress message."), "Bounded newest-first recent progress."),
+            ),
+            (
+                "recent_decisions",
+                array_schema(open_object_schema("Bounded recent decision message."), "Bounded newest-first recent decisions."),
+            ),
+            (
+                "recent_failed_tools",
+                array_schema(open_object_schema("Bounded failed tool call summary: tool_name, error_kind, failure_kind, created_at, write_like, job_like."), "Bounded newest-first recent failed tool calls. Never includes raw input payloads."),
+            ),
+            (
+                "workspace",
+                open_object_schema("Bounded workspace summary when project is provided: project, git_available, non_git_project, clean, branch, head, changed_files_count, warnings, suggested_next_actions. Never includes hunks or full diffs."),
+            ),
+            (
+                "checkpoints",
+                open_object_schema("Bounded checkpoint candidates when project is provided: latest_last_known_good and recent list. Never includes validation.commands or diffs."),
+            ),
+            (
+                "suggested_next_actions",
+                array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions for the receiving agent."),
             ),
         ]),
         "bind_current_session" => wrapped_output_schema(vec![
@@ -1457,6 +1539,13 @@ impl ToolRuntime {
                 input_schema: session_discussion_summary_input_schema(),
                 output_schema: output_schema_for_tool("session_discussion_summary"),
                 annotations: tool_annotations("session_discussion_summary"),
+            },
+            ToolSpec {
+                name: "session_handoff_summary".to_string(),
+                description: "Return a bounded structured handoff summary for an explicit session: session info, message board, recent progress/decisions, open todos/risks/questions, recent failed tools, and optional workspace + checkpoint metadata. Read-only; never calls an LLM.".to_string(),
+                input_schema: session_handoff_summary_input_schema(),
+                output_schema: output_schema_for_tool("session_handoff_summary"),
+                annotations: tool_annotations("session_handoff_summary"),
             },
             ToolSpec {
                 name: "bind_current_session".to_string(),
@@ -2301,6 +2390,7 @@ impl ToolRuntime {
                 "list_tools", "start_session", "session_summary",
                 "post_session_message", "list_session_messages",
                 "resolve_session_message", "session_discussion_summary",
+                "session_handoff_summary",
                 "bind_current_session", "current_session", "unbind_current_session",
                 "workspace_checkpoint_create", "workspace_checkpoint_list",
                 "workspace_checkpoint_show", "workspace_checkpoint_restore",

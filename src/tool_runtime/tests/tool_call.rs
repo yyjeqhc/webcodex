@@ -242,7 +242,14 @@ fn tool_call_project_accessor_covers_project_tool_specs() {
         let call = ToolCall::from_tool_name(&spec.name, sample_tool_args(&spec.name))
             .unwrap_or_else(|e| panic!("{} should deserialize: {}", spec.name, e));
         let schema_has_project = spec.input_schema["properties"].get("project").is_some();
-        let expected_project = if schema_has_project && spec.name != "start_session" {
+        // `start_session` has an optional project for task association that is
+        // intentionally not exposed by `project()`. `session_handoff_summary`
+        // has an optional project for workspace/checkpoint enrichment; sample
+        // args omit it (it is not required), so `project()` returns `None`.
+        let expected_project = if schema_has_project
+            && spec.name != "start_session"
+            && spec.name != "session_handoff_summary"
+        {
             Some("agent:oe:private-drop")
         } else {
             None
@@ -261,6 +268,16 @@ fn tool_call_project_accessor_covers_project_tool_specs() {
         ToolCall::from_tool_name("start_session", json!({"project": "agent:oe:private-drop"}))
             .unwrap();
     assert_eq!(start_session.project(), None);
+
+    // session_handoff_summary's optional project IS exposed by project()
+    // when provided, so the kernel can report it and authorize the workspace
+    // git inspection path.
+    let handoff = ToolCall::from_tool_name(
+        "session_handoff_summary",
+        json!({"session_id": "wc_sess_x", "project": "agent:oe:private-drop"}),
+    )
+    .unwrap();
+    assert_eq!(handoff.project(), Some("agent:oe:private-drop"));
 }
 
 #[test]

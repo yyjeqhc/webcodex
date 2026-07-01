@@ -8,6 +8,7 @@ mod checkpoint;
 mod codex;
 pub(crate) mod files;
 mod git;
+mod handoff;
 mod helpers;
 mod jobs;
 pub(crate) mod kernel;
@@ -282,6 +283,13 @@ fn is_current_session_control_tool(call: &ToolCall) -> bool {
 }
 
 fn is_current_session_eligible(call: &ToolCall) -> bool {
+    // `session_handoff_summary` carries an optional project for workspace/
+    // checkpoint enrichment, but its `session_id` is required business input
+    // (the session to summarize), not a recorder session. It must never fall
+    // back to the current-session binding.
+    if matches!(call, ToolCall::SessionHandoffSummary { .. }) {
+        return false;
+    }
     call.project().is_some() && !is_current_session_control_tool(call)
 }
 
@@ -633,6 +641,7 @@ impl ToolRuntime {
             | ToolCall::ListSessionMessages { .. }
             | ToolCall::ResolveSessionMessage { .. }
             | ToolCall::SessionDiscussionSummary { .. }
+            | ToolCall::SessionHandoffSummary { .. }
             | ToolCall::BindCurrentSession { .. }
             | ToolCall::CurrentSession { .. }
             | ToolCall::UnbindCurrentSession { .. }
@@ -1023,6 +1032,23 @@ impl ToolRuntime {
                     })),
                     Err(err) => session_message_error_result(&session_id, None, err),
                 }
+            }
+
+            ToolCall::SessionHandoffSummary {
+                session_id,
+                project,
+                include_workspace,
+                include_checkpoints,
+                limit,
+            } => {
+                self.session_handoff_summary(
+                    session_id,
+                    project,
+                    include_workspace,
+                    include_checkpoints,
+                    limit,
+                )
+                .await
             }
 
             ToolCall::BindCurrentSession {
@@ -1967,6 +1993,7 @@ fn tool_manifest_category(name: &str) -> &'static str {
         | "list_session_messages"
         | "resolve_session_message"
         | "session_discussion_summary"
+        | "session_handoff_summary"
         | "bind_current_session"
         | "current_session"
         | "unbind_current_session" => "session",
@@ -2085,6 +2112,11 @@ fn tool_manifest_recommended_flows() -> Vec<Value> {
             "name": "discovery",
             "purpose": "Discover projects, agents, and available tools.",
             "tools": ["tool_manifest", "list_projects", "runtime_status"]
+        }),
+        json!({
+            "name": "handoff",
+            "purpose": "Quickly understand task state before taking over a session.",
+            "tools": ["session_handoff_summary", "show_changes", "workspace_checkpoint_create"]
         }),
     ]
 }

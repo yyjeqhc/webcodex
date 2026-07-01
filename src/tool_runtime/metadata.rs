@@ -142,6 +142,16 @@ pub(crate) const TOOL_METADATA: &[ToolMetadata] = &[
         false,
     ),
     metadata(
+        "session_handoff_summary",
+        "control",
+        ToolRisk::ReadOnly,
+        Some(RUNTIME_READ),
+        false,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
         "bind_current_session",
         "control",
         ToolRisk::ReadOnly,

@@ -170,6 +170,24 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
+    /// Return a bounded structured handoff summary for an explicit session:
+    /// session info, message-board state, recent progress/decisions, open
+    /// todos/risks/questions/guidance, recent failed tool calls, and optional
+    /// workspace + checkpoint metadata. Read-only; never calls an LLM or
+    /// generates natural-language summaries. Exposed only through runtime
+    /// tools / MCP / `callRuntimeTool` (no dedicated OpenAPI op).
+    SessionHandoffSummary {
+        session_id: String,
+        #[serde(default)]
+        project: Option<String>,
+        #[serde(default)]
+        include_workspace: Option<bool>,
+        #[serde(default)]
+        include_checkpoints: Option<bool>,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
+
     /// Explicitly bind an existing project-scoped session as the caller's
     /// current session for later project tool calls on this transport.
     BindCurrentSession { project: String, session_id: String },
@@ -808,6 +826,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "list_session_messages",
     "resolve_session_message",
     "session_discussion_summary",
+    "session_handoff_summary",
     "bind_current_session",
     "current_session",
     "unbind_current_session",
@@ -914,6 +933,7 @@ impl ToolCall {
             Self::ListSessionMessages { .. } => "list_session_messages",
             Self::ResolveSessionMessage { .. } => "resolve_session_message",
             Self::SessionDiscussionSummary { .. } => "session_discussion_summary",
+            Self::SessionHandoffSummary { .. } => "session_handoff_summary",
             Self::BindCurrentSession { .. } => "bind_current_session",
             Self::CurrentSession { .. } => "current_session",
             Self::UnbindCurrentSession { .. } => "unbind_current_session",
@@ -1104,6 +1124,7 @@ impl ToolCall {
             | Self::WorkspaceCheckpointShow { project, .. }
             | Self::WorkspaceCheckpointRestore { project, .. }
             | Self::WorkspaceCheckpointDelete { project, .. } => Some(project.as_str()),
+            Self::SessionHandoffSummary { project, .. } => project.as_deref(),
             _ => None,
         }
     }
@@ -1577,6 +1598,19 @@ impl ToolCall {
             }),
             Self::SessionDiscussionSummary { session_id, limit } => serde_json::json!({
                 "session_id": session_id,
+                "limit": limit,
+            }),
+            Self::SessionHandoffSummary {
+                session_id,
+                project,
+                include_workspace,
+                include_checkpoints,
+                limit,
+            } => serde_json::json!({
+                "session_id": session_id,
+                "project": project,
+                "include_workspace": include_workspace,
+                "include_checkpoints": include_checkpoints,
                 "limit": limit,
             }),
             Self::ToolManifest {

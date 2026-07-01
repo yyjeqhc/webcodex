@@ -9,6 +9,7 @@ mod files;
 mod files_helpers;
 mod files_line_edit;
 mod git;
+mod handoff;
 mod jobs;
 mod metadata;
 mod schema;

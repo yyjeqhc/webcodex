@@ -7250,6 +7250,224 @@ shell_profile = "../rust"
         assert!(err.contains("Retry guidance"));
     }
 
+    fn apply_text_edits_request(
+        cwd: &Path,
+        path: &str,
+        payload: serde_json::Value,
+    ) -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: "req-apply-text-edits".to_string(),
+            client_id: "agent-1".to_string(),
+            kind: "file_apply_text_edits".to_string(),
+            job_id: None,
+            cwd: Some(cwd.to_string_lossy().to_string()),
+            path: Some(path.to_string()),
+            content: Some(payload.to_string()),
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            command: String::new(),
+            stdin: None,
+            timeout_secs: 30,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn file_apply_text_edits_replace_exact_writes_atomically() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "old\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "target.txt",
+                serde_json::json!({
+                    "edits": [
+                        {"kind": "replace_exact", "old_text": "old", "new_text": "new"}
+                    ]
+                }),
+            ),
+        ));
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["would_change"], true);
+        assert_eq!(out["changed_paths"][0], "target.txt");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "new\n");
+    }
+
+    #[test]
+    fn file_apply_text_edits_dry_run_does_not_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "old\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "target.txt",
+                serde_json::json!({
+                    "dry_run": true,
+                    "edits": [
+                        {"kind": "replace_exact", "old_text": "old", "new_text": "new"}
+                    ]
+                }),
+            ),
+        ));
+        assert_eq!(out["dry_run"], true);
+        assert_eq!(out["changed"], false);
+        assert_eq!(out["would_change"], true);
+        assert_eq!(out["changed_paths"][0], "target.txt");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "old\n");
+    }
+
+    #[test]
+    fn file_apply_text_edits_rejects_missing_match_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "alpha\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "target.txt",
+                serde_json::json!({
+                    "edits": [
+                        {"kind": "replace_exact", "old_text": "missing", "new_text": "x"}
+                    ]
+                }),
+            ),
+        ));
+        let msg = out["message"].as_str().unwrap();
+        assert!(msg.contains("match text was not found"));
+        assert!(msg.contains("No files were modified"));
+        assert_eq!(out["changed"], false);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "alpha\n");
+    }
+
+    #[test]
+    fn file_apply_text_edits_rejects_ambiguous_match_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "dup-dup\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "target.txt",
+                serde_json::json!({
+                    "edits": [
+                        {"kind": "replace_exact", "old_text": "dup", "new_text": "x"}
+                    ]
+                }),
+            ),
+        ));
+        let msg = out["message"].as_str().unwrap();
+        assert!(msg.contains("refusing ambiguous edit"));
+        assert!(msg.contains("No files were modified"));
+        assert_eq!(out["changed"], false);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "dup-dup\n");
+    }
+
+    #[test]
+    fn file_apply_text_edits_expected_file_sha256_mismatch_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "alpha\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "target.txt",
+                serde_json::json!({
+                    "expected_file_sha256": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeefdead",
+                    "edits": [
+                        {"kind": "replace_exact", "old_text": "alpha", "new_text": "beta"}
+                    ]
+                }),
+            ),
+        ));
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("expected_file_sha256 mismatch"));
+        assert!(err.contains("No files were modified"));
+        assert_eq!(out["changed"], false);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "alpha\n");
+    }
+
+    #[test]
+    fn file_apply_text_edits_insert_before_after_and_delete_exact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "alpha\nbeta\ngamma\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "target.txt",
+                serde_json::json!({
+                    "edits": [
+                        {"kind": "insert_after", "anchor_text": "alpha\n", "new_text": "ALPHA-AFTER\n"},
+                        {"kind": "delete_exact", "old_text": "beta\n"},
+                        {"kind": "insert_before", "anchor_text": "gamma\n", "new_text": "GAMMA-BEFORE\n"}
+                    ]
+                }),
+            ),
+        ));
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["applied_count"], 3);
+        assert_eq!(out["changed_paths"][0], "target.txt");
+        assert_eq!(
+            std::fs::read_to_string(&file).unwrap(),
+            "alpha\nALPHA-AFTER\nGAMMA-BEFORE\ngamma\n"
+        );
+    }
+
+    #[test]
+    fn file_apply_text_edits_rejects_overlapping_edits() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "abcdef\n").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &apply_text_edits_request(
+                tmp.path(),
+                "target.txt",
+                serde_json::json!({
+                    "edits": [
+                        {"kind": "replace_exact", "old_text": "abc", "new_text": "ABC"},
+                        {"kind": "replace_exact", "old_text": "cde", "new_text": "CDE"}
+                    ]
+                }),
+            ),
+        ));
+        let err = out["error"].as_str().unwrap();
+        assert!(err.contains("edits overlap"));
+        assert!(err.contains("No files were modified"));
+        assert_eq!(out["changed"], false);
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "abcdef\n");
+    }
+
     #[test]
     fn agent_native_line_edit_replace_insert_delete_happy_paths() {
         let tmp = tempfile::tempdir().unwrap();

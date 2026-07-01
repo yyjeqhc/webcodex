@@ -78,6 +78,8 @@ Environment:\n\
   WEBCODEX_DATA          Data directory, default ./data\n\
   WEBCODEX_PUBLIC_URL    Public URL reported to clients\n\
   WEBCODEX_ENABLE_SSH    Enable SSH-related runtime features\n\
+  WEBCODEX_ALLOW_ANONYMOUS  Allow anonymous GPT/MCP and client access (--open). \
+Default off; only safe on localhost/trusted LAN/temporary demos.\n\
   WEBCODEX_QUIC_ENABLED  Enable QUIC agent transport (default off)\n\
   WEBCODEX_QUIC_LISTEN   QUIC UDP listen addr, default 0.0.0.0:8443\n\
   WEBCODEX_QUIC_CERT     PEM cert path for the QUIC listener\n\
@@ -192,9 +194,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = Config::from_env();
     if !config.is_auth_enabled() {
         tracing::warn!(
-            "WEBCODEX_TOKEN is not set! Running in development mode without authentication."
+            "WEBCODEX_TOKEN is not set! Running in development mode without authentication. \
+Use `webcodex-cli server up` to generate a bootstrap/admin key, or set WEBCODEX_ALLOW_ANONYMOUS=true \
+only for local/trusted-network demos."
         );
-        tracing::warn!("Set WEBCODEX_TOKEN environment variable to enable authentication.");
+        tracing::warn!("Anonymous API access is rejected by default in production mode.");
     }
     let build_info = build_info::current();
     tracing::info!(
@@ -536,6 +540,7 @@ mod tests {
             "WEBCODEX_DATA",
             "WEBCODEX_PUBLIC_URL",
             "WEBCODEX_ENABLE_SSH",
+            "WEBCODEX_ALLOW_ANONYMOUS",
             "WEBCODEX_QUIC_ENABLED",
             "WEBCODEX_QUIC_LISTEN",
             "WEBCODEX_QUIC_CERT",
@@ -589,6 +594,7 @@ mod tests {
             "WEBCODEX_DATA",
             "WEBCODEX_PUBLIC_URL",
             "WEBCODEX_ENABLE_SSH",
+            "WEBCODEX_ALLOW_ANONYMOUS",
             "WEBCODEX_QUIC_ENABLED",
             "WEBCODEX_QUIC_LISTEN",
             "WEBCODEX_QUIC_CERT",

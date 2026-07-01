@@ -3352,6 +3352,7 @@ mod tests {
                 Some("user".to_string())
             },
             allowed_client_id: None,
+            shared_key_hash: None,
         }
     }
 
@@ -3373,6 +3374,7 @@ mod tests {
             is_bootstrap: false,
             token_kind: Some("agent".to_string()),
             allowed_client_id: Some(allowed_client_id.to_string()),
+            shared_key_hash: None,
         }
     }
 

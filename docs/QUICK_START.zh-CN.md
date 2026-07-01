@@ -7,11 +7,52 @@
 | 需求 | 使用 |
 | --- | --- |
 | 单机本地评估，不需要 `sudo`、HTTPS 或 service | README 快速开始 |
+| **最快 server + client（共享密钥）** | **下方快速开始** |
+| **临时 demo（匿名 open 模式）** | **下方快速开始** |
 | 第一次部署 server 和长期运行的 systemd agent | 下方第 1-3 节 |
 | 临时 agent、容器或没有 systemd 的机器 | 下方第 4 节 |
 | 生产加固、Nginx、QUIC、GPT Actions、MCP 细节 | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) |
 
 下面的命令形态已对照当前 `webcodex-cli`、`webcodex-agent` 和 `webcodex` 的二进制 help 输出检查。
+
+## 快速开始：三条路径
+
+### A. 共享密钥（推荐早期体验）
+
+启动 server —— 自动生成 bootstrap/admin 密钥并启用共享密钥客户端：
+
+```bash
+webcodex-cli server up --public-url https://sg4.yyjeqhc.cn
+```
+
+从项目目录连接客户端：
+
+```bash
+webcodex-cli connect https://sg4.yyjeqhc.cn --key abc123 --root ~/git/project
+```
+
+GPT Action / MCP 使用同一个密钥：
+
+```text
+Authorization: Bearer abc123
+```
+
+Client 和 GPT/MCP 使用同一个密钥，server 会把它们匹配到同一组。共享密钥不是管理员，不能管理 server 全局资源。如需生产级 IAM、scope 和 token 轮换，请使用下方第 1-4 节的 managed mode。
+
+### B. Open（匿名，仅限临时 demo）
+
+```bash
+webcodex-cli server up --open
+webcodex-cli connect http://127.0.0.1:8080 --open --root .
+```
+
+GPT Action / MCP：不填 token。
+
+> **警告：** `--open` 是匿名测试模式。server 和 client 都必须显式使用 `--open`。不要在不可信公网使用 `--open`。
+
+### C. 生产 / managed mode
+
+使用 `wc_pat_*` 和 `wc_agent_*` token、pairing 和 systemd service 的完整 managed 流程保留在下方第 1-4 节。适用于需要每用户 scope、token 轮换和审计的生产部署。
 
 ## 0. 安装 binaries
 

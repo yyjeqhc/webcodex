@@ -43,6 +43,12 @@ pub enum AuthMethod {
     /// An OAuth2 bearer token. **Reserved for future use** — no verifier is
     /// wired up yet.
     OAuth2,
+    /// A lightweight shared-key bearer token (quick-start mode). Non-admin,
+    /// grouped by key hash.
+    SharedKey,
+    /// Anonymous access under explicit `--open` server mode. Non-admin, single
+    /// open group.
+    OpenAnonymous,
 }
 
 impl std::fmt::Display for AuthMethod {
@@ -53,6 +59,8 @@ impl std::fmt::Display for AuthMethod {
             AuthMethod::AgentToken => write!(f, "agent_token"),
             AuthMethod::AccountCredential => write!(f, "account_credential"),
             AuthMethod::OAuth2 => write!(f, "oauth2"),
+            AuthMethod::SharedKey => write!(f, "shared_key"),
+            AuthMethod::OpenAnonymous => write!(f, "open_anonymous"),
         }
     }
 }
@@ -221,6 +229,8 @@ impl Principal {
             AuthKind::AgentToken => AuthMethod::AgentToken,
             AuthKind::AccountCredential => AuthMethod::AccountCredential,
             AuthKind::OAuth2Token => AuthMethod::OAuth2,
+            AuthKind::SharedKey => AuthMethod::SharedKey,
+            AuthKind::OpenAnonymous => AuthMethod::OpenAnonymous,
         };
 
         Principal {
@@ -367,6 +377,7 @@ mod tests {
             is_bootstrap: true,
             token_kind: None,
             allowed_client_id: None,
+            shared_key_hash: None,
         }
     }
 
@@ -382,6 +393,7 @@ mod tests {
             is_bootstrap: false,
             token_kind: Some("user".to_string()),
             allowed_client_id: None,
+            shared_key_hash: None,
         }
     }
 
@@ -397,6 +409,7 @@ mod tests {
             is_bootstrap: false,
             token_kind: Some("agent".to_string()),
             allowed_client_id: Some(client_id.to_string()),
+            shared_key_hash: None,
         }
     }
 

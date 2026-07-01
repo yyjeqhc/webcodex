@@ -7,11 +7,52 @@ This guide is the first deployable setup path after the no-sudo local demo in th
 | Need | Use |
 | --- | --- |
 | One-machine local evaluation, no `sudo`, no HTTPS, no service | README Quick start |
+| **Quickest server + client (shared key)** | **Quick start below** |
+| **Temporary demo (anonymous open mode)** | **Quick start below** |
 | First server and long-running agent with systemd services | Sections 1-3 below |
 | Temporary agent, container, or machine without systemd | Section 4 below |
 | Production hardening, Nginx, QUIC, GPT Actions, MCP details | [DEPLOYMENT.md](DEPLOYMENT.md) |
 
 The command shapes below were checked against the current binary help output for `webcodex-cli`, `webcodex-agent`, and `webcodex`.
+
+## Quick start: three paths
+
+### A. Shared key (recommended for early evaluation)
+
+Start the server — it auto-generates a bootstrap/admin key and enables shared-key clients:
+
+```bash
+webcodex-cli server up --public-url https://sg4.yyjeqhc.cn
+```
+
+Connect a client from a project directory:
+
+```bash
+webcodex-cli connect https://sg4.yyjeqhc.cn --key abc123 --root ~/git/project
+```
+
+Configure GPT Action / MCP with the same key:
+
+```text
+Authorization: Bearer abc123
+```
+
+Client and GPT/MCP use the same key; the server matches them to the same group. Shared keys are non-admin and cannot manage server-global resources. For production-grade IAM, scopes, and token rotation, use the managed mode in Sections 1-4.
+
+### B. Open (anonymous, temporary demo only)
+
+```bash
+webcodex-cli server up --open
+webcodex-cli connect http://127.0.0.1:8080 --open --root .
+```
+
+GPT Action / MCP: do not fill a token.
+
+> **Warning:** `--open` is anonymous test mode. Both server and client must explicitly use `--open`. Do not use `--open` on untrusted public networks.
+
+### C. Production / managed mode
+
+The full managed flow with `wc_pat_*` and `wc_agent_*` tokens, pairing, and systemd services is preserved in Sections 1-4 below. Use it for production deployments that need per-user scopes, token rotation, and audit trails.
 
 ## 0. Install binaries
 

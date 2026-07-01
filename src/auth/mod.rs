@@ -97,6 +97,16 @@ pub enum AuthKind {
     /// [`OAuth2Verifier`]. Accepted on all regular HTTP paths; rejected on
     /// agent-transport and QUIC surfaces.
     OAuth2Token,
+    /// A lightweight shared-key bearer token (quick-start mode). Any bearer
+    /// token that is not a recognized managed credential (`wc_boot_*`,
+    /// `wc_pat_*`, `wc_agent_*`, `wc_oat_*`) is treated as a shared key and
+    /// grouped by its SHA-256 hash. Shared keys are non-admin and scoped to
+    /// runtime/project/agent surfaces only.
+    SharedKey,
+    /// Anonymous access granted only when the server is started with explicit
+    /// `--open` (`WEBCODEX_ALLOW_ANONYMOUS=true`). Non-admin, grouped under a
+    /// single open group. Intended for local/trusted-network demos only.
+    OpenAnonymous,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +130,9 @@ pub struct AuthContext {
     /// Phase 3: the `allowed_client_id` bound to an agent token. `None` for
     /// bootstrap auth and user tokens.
     pub allowed_client_id: Option<String>,
+    /// Quick-start shared-key mode: the SHA-256 hex of the bearer token used
+    /// for lightweight group isolation. `None` for all managed auth kinds.
+    pub shared_key_hash: Option<String>,
 }
 
 impl AuthContext {
@@ -167,6 +180,28 @@ impl AuthContext {
         matches!(self.kind, AuthKind::OAuth2Token)
     }
 
+    /// True when the caller authenticated with a lightweight shared key
+    /// (quick-start mode).
+    #[allow(dead_code)]
+    pub fn is_shared_key(&self) -> bool {
+        matches!(self.kind, AuthKind::SharedKey)
+    }
+
+    /// True when the caller was granted anonymous access under explicit
+    /// `--open` server mode.
+    #[allow(dead_code)]
+    pub fn is_open_anonymous(&self) -> bool {
+        matches!(self.kind, AuthKind::OpenAnonymous)
+    }
+
+    /// True when the caller is a lightweight principal (shared key or open
+    /// anonymous). These are non-admin and must not reach account-control or
+    /// server-global management surfaces.
+    #[allow(dead_code)]
+    pub fn is_lightweight(&self) -> bool {
+        self.is_shared_key() || self.is_open_anonymous()
+    }
+
     /// True when the caller may use an agent transport endpoint for the given
     /// `client_id`. Bootstrap may use any client_id. Agent tokens may only use
     /// the `allowed_client_id` they are bound to. User tokens may not use
@@ -174,6 +209,11 @@ impl AuthContext {
     #[allow(dead_code)]
     pub fn can_use_agent_endpoint(&self, client_id: &str) -> bool {
         if self.is_bootstrap {
+            return true;
+        }
+        // Shared-key and open-anonymous callers may use agent transport
+        // endpoints — grouping is by key/open group, not by client_id.
+        if self.is_lightweight() {
             return true;
         }
         if matches!(self.kind, AuthKind::AgentToken) {
@@ -400,6 +440,7 @@ impl TokenVerifier for PatVerifier {
                 is_bootstrap: false,
                 token_kind: Some(api_key.kind().to_string()),
                 allowed_client_id: api_key.allowed_client_id.clone(),
+                shared_key_hash: None,
             }));
         }
 
@@ -431,6 +472,7 @@ impl TokenVerifier for PatVerifier {
                 is_bootstrap: false,
                 token_kind: Some("account".to_string()),
                 allowed_client_id: None,
+                shared_key_hash: None,
             }));
         }
 
@@ -561,6 +603,7 @@ impl TokenVerifier for OAuth2Verifier {
             is_bootstrap: false,
             token_kind: Some("oauth2".to_string()),
             allowed_client_id: Some(at_record.client_id.clone()),
+            shared_key_hash: None,
         }))
     }
 }
@@ -603,7 +646,16 @@ pub(crate) async fn authenticate_bearer(
     if !config.is_auth_enabled() {
         return Some(bootstrap_context());
     }
-    let token = token?;
+    // No token: only allowed when the server is explicitly --open.
+    let token = match token {
+        Some(t) => t,
+        None => {
+            if allow_anonymous_enabled() {
+                return Some(open_anonymous_context());
+            }
+            return None;
+        }
+    };
     // Pre-reject OAuth2 access tokens before running the verifier chain.
     // OAuth2Verifier updates last_used_at on success, so we must not let it
     // run on a surface that will ultimately reject the token. The QUIC/agent
@@ -615,14 +667,28 @@ pub(crate) async fn authenticate_bearer(
     // OAuth2Verifier). Any error (disabled user, expired token) is treated
     // the same as "unknown" for the QUIC transport — the caller rejects
     // the connection either way.
-    let ctx = authenticate(config, db, token).await.ok().flatten()?;
-    // Account credentials are not valid on the agent transport surface.
-    // Reject them here so they don't silently update last_used_at and then
-    // get rejected by the caller anyway.
-    if ctx.is_account_credential() {
-        return None;
+    match authenticate(config, db, token).await {
+        Ok(Some(ctx)) => {
+            // Account credentials are not valid on the agent transport surface.
+            // Reject them here so they don't silently update last_used_at and then
+            // get rejected by the caller anyway.
+            if ctx.is_account_credential() {
+                return None;
+            }
+            Some(ctx)
+        }
+        Ok(None) => {
+            // Unknown bearer token: treat as a lightweight shared key only
+            // when quick-start mode is enabled and the token does not look
+            // like a WebCodex managed credential.
+            if shared_key_enabled() && !is_managed_token_prefix(token) {
+                Some(shared_key_context(token))
+            } else {
+                None
+            }
+        }
+        Err(_) => None,
     }
-    Some(ctx)
 }
 
 /// Build the bootstrap `AuthContext` used when auth is disabled or the
@@ -640,6 +706,93 @@ fn bootstrap_context() -> AuthContext {
         is_bootstrap: true,
         token_kind: None,
         allowed_client_id: None,
+        shared_key_hash: None,
+    }
+}
+
+/// Read the explicit-anonymous (`--open`) flag from the environment. When true,
+/// the server allows anonymous GPT/MCP and anonymous client access under the
+/// open group. Default false — the server never offers anonymous service
+/// unless the operator explicitly opts in.
+pub(crate) fn allow_anonymous_enabled() -> bool {
+    crate::config::env_flag("WEBCODEX_ALLOW_ANONYMOUS").unwrap_or(false)
+}
+
+/// Read the shared-key quick-start flag from the environment. When true,
+/// unknown bearer tokens that do not look like WebCodex managed credentials
+/// (`wc_*`) are accepted as lightweight shared keys instead of being rejected.
+/// Default false — the server rejects unknown tokens unless the operator
+/// explicitly enables quick-start mode (e.g. via `server up`).
+pub(crate) fn shared_key_enabled() -> bool {
+    crate::config::env_flag("WEBCODEX_SHARED_KEY_ENABLED").unwrap_or(false)
+}
+
+/// True when `token` uses a WebCodex managed-credential prefix. Tokens with
+/// these prefixes that fail verifier-chain validation are rejected outright
+/// rather than falling back to shared-key mode.
+fn is_managed_token_prefix(token: &str) -> bool {
+    token.starts_with("wc_")
+}
+
+/// SHA-256 hex of a shared key, used for lightweight group isolation. Two
+/// requests presenting the same key land in the same group.
+fn shared_key_hash_of(token: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(token.as_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+/// Scopes granted to a shared-key or open-anonymous caller. These cover the
+/// runtime, project, job, and agent-transport surfaces but deliberately
+/// exclude `admin` and `account:manage` so lightweight keys cannot manage
+/// server-global resources.
+fn lightweight_scopes() -> Vec<String> {
+    vec![
+        SCOPE_RUNTIME_READ.to_string(),
+        SCOPE_PROJECT_READ.to_string(),
+        SCOPE_PROJECT_WRITE.to_string(),
+        SCOPE_JOB_RUN.to_string(),
+        SCOPE_AGENT_REGISTER.to_string(),
+        SCOPE_AGENT_POLL.to_string(),
+        SCOPE_AGENT_RESULT.to_string(),
+        SCOPE_AGENT_JOB_UPDATE.to_string(),
+    ]
+}
+
+/// Build a shared-key [`AuthContext`] for a lightweight bearer token. The
+/// caller is non-admin and grouped by `shared_key_hash`.
+fn shared_key_context(token: &str) -> AuthContext {
+    AuthContext {
+        kind: AuthKind::SharedKey,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        api_key_name: None,
+        role: Some("shared-key".to_string()),
+        scopes: lightweight_scopes(),
+        is_bootstrap: false,
+        token_kind: Some("shared-key".to_string()),
+        allowed_client_id: None,
+        shared_key_hash: Some(shared_key_hash_of(token)),
+    }
+}
+
+/// Build the open-anonymous [`AuthContext`] used only when the server is
+/// started with explicit `--open`. Non-admin, single open group.
+fn open_anonymous_context() -> AuthContext {
+    AuthContext {
+        kind: AuthKind::OpenAnonymous,
+        user_id: None,
+        username: None,
+        api_key_id: None,
+        api_key_name: None,
+        role: Some("open".to_string()),
+        scopes: lightweight_scopes(),
+        is_bootstrap: false,
+        token_kind: Some("open".to_string()),
+        allowed_client_id: None,
+        shared_key_hash: None,
     }
 }
 
@@ -694,6 +847,14 @@ pub(crate) fn enforce_token_surface(
     ctx: &AuthContext,
     path: &str,
 ) -> Result<(), (StatusCode, &'static str)> {
+    // Lightweight principals (shared key / open anonymous) must never reach
+    // account-control or first-party-only management surfaces.
+    if ctx.is_lightweight() && is_account_control_path(path) {
+        return Err((
+            StatusCode::FORBIDDEN,
+            "lightweight keys are not allowed on account control endpoints",
+        ));
+    }
     if ctx.is_agent_token() && !is_agent_transport_path(path) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -809,7 +970,10 @@ impl Handler for AuthMiddleware {
         let db = get_db(depot);
         let token = bearer_or_allowed_query_token(req);
 
-        // When no token is present and auth is enabled, reject immediately.
+        // When no token is present and auth is enabled, reject immediately
+        // unless the server was explicitly started with `--open`
+        // (WEBCODEX_ALLOW_ANONYMOUS=true), in which case the anonymous caller
+        // is granted a non-admin open-group context.
         // When auth is disabled, the verifier chain handles the bootstrap
         // fallback — we still call authenticate with a dummy token so the
         // code path stays uniform.
@@ -819,6 +983,20 @@ impl Handler for AuthMiddleware {
                 if !config.is_auth_enabled() {
                     // Auth disabled, no token: inject bootstrap and continue.
                     depot.inject(bootstrap_context());
+                    ctrl.call_next(req, depot, res).await;
+                    return;
+                }
+                if allow_anonymous_enabled() {
+                    // Explicit --open: anonymous callers get a non-admin open
+                    // context. Surface restrictions still apply.
+                    let ctx = open_anonymous_context();
+                    if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
+                        res.status_code(status);
+                        res.render(Json(serde_json::json!({"error": msg})));
+                        ctrl.skip_rest();
+                        return;
+                    }
+                    depot.inject(ctx);
                     ctrl.call_next(req, depot, res).await;
                     return;
                 }
@@ -870,7 +1048,34 @@ impl Handler for AuthMiddleware {
                 ctrl.call_next(req, depot, res).await;
             }
             Ok(None) => {
-                // Token not recognized by any verifier.
+                // Token not recognized by any verifier. When shared-key
+                // quick-start mode is enabled and the token does not look
+                // like a WebCodex managed credential (wc_*), treat it as a
+                // lightweight shared key. Managed-prefix tokens that failed
+                // verification are always rejected.
+                if config.is_auth_enabled()
+                    && shared_key_enabled()
+                    && !is_managed_token_prefix(&token)
+                {
+                    let ctx = shared_key_context(&token);
+                    if let Err((status, msg)) = enforce_token_surface(&ctx, req.uri().path()) {
+                        res.status_code(status);
+                        res.render(Json(serde_json::json!({"error": msg})));
+                        ctrl.skip_rest();
+                        return;
+                    }
+                    if let Err((scope, description)) =
+                        enforce_oauth_route_scope(&ctx, req.method().as_str(), req.uri().path())
+                    {
+                        render_oauth_insufficient_scope(res, scope, description);
+                        ctrl.skip_rest();
+                        return;
+                    }
+                    depot.inject(ctx);
+                    ctrl.call_next(req, depot, res).await;
+                    return;
+                }
+                // Unknown or managed-prefix-invalid token: reject.
                 res.status_code(StatusCode::UNAUTHORIZED);
                 if let Some(challenge) = oauth2_bearer_challenge(&config) {
                     if let Ok(val) = salvo::http::HeaderValue::from_str(&challenge) {
@@ -936,6 +1141,7 @@ mod tests {
             is_bootstrap: true,
             token_kind: None,
             allowed_client_id: None,
+            shared_key_hash: None,
         }
     }
 
@@ -951,6 +1157,7 @@ mod tests {
             is_bootstrap: false,
             token_kind: Some("user".to_string()),
             allowed_client_id: None,
+            shared_key_hash: None,
         }
     }
 
@@ -966,6 +1173,7 @@ mod tests {
             is_bootstrap: false,
             token_kind: Some("agent".to_string()),
             allowed_client_id: Some(client_id.to_string()),
+            shared_key_hash: None,
         }
     }
 
@@ -2066,6 +2274,143 @@ mod tests {
             assert_eq!(status, StatusCode::FORBIDDEN);
             assert!(msg.contains("agent tokens"));
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // Shared-key / open-anonymous quick-start auth tests
+    // -----------------------------------------------------------------------
+
+    #[test]
+    fn shared_key_context_is_non_admin_with_key_hash() {
+        let ctx = shared_key_context("abc123");
+        assert!(!ctx.is_bootstrap);
+        assert!(!ctx.is_admin());
+        assert!(ctx.is_shared_key());
+        assert!(ctx.is_lightweight());
+        assert!(ctx.shared_key_hash.is_some());
+        // Same key → same hash (deterministic grouping).
+        let ctx2 = shared_key_context("abc123");
+        assert_eq!(ctx.shared_key_hash, ctx2.shared_key_hash);
+        // Different key → different hash.
+        let ctx3 = shared_key_context("xyz789");
+        assert_ne!(ctx.shared_key_hash, ctx3.shared_key_hash);
+    }
+
+    #[test]
+    fn open_anonymous_context_is_non_admin() {
+        let ctx = open_anonymous_context();
+        assert!(!ctx.is_bootstrap);
+        assert!(!ctx.is_admin());
+        assert!(ctx.is_open_anonymous());
+        assert!(ctx.is_lightweight());
+        assert!(ctx.shared_key_hash.is_none());
+    }
+
+    #[test]
+    fn lightweight_contexts_have_no_admin_scope() {
+        let sk = shared_key_context("k");
+        assert!(!sk.scopes.iter().any(|s| s == SCOPE_ADMIN));
+        let open = open_anonymous_context();
+        assert!(!open.scopes.iter().any(|s| s == SCOPE_ADMIN));
+        // They do have runtime/project/agent scopes.
+        assert!(sk.scopes.contains(&SCOPE_RUNTIME_READ.to_string()));
+        assert!(sk.scopes.contains(&SCOPE_PROJECT_WRITE.to_string()));
+        assert!(sk.scopes.contains(&SCOPE_AGENT_REGISTER.to_string()));
+    }
+
+    #[test]
+    fn enforce_token_surface_rejects_lightweight_on_account_control() {
+        let sk = shared_key_context("k");
+        let open = open_anonymous_context();
+        for path in ACCOUNT_CONTROL_PATHS {
+            let r1 = enforce_token_surface(&sk, path);
+            assert!(r1.is_err(), "shared key should be rejected on {path}");
+            let (status, _) = r1.unwrap_err();
+            assert_eq!(status, StatusCode::FORBIDDEN);
+            let r2 = enforce_token_surface(&open, path);
+            assert!(r2.is_err(), "open should be rejected on {path}");
+        }
+    }
+
+    #[test]
+    fn enforce_token_surface_allows_lightweight_on_runtime_and_agent_paths() {
+        let sk = shared_key_context("k");
+        let open = open_anonymous_context();
+        for path in [
+            "/api/runtime/status",
+            "/api/tools/list",
+            "/api/projects/list",
+            "/api/shell/agent/register",
+            "/api/agents/ws",
+            "/mcp",
+        ] {
+            assert!(
+                enforce_token_surface(&sk, path).is_ok(),
+                "shared key should be allowed on {path}"
+            );
+            assert!(
+                enforce_token_surface(&open, path).is_ok(),
+                "open should be allowed on {path}"
+            );
+        }
+    }
+
+    #[test]
+    fn lightweight_can_use_agent_endpoint() {
+        let sk = shared_key_context("k");
+        assert!(sk.can_use_agent_endpoint("any-client-id"));
+        let open = open_anonymous_context();
+        assert!(open.can_use_agent_endpoint("any-client-id"));
+    }
+
+    #[test]
+    fn managed_token_prefix_detected() {
+        assert!(is_managed_token_prefix("wc_boot_abc"));
+        assert!(is_managed_token_prefix("wc_pat_xyz"));
+        assert!(is_managed_token_prefix("wc_agent_123"));
+        assert!(is_managed_token_prefix("wc_oat_def"));
+        assert!(is_managed_token_prefix("wc_ort_refresh"));
+        assert!(!is_managed_token_prefix("abc123"));
+        assert!(!is_managed_token_prefix("my-shared-key"));
+        assert!(!is_managed_token_prefix("wrong-token"));
+        assert!(!is_managed_token_prefix(""));
+    }
+
+    #[tokio::test]
+    async fn shared_key_fallback_gated_by_env_and_prefix() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let config = crate::Config {
+            addr: "0.0.0.0:8080".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            enable_ssh: false,
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::default(),
+        };
+
+        // Shared-key disabled (default): unknown non-wc token → None (reject).
+        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
+        let r = authenticate_bearer(&config, None, Some("my-key")).await;
+        assert!(
+            r.is_none(),
+            "unknown token should be rejected when shared-key disabled"
+        );
+
+        // Shared-key enabled: unknown non-wc token → Some (shared-key context).
+        std::env::set_var("WEBCODEX_SHARED_KEY_ENABLED", "true");
+        let r = authenticate_bearer(&config, None, Some("my-key")).await;
+        assert!(r.is_some(), "non-wc token should be accepted as shared-key");
+        let ctx = r.unwrap();
+        assert!(ctx.is_shared_key());
+        assert!(!ctx.is_admin());
+
+        // Shared-key enabled but wc_-prefixed invalid token → None (reject).
+        let r = authenticate_bearer(&config, None, Some("wc_pat_invalid")).await;
+        assert!(r.is_none(), "wc_ prefix invalid token must be rejected");
+
+        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
     }
 
     #[test]

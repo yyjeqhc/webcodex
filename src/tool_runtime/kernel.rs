@@ -504,6 +504,7 @@ mod tests {
             is_bootstrap: false,
             token_kind: Some("oauth2".to_string()),
             allowed_client_id: None,
+            shared_key_hash: None,
         }
     }
 

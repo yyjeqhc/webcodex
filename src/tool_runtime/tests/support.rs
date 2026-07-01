@@ -550,6 +550,7 @@ pub(super) fn auth_context(username: Option<&str>, is_bootstrap: bool) -> crate:
             Some("user".to_string())
         },
         allowed_client_id: None,
+        shared_key_hash: None,
     }
 }
 

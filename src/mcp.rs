@@ -706,6 +706,7 @@ mod tests {
             is_bootstrap: true,
             token_kind: None,
             allowed_client_id: None,
+            shared_key_hash: None,
         };
 
         let outcome = handle_mcp_request(

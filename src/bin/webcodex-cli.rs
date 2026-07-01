@@ -73,6 +73,8 @@ enum CliAction {
     ServerInit(ServerInitOptions),
     ServerInstallService(ServerInstallServiceOptions),
     ServerStatus(ServerStatusOptions),
+    ServerUp(ServerUpOptions),
+    Connect(ConnectOptions),
     Exit {
         code: i32,
         stdout: String,
@@ -228,6 +230,38 @@ struct ServerStatusOptions {
     json: bool,
 }
 
+/// Quick-start connection mode selected by the caller. `--key` and `--open` are
+/// mutually exclusive at the CLI layer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ConnectMode {
+    /// Shared-key pairing: client and GPT/MCP use the same arbitrary key.
+    SharedKey(String),
+    /// Anonymous pairing: requires the server to be started with `--open`.
+    Open,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ConnectOptions {
+    server_url: String,
+    mode: ConnectMode,
+    root: PathBuf,
+    output_dir: Option<PathBuf>,
+    client_id: Option<String>,
+    overwrite: bool,
+    json: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ServerUpOptions {
+    public_url: Option<String>,
+    listen: Option<String>,
+    open: bool,
+    data_dir: Option<PathBuf>,
+    env_file: Option<PathBuf>,
+    foreground: bool,
+    json: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AgentStatusOptions {
     config: PathBuf,
@@ -241,6 +275,8 @@ fn usage() -> &'static str {
     "Usage: webcodex-cli <COMMAND>\n\n\
      Management/setup commands for WebCodex.\n\n\
      Commands:\n\
+       connect <URL> --key <KEY> | --open       Quick-start client connection (shared key or open)\n\
+       server up                                      Bootstrap server env with auto-generated admin key\n\
        server init                                      Create server env bootstrap file\n\
        server install-service                           Generate/install a systemd unit\n\
        server status                                    Check service and runtime status\n\
@@ -306,6 +342,44 @@ fn client_usage() -> &'static str {
        enroll       Enroll this client using a temporary pairing code\n"
 }
 
+fn connect_usage() -> &'static str {
+    "Usage: webcodex-cli connect <SERVER-URL> --key <KEY> | --open [OPTIONS]\n\n\
+     Quick-start client connection. Generates a client id, agent.toml, and a\n\
+     projects registry entry for the project root, then prints how to configure\n\
+     GPT Actions / MCP.\n\n\
+     Options:\n\
+       --key KEY            Shared-key pairing (mutually exclusive with --open)\n\
+       --open               Anonymous pairing; server must also be --open\n\
+       --root PATH          Project root [default: current working directory]\n\
+       --output-dir DIR     Output dir [default: ~/.config/webcodex/clients/<client-id>]\n\
+       --client-id ID       Client id [default: generated UUID]\n\
+       --overwrite          Replace existing config files\n\
+       --json               Print machine-readable output\n\
+       -h, --help           Print help and exit\n\n\
+     --key and --open are mutually exclusive. Client and GPT/MCP use the same\n\
+     key as a Bearer token and the server groups them together.\n"
+}
+
+fn server_up_usage() -> &'static str {
+    "Usage: webcodex-cli server up [OPTIONS]\n\n\
+     Quick-start server bootstrap. Generates a local bootstrap/admin key when no\n\
+     WEBCODEX_TOKEN is configured, writes a user-writable env file, and prints\n\
+     next steps. Anonymous access is rejected by default; pass --open only for\n\
+     local/trusted-network demos.\n\n\
+     Options:\n\
+       --public-url URL     Public URL reported to clients\n\
+       --listen ADDR        Listen address [default: 0.0.0.0:8080]\n\
+       --open               Allow anonymous GPT/MCP and client access\n\
+       --data-dir DIR       Data directory [default: user/state dependent]\n\
+       --env-file PATH      Env file path [default: user/config dependent]\n\
+       --foreground         Start the server in the foreground after writing env\n\
+       --json               Print machine-readable output\n\
+       -h, --help           Print help and exit\n\n\
+     Default (no --open): anonymous denied, shared-key clients allowed,\n\
+     managed tokens allowed, bootstrap/admin key enabled.\n\
+     With --open: anonymous GPT/MCP and clients allowed (demo/test only).\n"
+}
+
 fn client_enroll_usage() -> &'static str {
     "Usage: webcodex-cli client enroll --server-url URL --pairing-code CODE --client-id CLIENT_ID [OPTIONS]\n\n\
      Options:\n\
@@ -364,6 +438,7 @@ fn server_usage() -> &'static str {
     "Usage: webcodex-cli server <COMMAND>\n\n\
      Server bootstrap commands.\n\n\
      Commands:\n\
+       up                   Quick-start: auto-generate admin key + env, optional --open\n\
        init                 Create WEBCODEX_TOKEN env bootstrap file\n\
        install-service      Generate/install a systemd unit\n\
        status               Check systemd and /api/runtime/status\n\n\
@@ -512,6 +587,7 @@ where
             stdout: build_info::version_output("webcodex-cli"),
             stderr: String::new(),
         },
+        "connect" => parse_connect_command(&args[1..]),
         "server" => parse_server_subcommand(&args[1..]),
         "pairing" => parse_pairing_subcommand(&args[1..]),
         "client" => parse_client_subcommand(&args[1..]),
@@ -951,6 +1027,23 @@ fn parse_server_subcommand(args: &[String]) -> CliAction {
                 },
             }
         }
+        "up" => {
+            if args.get(1).is_some_and(|a| a == "--help" || a == "-h") {
+                return CliAction::Exit {
+                    code: 0,
+                    stdout: server_up_usage().to_string(),
+                    stderr: String::new(),
+                };
+            }
+            match parse_server_up(&args[1..]) {
+                Ok(opts) => CliAction::ServerUp(opts),
+                Err(e) => CliAction::Exit {
+                    code: 2,
+                    stdout: String::new(),
+                    stderr: format!("{}\n", e),
+                },
+            }
+        }
         other => CliAction::Exit {
             code: 2,
             stdout: String::new(),
@@ -997,6 +1090,131 @@ fn parse_server_init(args: &[String]) -> Result<ServerInitOptions, String> {
     }
     if opts.env_file.as_os_str().is_empty() {
         return Err("--env-file cannot be empty".to_string());
+    }
+    if let Some(url) = &opts.public_url {
+        if url.trim().is_empty() {
+            return Err("--public-url cannot be empty".to_string());
+        }
+    }
+    Ok(opts)
+}
+
+fn parse_connect_command(args: &[String]) -> CliAction {
+    if args.is_empty() {
+        return CliAction::Exit {
+            code: 2,
+            stdout: String::new(),
+            stderr: format!("{}\n", connect_usage()),
+        };
+    }
+    match args[0].as_str() {
+        "--help" | "-h" => CliAction::Exit {
+            code: 0,
+            stdout: connect_usage().to_string(),
+            stderr: String::new(),
+        },
+        _ => match parse_connect(&args) {
+            Ok(opts) => CliAction::Connect(opts),
+            Err(e) => CliAction::Exit {
+                code: 2,
+                stdout: String::new(),
+                stderr: format!("{}\n", e),
+            },
+        },
+    }
+}
+
+fn parse_connect(args: &[String]) -> Result<ConnectOptions, String> {
+    let mut server_url: Option<String> = None;
+    let mut key: Option<String> = None;
+    let mut open = false;
+    let mut root: Option<PathBuf> = None;
+    let mut output_dir: Option<PathBuf> = None;
+    let mut client_id: Option<String> = None;
+    let mut overwrite = false;
+    let mut json = false;
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--key" => key = Some(next_value(&mut iter, arg)?),
+            "--open" => open = true,
+            "--root" => root = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--output-dir" => output_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--client-id" => client_id = Some(next_value(&mut iter, arg)?),
+            "--overwrite" => overwrite = true,
+            "--json" => json = true,
+            "-h" | "--help" => return Err(connect_usage().to_string()),
+            other if !other.starts_with("--") && server_url.is_none() => {
+                server_url = Some(other.to_string());
+            }
+            other => return Err(format!("unknown connect flag: {}", other)),
+        }
+    }
+    // Mutual exclusion: --key and --open cannot be combined.
+    if open && key.is_some() {
+        return Err("--key and --open are mutually exclusive.\n\
+             Use --key for shared-key pairing, or --open for anonymous pairing."
+            .to_string());
+    }
+    // At least one of --key / --open is required.
+    if !open && key.is_none() {
+        return Err("either --key or --open is required.\n\
+             Use --key <KEY> for shared-key pairing, or --open for anonymous pairing."
+            .to_string());
+    }
+    let server_url = server_url.ok_or_else(|| {
+        "server URL is required.\n\
+         Usage: webcodex-cli connect <SERVER-URL> --key <KEY> | --open"
+            .to_string()
+    })?;
+    if server_url.trim().is_empty() {
+        return Err("server URL cannot be empty".to_string());
+    }
+    let key_value = key.clone().unwrap_or_default();
+    if key.is_some() && key_value.trim().is_empty() {
+        return Err("--key cannot be empty".to_string());
+    }
+    let mode = if open {
+        ConnectMode::Open
+    } else {
+        ConnectMode::SharedKey(key_value)
+    };
+    let root =
+        root.unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
+    Ok(ConnectOptions {
+        server_url,
+        mode,
+        root,
+        output_dir,
+        client_id,
+        overwrite,
+        json,
+    })
+}
+
+fn parse_server_up(args: &[String]) -> Result<ServerUpOptions, String> {
+    let mut opts = ServerUpOptions {
+        public_url: None,
+        listen: None,
+        open: false,
+        data_dir: None,
+        env_file: None,
+        foreground: false,
+        json: false,
+    };
+    let mut iter = args.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--public-url" => opts.public_url = Some(next_value(&mut iter, arg)?),
+            "--listen" => opts.listen = Some(next_value(&mut iter, arg)?),
+            "--open" => opts.open = true,
+            "--data-dir" => opts.data_dir = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--env-file" => opts.env_file = Some(PathBuf::from(next_value(&mut iter, arg)?)),
+            "--foreground" => opts.foreground = true,
+            "--json" => opts.json = true,
+            "-h" | "--help" => return Err(server_up_usage().to_string()),
+            other => return Err(format!("unknown server up flag: {}", other)),
+        }
     }
     if let Some(url) = &opts.public_url {
         if url.trim().is_empty() {
@@ -4175,6 +4393,316 @@ async fn run_setup_single_user(opts: SetupSingleUserOptions) -> Result<String, S
     }
 }
 
+fn run_server_up(opts: ServerUpOptions) -> Result<String, String> {
+    let defaults = default_server_paths();
+    let env_file = opts.env_file.unwrap_or(defaults.env_file);
+    let data_dir = opts.data_dir.unwrap_or(defaults.data_dir);
+    let listen = opts
+        .listen
+        .clone()
+        .unwrap_or_else(|| "0.0.0.0:8080".to_string());
+
+    // If the env file already exists and contains a WEBCODEX_TOKEN, reuse it.
+    // Otherwise generate a fresh bootstrap/admin key.
+    let existing_token = if env_file.exists() {
+        read_env_file_value(&env_file, "WEBCODEX_TOKEN")
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let token_was_generated = existing_token.is_none();
+    let token = existing_token.unwrap_or_else(generate_bootstrap_token);
+
+    // Render the env file content.
+    let mut content = String::new();
+    content.push_str(&format!("WEBCODEX_ADDR={}\n", listen.trim()));
+    content.push_str(&format!("WEBCODEX_DATA={}\n", data_dir.display()));
+    content.push_str(&format!("WEBCODEX_TOKEN={}\n", token));
+    if let Some(public_url) = &opts.public_url {
+        content.push_str(&format!(
+            "WEBCODEX_PUBLIC_URL={}\n",
+            public_url.trim().trim_end_matches('/')
+        ));
+    }
+    if opts.open {
+        content.push_str("WEBCODEX_ALLOW_ANONYMOUS=true\n");
+    }
+    // Enable shared-key quick-start mode so clients using --key <KEY> are
+    // accepted without managed token enrollment.
+    content.push_str("WEBCODEX_SHARED_KEY_ENABLED=true\n");
+    // Write the env file (overwrite when the token was freshly generated,
+    // otherwise preserve and merge — simplest is to overwrite with the full
+    // content since we read the token first).
+    write_text_file(&env_file, &content, true, true)?;
+
+    if opts.json {
+        let summary = json!({
+            "env_file": env_file.to_string_lossy(),
+            "listen": listen,
+            "data_dir": data_dir.to_string_lossy(),
+            "public_url": opts.public_url,
+            "open": opts.open,
+            "token_generated": token_was_generated,
+            "token_prefix": token_prefix(&token),
+            "next_steps": if opts.foreground {
+                vec!["server starting in foreground".to_string()]
+            } else {
+                vec![
+                    format!("source the env file: set -a && . {} && set +a", env_file.display()),
+                    "run the server: webcodex".to_string(),
+                    "connect a client: webcodex-cli connect <URL> --key <KEY>".to_string(),
+                ]
+            },
+        });
+        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+    }
+
+    let mut out = String::new();
+    out.push_str("Server bootstrap ready.\n\n");
+    out.push_str(&format!("  env file:     {}\n", env_file.display()));
+    out.push_str(&format!("  listen:       {}\n", listen));
+    out.push_str(&format!("  data dir:     {}\n", data_dir.display()));
+    if let Some(public_url) = &opts.public_url {
+        out.push_str(&format!("  public URL:   {}\n", public_url.trim()));
+    } else {
+        out.push_str("  public URL:   not configured\n");
+    }
+    if token_was_generated {
+        out.push_str(&format!("  admin key:    {}\n", token));
+        out.push_str("  (saved to env file; do not share on untrusted networks)\n");
+    } else {
+        out.push_str(&format!(
+            "  admin key:    (reused from {})\n",
+            env_file.display()
+        ));
+    }
+    out.push_str(&format!(
+        "  open mode:    {}\n",
+        if opts.open {
+            "enabled (anonymous allowed)"
+        } else {
+            "disabled (anonymous denied)"
+        }
+    ));
+    if opts.open {
+        out.push_str("\n  WARNING: --open allows anonymous GPT/MCP and client access.\n");
+        out.push_str("  Only use --open on localhost, trusted LAN, or temporary demos.\n");
+        out.push_str("  Do NOT use --open on untrusted public networks.\n");
+    }
+    out.push_str("\nAuth modes:\n");
+    out.push_str("  - Shared-key clients: allowed (use --key <KEY> on the client)\n");
+    out.push_str("  - Managed tokens (wc_pat_*/wc_agent_*): allowed\n");
+    if opts.open {
+        out.push_str("  - Anonymous (no token): allowed under open group\n");
+    } else {
+        out.push_str("  - Anonymous (no token): denied\n");
+    }
+    out.push_str("\nNext steps:\n");
+    if opts.foreground {
+        out.push_str("  Starting server in foreground...\n");
+    } else {
+        out.push_str(&format!(
+            "  1. Load the env:  set -a && . {} && set +a\n",
+            env_file.display()
+        ));
+        out.push_str("  2. Start server:  webcodex\n");
+        out.push_str(
+            "  3. Connect client: webcodex-cli connect <URL> --key <KEY> --root <PROJECT>\n",
+        );
+        out.push_str("  4. GPT/MCP:       use the same --key value as a Bearer token\n");
+    }
+    Ok(out)
+}
+
+fn run_connect(opts: ConnectOptions) -> Result<String, String> {
+    let client_id = opts
+        .client_id
+        .clone()
+        .unwrap_or_else(|| format!("cli-{}", &Uuid::new_v4().simple().to_string()[..12]));
+    // Output directory: explicit, or ~/.config/webcodex/clients/<client-id>.
+    let output_dir = opts.output_dir.clone().unwrap_or_else(|| {
+        let home = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."));
+        home.join(".config/webcodex/clients").join(&client_id)
+    });
+    let agent_config = output_dir.join("agent.toml");
+    let projects_dir = output_dir.join("projects.d");
+
+    // Determine the token for agent.toml. Shared-key mode uses the key itself;
+    // open mode uses an empty token (the server accepts anonymous).
+    let (token_for_agent, mode_label, gpt_token_hint) = match &opts.mode {
+        ConnectMode::SharedKey(key) => (
+            key.clone(),
+            "shared-key",
+            format!("Authorization: Bearer {}", key),
+        ),
+        ConnectMode::Open => (
+            String::new(),
+            "open",
+            "(no token needed — server must be --open)".to_string(),
+        ),
+    };
+
+    // Canonicalize the project root for the projects registry.
+    let root_canonical = std::fs::canonicalize(&opts.root).unwrap_or_else(|_| opts.root.clone());
+    let project_id = root_canonical
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("project")
+        .to_string();
+
+    // Ensure output dirs exist.
+    std::fs::create_dir_all(&output_dir)
+        .map_err(|e| format!("failed to create {}: {}", output_dir.display(), e))?;
+    std::fs::create_dir_all(&projects_dir)
+        .map_err(|e| format!("failed to create {}: {}", projects_dir.display(), e))?;
+
+    // Generate agent.toml. Shared-key mode uses the shared agent_init module
+    // (which requires a token). Open mode writes the config directly with an
+    // empty token since the server accepts anonymous connections.
+    if token_for_agent.is_empty() {
+        // Open mode: write agent.toml directly.
+        let agent_toml = format!(
+            "# Generated by webcodex-cli connect --open.\n\
+             # The server must be started with --open (WEBCODEX_ALLOW_ANONYMOUS=true).\n\
+             # No token is used; the agent connects anonymously under the open group.\n\
+             server_url = \"{}\"\n\
+             token = \"\"\n\
+             client_id = \"{}\"\n\
+             display_name = \"connect-open\"\n\
+             owner = \"open\"\n\
+             transport = \"auto\"\n\
+             poll_interval_ms = {}\n\
+             projects_dir = \"{}\"\n\n\
+             [capabilities]\n\
+             shell = true\n\
+             file_read = true\n\
+             file_write = true\n\
+             git = true\n\
+             jobs = true\n\
+             async_jobs = true\n\
+             async_shell_jobs = true\n\n\
+             [policy]\n\
+             allow_raw_shell = true\n\
+             allow_cwd_anywhere = false\n\
+             allowed_roots = [\"{}\"]\n\
+             max_timeout_secs = 3600\n\
+             max_output_bytes = 262144\n",
+            opts.server_url.trim_end_matches('/'),
+            client_id,
+            DEFAULT_POLL_INTERVAL_MS,
+            projects_dir.display(),
+            root_canonical.display(),
+        );
+        write_text_file(&agent_config, &agent_toml, opts.overwrite, true)?;
+    } else {
+        let agent_opts = AgentInitOptions {
+            server_url: opts.server_url.clone(),
+            token: Some(token_for_agent.clone()),
+            token_file: None,
+            client_id: client_id.clone(),
+            owner: mode_label.to_string(),
+            display_name: Some(format!("connect-{}", mode_label)),
+            transport: "auto".to_string(),
+            poll_interval_ms: DEFAULT_POLL_INTERVAL_MS,
+            projects_dir: projects_dir.clone(),
+            output: agent_config.clone(),
+            allowed_roots: vec![root_canonical.clone()],
+            allow_cwd_anywhere: false,
+            overwrite: opts.overwrite,
+        };
+        run_agent_init(agent_opts)?;
+    }
+
+    // Write the projects registry entry for this root.
+    let project_file = projects_dir.join(format!("{}.toml", project_id));
+    let project_toml = format!(
+        "# Generated by webcodex-cli connect.\n\
+         id = \"{}\"\n\
+         path = \"{}\"\n\
+         name = \"{}\"\n\
+         kind = \"auto\"\n\
+         disabled = false\n",
+        project_id,
+        root_canonical.display(),
+        project_id,
+    );
+    write_text_file(&project_file, &project_toml, opts.overwrite, false)?;
+
+    // Write a top-level projects.toml that includes the projects.d directory
+    // entries, so the server-side PROJECTS_CONFIG can resolve this project.
+    let projects_toml_path = output_dir.join("projects.toml");
+    let projects_toml = format!(
+        "# Generated by webcodex-cli connect.\n\
+         # Point PROJECTS_CONFIG at this file, or merge it into your server's\n\
+         # projects.toml.\n\
+         [projects.{}]\n\
+         path = \"{}\"\n\
+         executor = \"agent\"\n\
+         client_id = \"{}\"\n\
+         allow_patch = true\n",
+        project_id,
+        root_canonical.display(),
+        client_id,
+    );
+    write_text_file(&projects_toml_path, &projects_toml, opts.overwrite, false)?;
+
+    if opts.json {
+        let summary = json!({
+            "mode": mode_label,
+            "client_id": client_id,
+            "server_url": opts.server_url,
+            "root": root_canonical.to_string_lossy(),
+            "project_id": project_id,
+            "output_dir": output_dir.to_string_lossy(),
+            "agent_config": agent_config.to_string_lossy(),
+            "projects_dir": projects_dir.to_string_lossy(),
+            "projects_toml": projects_toml_path.to_string_lossy(),
+            "gpt_mcp_auth": gpt_token_hint,
+            "next_steps": [
+                "start the agent: webcodex-agent --config <agent_config>",
+                "register the project on the server (merge projects.toml or use the runtime API)",
+                format!("configure GPT/MCP: {}", gpt_token_hint),
+            ],
+        });
+        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+    }
+
+    let mut out = String::new();
+    out.push_str("Client connection configured.\n\n");
+    out.push_str(&format!("  mode:          {}\n", mode_label));
+    out.push_str(&format!("  server URL:    {}\n", opts.server_url));
+    out.push_str(&format!("  client id:     {}\n", client_id));
+    out.push_str(&format!("  project root:  {}\n", root_canonical.display()));
+    out.push_str(&format!("  project id:    {}\n", project_id));
+    out.push_str(&format!("  agent config:  {}\n", agent_config.display()));
+    out.push_str(&format!("  projects dir:  {}\n", projects_dir.display()));
+    out.push_str(&format!(
+        "  projects.toml: {}\n",
+        projects_toml_path.display()
+    ));
+    out.push_str("\nGPT Action / MCP configuration:\n");
+    out.push_str(&format!("  {}\n", gpt_token_hint));
+    if matches!(opts.mode, ConnectMode::Open) {
+        out.push_str("\n  Note: --open requires the server to also be started with --open.\n");
+        out.push_str("  Do not use --open on untrusted public networks.\n");
+    } else {
+        out.push_str("\n  Client and GPT/MCP use the same key; the server groups them together.\n");
+    }
+    out.push_str("\nNext steps:\n");
+    out.push_str(&format!(
+        "  1. Start the agent:  webcodex-agent --config {}\n",
+        agent_config.display()
+    ));
+    out.push_str(
+        "  2. Register the project on the server (merge projects.toml or use the runtime API)\n",
+    );
+    out.push_str(&format!("  3. Configure GPT/MCP: {}\n", gpt_token_hint));
+    Ok(out)
+}
+
 fn run_server_init(opts: ServerInitOptions) -> Result<String, String> {
     let token = generate_bootstrap_token();
     let env_content = render_server_env(&opts, &token);
@@ -5154,6 +5682,32 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         },
         CliAction::ServerInit(opts) => match run_server_init(opts) {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::ServerUp(opts) => match run_server_up(opts) {
+            Ok(stdout) => {
+                print!("{}", stdout);
+                if !stdout.ends_with('\n') {
+                    println!();
+                }
+                std::process::exit(0);
+            }
+            Err(stderr) => {
+                eprintln!("{}", stderr);
+                std::process::exit(1);
+            }
+        },
+        CliAction::Connect(opts) => match run_connect(opts) {
             Ok(stdout) => {
                 print!("{}", stdout);
                 if !stdout.ends_with('\n') {
@@ -7710,5 +8264,159 @@ transport = "websocket"
         assert!(msg.contains("HTTP 500"));
         assert!(msg.contains("bad request"));
         assert!(!msg.contains("fake-secret"));
+    }
+
+    // ------------------------------------------------------------------
+    // connect + server up quick-start CLI tests
+    // ------------------------------------------------------------------
+
+    fn cli_exit<I, S>(args: I) -> Result<String, String>
+    where
+        I: IntoIterator<Item = S>,
+        S: AsRef<str>,
+    {
+        match cli_action(args) {
+            CliAction::Exit {
+                code: 0, stdout, ..
+            } => Ok(stdout),
+            CliAction::Exit { stderr, .. } => Err(stderr),
+            other => Err(format!("expected exit, got {other:?}")),
+        }
+    }
+
+    #[test]
+    fn connect_help_prints_usage() {
+        let out = cli_exit(["connect", "--help"]).unwrap();
+        assert!(out.contains("Usage: webcodex-cli connect"));
+        assert!(out.contains("--key"));
+        assert!(out.contains("--open"));
+        assert!(out.contains("mutually exclusive"));
+    }
+
+    #[test]
+    fn connect_key_and_open_are_mutually_exclusive() {
+        let err =
+            cli_exit(["connect", "http://127.0.0.1:8080", "--key", "abc", "--open"]).unwrap_err();
+        assert!(err.contains("mutually exclusive"), "err was: {err}");
+    }
+
+    #[test]
+    fn connect_requires_key_or_open() {
+        let err = cli_exit(["connect", "http://127.0.0.1:8080"]).unwrap_err();
+        assert!(
+            err.contains("--key") || err.contains("--open"),
+            "err was: {err}"
+        );
+    }
+
+    #[test]
+    fn connect_key_parses_with_default_root() {
+        match cli_action(["connect", "http://127.0.0.1:8080", "--key", "abc123"]) {
+            CliAction::Connect(opts) => {
+                assert_eq!(opts.server_url, "http://127.0.0.1:8080");
+                assert_eq!(opts.mode, ConnectMode::SharedKey("abc123".to_string()));
+                // Default root is the current working directory.
+                assert!(opts.root.is_absolute() || !opts.root.as_os_str().is_empty());
+                assert!(!opts.overwrite);
+                assert!(!opts.json);
+            }
+            other => panic!("expected Connect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connect_open_parses() {
+        match cli_action([
+            "connect",
+            "http://127.0.0.1:8080",
+            "--open",
+            "--root",
+            "/tmp/proj",
+        ]) {
+            CliAction::Connect(opts) => {
+                assert_eq!(opts.server_url, "http://127.0.0.1:8080");
+                assert_eq!(opts.mode, ConnectMode::Open);
+                assert_eq!(opts.root, PathBuf::from("/tmp/proj"));
+            }
+            other => panic!("expected Connect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connect_explicit_client_id_and_output_dir() {
+        match cli_action([
+            "connect",
+            "https://example.com",
+            "--key",
+            "k",
+            "--root",
+            "/tmp/p",
+            "--client-id",
+            "my-laptop",
+            "--output-dir",
+            "/tmp/out",
+            "--overwrite",
+            "--json",
+        ]) {
+            CliAction::Connect(opts) => {
+                assert_eq!(opts.client_id.as_deref(), Some("my-laptop"));
+                assert_eq!(
+                    opts.output_dir.as_deref(),
+                    Some(std::path::Path::new("/tmp/out"))
+                );
+                assert!(opts.overwrite);
+                assert!(opts.json);
+            }
+            other => panic!("expected Connect, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn connect_requires_server_url() {
+        let err = cli_exit(["connect", "--key", "abc"]).unwrap_err();
+        assert!(err.contains("server URL"), "err was: {err}");
+    }
+
+    #[test]
+    fn server_up_help_prints_usage() {
+        let out = cli_exit(["server", "up", "--help"]).unwrap();
+        assert!(out.contains("Usage: webcodex-cli server up"));
+        assert!(out.contains("--open"));
+        assert!(out.contains("--foreground"));
+    }
+
+    #[test]
+    fn server_up_parses_open_mode() {
+        match cli_action([
+            "server",
+            "up",
+            "--open",
+            "--public-url",
+            "https://x.example",
+        ]) {
+            CliAction::ServerUp(opts) => {
+                assert!(opts.open);
+                assert_eq!(opts.public_url.as_deref(), Some("https://x.example"));
+            }
+            other => panic!("expected ServerUp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn server_up_defaults_to_closed_mode() {
+        match cli_action(["server", "up"]) {
+            CliAction::ServerUp(opts) => {
+                assert!(!opts.open);
+                assert!(opts.public_url.is_none());
+            }
+            other => panic!("expected ServerUp, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn top_level_usage_mentions_connect_and_server_up() {
+        let out = cli_exit(["--help"]).unwrap();
+        assert!(out.contains("connect"));
+        assert!(out.contains("server up"));
     }
 }

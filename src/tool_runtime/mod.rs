@@ -328,6 +328,7 @@ fn current_session_principal(auth: Option<&AuthContext>) -> Result<(String, Stri
         .or(auth.user_id.as_deref())
         .or(auth.username.as_deref())
         .or(auth.allowed_client_id.as_deref())
+        .or(auth.shared_key_hash.as_deref())
         .map(str::to_string);
     let Some(principal_id) = id else {
         return Err(
@@ -341,6 +342,8 @@ fn current_session_principal(auth: Option<&AuthContext>) -> Result<(String, Stri
         crate::auth::AuthKind::AccountCredential => "account_credential",
         crate::auth::AuthKind::OAuth2Token => "oauth2",
         crate::auth::AuthKind::Bootstrap => "bootstrap",
+        crate::auth::AuthKind::SharedKey => "shared-key",
+        crate::auth::AuthKind::OpenAnonymous => "open",
     };
     Ok((principal_kind.to_string(), principal_id))
 }

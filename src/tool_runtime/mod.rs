@@ -10,6 +10,7 @@ pub(crate) mod files;
 mod git;
 mod handoff;
 mod helpers;
+mod hygiene;
 mod jobs;
 pub(crate) mod kernel;
 pub(crate) mod metadata;
@@ -624,7 +625,8 @@ impl ToolRuntime {
             | ToolCall::GitDiffHunks { .. }
             | ToolCall::GitLog { .. }
             | ToolCall::GitDiffSummary { .. }
-            | ToolCall::ShowChanges { .. } => Some(AgentCapability::GitOrShell),
+            | ToolCall::ShowChanges { .. }
+            | ToolCall::WorkspaceHygieneCheck { .. } => Some(AgentCapability::GitOrShell),
             ToolCall::WorkspaceCheckpointCreate { .. }
             | ToolCall::WorkspaceCheckpointRestore { .. } => Some(AgentCapability::Shell),
             ToolCall::WorkspaceCheckpointList { .. }
@@ -1499,6 +1501,16 @@ impl ToolRuntime {
                 .await
             }
 
+            ToolCall::WorkspaceHygieneCheck {
+                project,
+                max_findings,
+                include_tracked,
+                session_id,
+            } => {
+                self.workspace_hygiene_check(project, max_findings, include_tracked, session_id)
+                    .await
+            }
+
             ToolCall::ListJobs { limit, status } => self.list_jobs(limit, status).await,
 
             ToolCall::JobTail { job_id, tail_lines } => self.job_tail(job_id, tail_lines).await,
@@ -2031,7 +2043,10 @@ fn tool_manifest_category(name: &str) -> &'static str {
             "artifact"
         }
         // Cleanup / destructive
-        "delete_project_files" | "git_restore_paths" | "discard_untracked" => "cleanup",
+        "delete_project_files"
+        | "git_restore_paths"
+        | "discard_untracked"
+        | "workspace_hygiene_check" => "cleanup",
         // Codex delegation
         "run_codex" => "codex",
         _ => "other",

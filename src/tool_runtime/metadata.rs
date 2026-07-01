@@ -592,6 +592,16 @@ pub(crate) const TOOL_METADATA: &[ToolMetadata] = &[
         false,
     ),
     metadata(
+        "workspace_hygiene_check",
+        "agent",
+        ToolRisk::ReadOnly,
+        Some(PROJECT_READ),
+        true,
+        ToolPathHint::None,
+        false,
+        false,
+    ),
+    metadata(
         "list_jobs",
         "native",
         ToolRisk::ReadOnly,

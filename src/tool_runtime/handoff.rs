@@ -1,5 +1,7 @@
-//! `session_handoff_summary` — read-only structured handoff for multi-agent /
-//! multi-window / small-model task takeover.
+//! `session_handoff_summary` — read-only structured handoff for degraded or
+//! contaminated execution context recovery (GPT long-task window routed to a
+//! degraded/contaminated context, context pollution, or continuing in a fresh
+//! window), multi-agent, and multi-window scenarios.
 //!
 //! Aggregates session info, message-board state, recent progress/decisions,
 //! open todos/risks/questions/guidance, recent failed tool calls, and optional

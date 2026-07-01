@@ -737,6 +737,24 @@ pub enum ToolCall {
         session_id: Option<String>,
     },
 
+    /// Read-only workspace hygiene inspection. Detects pollution risks before
+    /// deployment smoke, model handoff, or real development: dirty worktree,
+    /// untracked temporary/smoke/anchor files, cache directories, secret-like
+    /// path names, and large untracked files. Never cleans, deletes, restores,
+    /// or modifies the project. Never reads file contents, env values, tokens,
+    /// or stdout/stderr bodies. Suspicious secret files are identified by
+    /// path/name only. Exposed only through runtime tools / MCP /
+    /// `callRuntimeTool` (no dedicated OpenAPI op).
+    WorkspaceHygieneCheck {
+        project: String,
+        #[serde(default)]
+        max_findings: Option<usize>,
+        #[serde(default)]
+        include_tracked: Option<bool>,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// List all agent-registered runtime projects.
     ListProjects,
 
@@ -870,6 +888,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "search_project_text",
     "git_diff_summary",
     "show_changes",
+    "workspace_hygiene_check",
     "list_jobs",
     "job_tail",
     "list_projects",
@@ -965,6 +984,7 @@ impl ToolCall {
             Self::SearchProjectText { .. } => "search_project_text",
             Self::GitDiffSummary { .. } => "git_diff_summary",
             Self::ShowChanges { .. } => "show_changes",
+            Self::WorkspaceHygieneCheck { .. } => "workspace_hygiene_check",
             Self::ListJobs { .. } => "list_jobs",
             Self::JobTail { .. } => "job_tail",
             Self::ReplaceInFile { .. } => "replace_in_file",
@@ -1027,7 +1047,8 @@ impl ToolCall {
             | Self::WorkspaceCheckpointList { session_id, .. }
             | Self::WorkspaceCheckpointShow { session_id, .. }
             | Self::WorkspaceCheckpointRestore { session_id, .. }
-            | Self::WorkspaceCheckpointDelete { session_id, .. } => session_id.as_deref(),
+            | Self::WorkspaceCheckpointDelete { session_id, .. }
+            | Self::WorkspaceHygieneCheck { session_id, .. } => session_id.as_deref(),
             _ => None,
         }
     }
@@ -1071,7 +1092,8 @@ impl ToolCall {
             | Self::WorkspaceCheckpointList { session_id, .. }
             | Self::WorkspaceCheckpointShow { session_id, .. }
             | Self::WorkspaceCheckpointRestore { session_id, .. }
-            | Self::WorkspaceCheckpointDelete { session_id, .. } => {
+            | Self::WorkspaceCheckpointDelete { session_id, .. }
+            | Self::WorkspaceHygieneCheck { session_id, .. } => {
                 if session_id.is_none() {
                     *session_id = Some(effective_session_id);
                 }
@@ -1123,7 +1145,8 @@ impl ToolCall {
             | Self::WorkspaceCheckpointList { project, .. }
             | Self::WorkspaceCheckpointShow { project, .. }
             | Self::WorkspaceCheckpointRestore { project, .. }
-            | Self::WorkspaceCheckpointDelete { project, .. } => Some(project.as_str()),
+            | Self::WorkspaceCheckpointDelete { project, .. }
+            | Self::WorkspaceHygieneCheck { project, .. } => Some(project.as_str()),
             Self::SessionHandoffSummary { project, .. } => project.as_deref(),
             _ => None,
         }
@@ -1621,6 +1644,16 @@ impl ToolCall {
                 "category": category,
                 "include_recommended_flows": include_recommended_flows,
                 "include_risk_summary": include_risk_summary,
+            }),
+            Self::WorkspaceHygieneCheck {
+                project,
+                max_findings,
+                include_tracked,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "max_findings": max_findings,
+                "include_tracked": include_tracked,
             }),
             _ => serde_json::json!({}),
         }

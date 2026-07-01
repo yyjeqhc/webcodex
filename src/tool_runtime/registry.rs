@@ -323,6 +323,34 @@ fn session_handoff_summary_input_schema() -> Value {
     })
 }
 
+fn workspace_hygiene_check_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Runtime project id."
+            },
+            "max_findings": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "description": "Maximum findings to return (default 50, clamped to 1..200)."
+            },
+            "include_tracked": {
+                "type": "boolean",
+                "description": "Also report tracked suspicious path names (default false). When false, only untracked entries and the dirty-worktree summary are reported. Never reads file contents."
+            },
+            "session_id": {
+                "type": "string",
+                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+            }
+        },
+        "required": ["project"],
+        "additionalProperties": false,
+    })
+}
+
 fn start_session_input_schema() -> Value {
     json!({
         "type": "object",
@@ -926,6 +954,35 @@ fn output_schema_for_tool(name: &str) -> Value {
             (
                 "suggested_next_actions",
                 array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions for the receiving agent."),
+            ),
+        ]),
+        "workspace_hygiene_check" => wrapped_output_schema(vec![
+            ("project", schema_type("string", "Project input from the request.")),
+            (
+                "resolved_project",
+                nullable_schema("string", "Canonical runtime project id, when resolved."),
+            ),
+            ("git_available", schema_type("boolean", "True when the project is a git repository.")),
+            ("clean", schema_type("boolean", "True when git is available and no findings were reported.")),
+            (
+                "counts",
+                open_object_schema("Bounded finding counts: findings, critical, high, medium, low, untracked, tracked, large_files, secret_like_paths, cache_paths."),
+            ),
+            (
+                "findings",
+                array_schema(
+                    open_object_schema("Hygiene finding: path, kind, severity, tracked_status, reason, recommendation. Never includes file contents."),
+                    "Bounded hygiene findings. Path is project-relative. Secret-like files are identified by name only.",
+                ),
+            ),
+            ("truncated", schema_type("boolean", "True when findings were truncated to max_findings.")),
+            (
+                "warnings",
+                array_schema(schema_type("string", "Warning code."), "Warning codes such as non_git_project."),
+            ),
+            (
+                "suggested_next_actions",
+                array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions."),
             ),
         ]),
         "bind_current_session" => wrapped_output_schema(vec![
@@ -1546,6 +1603,13 @@ impl ToolRuntime {
                 input_schema: session_handoff_summary_input_schema(),
                 output_schema: output_schema_for_tool("session_handoff_summary"),
                 annotations: tool_annotations("session_handoff_summary"),
+            },
+            ToolSpec {
+                name: "workspace_hygiene_check".to_string(),
+                description: "Read-only workspace hygiene inspection. Detects pollution risks before smoke, handoff, or development: dirty worktree, untracked temp/smoke files, cache dirs, secret-like path names, large untracked files. Never reads file contents.".to_string(),
+                input_schema: workspace_hygiene_check_input_schema(),
+                output_schema: output_schema_for_tool("workspace_hygiene_check"),
+                annotations: tool_annotations("workspace_hygiene_check"),
             },
             ToolSpec {
                 name: "bind_current_session".to_string(),

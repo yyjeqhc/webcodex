@@ -170,6 +170,11 @@ fn required_agent_capability_matches_metadata_risk_table() {
             AgentCapability::GitOrShell,
         ),
         (
+            "workspace_hygiene_check",
+            ToolRisk::ReadOnly,
+            AgentCapability::GitOrShell,
+        ),
+        (
             "workspace_checkpoint_create",
             ToolRisk::ReadOnly,
             AgentCapability::Shell,
@@ -578,6 +583,7 @@ fn tool_specs_covers_expected_tool_set() {
         "git_diff_hunks",
         "git_log",
         "show_changes",
+        "workspace_hygiene_check",
         "workspace_checkpoint_create",
         "workspace_checkpoint_list",
         "workspace_checkpoint_show",

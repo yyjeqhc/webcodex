@@ -10,6 +10,7 @@ mod files_helpers;
 mod files_line_edit;
 mod git;
 mod handoff;
+mod hygiene;
 mod jobs;
 mod metadata;
 mod schema;

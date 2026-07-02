@@ -27,13 +27,14 @@ Start with the product README ([English](../README.md), [简体中文](../README
 
 14. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — long-term WebCodex runtime architecture: access modes, agent operating contract, tool standard library, execution IR, safety model, optimizer, artifact bus, desktop sessions, providers, coding, operations, and multi-agent direction.
 15. [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) / [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) — future WebCodex Desktop Session strategy: controlled, auditable, replayable computer-use sessions for engineering workflows.
+16. [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md) — public shared-key OAuth bridge threat model, identity decision, endpoint contract draft, scope policy, and future acceptance tests.
 
 ## Reference docs worth keeping
 
-16. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — short build/install command reference; overlaps with deployment but remains useful as a quick reference.
-17. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) — agent auth, identity, protocol, and redacted policy summaries.
-18. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — local end-to-end validation scripts and documentation scan guidance.
-19. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
+17. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — short build/install command reference; overlaps with deployment but remains useful as a quick reference.
+18. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) — agent auth, identity, protocol, and redacted policy summaries.
+19. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — local end-to-end validation scripts and documentation scan guidance.
+20. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
 
 ## Removed from the public docs set
 

@@ -10,8 +10,10 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 mod import_http;
+mod projects;
 
 pub use import_http::import_conversation_files_to_project;
+pub use projects::{projects_create, projects_list, projects_register};
 
 /// Generic runtime tool call body. `tool` is required; `params` carries the
 /// tool-specific arguments. `arguments` is accepted as a compatibility alias
@@ -242,50 +244,6 @@ struct JobTailRequest {
     pub job_id: String,
     #[serde(default)]
     pub tail_lines: Option<usize>,
-}
-
-/// `POST /api/projects/register` — thin REST wrapper over
-/// `ToolCall::RegisterProject`. Mutation with side effects; registers an
-/// existing directory as a WebCodex project on the selected agent. Dedicated
-/// GPT Action (`registerProject`); also reachable via callRuntimeTool / MCP
-/// tools/call.
-#[derive(Debug, Deserialize)]
-struct RegisterProjectRequest {
-    pub client_id: String,
-    pub id: String,
-    pub name: String,
-    pub path: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default = "crate::tool_runtime::default_true")]
-    pub allow_patch: bool,
-    #[serde(default)]
-    pub overwrite: bool,
-}
-
-/// `POST /api/projects/create` — thin REST wrapper over
-/// `ToolCall::CreateProject`. Mutation with side effects; creates a new
-/// directory on the selected agent and registers it as a WebCodex project.
-/// Dedicated GPT Action (`createProject`); also reachable via callRuntimeTool
-/// / MCP tools/call.
-#[derive(Debug, Deserialize)]
-struct CreateProjectRequest {
-    pub client_id: String,
-    pub id: String,
-    pub name: String,
-    pub path: String,
-    #[serde(default)]
-    pub description: Option<String>,
-    #[serde(default = "crate::tool_runtime::default_true")]
-    pub allow_patch: bool,
-    #[serde(default)]
-    pub template: Option<String>,
-    #[serde(default)]
-    pub git_init: bool,
-    #[serde(default)]
-    pub allow_existing_empty: bool,
-    #[serde(default)]
-    pub overwrite: bool,
 }
 
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
@@ -613,31 +571,6 @@ pub async fn job_stop(req: &mut Request, depot: &mut Depot, res: &mut Response) 
     };
     let result = runtime.stop_job(body.job_id).await;
     render_result(res, &audit, "job_stop", None, result);
-}
-
-#[handler]
-pub async fn projects_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/projects/list", "listProjects");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    // Body is optional; reject non-empty invalid JSON for consistency but
-    // tolerate an empty/missing body since this call takes no arguments.
-    let body: Value = match req.parse_json().await {
-        Ok(body) => body,
-        Err(_) => Value::Null,
-    };
-    let _ = body;
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(ToolCall::ListProjects, auth.as_ref())
-        .await;
-    render_result(res, &audit, "list_projects", None, result);
 }
 
 #[handler]
@@ -1387,95 +1320,6 @@ pub async fn projects_git_diff_summary(req: &mut Request, depot: &mut Depot, res
     render_result(res, &audit, "git_diff_summary", Some(project), result);
 }
 
-/// `ToolCall::RegisterProject`. Registers an existing directory as a
-/// WebCodex project on the selected agent. Mutation with side effects; executes
-/// on the selected agent and is constrained by agent policy.
-#[handler]
-pub async fn projects_register(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/projects/register", "registerProject");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: RegisterProjectRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RegisterProject {
-                client_id: body.client_id,
-                id: body.id,
-                name: body.name,
-                path: body.path,
-                description: body.description,
-                allow_patch: body.allow_patch,
-                overwrite: body.overwrite,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "register_project", None, result);
-}
-
-/// `ToolCall::CreateProject`. Creates a new directory on the selected agent
-/// and registers it as a WebCodex project. Mutation with side effects; executes
-/// on the selected agent and is constrained by agent policy.
-#[handler]
-pub async fn projects_create(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/projects/create", "createProject");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: CreateProjectRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::CreateProject {
-                client_id: body.client_id,
-                id: body.id,
-                name: body.name,
-                path: body.path,
-                description: body.description,
-                allow_patch: body.allow_patch,
-                template: body.template,
-                git_init: body.git_init,
-                allow_existing_empty: body.allow_existing_empty,
-                overwrite: body.overwrite,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "create_project", None, result);
-}
-
 /// `ToolCall::ListJobs`. Bounded job summaries (no stdout/stderr bodies).
 #[handler]
 pub async fn jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
@@ -1561,6 +1405,7 @@ mod tests {
     use std::time::Duration;
 
     mod import_http_tests;
+    mod projects_tests;
 
     fn test_config(token: Option<&str>) -> Arc<crate::Config> {
         Arc::new(crate::Config {
@@ -1950,47 +1795,6 @@ mod tests {
                 "{path} should require bearer auth"
             );
         }
-    }
-
-    #[tokio::test]
-    async fn http_projects_list_rejects_wrong_bearer() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let resp = TestClient::post("http://localhost/api/projects/list")
-            .bearer_auth("wrong")
-            .json(&json!({}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
-    }
-
-    #[tokio::test]
-    async fn http_projects_list_ignores_server_configured_projects() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let mut resp = TestClient::post("http://localhost/api/projects/list")
-            .bearer_auth("secret")
-            .json(&json!({}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::OK);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], true);
-        let list = body["output"]
-            .as_array()
-            .expect("output is a project array");
-        assert!(
-            list.is_empty(),
-            "runtime project discovery is agent-registered only"
-        );
     }
 
     // =========================================================================
@@ -4050,123 +3854,6 @@ mod tests {
         assert!(
             polled.is_none(),
             "unknown session_id should fail before enqueueing an agent write"
-        );
-    }
-
-    // =========================================================================
-    // register_project / create_project REST endpoints
-    // =========================================================================
-
-    #[tokio::test]
-    async fn http_projects_register_rejects_unknown_client_id() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let mut resp = TestClient::post("http://localhost/api/projects/register")
-            .bearer_auth("secret")
-            .json(&json!({
-                "client_id": "no-such-agent",
-                "id": "my-project",
-                "name": "My Project",
-                "path": "/root/git/my-project"
-            }))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false);
-        assert!(
-            body["error"]
-                .as_str()
-                .is_some_and(|e| e.contains("unknown agent")),
-            "register_project should reject unknown client_id: {:?}",
-            body["error"]
-        );
-    }
-
-    #[tokio::test]
-    async fn http_projects_create_rejects_unknown_client_id() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let mut resp = TestClient::post("http://localhost/api/projects/create")
-            .bearer_auth("secret")
-            .json(&json!({
-                "client_id": "no-such-agent",
-                "id": "hello",
-                "name": "Hello",
-                "path": "/root/git/hello"
-            }))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false);
-        assert!(
-            body["error"]
-                .as_str()
-                .is_some_and(|e| e.contains("unknown agent")),
-            "create_project should reject unknown client_id: {:?}",
-            body["error"]
-        );
-    }
-
-    #[tokio::test]
-    async fn http_projects_register_rejects_unsafe_id() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let mut resp = TestClient::post("http://localhost/api/projects/register")
-            .bearer_auth("secret")
-            .json(&json!({
-                "client_id": "oe",
-                "id": "a/b",
-                "name": "Test",
-                "path": "/root/git/test"
-            }))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false);
-    }
-
-    #[tokio::test]
-    async fn http_projects_create_rejects_relative_path() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let mut resp = TestClient::post("http://localhost/api/projects/create")
-            .bearer_auth("secret")
-            .json(&json!({
-                "client_id": "oe",
-                "id": "hello",
-                "name": "Hello",
-                "path": "relative/path"
-            }))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false);
-        assert!(
-            body["error"]
-                .as_str()
-                .is_some_and(|e| e.contains("absolute")),
-            "create_project should reject relative path: {:?}",
-            body["error"]
         );
     }
 }

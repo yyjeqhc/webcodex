@@ -2,8 +2,9 @@
 
 ## Status
 
-The OAuth subject model substrate exists, but no public bridge issuance endpoint
-or UI exists yet. OAuth code, access-token, and refresh-token rows now
+The OAuth subject model substrate exists, and `OAuth2Verifier` now dispatches
+both `managed_user` and `shared_key` OAuth subjects. No public bridge issuance
+endpoint or UI exists yet. OAuth code, access-token, and refresh-token rows
 distinguish `managed_user` and `shared_key` subjects.
 
 The current internal chain is:
@@ -14,7 +15,7 @@ oauth_authorization_codes.subject_kind / subject_id / shared_key_hash
 -> oauth_access_tokens.subject_kind / subject_id / shared_key_hash
 -> oauth_refresh_tokens.subject_kind / subject_id / shared_key_hash
 -> refresh rotation
--> OAuth2Verifier managed-user dispatch
+-> OAuth2Verifier managed-user/shared-key dispatch
 ```
 
 Important current design facts:
@@ -23,15 +24,17 @@ Important current design facts:
   `OAuthRefreshTokenRecord` have explicit `subject_kind` and `subject_id`
   fields. `managed_user` subjects carry `user_id`; `shared_key` subjects carry
   `shared_key_hash` and no `user_id`.
-- `OAuth2Verifier` still dispatches only managed-user OAuth subjects. Shared-key
-  OAuth subjects are explicitly rejected until the next implementation phase.
+- `OAuth2Verifier` dispatches managed-user OAuth subjects through the existing
+  managed user lookup/disabled-user checks.
+- `OAuth2Verifier` dispatches shared-key OAuth subjects without managed-user
+  lookup, using `shared_key_hash` for project/job visibility while preserving
+  OAuth token semantics and scope enforcement.
 - Managed-user OAuth records may still carry bridge metadata when explicitly
   seeded, but `shared_key_hash` does not change managed-user identity.
 - A bridge OAuth token is still an `OAuth2Token`, not `SharedKey`.
 - Agent transport endpoints still reject `OAuth2Token`.
-- Current-session identity is still keyed by OAuth token/user/client semantics
-  for managed-user OAuth tokens. Shared-key OAuth current-session dispatch is
-  not implemented yet.
+- Current-session identity is still keyed by OAuth token semantics; any future
+  shared-key OAuth aggregation semantics require an explicit design change.
 
 ## Non-goals
 
@@ -45,20 +48,20 @@ This design does not add or permit:
 - Fake managed user identity.
 - A public bridge endpoint in this commit.
 
-## Identity Problem
+## Identity Decision
 
-OAuth tokens are still backed by `user_id`. A shared-key-only caller has no
-managed `user_id`. Therefore a public shared-key OAuth bridge cannot be safely
-implemented by only adding a route; it must choose an explicit subject model.
+Managed-user OAuth tokens remain backed by `user_id`. Shared-key OAuth tokens
+use the explicit non-managed subject model instead: `subject_kind = shared_key`,
+`subject_id = shared_key_hash`, `user_id = NULL`, and `shared_key_hash` set.
 
-The central design question is:
+The core identity decision is now explicit:
 
 ```text
-Where does user_id come from for a shared-key bridge OAuth token?
-Is the token a managed user token, or is it a shared-key principal token?
+Shared-key bridge OAuth tokens are shared-key principal tokens, not managed-user tokens.
 ```
 
-Until that answer is explicit, public bridge issuance must remain unimplemented.
+Public bridge issuance still remains unimplemented until the authorize route/UI,
+shared-key validation, scope cap, and endpoint contract are added and tested.
 
 ## Threat Model
 
@@ -154,21 +157,22 @@ Reasons:
 
 ## Recommended v1
 
-Recommended v1: do not implement a public bridge endpoint until the subject
-model is explicit.
+Recommended v1 is now the shared-key principal OAuth model for pure quick-start
+OAuth onboarding. The public bridge endpoint still must not be implemented until
+its route/UI, shared-key validation, scope cap, and endpoint contract are added
+and tested.
 
-For the first safe implementation, prefer the managed-account-bound bridge if
-the goal is production OAuth security. Prefer a shared-key principal OAuth token
-only if the product requirement is pure quick-start OAuth onboarding. Do not use
-synthetic managed users.
+Do not use synthetic managed users. Do not overload `user_id`. Managed-user
+OAuth remains supported for formal managed-account delegation, but the bridge
+path uses the explicit `shared_key` subject model.
 
 Suggested staged roadmap:
 
 1. Phase A: document the threat model and endpoint contract.
-2. Phase B: implement a managed-account-bound bridge only, behind an explicit
-   config flag.
-3. Phase C: if pure shared-key OAuth is still required, design a shared-key
-   principal schema separately.
+2. Phase B: implement OAuth subject substrate and verifier dispatch for
+   `managed_user` and `shared_key`.
+3. Phase C: implement public shared-key bridge authorize route/UI behind an
+   explicit config flag and strict scope policy.
 
 ## Endpoint Contract Draft
 
@@ -210,12 +214,11 @@ Required contract:
   shared-key bridge unless explicitly justified and tested.
 - OAuth2 tokens remain rejected on agent transport endpoints.
 
-The contract must also define the subject model before implementation:
-
-- Managed-account-bound v1: require an authenticated managed user before
-  accepting the shared key, and set `user_id` to that managed user.
-- Shared-key-principal v1: do not reuse `user_id`; first add an explicit
-  non-user OAuth subject model.
+- Managed-account-bound tokens continue to use `subject_kind = managed_user`
+  and require a real managed user row.
+- Shared-key-principal tokens use `subject_kind = shared_key`,
+  `subject_id = shared_key_hash`, `user_id = NULL`, and the explicit
+  non-user OAuth verifier branch.
 
 ## Scope Policy
 

@@ -110,9 +110,9 @@ subjects on authorization codes, access tokens, and refresh tokens. Public
 bridge endpoint design is tracked in
 [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md).
 
-OAuth2Verifier shared-key AuthContext dispatch remains a later phase. Managed
-OAuth tokens keep OAuth current-session identity semantics; public shared-key
-bridge tokens are not available yet.
+OAuth2Verifier now dispatches managed-user and shared-key OAuth subjects.
+Managed OAuth tokens keep OAuth current-session identity semantics; public
+shared-key bridge tokens are not available yet.
 
 That bridge would preserve host OAuth semantics. It would not make blank OAuth
 client fields behave like no-auth, shared-key quick start, or a static Bearer

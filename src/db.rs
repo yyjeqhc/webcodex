@@ -2343,6 +2343,29 @@ impl Database {
                 return Ok(None);
             }
 
+            let code_record = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, code_hash, client_id, subject_kind, subject_id, user_id,
+                            redirect_uri, scopes, code_challenge, code_challenge_method,
+                            resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
+                     FROM oauth_authorization_codes
+                     WHERE code_hash = ?1",
+                )?;
+                let mut rows =
+                    stmt.query_map(params![code_hash], row_to_oauth_authorization_code)?;
+                match rows.next() {
+                    Some(r) => r?,
+                    None => anyhow::bail!("consumed OAuth authorization code disappeared"),
+                }
+            };
+            validate_oauth_authorization_code_subject(&code_record)?;
+            validate_oauth_subjects_match(
+                &code_record.subject_kind,
+                &code_record.subject_id,
+                &access_token_record.subject_kind,
+                &access_token_record.subject_id,
+            )?;
+
             // 2. Insert access token.
             tx.execute(
                 "INSERT INTO oauth_access_tokens (
@@ -2670,6 +2693,14 @@ impl Database {
             if old.client_id != client_id {
                 return Ok(RotateResult::ClientMismatch);
             }
+
+            validate_oauth_refresh_token_subject(&old)?;
+            validate_oauth_subjects_match(
+                &old.subject_kind,
+                &old.subject_id,
+                &access_token_record.subject_kind,
+                &access_token_record.subject_id,
+            )?;
 
             // 5. Revoke old token.
             let changed = tx.execute(
@@ -4420,5 +4451,173 @@ mod tests {
             .consume_oauth_authorization_code_by_hash("nonexistent-hash", now)
             .unwrap();
         assert!(result.is_none(), "unknown hash should return None");
+    }
+
+    #[test]
+    fn exchange_authorization_code_rejects_subject_mismatch_with_consumed_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+        let now = chrono::Utc::now().timestamp();
+        let code_hash = "code-hash-subject-mismatch".to_string();
+        let code = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: code_hash.clone(),
+            client_id: client.client_id.clone(),
+            subject_kind: "shared_key".to_string(),
+            subject_id: "hash-a".to_string(),
+            user_id: None,
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            resource: None,
+            shared_key_hash: Some("hash-a".to_string()),
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&code, &code_hash)
+            .unwrap();
+
+        let access = OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: "access-hash-mismatch".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        let refresh = OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: "refresh-hash-mismatch".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+
+        let err = db
+            .exchange_oauth_authorization_code_for_tokens(&code_hash, now + 10, &access, &refresh)
+            .expect_err("subject mismatch must abort exchange");
+        assert!(err.to_string().contains("OAuth token subjects must match"));
+        let conn = db.conn_for_tests();
+        let used_at: Option<i64> = conn
+            .query_row(
+                "SELECT used_at FROM oauth_authorization_codes WHERE id = ?1",
+                [&code.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(used_at, None);
+        let access_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM oauth_access_tokens WHERE id = ?1",
+                [&access.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(access_count, 0);
+    }
+
+    #[test]
+    fn rotate_refresh_token_rejects_subject_mismatch_with_old_refresh() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+        let now = chrono::Utc::now().timestamp();
+        let old = OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: "old-refresh-hash".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "shared_key".to_string(),
+            subject_id: "hash-a".to_string(),
+            user_id: None,
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: Some("hash-a".to_string()),
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&old).unwrap();
+
+        let access = OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: "new-access-hash".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        let refresh = OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: "new-refresh-hash".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: Some(old.id.clone()),
+        };
+
+        let err = db
+            .rotate_oauth_refresh_token(
+                &old.token_hash,
+                &client.client_id,
+                now + 10,
+                &access,
+                &refresh,
+            )
+            .expect_err("subject mismatch must abort rotation");
+        assert!(err.to_string().contains("OAuth token subjects must match"));
+        let fetched_old = db
+            .get_oauth_refresh_token_by_hash(&old.token_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched_old.revoked_at, None);
+        assert_eq!(fetched_old.last_used_at, None);
+        let conn = db.conn_for_tests();
+        let access_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM oauth_access_tokens WHERE id = ?1",
+                [&access.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(access_count, 0);
     }
 }

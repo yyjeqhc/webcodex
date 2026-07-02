@@ -1974,16 +1974,30 @@ mod tests {
     ) -> String {
         let now = chrono::Utc::now().timestamp();
         let plaintext = crate::auth::generate_oauth_access_token();
+        let (subject_kind, subject_id, user_id, shared_key_hash) = match shared_key_hash {
+            Some(hash) => (
+                "shared_key".to_string(),
+                hash.to_string(),
+                None,
+                Some(hash.to_string()),
+            ),
+            None => (
+                "managed_user".to_string(),
+                user.id.clone(),
+                Some(user.id.clone()),
+                None,
+            ),
+        };
         let record = crate::models::OAuthAccessTokenRecord {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: crate::auth::hash_token(&plaintext),
             client_id: client.client_id.clone(),
-            subject_kind: "managed_user".to_string(),
-            subject_id: user.id.clone(),
-            user_id: Some(user.id.clone()),
+            subject_kind,
+            subject_id,
+            user_id,
             scopes: scopes.to_string(),
             resource: None,
-            shared_key_hash: shared_key_hash.map(str::to_string),
+            shared_key_hash,
             created_at: now,
             expires_at: now + 3600,
             revoked_at: None,

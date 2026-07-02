@@ -181,6 +181,15 @@ impl AuthContext {
         matches!(self.kind, AuthKind::OAuth2Token)
     }
 
+    /// True when the caller is a non-managed shared-key OAuth subject. This is
+    /// still an OAuth2 token for scope and transport purposes, but it must not
+    /// reach first-party account-control surfaces.
+    #[allow(dead_code)]
+    pub fn is_oauth_shared_key_subject(&self) -> bool {
+        matches!(self.kind, AuthKind::OAuth2Token)
+            && self.token_kind.as_deref() == Some("oauth2_shared_key")
+    }
+
     /// True when the caller authenticated with a lightweight shared key
     /// (quick-start mode).
     #[allow(dead_code)]
@@ -574,51 +583,83 @@ impl TokenVerifier for OAuth2Verifier {
             }
         }
 
-        if at_record.subject_kind == "shared_key" {
-            return Err("shared-key OAuth2 subject is not supported yet".to_string());
-        }
-        if at_record.subject_kind != "managed_user" {
-            return Err("unsupported OAuth2 subject".to_string());
-        }
+        let ctx = match at_record.subject_kind.as_str() {
+            "managed_user" => {
+                let user_id = at_record
+                    .user_id
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "managed-user OAuth2 token missing user_id".to_string())?;
+                if at_record.subject_id != user_id {
+                    return Err("managed-user OAuth2 subject_id does not match user_id".to_string());
+                }
 
-        let user_id = at_record
-            .user_id
-            .as_deref()
-            .filter(|value| !value.is_empty())
-            .ok_or_else(|| "managed-user OAuth2 token missing user_id".to_string())?;
+                // Verify the owning user is not disabled (consistent with
+                // PatVerifier behavior).
+                let user = db
+                    .get_user_by_id(user_id)
+                    .ok()
+                    .flatten()
+                    .ok_or_else(|| "user not found".to_string())?;
 
-        // Verify the owning user is not disabled (consistent with
-        // PatVerifier behavior).
-        let user = db
-            .get_user_by_id(user_id)
-            .ok()
-            .flatten()
-            .ok_or_else(|| "user not found".to_string())?;
+                if user.is_disabled() {
+                    return Err("user is disabled".to_string());
+                }
 
-        if user.is_disabled() {
-            return Err("user is disabled".to_string());
-        }
+                AuthContext {
+                    kind: AuthKind::OAuth2Token,
+                    user_id: Some(user.id.clone()),
+                    username: Some(user.username.clone()),
+                    // OAuth2 tokens don't map to an api_keys row. Use the
+                    // access token ID as the credential identifier.
+                    api_key_id: Some(at_record.id.clone()),
+                    api_key_name: None,
+                    role: Some(user.role.clone()),
+                    scopes: at_record.scopes_vec(),
+                    is_bootstrap: false,
+                    token_kind: Some("oauth2".to_string()),
+                    allowed_client_id: Some(at_record.client_id.clone()),
+                    shared_key_hash: at_record.shared_key_hash.clone(),
+                }
+            }
+            "shared_key" => {
+                if at_record.user_id.is_some() {
+                    return Err("shared-key OAuth2 token must not include user_id".to_string());
+                }
+                let shared_key_hash = at_record
+                    .shared_key_hash
+                    .as_deref()
+                    .filter(|value| !value.is_empty())
+                    .ok_or_else(|| "shared-key OAuth2 token missing shared_key_hash".to_string())?;
+                if at_record.subject_id != shared_key_hash {
+                    return Err(
+                        "shared-key OAuth2 subject_id does not match shared_key_hash".to_string(),
+                    );
+                }
+
+                AuthContext {
+                    kind: AuthKind::OAuth2Token,
+                    user_id: None,
+                    username: None,
+                    api_key_id: Some(at_record.id.clone()),
+                    api_key_name: None,
+                    role: Some("shared-key".to_string()),
+                    scopes: at_record.scopes_vec(),
+                    is_bootstrap: false,
+                    token_kind: Some("oauth2_shared_key".to_string()),
+                    allowed_client_id: Some(at_record.client_id.clone()),
+                    shared_key_hash: Some(shared_key_hash.to_string()),
+                }
+            }
+            _ => return Err("unsupported OAuth2 subject".to_string()),
+        };
 
         // All checks passed — update last_used_at.
         if let Err(e) = db.update_oauth_access_token_last_used(&at_record.id, now) {
             tracing::warn!("failed to update oauth access token last_used_at: {}", e);
         }
 
-        Ok(Some(AuthContext {
-            kind: AuthKind::OAuth2Token,
-            user_id: Some(user.id.clone()),
-            username: Some(user.username.clone()),
-            // OAuth2 tokens don't map to an api_keys row. Use the
-            // access token ID as the credential identifier.
-            api_key_id: Some(at_record.id.clone()),
-            api_key_name: None,
-            role: Some(user.role.clone()),
-            scopes: at_record.scopes_vec(),
-            is_bootstrap: false,
-            token_kind: Some("oauth2".to_string()),
-            allowed_client_id: Some(at_record.client_id.clone()),
-            shared_key_hash: at_record.shared_key_hash.clone(),
-        }))
+        Ok(Some(ctx))
     }
 }
 
@@ -862,12 +903,13 @@ pub(crate) fn enforce_token_surface(
     ctx: &AuthContext,
     path: &str,
 ) -> Result<(), (StatusCode, &'static str)> {
-    // Lightweight principals (shared key / open anonymous) must never reach
-    // account-control or first-party-only management surfaces.
-    if ctx.is_lightweight() && is_account_control_path(path) {
+    // Lightweight principals and shared-key OAuth subjects must never reach
+    // account-control management surfaces.
+    if (ctx.is_lightweight() || ctx.is_oauth_shared_key_subject()) && is_account_control_path(path)
+    {
         return Err((
             StatusCode::FORBIDDEN,
-            "lightweight keys are not allowed on account control endpoints",
+            "shared-key principals are not allowed on account control endpoints",
         ));
     }
     if ctx.is_agent_token() && !is_agent_transport_path(path) {
@@ -1503,6 +1545,33 @@ mod tests {
         (record, plaintext)
     }
 
+    fn gate_seed_shared_key_oauth_access_token(
+        db: &crate::Database,
+        client: &crate::models::OAuthClientRecord,
+        scopes: &str,
+        shared_key_hash: &str,
+    ) -> (crate::models::OAuthAccessTokenRecord, String) {
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = generate_oauth_access_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            subject_kind: "shared_key".to_string(),
+            subject_id: shared_key_hash.to_string(),
+            user_id: None,
+            scopes: scopes.to_string(),
+            resource: None,
+            shared_key_hash: Some(shared_key_hash.to_string()),
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+        (record, plaintext)
+    }
     /// Trivial handler that returns 200 OK JSON. Reaching it proves the central
     /// gate did not reject the request.
     #[salvo::handler]
@@ -2066,42 +2135,150 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth2_verifier_rejects_shared_key_subject_without_user_lookup() {
+    async fn oauth2_verifier_accepts_shared_key_subject_without_user_lookup() {
         let config = gate_test_config_oauth2(Some("secret"));
         let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-        let now = chrono::Utc::now().timestamp();
-        let plaintext = generate_oauth_access_token();
-        let token_hash = hash_token(&plaintext);
-        let record = crate::models::OAuthAccessTokenRecord {
-            id: uuid::Uuid::new_v4().to_string(),
-            token_hash,
-            client_id: client.client_id.clone(),
-            subject_kind: "shared_key".to_string(),
-            subject_id: "test-hash-a".to_string(),
-            user_id: None,
-            scopes: "runtime:read".to_string(),
-            resource: None,
-            shared_key_hash: Some("test-hash-a".to_string()),
-            created_at: now,
-            expires_at: now + 3600,
-            revoked_at: None,
-            last_used_at: None,
-        };
-        db.insert_oauth_access_token(&record).unwrap();
+        let owner = gate_seed_user(&db, "owner");
+        let (client, _secret) = gate_seed_oauth_client(&db, &owner, "Test App");
+        let (at, plaintext) = gate_seed_shared_key_oauth_access_token(
+            &db,
+            &client,
+            "runtime:read project:read",
+            "test-hash-a",
+        );
+        db.set_user_disabled(&owner.id, true, chrono::Utc::now().timestamp())
+            .unwrap();
 
         let verifier = OAuth2Verifier;
-        let err = verifier
+        let ctx = verifier
             .verify(&config, Some(&db), &plaintext)
             .await
-            .expect_err("shared-key OAuth2 subject is not enabled in this phase");
-        assert_eq!(err, "shared-key OAuth2 subject is not supported yet");
+            .unwrap()
+            .expect("shared-key OAuth2 subject should verify");
+        assert_eq!(ctx.kind, AuthKind::OAuth2Token);
+        assert_eq!(ctx.user_id, None);
+        assert_eq!(ctx.username, None);
+        assert_eq!(ctx.api_key_id.as_deref(), Some(at.id.as_str()));
+        assert_eq!(ctx.role.as_deref(), Some("shared-key"));
+        assert_eq!(ctx.token_kind.as_deref(), Some("oauth2_shared_key"));
+        assert_eq!(
+            ctx.allowed_client_id.as_deref(),
+            Some(client.client_id.as_str())
+        );
+        assert_eq!(ctx.shared_key_hash.as_deref(), Some("test-hash-a"));
+        assert!(ctx.scopes.contains(&"runtime:read".to_string()));
+        assert!(!ctx.is_admin());
+
         let stored = db
-            .get_oauth_access_token_by_hash(&record.token_hash)
+            .get_oauth_access_token_by_hash(&at.token_hash)
             .unwrap()
             .unwrap();
-        assert_eq!(stored.last_used_at, None);
+        assert!(stored.last_used_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_rejects_invalid_subject_combinations() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let owner = gate_seed_user(&db, "owner");
+        let (client, _secret) = gate_seed_oauth_client(&db, &owner, "Test App");
+        let now = chrono::Utc::now().timestamp();
+
+        let cases = [
+            (
+                "managed-missing-user",
+                "managed_user",
+                owner.id.as_str(),
+                None,
+                None,
+                "managed-user OAuth2 token missing user_id",
+            ),
+            (
+                "managed-mismatch",
+                "managed_user",
+                "other-user",
+                Some(owner.id.as_str()),
+                None,
+                "managed-user OAuth2 subject_id does not match user_id",
+            ),
+            (
+                "shared-with-user",
+                "shared_key",
+                "hash-a",
+                Some(owner.id.as_str()),
+                Some("hash-a"),
+                "shared-key OAuth2 token must not include user_id",
+            ),
+            (
+                "shared-missing-hash",
+                "shared_key",
+                "hash-a",
+                None,
+                None,
+                "shared-key OAuth2 token missing shared_key_hash",
+            ),
+            (
+                "shared-mismatch",
+                "shared_key",
+                "hash-a",
+                None,
+                Some("hash-b"),
+                "shared-key OAuth2 subject_id does not match shared_key_hash",
+            ),
+            (
+                "unknown-kind",
+                "surprise",
+                "subject",
+                None,
+                None,
+                "unsupported OAuth2 subject",
+            ),
+        ];
+
+        for (label, subject_kind, subject_id, user_id, shared_key_hash, expected_error) in cases {
+            let plaintext = generate_oauth_access_token();
+            let token_hash = hash_token(&plaintext);
+            let id = uuid::Uuid::new_v4().to_string();
+            {
+                let conn = db.conn_for_tests();
+                conn.execute(
+                    "INSERT INTO oauth_access_tokens (
+                        id, token_hash, client_id, subject_kind, subject_id, user_id,
+                        scopes, resource, shared_key_hash, created_at, expires_at,
+                        revoked_at, last_used_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, NULL, ?8, ?9, ?10, NULL, NULL)",
+                    rusqlite::params![
+                        id,
+                        token_hash,
+                        client.client_id,
+                        subject_kind,
+                        subject_id,
+                        user_id,
+                        "runtime:read",
+                        shared_key_hash,
+                        now,
+                        now + 3600,
+                    ],
+                )
+                .unwrap();
+            }
+
+            let verifier = OAuth2Verifier;
+            let err = verifier
+                .verify(&config, Some(&db), &plaintext)
+                .await
+                .expect_err(label);
+            assert_eq!(err, expected_error, "{label}");
+            let conn = db.conn_for_tests();
+            let last_used: Option<i64> = conn
+                .query_row(
+                    "SELECT last_used_at FROM oauth_access_tokens WHERE id = ?1",
+                    [&id],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(last_used, None, "{label}");
+        }
     }
 
     #[tokio::test]
@@ -2775,9 +2952,10 @@ mod tests {
     async fn authenticate_bearer_rejects_oauth2_access_token() {
         let config = gate_test_config_oauth2(Some("secret"));
         let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-        let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+        let owner = gate_seed_user(&db, "owner");
+        let (client, _secret) = gate_seed_oauth_client(&db, &owner, "Test App");
+        let (at, plaintext) =
+            gate_seed_shared_key_oauth_access_token(&db, &client, "runtime:read", "test-hash-a");
         assert!(at.last_used_at.is_none(), "precondition");
         let result = authenticate_bearer(&config, Some(&db), Some(&plaintext)).await;
         assert!(
@@ -2928,15 +3106,10 @@ mod tests {
     async fn auth_middleware_rejects_bridge_oauth2_on_agent_path_without_updating_last_used() {
         let config = gate_test_config_oauth2(Some("secret"));
         let (_tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-        let (at, plaintext) = gate_seed_oauth_access_token_with_shared_key_hash(
-            &db,
-            &client,
-            &user,
-            "runtime:read",
-            Some("test-hash-a"),
-        );
+        let owner = gate_seed_user(&db, "owner");
+        let (client, _secret) = gate_seed_oauth_client(&db, &owner, "Test App");
+        let (at, plaintext) =
+            gate_seed_shared_key_oauth_access_token(&db, &client, "runtime:read", "test-hash-a");
         assert_eq!(at.shared_key_hash.as_deref(), Some("test-hash-a"));
         assert!(at.last_used_at.is_none(), "precondition");
 
@@ -2969,9 +3142,10 @@ mod tests {
     async fn gate_oauth2_token_with_scopes(scopes: &str) -> (tempfile::TempDir, Service, String) {
         let config = gate_test_config_oauth2(Some("secret"));
         let (tmp, db) = gate_test_db();
-        let user = gate_seed_user(&db, "alice");
-        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-        let (_at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, scopes);
+        let owner = gate_seed_user(&db, "owner");
+        let (client, _secret) = gate_seed_oauth_client(&db, &owner, "Test App");
+        let (_at, plaintext) =
+            gate_seed_shared_key_oauth_access_token(&db, &client, scopes, "test-hash-a");
         let service = Service::new(gate_router(config, db));
         (tmp, service, plaintext)
     }
@@ -3052,17 +3226,37 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth2_token_with_account_manage_can_call_users_me_or_tokens_list() {
-        let (_tmp, service, token) = gate_oauth2_token_with_scopes("account:manage").await;
+    async fn managed_oauth2_token_with_account_manage_can_call_users_me() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, token) = gate_seed_oauth_access_token(&db, &client, &user, "account:manage");
+        let service = Service::new(gate_router(config, db));
         let (status, body) = gate_send(&service, "/api/users/me", Some(&token)).await;
         assert_eq!(status, StatusCode::OK, "body: {:?}", body);
     }
 
     #[tokio::test]
-    async fn oauth2_token_without_account_manage_cannot_call_account_route() {
+    async fn shared_key_oauth2_token_with_account_manage_still_cannot_call_account_route() {
+        let (_tmp, service, token) = gate_oauth2_token_with_scopes("account:manage").await;
+        let (status, body) = gate_send(&service, "/api/users/me", Some(&token)).await;
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+        assert_eq!(
+            body["error"].as_str(),
+            Some("shared-key principals are not allowed on account control endpoints")
+        );
+    }
+
+    #[tokio::test]
+    async fn shared_key_oauth2_token_without_account_manage_cannot_call_account_route() {
         let (_tmp, service, token) = gate_oauth2_token_with_scopes("runtime:read").await;
         let (status, body) = gate_send(&service, "/api/users/me", Some(&token)).await;
-        assert_insufficient_scope(status, &body, Some(SCOPE_ACCOUNT_MANAGE));
+        assert_eq!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
+        assert_eq!(
+            body["error"].as_str(),
+            Some("shared-key principals are not allowed on account control endpoints")
+        );
     }
 
     #[tokio::test]

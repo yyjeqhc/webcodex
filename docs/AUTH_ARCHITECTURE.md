@@ -686,8 +686,9 @@ configuration, and artifact/import/action behavior unchanged.
    `response_types_supported = ["code"]`,
    `grant_types_supported = ["authorization_code", "refresh_token"]`,
    `code_challenge_methods_supported = ["S256"]`,
-   `token_endpoint_auth_methods_supported = ["client_secret_post", "none"]`,
+   `token_endpoint_auth_methods_supported = ["client_secret_post"]`,
    and `scopes_supported`.
+   Public clients and `token_endpoint_auth_method = "none"` are not supported.
 4. **Issuer-derived URLs**: `issuer` comes from `config.oauth2.issuer` with
    the existing `http://localhost` fallback. Endpoint URLs trim a trailing
    issuer slash before appending `/oauth/authorize`, `/oauth/token`, and

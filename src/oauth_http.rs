@@ -3352,7 +3352,7 @@ pub(crate) async fn oauth_authorization_server_metadata(depot: &mut Depot, res: 
         "response_types_supported": ["code"],
         "grant_types_supported": ["authorization_code", "refresh_token"],
         "code_challenge_methods_supported": ["S256"],
-        "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
+        "token_endpoint_auth_methods_supported": ["client_secret_post"],
         "scopes_supported": oauth_scopes_supported(),
     });
 
@@ -8474,11 +8474,17 @@ mod tests {
             body["code_challenge_methods_supported"],
             serde_json::json!(["S256"])
         );
+        assert_eq!(
+            body["token_endpoint_auth_methods_supported"],
+            serde_json::json!(["client_secret_post"])
+        );
         let auth_methods = body["token_endpoint_auth_methods_supported"]
             .as_array()
             .unwrap();
-        assert!(auth_methods.iter().any(|v| v == "client_secret_post"));
-        assert!(auth_methods.iter().any(|v| v == "none"));
+        assert!(
+            !auth_methods.iter().any(|v| v == "none"),
+            "metadata must not advertise unsupported public-client auth"
+        );
         assert_eq!(
             body["scopes_supported"],
             serde_json::json!(oauth_scopes_supported())

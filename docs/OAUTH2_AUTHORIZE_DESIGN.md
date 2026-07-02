@@ -58,8 +58,9 @@ Implemented in Phase 2e-2:
   `response_types_supported = ["code"]`,
   `grant_types_supported = ["authorization_code", "refresh_token"]`,
   `code_challenge_methods_supported = ["S256"]`,
-  `token_endpoint_auth_methods_supported = ["client_secret_post", "none"]`,
+  `token_endpoint_auth_methods_supported = ["client_secret_post"]`,
   and `scopes_supported` from the global OAuth scope registry.
+  Public clients and `token_endpoint_auth_method = "none"` are not supported.
 
 Implemented in Phase 2e-3:
 
@@ -447,8 +448,12 @@ are real. The metadata includes:
 - `response_types_supported = ["code"]`
 - `grant_types_supported = ["authorization_code", "refresh_token"]`
 - `code_challenge_methods_supported = ["S256"]`
-- `token_endpoint_auth_methods_supported = ["client_secret_post", "none"]`
+- `token_endpoint_auth_methods_supported = ["client_secret_post"]`
 - `scopes_supported`
+
+The current token endpoint implementation requires client authentication with
+`client_id` and `client_secret` submitted via `client_secret_post`; it does not
+support public clients or `token_endpoint_auth_method = "none"`.
 
 The endpoint URLs are derived from `config.oauth2.issuer` (fallback:
 `http://localhost`) after trimming a trailing slash before appending

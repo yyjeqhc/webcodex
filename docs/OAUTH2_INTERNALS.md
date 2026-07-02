@@ -153,7 +153,7 @@ Authorization server metadata contains only implemented capabilities:
   "response_types_supported": ["code"],
   "grant_types_supported": ["authorization_code", "refresh_token"],
   "code_challenge_methods_supported": ["S256"],
-  "token_endpoint_auth_methods_supported": ["client_secret_post", "none"],
+  "token_endpoint_auth_methods_supported": ["client_secret_post"],
   "scopes_supported": ["runtime:read", "project:read", "project:write", "job:run", "account:manage"]
 }
 ```
@@ -162,6 +162,9 @@ Authorization server metadata contains only implemented capabilities:
 fallback. Endpoint URLs trim any trailing issuer slash before appending
 `/oauth/authorize`, `/oauth/token`, or `/oauth/revoke`. `scopes_supported`
 reuses `oauth_scopes_supported()`.
+
+The current token endpoint supports `client_secret_post` only; public clients
+and `token_endpoint_auth_method = "none"` are not supported.
 
 `/.well-known/openid-configuration` is still not implemented. The server does
 not advertise JWKS, userinfo, registration, device authorization,

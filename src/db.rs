@@ -398,6 +398,7 @@ impl Database {
                 code_challenge TEXT,
                 code_challenge_method TEXT,
                 resource TEXT,
+                shared_key_hash TEXT,
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL,
                 used_at INTEGER,
@@ -471,7 +472,11 @@ impl Database {
     }
 
     fn migrate_oauth_bridge_columns(conn: &Connection) -> anyhow::Result<()> {
-        for table in ["oauth_access_tokens", "oauth_refresh_tokens"] {
+        for table in [
+            "oauth_authorization_codes",
+            "oauth_access_tokens",
+            "oauth_refresh_tokens",
+        ] {
             let cols = table_columns(conn, table)?;
             if !cols.iter().any(|c| c == "shared_key_hash") {
                 conn.execute(
@@ -1844,9 +1849,9 @@ impl Database {
         conn.execute(
             "INSERT INTO oauth_authorization_codes (
                 id, code_hash, client_id, user_id, redirect_uri, scopes,
-                code_challenge, code_challenge_method, resource,
+                code_challenge, code_challenge_method, resource, shared_key_hash,
                 created_at, expires_at, used_at, revoked_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 record.id,
                 code_hash,
@@ -1857,6 +1862,7 @@ impl Database {
                 record.code_challenge,
                 record.code_challenge_method,
                 record.resource,
+                record.shared_key_hash,
                 record.created_at,
                 record.expires_at,
                 record.used_at,
@@ -1873,7 +1879,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, code_hash, client_id, user_id, redirect_uri, scopes,
-                    code_challenge, code_challenge_method, resource,
+                    code_challenge, code_challenge_method, resource, shared_key_hash,
                     created_at, expires_at, used_at, revoked_at
              FROM oauth_authorization_codes
              WHERE code_hash = ?1 AND revoked_at IS NULL",
@@ -1943,7 +1949,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, code_hash, client_id, user_id, redirect_uri, scopes,
-                    code_challenge, code_challenge_method, resource,
+                    code_challenge, code_challenge_method, resource, shared_key_hash,
                     created_at, expires_at, used_at, revoked_at
              FROM oauth_authorization_codes
              WHERE code_hash = ?1",
@@ -2486,10 +2492,11 @@ fn row_to_oauth_authorization_code(
         code_challenge: row.get(6)?,
         code_challenge_method: row.get(7)?,
         resource: row.get(8)?,
-        created_at: row.get(9)?,
-        expires_at: row.get(10)?,
-        used_at: row.get(11)?,
-        revoked_at: row.get(12)?,
+        shared_key_hash: row.get(9)?,
+        created_at: row.get(10)?,
+        expires_at: row.get(11)?,
+        used_at: row.get(12)?,
+        revoked_at: row.get(13)?,
     })
 }
 
@@ -3155,6 +3162,7 @@ mod tests {
             code_challenge: Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_string()),
             code_challenge_method: Some("S256".to_string()),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 300,
             used_at: None,
@@ -3177,6 +3185,7 @@ mod tests {
             Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM")
         );
         assert_eq!(fetched.code_challenge_method.as_deref(), Some("S256"));
+        assert!(fetched.shared_key_hash.is_none());
     }
 
     #[test]
@@ -3199,6 +3208,7 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 300,
             used_at: None,
@@ -3369,6 +3379,31 @@ mod tests {
         let (client, _) = oauth_seed_client(&db, &user, "Test App");
         let now = chrono::Utc::now().timestamp();
 
+        let plaintext_ac = crate::auth::generate_oauth_authorization_code();
+        let auth_code = OAuthAuthorizationCodeRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            code_hash: crate::auth::hash_token(&plaintext_ac),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            redirect_uri: "https://example.com/callback".to_string(),
+            scopes: "runtime:read".to_string(),
+            code_challenge: None,
+            code_challenge_method: None,
+            resource: None,
+            shared_key_hash: Some("hash-a".to_string()),
+            created_at: now,
+            expires_at: now + 300,
+            used_at: None,
+            revoked_at: None,
+        };
+        db.insert_oauth_authorization_code(&auth_code, &auth_code.code_hash)
+            .unwrap();
+        let fetched_auth_code = db
+            .get_oauth_authorization_code_by_hash(&auth_code.code_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched_auth_code.shared_key_hash.as_deref(), Some("hash-a"));
+
         let plaintext_at = crate::auth::generate_oauth_access_token();
         let access = OAuthAccessTokenRecord {
             id: uuid::Uuid::new_v4().to_string(),
@@ -3421,6 +3456,21 @@ mod tests {
             let conn = rusqlite::Connection::open(&path).unwrap();
             conn.execute_batch(
                 "
+                CREATE TABLE oauth_authorization_codes (
+                    id TEXT PRIMARY KEY,
+                    code_hash TEXT NOT NULL UNIQUE,
+                    client_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    redirect_uri TEXT NOT NULL,
+                    scopes TEXT NOT NULL DEFAULT '',
+                    code_challenge TEXT,
+                    code_challenge_method TEXT,
+                    resource TEXT,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    used_at INTEGER,
+                    revoked_at INTEGER
+                );
                 CREATE TABLE oauth_access_tokens (
                     id TEXT PRIMARY KEY,
                     token_hash TEXT NOT NULL UNIQUE,
@@ -3446,6 +3496,29 @@ mod tests {
                     last_used_at INTEGER,
                     rotated_from_id TEXT
                 );
+                INSERT INTO oauth_authorization_codes (
+                    id, code_hash, client_id, user_id, redirect_uri, scopes,
+                    code_challenge, code_challenge_method, resource,
+                    created_at, expires_at, used_at, revoked_at
+                ) VALUES (
+                    'legacy-code', 'legacy-code-hash', 'legacy-client', 'legacy-user',
+                    'https://example.com/callback', 'runtime:read', NULL, NULL, NULL,
+                    1, 301, NULL, NULL
+                );
+                INSERT INTO oauth_access_tokens (
+                    id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at
+                ) VALUES (
+                    'legacy-access', 'legacy-access-hash', 'legacy-client', 'legacy-user',
+                    'runtime:read', NULL, 1, 3601, NULL, NULL
+                );
+                INSERT INTO oauth_refresh_tokens (
+                    id, token_hash, client_id, user_id, scopes, resource,
+                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                ) VALUES (
+                    'legacy-refresh', 'legacy-refresh-hash', 'legacy-client', 'legacy-user',
+                    'runtime:read', NULL, 1, 2592001, NULL, NULL, NULL
+                );
                 ",
             )
             .unwrap();
@@ -3453,10 +3526,36 @@ mod tests {
 
         let db = Database::open(&path).unwrap();
         let conn = db.conn.lock().unwrap();
+        let auth_code_cols = table_columns(&conn, "oauth_authorization_codes").unwrap();
         let access_cols = table_columns(&conn, "oauth_access_tokens").unwrap();
         let refresh_cols = table_columns(&conn, "oauth_refresh_tokens").unwrap();
+        assert!(auth_code_cols.iter().any(|c| c == "shared_key_hash"));
         assert!(access_cols.iter().any(|c| c == "shared_key_hash"));
         assert!(refresh_cols.iter().any(|c| c == "shared_key_hash"));
+        let auth_code_shared_key_hash: Option<String> = conn
+            .query_row(
+                "SELECT shared_key_hash FROM oauth_authorization_codes WHERE id = 'legacy-code'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let access_shared_key_hash: Option<String> = conn
+            .query_row(
+                "SELECT shared_key_hash FROM oauth_access_tokens WHERE id = 'legacy-access'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let refresh_shared_key_hash: Option<String> = conn
+            .query_row(
+                "SELECT shared_key_hash FROM oauth_refresh_tokens WHERE id = 'legacy-refresh'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert!(auth_code_shared_key_hash.is_none());
+        assert!(access_shared_key_hash.is_none());
+        assert!(refresh_shared_key_hash.is_none());
     }
 
     #[test]
@@ -3590,6 +3689,7 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 300,
             used_at: None,
@@ -3633,6 +3733,7 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 300,
             used_at: None,
@@ -3670,6 +3771,7 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 300,
             used_at: None,
@@ -3710,6 +3812,7 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 300,
             used_at: None,
@@ -3745,6 +3848,7 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 300,
             used_at: None,

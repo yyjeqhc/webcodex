@@ -104,10 +104,14 @@ A bearer-like OAuth bridge product flow is future work. It may let a user enter
 a shared key on a WebCodex-hosted OAuth authorization page and receive an OAuth
 access token for OAuth-only hosts.
 
-The internal token substrate may carry an optional `shared_key_hash` on
-WebCodex-issued OAuth access and refresh tokens so bridge-issued tokens can
-reuse shared-key group isolation. No public bridge issuance endpoint, login UI,
-or shared-key-to-OAuth exchange route is exposed yet.
+The internal token substrate now supports an optional `shared_key_hash` on
+authorization codes, access tokens, and refresh tokens so bridge-issued tokens
+can reuse shared-key group isolation. Public bridge issuance endpoint/UI remains
+future work; no shared-key-to-OAuth exchange route is exposed yet.
+
+Bridge OAuth tokens currently keep OAuth current-session identity semantics;
+`shared_key_hash` affects shared-key project/job visibility, not managed-user
+identity.
 
 That bridge would preserve host OAuth semantics. It would not make blank OAuth
 client fields behave like no-auth, shared-key quick start, or a static Bearer

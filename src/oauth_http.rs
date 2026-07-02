@@ -993,6 +993,7 @@ pub(crate) async fn oauth_authorize_consent(
         resource,
         code_challenge: Some(parsed.code_challenge.clone()),
         code_challenge_method: Some("S256".to_string()),
+        shared_key_hash: None,
         created_at: now,
         expires_at: now + config.oauth2.authorization_code_ttl_secs,
         used_at: None,
@@ -1738,6 +1739,7 @@ async fn authorize_issue_with_context(
         resource,
         code_challenge: Some(parsed.code_challenge.clone()),
         code_challenge_method: Some("S256".to_string()),
+        shared_key_hash: None,
         created_at: now,
         expires_at: now + config.oauth2.authorization_code_ttl_secs,
         used_at: None,
@@ -2266,7 +2268,7 @@ async fn handle_authorization_code_grant(
         user_id: code_record.user_id.clone(),
         scopes: code_record.scopes.clone(),
         resource: code_record.resource.clone(),
-        shared_key_hash: None,
+        shared_key_hash: code_record.shared_key_hash.clone(),
         created_at: now,
         expires_at: at_expires_at,
         revoked_at: None,
@@ -2280,7 +2282,7 @@ async fn handle_authorization_code_grant(
         user_id: code_record.user_id.clone(),
         scopes: code_record.scopes.clone(),
         resource: code_record.resource.clone(),
-        shared_key_hash: None,
+        shared_key_hash: code_record.shared_key_hash.clone(),
         created_at: now,
         expires_at: rt_expires_at,
         revoked_at: None,
@@ -3477,6 +3479,51 @@ mod tests {
         code_challenge_method: Option<&str>,
         resource: Option<&str>,
     ) -> (OAuthAuthorizationCodeRecord, String) {
+        seed_auth_code_with_resource_and_shared_key_hash(
+            db,
+            client,
+            user,
+            redirect_uri,
+            scopes,
+            code_challenge,
+            code_challenge_method,
+            resource,
+            None,
+        )
+    }
+
+    fn seed_auth_code_with_shared_key_hash(
+        db: &crate::Database,
+        client: &OAuthClientRecord,
+        user: &UserRecord,
+        redirect_uri: &str,
+        scopes: &str,
+        shared_key_hash: &str,
+    ) -> (OAuthAuthorizationCodeRecord, String) {
+        seed_auth_code_with_resource_and_shared_key_hash(
+            db,
+            client,
+            user,
+            redirect_uri,
+            scopes,
+            None,
+            None,
+            None,
+            Some(shared_key_hash),
+        )
+    }
+
+    fn seed_auth_code_with_resource_and_shared_key_hash(
+        db: &crate::Database,
+        client: &OAuthClientRecord,
+        user: &UserRecord,
+        redirect_uri: &str,
+        scopes: &str,
+        code_challenge: Option<&str>,
+        code_challenge_method: Option<&str>,
+        resource: Option<&str>,
+        shared_key_hash: Option<&str>,
+    ) -> (OAuthAuthorizationCodeRecord, String) {
         let now = chrono::Utc::now().timestamp();
         let plaintext_code = generate_oauth_authorization_code();
         let code_hash = hash_token(&plaintext_code);
@@ -3490,6 +3537,7 @@ mod tests {
             code_challenge: code_challenge.map(str::to_string),
             code_challenge_method: code_challenge_method.map(str::to_string),
             resource: resource.map(str::to_string),
+            shared_key_hash: shared_key_hash.map(str::to_string),
             created_at: now,
             expires_at: now + 300,
             used_at: None,
@@ -3770,6 +3818,8 @@ mod tests {
             authorize_success(&service, &db, &url, &token).await;
 
         assert!(code.starts_with("wc_oac_"));
+        let record = auth_code_by_plaintext(&db, &code);
+        assert_eq!(record.shared_key_hash, None);
     }
 
     #[tokio::test]
@@ -4502,6 +4552,7 @@ mod tests {
         assert_eq!(record.redirect_uri, "https://example.com/callback");
         assert_eq!(record.scopes, "runtime:read project:read");
         assert_eq!(record.resource, None);
+        assert_eq!(record.shared_key_hash, None);
         assert_eq!(record.code_challenge.as_deref(), Some("challenge-1"));
         assert_eq!(record.code_challenge_method.as_deref(), Some("S256"));
         assert_eq!(record.used_at, None);
@@ -4682,17 +4733,15 @@ mod tests {
 
         assert_eq!(resp.status_code, Some(StatusCode::OK));
         let json: serde_json::Value = resp.take_json().await.unwrap();
-        assert!(json["access_token"]
-            .as_str()
-            .unwrap()
-            .starts_with("wc_oat_"));
-        assert!(json["refresh_token"]
-            .as_str()
-            .unwrap()
-            .starts_with("wc_ort_"));
+        let access_token = json["access_token"].as_str().unwrap();
+        let refresh_token = json["refresh_token"].as_str().unwrap();
+        assert!(access_token.starts_with("wc_oat_"));
+        assert!(refresh_token.starts_with("wc_ort_"));
         assert_eq!(json["token_type"], "Bearer");
         assert_eq!(json["expires_in"], 3600);
         assert_eq!(json["scope"], "runtime:read");
+        assert!(access_token_shared_key_hash_by_plaintext(&db, access_token).is_none());
+        assert!(refresh_token_shared_key_hash_by_plaintext(&db, refresh_token).is_none());
 
         // Both tokens should be inserted.
         let (at_after, rt_after) = oauth_token_counts(&db);
@@ -4741,6 +4790,48 @@ mod tests {
         assert_eq!(
             refresh_token_resource_by_plaintext(&db, refresh_token).as_deref(),
             Some("https://example.test/mcp")
+        );
+    }
+
+    #[tokio::test]
+    async fn oauth_token_exchange_inherits_bridge_shared_key_hash_from_code() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (_, code) = seed_auth_code_with_shared_key_hash(
+            &db,
+            &client,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read",
+            "hash-a",
+        );
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", "https://example.com/callback"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        let access_token = json["access_token"].as_str().unwrap();
+        let refresh_token = json["refresh_token"].as_str().unwrap();
+
+        assert_eq!(
+            access_token_shared_key_hash_by_plaintext(&db, access_token).as_deref(),
+            Some("hash-a")
+        );
+        assert_eq!(
+            refresh_token_shared_key_hash_by_plaintext(&db, refresh_token).as_deref(),
+            Some("hash-a")
         );
     }
 
@@ -5043,6 +5134,7 @@ mod tests {
             code_challenge: None,
             code_challenge_method: None,
             resource: None,
+            shared_key_hash: None,
             created_at: now - 600,
             expires_at: now - 1, // already expired
             used_at: None,
@@ -7992,6 +8084,8 @@ mod tests {
             parsed.query_pairs().into_owned().collect();
         let code = params.get("code").expect("code in redirect");
         assert!(code.starts_with("wc_oac_"));
+        let record = auth_code_by_plaintext(&db, code);
+        assert_eq!(record.shared_key_hash, None);
         assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
     }
 
@@ -8042,6 +8136,7 @@ mod tests {
 
         assert!(code.starts_with("wc_oac_"));
         assert_eq!(record.resource.as_deref(), Some("https://example.test/mcp"));
+        assert_eq!(record.shared_key_hash, None);
         assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
     }
 

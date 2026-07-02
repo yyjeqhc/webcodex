@@ -306,6 +306,9 @@ pub struct OAuthAuthorizationCodeRecord {
     pub code_challenge_method: Option<String>,
     /// Audience / resource indicator for MCP OAuth. `None` when not specified.
     pub resource: Option<String>,
+    /// Optional shared-key group hash for future bridge-issued authorization
+    /// codes. Plaintext shared keys are never stored.
+    pub shared_key_hash: Option<String>,
     pub created_at: i64,
     pub expires_at: i64,
     pub used_at: Option<i64>,

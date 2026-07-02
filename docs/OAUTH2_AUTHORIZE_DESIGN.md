@@ -139,7 +139,7 @@ two paths:
 | `state` | No | Opaque client value. WebCodex does not interpret or trust it. The decoded state value is preserved semantically and URL-encoded again when redirecting. |
 | `code_challenge` | Yes | Required for PKCE. |
 | `code_challenge_method` | Yes | Must be exactly `S256`. |
-| `resource` | No | Not supported in Phase 2e-1. If present, reject instead of silently ignoring. |
+| `resource` | No | Currently unsupported. If present, reject instead of silently ignoring. |
 
 Unsupported duplicate or ambiguous parameters should be rejected with
 `invalid_request`. The handler must not interpret or trust `state`; it
@@ -152,18 +152,24 @@ The handler follows this order:
 
 1. Require OAuth2 enabled. If disabled, return a direct error and create no
    code.
-2. Require authenticated WebCodex user via `AuthMiddleware`.
-3. Parse query parameters.
-4. Validate `client_id` and load a non-revoked client.
-5. Validate `redirect_uri` by exact string match against
-   `oauth_clients.redirect_uris`.
-6. After the redirect target is trusted, validate `response_type`, PKCE,
-   `scope`, and unsupported `resource`.
+2. Parse query parameters enough to validate the OAuth request and client
+   redirect boundary.
+3. Validate `client_id` and load a non-revoked client.
+4. Validate `redirect_uri` by exact registered match before redirecting
+   anywhere.
+5. Validate `response_type`, PKCE, `scope`, and unsupported `resource`.
+6. Resolve first-party authorize identity:
+
+   - Bearer PAT with a concrete `user_id` may directly issue a code.
+   - Browser flow may use `/oauth/authorize/login` to create a short-lived
+     authorize-session cookie, then `/oauth/authorize/consent` revalidates the
+     request, client, scope, and PKCE before code issuance.
+   - OAuth2 access tokens, agent tokens, account credentials, bootstrap, and
+     unauthenticated requests must not issue codes.
+
 7. On any validation failure, create no authorization code.
 8. Generate one plaintext `wc_oac_*` code, store only its SHA-256 hash and
    metadata, and redirect once to the registered redirect URI.
-9. In a later metadata phase, expose authorization server metadata after the
-   authorize issuance behavior remains stable.
 
 ## Client And Redirect URI Validation
 

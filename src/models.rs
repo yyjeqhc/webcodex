@@ -297,7 +297,13 @@ pub struct OAuthAuthorizationCodeRecord {
     /// SHA-256 hash of the code. Plaintext never stored.
     pub code_hash: String,
     pub client_id: String,
-    pub user_id: String,
+    /// Stable OAuth subject discriminator. Supported values are
+    /// `"managed_user"` and `"shared_key"`.
+    pub subject_kind: String,
+    /// Stable subject identifier: managed users use `user_id`; shared-key
+    /// subjects use `shared_key_hash`.
+    pub subject_id: String,
+    pub user_id: Option<String>,
     pub redirect_uri: String,
     pub scopes: String,
     /// PKCE code challenge (S256). `None` when PKCE is not used.
@@ -323,7 +329,13 @@ pub struct OAuthAccessTokenRecord {
     /// SHA-256 hash of the token. Plaintext never stored.
     pub token_hash: String,
     pub client_id: String,
-    pub user_id: String,
+    /// Stable OAuth subject discriminator. Supported values are
+    /// `"managed_user"` and `"shared_key"`.
+    pub subject_kind: String,
+    /// Stable subject identifier: managed users use `user_id`; shared-key
+    /// subjects use `shared_key_hash`.
+    pub subject_id: String,
+    pub user_id: Option<String>,
     pub scopes: String,
     /// Audience / resource indicator for MCP OAuth.
     pub resource: Option<String>,
@@ -344,7 +356,13 @@ pub struct OAuthRefreshTokenRecord {
     /// SHA-256 hash of the token. Plaintext never stored.
     pub token_hash: String,
     pub client_id: String,
-    pub user_id: String,
+    /// Stable OAuth subject discriminator. Supported values are
+    /// `"managed_user"` and `"shared_key"`.
+    pub subject_kind: String,
+    /// Stable subject identifier: managed users use `user_id`; shared-key
+    /// subjects use `shared_key_hash`.
+    pub subject_id: String,
+    pub user_id: Option<String>,
     pub scopes: String,
     /// Audience / resource indicator for MCP OAuth.
     pub resource: Option<String>,

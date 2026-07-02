@@ -987,7 +987,9 @@ pub(crate) async fn oauth_authorize_consent(
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: client.client_id.clone(),
-        user_id: session.user_id.clone(),
+        subject_kind: "managed_user".to_string(),
+        subject_id: session.user_id.clone(),
+        user_id: Some(session.user_id.clone()),
         redirect_uri: parsed.redirect_uri.clone(),
         scopes,
         resource,
@@ -1733,7 +1735,9 @@ async fn authorize_issue_with_context(
         id: uuid::Uuid::new_v4().to_string(),
         code_hash,
         client_id: client.client_id.clone(),
-        user_id: user_id.to_string(),
+        subject_kind: "managed_user".to_string(),
+        subject_id: user_id.to_string(),
+        user_id: Some(user_id.to_string()),
         redirect_uri: redirect_uri.clone(),
         scopes,
         resource,
@@ -2265,6 +2269,8 @@ async fn handle_authorization_code_grant(
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: at_hash,
         client_id: client.client_id.clone(),
+        subject_kind: code_record.subject_kind.clone(),
+        subject_id: code_record.subject_id.clone(),
         user_id: code_record.user_id.clone(),
         scopes: code_record.scopes.clone(),
         resource: code_record.resource.clone(),
@@ -2279,6 +2285,8 @@ async fn handle_authorization_code_grant(
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: rt_hash,
         client_id: client.client_id.clone(),
+        subject_kind: code_record.subject_kind.clone(),
+        subject_id: code_record.subject_id.clone(),
         user_id: code_record.user_id.clone(),
         scopes: code_record.scopes.clone(),
         resource: code_record.resource.clone(),
@@ -2429,6 +2437,8 @@ async fn handle_refresh_token_grant(
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: new_at_hash,
         client_id: client.client_id.clone(),
+        subject_kind: old_rt_metadata.subject_kind.clone(),
+        subject_id: old_rt_metadata.subject_id.clone(),
         user_id: old_rt_metadata.user_id.clone(),
         scopes: old_rt_metadata.scopes.clone(),
         resource: old_rt_metadata.resource.clone(),
@@ -2443,6 +2453,8 @@ async fn handle_refresh_token_grant(
         id: uuid::Uuid::new_v4().to_string(),
         token_hash: new_rt_hash,
         client_id: client.client_id.clone(),
+        subject_kind: old_rt_metadata.subject_kind.clone(),
+        subject_id: old_rt_metadata.subject_id.clone(),
         user_id: old_rt_metadata.user_id.clone(),
         scopes: old_rt_metadata.scopes.clone(),
         resource: old_rt_metadata.resource.clone(),
@@ -3531,7 +3543,14 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: shared_key_hash
+                .map(|_| "shared_key")
+                .unwrap_or("managed_user")
+                .to_string(),
+            subject_id: shared_key_hash.unwrap_or(&user.id).to_string(),
+            user_id: shared_key_hash
+                .map(|_| ())
+                .map_or(Some(user.id.clone()), |_| None),
             redirect_uri: redirect_uri.to_string(),
             scopes: scopes.to_string(),
             code_challenge: code_challenge.map(str::to_string),
@@ -3603,7 +3622,14 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: shared_key_hash
+                .map(|_| "shared_key")
+                .unwrap_or("managed_user")
+                .to_string(),
+            subject_id: shared_key_hash.unwrap_or(&user.id).to_string(),
+            user_id: shared_key_hash
+                .map(|_| ())
+                .map_or(Some(user.id.clone()), |_| None),
             scopes: scopes.to_string(),
             resource: resource.map(str::to_string),
             shared_key_hash: shared_key_hash.map(str::to_string),
@@ -3632,7 +3658,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: scopes.to_string(),
             resource: None,
             shared_key_hash: None,
@@ -3738,6 +3766,19 @@ mod tests {
             .unwrap()
     }
 
+    fn access_token_subject_by_plaintext(
+        db: &crate::Database,
+        plaintext_token: &str,
+    ) -> (String, String, Option<String>, Option<String>) {
+        db.conn_for_tests()
+            .query_row(
+                "SELECT subject_kind, subject_id, user_id, shared_key_hash FROM oauth_access_tokens WHERE token_hash = ?1",
+                [&hash_token(plaintext_token)],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap()
+    }
+
     fn refresh_token_resource_by_plaintext(
         db: &crate::Database,
         plaintext_token: &str,
@@ -3760,6 +3801,19 @@ mod tests {
                 "SELECT shared_key_hash FROM oauth_refresh_tokens WHERE token_hash = ?1",
                 [&hash_token(plaintext_token)],
                 |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn refresh_token_subject_by_plaintext(
+        db: &crate::Database,
+        plaintext_token: &str,
+    ) -> (String, String, Option<String>, Option<String>) {
+        db.conn_for_tests()
+            .query_row(
+                "SELECT subject_kind, subject_id, user_id, shared_key_hash FROM oauth_refresh_tokens WHERE token_hash = ?1",
+                [&hash_token(plaintext_token)],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
             )
             .unwrap()
     }
@@ -4548,7 +4602,9 @@ mod tests {
         let record = auth_code_by_plaintext(&db, &code);
 
         assert_eq!(record.client_id, client.client_id);
-        assert_eq!(record.user_id, user.id);
+        assert_eq!(record.subject_kind, "managed_user");
+        assert_eq!(record.subject_id, user.id);
+        assert_eq!(record.user_id, Some(user.id.clone()));
         assert_eq!(record.redirect_uri, "https://example.com/callback");
         assert_eq!(record.scopes, "runtime:read project:read");
         assert_eq!(record.resource, None);
@@ -4742,6 +4798,24 @@ mod tests {
         assert_eq!(json["scope"], "runtime:read");
         assert!(access_token_shared_key_hash_by_plaintext(&db, access_token).is_none());
         assert!(refresh_token_shared_key_hash_by_plaintext(&db, refresh_token).is_none());
+        assert_eq!(
+            access_token_subject_by_plaintext(&db, access_token),
+            (
+                "managed_user".to_string(),
+                user.id.clone(),
+                Some(user.id.clone()),
+                None
+            )
+        );
+        assert_eq!(
+            refresh_token_subject_by_plaintext(&db, refresh_token),
+            (
+                "managed_user".to_string(),
+                user.id.clone(),
+                Some(user.id.clone()),
+                None
+            )
+        );
 
         // Both tokens should be inserted.
         let (at_after, rt_after) = oauth_token_counts(&db);
@@ -4832,6 +4906,24 @@ mod tests {
         assert_eq!(
             refresh_token_shared_key_hash_by_plaintext(&db, refresh_token).as_deref(),
             Some("hash-a")
+        );
+        assert_eq!(
+            access_token_subject_by_plaintext(&db, access_token),
+            (
+                "shared_key".to_string(),
+                "hash-a".to_string(),
+                None,
+                Some("hash-a".to_string())
+            )
+        );
+        assert_eq!(
+            refresh_token_subject_by_plaintext(&db, refresh_token),
+            (
+                "shared_key".to_string(),
+                "hash-a".to_string(),
+                None,
+                Some("hash-a".to_string())
+            )
         );
     }
 
@@ -5128,7 +5220,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: None,
@@ -5892,6 +5986,26 @@ mod tests {
         assert_eq!(json["token_type"], "Bearer");
         assert_eq!(json["expires_in"], 3600);
         assert_eq!(json["scope"], "runtime:read");
+        let access_token = json["access_token"].as_str().unwrap();
+        let refresh_token = json["refresh_token"].as_str().unwrap();
+        assert_eq!(
+            access_token_subject_by_plaintext(&db, access_token),
+            (
+                "managed_user".to_string(),
+                user.id.clone(),
+                Some(user.id.clone()),
+                None
+            )
+        );
+        assert_eq!(
+            refresh_token_subject_by_plaintext(&db, refresh_token),
+            (
+                "managed_user".to_string(),
+                user.id.clone(),
+                Some(user.id.clone()),
+                None
+            )
+        );
 
         // Old refresh token should be revoked.
         let conn = db.conn_for_tests();
@@ -6009,6 +6123,24 @@ mod tests {
         assert_eq!(
             refresh_token_shared_key_hash_by_plaintext(&db, refresh_token).as_deref(),
             Some("hash-a")
+        );
+        assert_eq!(
+            access_token_subject_by_plaintext(&db, access_token),
+            (
+                "shared_key".to_string(),
+                "hash-a".to_string(),
+                None,
+                Some("hash-a".to_string())
+            )
+        );
+        assert_eq!(
+            refresh_token_subject_by_plaintext(&db, refresh_token),
+            (
+                "shared_key".to_string(),
+                "hash-a".to_string(),
+                None,
+                Some("hash-a".to_string())
+            )
         );
     }
 
@@ -6256,7 +6388,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,

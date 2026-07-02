@@ -105,13 +105,14 @@ a shared key on a WebCodex-hosted OAuth authorization page and receive an OAuth
 access token for OAuth-only hosts.
 
 Public shared-key OAuth bridge issuance is not implemented yet. The internal
-`shared_key_hash` propagation substrate exists on authorization codes, access
-tokens, and refresh tokens. Public bridge endpoint design is tracked in
+OAuth subject model substrate now distinguishes `managed_user` and `shared_key`
+subjects on authorization codes, access tokens, and refresh tokens. Public
+bridge endpoint design is tracked in
 [OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md).
 
-Bridge OAuth tokens currently keep OAuth current-session identity semantics;
-`shared_key_hash` affects shared-key project/job visibility, not managed-user
-identity.
+OAuth2Verifier shared-key AuthContext dispatch remains a later phase. Managed
+OAuth tokens keep OAuth current-session identity semantics; public shared-key
+bridge tokens are not available yet.
 
 That bridge would preserve host OAuth semantics. It would not make blank OAuth
 client fields behave like no-auth, shared-key quick start, or a static Bearer
@@ -277,7 +278,10 @@ The row inserted into `oauth_authorization_codes` must include:
 | `id` | New UUID. |
 | `code_hash` | SHA-256 of the plaintext `wc_oac_*` code. |
 | `client_id` | Validated client ID. |
-| `user_id` | Authenticated `AuthContext.user_id`. |
+| `subject_kind` | `managed_user`. |
+| `subject_id` | Authenticated `AuthContext.user_id`. |
+| `user_id` | `Some(AuthContext.user_id)`. |
+| `shared_key_hash` | `None`. |
 | `redirect_uri` | Exact validated redirect URI. |
 | `scopes` | Normalized granted scope string. |
 | `resource` | `None` while resource indicators are unsupported. |

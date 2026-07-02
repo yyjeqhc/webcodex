@@ -2,34 +2,36 @@
 
 ## Status
 
-The internal bridge metadata substrate exists, but no public bridge issuance
-endpoint or UI exists yet.
+The OAuth subject model substrate exists, but no public bridge issuance endpoint
+or UI exists yet. OAuth code, access-token, and refresh-token rows now
+distinguish `managed_user` and `shared_key` subjects.
 
 The current internal chain is:
 
 ```text
-oauth_authorization_codes.shared_key_hash
+oauth_authorization_codes.subject_kind / subject_id / shared_key_hash
 -> authorization_code token exchange
--> oauth_access_tokens.shared_key_hash
--> oauth_refresh_tokens.shared_key_hash
+-> oauth_access_tokens.subject_kind / subject_id / shared_key_hash
+-> oauth_refresh_tokens.subject_kind / subject_id / shared_key_hash
 -> refresh rotation
--> OAuth2Verifier
--> AuthContext.shared_key_hash
--> shared-key project/job visibility
+-> OAuth2Verifier managed-user dispatch
 ```
 
 Important current design facts:
 
 - `OAuthAuthorizationCodeRecord`, `OAuthAccessTokenRecord`, and
-  `OAuthRefreshTokenRecord` still have `user_id`.
-- `OAuth2Verifier` looks up the access token's `user_id`, requires the user to
-  exist, and rejects disabled users.
-- `shared_key_hash` now affects shared-key project and job visibility.
-- `shared_key_hash` does not change the OAuth token's managed-user identity.
+  `OAuthRefreshTokenRecord` have explicit `subject_kind` and `subject_id`
+  fields. `managed_user` subjects carry `user_id`; `shared_key` subjects carry
+  `shared_key_hash` and no `user_id`.
+- `OAuth2Verifier` still dispatches only managed-user OAuth subjects. Shared-key
+  OAuth subjects are explicitly rejected until the next implementation phase.
+- Managed-user OAuth records may still carry bridge metadata when explicitly
+  seeded, but `shared_key_hash` does not change managed-user identity.
 - A bridge OAuth token is still an `OAuth2Token`, not `SharedKey`.
 - Agent transport endpoints still reject `OAuth2Token`.
-- Current-session identity is still keyed by OAuth token/user/client semantics;
-  `shared_key_hash` is not the primary current-session principal.
+- Current-session identity is still keyed by OAuth token/user/client semantics
+  for managed-user OAuth tokens. Shared-key OAuth current-session dispatch is
+  not implemented yet.
 
 ## Non-goals
 
@@ -197,10 +199,11 @@ Required contract:
 - Never accept no-auth fallback.
 - Never accept open anonymous as a bridge subject.
 - Store only SHA-256 `shared_key_hash`; never store plaintext shared keys.
-- Issue an authorization code with `shared_key_hash`.
-- Access and refresh tokens inherit `shared_key_hash` through the existing
-  substrate.
-- Refresh rotation preserves `shared_key_hash`.
+- Issue an authorization code with `subject_kind = shared_key`,
+  `subject_id = shared_key_hash`, `user_id = NULL`, and `shared_key_hash`.
+- Access and refresh tokens inherit the OAuth subject fields and
+  `shared_key_hash` through the existing token exchange substrate.
+- Refresh rotation preserves the OAuth subject fields and `shared_key_hash`.
 - Normalize requested scopes against the OAuth client's `allowed_scopes` and
   the global OAuth scope registry.
 - Do not grant dangerous scopes such as `account:manage` or `admin` to a
@@ -274,9 +277,11 @@ Before any public bridge endpoint is implemented, tests must cover:
   Bearer behavior.
 - Open anonymous cannot bridge.
 - Invalid shared key is rejected without issuing a code.
-- Valid shared key issues an authorization code with `shared_key_hash`.
-- Token exchange propagates `shared_key_hash`.
-- Refresh rotation preserves `shared_key_hash`.
+- Valid shared key issues an authorization code with `subject_kind =
+  shared_key`, `subject_id = shared_key_hash`, `user_id = NULL`, and
+  `shared_key_hash`.
+- Token exchange propagates the OAuth subject fields and `shared_key_hash`.
+- Refresh rotation preserves the OAuth subject fields and `shared_key_hash`.
 - OAuth scope enforcement still applies.
 - `account:manage` and admin-like scopes are denied or explicitly gated.
 - Agent transport endpoints reject a bridge OAuth token.

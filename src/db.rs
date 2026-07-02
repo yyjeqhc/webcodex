@@ -139,6 +139,139 @@ fn table_columns(conn: &Connection, table: &str) -> anyhow::Result<Vec<String>> 
     Ok(cols)
 }
 
+#[derive(Debug)]
+struct TableColumnInfo {
+    name: String,
+    notnull: bool,
+}
+
+fn table_column_info(conn: &Connection, table: &str) -> anyhow::Result<Vec<TableColumnInfo>> {
+    let mut stmt = conn.prepare(&format!("PRAGMA table_info({})", table))?;
+    let rows = stmt.query_map([], |row| {
+        Ok(TableColumnInfo {
+            name: row.get(1)?,
+            notnull: row.get::<_, i64>(3)? != 0,
+        })
+    })?;
+    let mut cols = Vec::new();
+    for row in rows {
+        cols.push(row?);
+    }
+    Ok(cols)
+}
+
+fn has_column(cols: &[TableColumnInfo], name: &str) -> bool {
+    cols.iter().any(|c| c.name == name)
+}
+
+fn column_expr(cols: &[TableColumnInfo], name: &str, fallback: &str) -> String {
+    if has_column(cols, name) {
+        name.to_string()
+    } else {
+        fallback.to_string()
+    }
+}
+
+fn subject_kind_expr(cols: &[TableColumnInfo]) -> String {
+    if has_column(cols, "subject_kind") {
+        "COALESCE(NULLIF(subject_kind, ''), 'managed_user')".to_string()
+    } else {
+        "'managed_user'".to_string()
+    }
+}
+
+fn subject_id_expr(cols: &[TableColumnInfo]) -> String {
+    if has_column(cols, "subject_id") {
+        "COALESCE(NULLIF(subject_id, ''), user_id)".to_string()
+    } else {
+        "user_id".to_string()
+    }
+}
+
+fn oauth_user_id_is_nullable(cols: &[TableColumnInfo]) -> bool {
+    cols.iter()
+        .find(|c| c.name == "user_id")
+        .map(|c| !c.notnull)
+        .unwrap_or(false)
+}
+
+fn validate_oauth_subject(
+    subject_kind: &str,
+    subject_id: &str,
+    user_id: Option<&str>,
+    shared_key_hash: Option<&str>,
+) -> anyhow::Result<()> {
+    match subject_kind {
+        "managed_user" => {
+            let user_id = user_id
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| anyhow::anyhow!("managed_user OAuth subject requires user_id"))?;
+            if subject_id != user_id {
+                anyhow::bail!("managed_user OAuth subject_id must match user_id");
+            }
+        }
+        "shared_key" => {
+            if user_id.is_some() {
+                anyhow::bail!("shared_key OAuth subject must not include user_id");
+            }
+            let shared_key_hash = shared_key_hash
+                .filter(|value| !value.trim().is_empty())
+                .ok_or_else(|| {
+                    anyhow::anyhow!("shared_key OAuth subject requires shared_key_hash")
+                })?;
+            if subject_id != shared_key_hash {
+                anyhow::bail!("shared_key OAuth subject_id must match shared_key_hash");
+            }
+        }
+        _ => anyhow::bail!("unknown OAuth subject_kind: {}", subject_kind),
+    }
+    if subject_id.trim().is_empty() {
+        anyhow::bail!("OAuth subject_id must not be empty");
+    }
+    Ok(())
+}
+
+fn validate_oauth_authorization_code_subject(
+    record: &OAuthAuthorizationCodeRecord,
+) -> anyhow::Result<()> {
+    validate_oauth_subject(
+        &record.subject_kind,
+        &record.subject_id,
+        record.user_id.as_deref(),
+        record.shared_key_hash.as_deref(),
+    )
+}
+
+fn validate_oauth_access_token_subject(record: &OAuthAccessTokenRecord) -> anyhow::Result<()> {
+    validate_oauth_subject(
+        &record.subject_kind,
+        &record.subject_id,
+        record.user_id.as_deref(),
+        record.shared_key_hash.as_deref(),
+    )
+}
+
+fn validate_oauth_refresh_token_subject(record: &OAuthRefreshTokenRecord) -> anyhow::Result<()> {
+    validate_oauth_subject(
+        &record.subject_kind,
+        &record.subject_id,
+        record.user_id.as_deref(),
+        record.shared_key_hash.as_deref(),
+    )
+}
+
+fn validate_oauth_subjects_match(
+    left_kind: &str,
+    left_id: &str,
+    right_kind: &str,
+    right_id: &str,
+) -> anyhow::Result<()> {
+    if left_kind != right_kind || left_id != right_id {
+        anyhow::bail!("OAuth token subjects must match");
+    }
+    Ok(())
+}
+
 impl Database {
     pub fn open(db_path: &PathBuf) -> anyhow::Result<Self> {
         let conn = Connection::open(db_path)?;
@@ -392,7 +525,9 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 code_hash TEXT NOT NULL UNIQUE,
                 client_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
+                subject_kind TEXT NOT NULL DEFAULT 'managed_user',
+                subject_id TEXT NOT NULL,
+                user_id TEXT,
                 redirect_uri TEXT NOT NULL,
                 scopes TEXT NOT NULL DEFAULT '',
                 code_challenge TEXT,
@@ -413,7 +548,9 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL UNIQUE,
                 client_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
+                subject_kind TEXT NOT NULL DEFAULT 'managed_user',
+                subject_id TEXT NOT NULL,
+                user_id TEXT,
                 scopes TEXT NOT NULL DEFAULT '',
                 resource TEXT,
                 shared_key_hash TEXT,
@@ -432,7 +569,9 @@ impl Database {
                 id TEXT PRIMARY KEY,
                 token_hash TEXT NOT NULL UNIQUE,
                 client_id TEXT NOT NULL,
-                user_id TEXT NOT NULL,
+                subject_kind TEXT NOT NULL DEFAULT 'managed_user',
+                subject_id TEXT NOT NULL,
+                user_id TEXT,
                 scopes TEXT NOT NULL DEFAULT '',
                 resource TEXT,
                 shared_key_hash TEXT,
@@ -472,19 +611,196 @@ impl Database {
     }
 
     fn migrate_oauth_bridge_columns(conn: &Connection) -> anyhow::Result<()> {
-        for table in [
-            "oauth_authorization_codes",
-            "oauth_access_tokens",
-            "oauth_refresh_tokens",
-        ] {
-            let cols = table_columns(conn, table)?;
-            if !cols.iter().any(|c| c == "shared_key_hash") {
-                conn.execute(
-                    &format!("ALTER TABLE {} ADD COLUMN shared_key_hash TEXT", table),
-                    [],
-                )?;
-            }
+        Self::migrate_oauth_authorization_codes_subject(conn)?;
+        Self::migrate_oauth_access_tokens_subject(conn)?;
+        Self::migrate_oauth_refresh_tokens_subject(conn)?;
+        conn.execute_batch(
+            "
+            CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_hash ON oauth_authorization_codes(code_hash);
+            CREATE INDEX IF NOT EXISTS idx_oauth_auth_codes_client ON oauth_authorization_codes(client_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_hash ON oauth_access_tokens(token_hash);
+            CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_client ON oauth_access_tokens(client_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_access_tokens_user ON oauth_access_tokens(user_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_hash ON oauth_refresh_tokens(token_hash);
+            CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_client ON oauth_refresh_tokens(client_id);
+            CREATE INDEX IF NOT EXISTS idx_oauth_refresh_tokens_user ON oauth_refresh_tokens(user_id);
+            ",
+        )?;
+        Ok(())
+    }
+
+    fn oauth_subject_migration_needed(cols: &[TableColumnInfo]) -> bool {
+        !has_column(cols, "subject_kind")
+            || !has_column(cols, "subject_id")
+            || !has_column(cols, "shared_key_hash")
+            || !oauth_user_id_is_nullable(cols)
+    }
+
+    fn migrate_oauth_authorization_codes_subject(conn: &Connection) -> anyhow::Result<()> {
+        let cols = table_column_info(conn, "oauth_authorization_codes")?;
+        if !Self::oauth_subject_migration_needed(&cols) {
+            return Ok(());
         }
+        let subject_kind = subject_kind_expr(&cols);
+        let subject_id = subject_id_expr(&cols);
+        let shared_key_hash = column_expr(&cols, "shared_key_hash", "NULL");
+        conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+        conn.execute_batch(
+            "
+            ALTER TABLE oauth_authorization_codes RENAME TO oauth_authorization_codes_legacy_subject_migration;
+            CREATE TABLE oauth_authorization_codes (
+                id TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL UNIQUE,
+                client_id TEXT NOT NULL,
+                subject_kind TEXT NOT NULL DEFAULT 'managed_user',
+                subject_id TEXT NOT NULL,
+                user_id TEXT,
+                redirect_uri TEXT NOT NULL,
+                scopes TEXT NOT NULL DEFAULT '',
+                code_challenge TEXT,
+                code_challenge_method TEXT,
+                resource TEXT,
+                shared_key_hash TEXT,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                used_at INTEGER,
+                revoked_at INTEGER,
+                FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            ",
+        )?;
+        conn.execute(
+            &format!(
+                "INSERT INTO oauth_authorization_codes (
+                    id, code_hash, client_id, subject_kind, subject_id, user_id,
+                    redirect_uri, scopes, code_challenge, code_challenge_method,
+                    resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
+                 )
+                 SELECT id, code_hash, client_id, {}, {}, user_id,
+                    redirect_uri, scopes, code_challenge, code_challenge_method,
+                    resource, {}, created_at, expires_at, used_at, revoked_at
+                 FROM oauth_authorization_codes_legacy_subject_migration",
+                subject_kind, subject_id, shared_key_hash
+            ),
+            [],
+        )?;
+        conn.execute_batch(
+            "
+            DROP TABLE oauth_authorization_codes_legacy_subject_migration;
+            PRAGMA foreign_keys=ON;
+            ",
+        )?;
+        Ok(())
+    }
+
+    fn migrate_oauth_access_tokens_subject(conn: &Connection) -> anyhow::Result<()> {
+        let cols = table_column_info(conn, "oauth_access_tokens")?;
+        if !Self::oauth_subject_migration_needed(&cols) {
+            return Ok(());
+        }
+        let subject_kind = subject_kind_expr(&cols);
+        let subject_id = subject_id_expr(&cols);
+        let shared_key_hash = column_expr(&cols, "shared_key_hash", "NULL");
+        conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+        conn.execute_batch(
+            "
+            ALTER TABLE oauth_access_tokens RENAME TO oauth_access_tokens_legacy_subject_migration;
+            CREATE TABLE oauth_access_tokens (
+                id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                client_id TEXT NOT NULL,
+                subject_kind TEXT NOT NULL DEFAULT 'managed_user',
+                subject_id TEXT NOT NULL,
+                user_id TEXT,
+                scopes TEXT NOT NULL DEFAULT '',
+                resource TEXT,
+                shared_key_hash TEXT,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                last_used_at INTEGER,
+                FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            ",
+        )?;
+        conn.execute(
+            &format!(
+                "INSERT INTO oauth_access_tokens (
+                    id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at
+                 )
+                 SELECT id, token_hash, client_id, {}, {}, user_id,
+                    scopes, resource, {}, created_at, expires_at, revoked_at, last_used_at
+                 FROM oauth_access_tokens_legacy_subject_migration",
+                subject_kind, subject_id, shared_key_hash
+            ),
+            [],
+        )?;
+        conn.execute_batch(
+            "
+            DROP TABLE oauth_access_tokens_legacy_subject_migration;
+            PRAGMA foreign_keys=ON;
+            ",
+        )?;
+        Ok(())
+    }
+
+    fn migrate_oauth_refresh_tokens_subject(conn: &Connection) -> anyhow::Result<()> {
+        let cols = table_column_info(conn, "oauth_refresh_tokens")?;
+        if !Self::oauth_subject_migration_needed(&cols) {
+            return Ok(());
+        }
+        let subject_kind = subject_kind_expr(&cols);
+        let subject_id = subject_id_expr(&cols);
+        let shared_key_hash = column_expr(&cols, "shared_key_hash", "NULL");
+        conn.execute_batch("PRAGMA foreign_keys=OFF;")?;
+        conn.execute_batch(
+            "
+            ALTER TABLE oauth_refresh_tokens RENAME TO oauth_refresh_tokens_legacy_subject_migration;
+            CREATE TABLE oauth_refresh_tokens (
+                id TEXT PRIMARY KEY,
+                token_hash TEXT NOT NULL UNIQUE,
+                client_id TEXT NOT NULL,
+                subject_kind TEXT NOT NULL DEFAULT 'managed_user',
+                subject_id TEXT NOT NULL,
+                user_id TEXT,
+                scopes TEXT NOT NULL DEFAULT '',
+                resource TEXT,
+                shared_key_hash TEXT,
+                created_at INTEGER NOT NULL,
+                expires_at INTEGER NOT NULL,
+                revoked_at INTEGER,
+                last_used_at INTEGER,
+                rotated_from_id TEXT,
+                FOREIGN KEY(client_id) REFERENCES oauth_clients(client_id),
+                FOREIGN KEY(user_id) REFERENCES users(id)
+            );
+            ",
+        )?;
+        conn.execute(
+            &format!(
+                "INSERT INTO oauth_refresh_tokens (
+                    id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at, rotated_from_id
+                 )
+                 SELECT id, token_hash, client_id, {}, {}, user_id,
+                    scopes, resource, {}, created_at, expires_at, revoked_at,
+                    last_used_at, rotated_from_id
+                 FROM oauth_refresh_tokens_legacy_subject_migration",
+                subject_kind, subject_id, shared_key_hash
+            ),
+            [],
+        )?;
+        conn.execute_batch(
+            "
+            DROP TABLE oauth_refresh_tokens_legacy_subject_migration;
+            PRAGMA foreign_keys=ON;
+            ",
+        )?;
         Ok(())
     }
 
@@ -1845,17 +2161,20 @@ impl Database {
         record: &OAuthAuthorizationCodeRecord,
         code_hash: &str,
     ) -> anyhow::Result<()> {
+        validate_oauth_authorization_code_subject(record)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO oauth_authorization_codes (
-                id, code_hash, client_id, user_id, redirect_uri, scopes,
-                code_challenge, code_challenge_method, resource, shared_key_hash,
-                created_at, expires_at, used_at, revoked_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                id, code_hash, client_id, subject_kind, subject_id, user_id,
+                redirect_uri, scopes, code_challenge, code_challenge_method,
+                resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 record.id,
                 code_hash,
                 record.client_id,
+                record.subject_kind,
+                record.subject_id,
                 record.user_id,
                 record.redirect_uri,
                 record.scopes,
@@ -1878,9 +2197,9 @@ impl Database {
     ) -> anyhow::Result<Option<OAuthAuthorizationCodeRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, code_hash, client_id, user_id, redirect_uri, scopes,
-                    code_challenge, code_challenge_method, resource, shared_key_hash,
-                    created_at, expires_at, used_at, revoked_at
+            "SELECT id, code_hash, client_id, subject_kind, subject_id, user_id,
+                    redirect_uri, scopes, code_challenge, code_challenge_method,
+                    resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
              FROM oauth_authorization_codes
              WHERE code_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -1948,9 +2267,9 @@ impl Database {
     ) -> anyhow::Result<Option<OAuthAuthorizationCodeRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, code_hash, client_id, user_id, redirect_uri, scopes,
-                    code_challenge, code_challenge_method, resource, shared_key_hash,
-                    created_at, expires_at, used_at, revoked_at
+            "SELECT id, code_hash, client_id, subject_kind, subject_id, user_id,
+                    redirect_uri, scopes, code_challenge, code_challenge_method,
+                    resource, shared_key_hash, created_at, expires_at, used_at, revoked_at
              FROM oauth_authorization_codes
              WHERE code_hash = ?1",
         )?;
@@ -1994,6 +2313,14 @@ impl Database {
         access_token_record: &OAuthAccessTokenRecord,
         refresh_token_record: &OAuthRefreshTokenRecord,
     ) -> anyhow::Result<Option<OAuthAuthorizationCodeRecord>> {
+        validate_oauth_access_token_subject(access_token_record)?;
+        validate_oauth_refresh_token_subject(refresh_token_record)?;
+        validate_oauth_subjects_match(
+            &access_token_record.subject_kind,
+            &access_token_record.subject_id,
+            &refresh_token_record.subject_kind,
+            &refresh_token_record.subject_id,
+        )?;
         // Scope the transaction so the MutexGuard is dropped after commit,
         // allowing get_oauth_authorization_code_by_hash_for_consume to
         // re-acquire the lock.
@@ -2019,13 +2346,16 @@ impl Database {
             // 2. Insert access token.
             tx.execute(
                 "INSERT INTO oauth_access_tokens (
-                    id, token_hash, client_id, user_id, scopes, resource,
-                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     access_token_record.id,
                     access_token_record.token_hash,
                     access_token_record.client_id,
+                    access_token_record.subject_kind,
+                    access_token_record.subject_id,
                     access_token_record.user_id,
                     access_token_record.scopes,
                     access_token_record.resource,
@@ -2040,13 +2370,16 @@ impl Database {
             // 3. Insert refresh token.
             tx.execute(
                 "INSERT INTO oauth_refresh_tokens (
-                    id, token_hash, client_id, user_id, scopes, resource,
-                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at, rotated_from_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     refresh_token_record.id,
                     refresh_token_record.token_hash,
                     refresh_token_record.client_id,
+                    refresh_token_record.subject_kind,
+                    refresh_token_record.subject_id,
                     refresh_token_record.user_id,
                     refresh_token_record.scopes,
                     refresh_token_record.resource,
@@ -2069,16 +2402,20 @@ impl Database {
     // --- OAuth access tokens ---
 
     pub fn insert_oauth_access_token(&self, record: &OAuthAccessTokenRecord) -> anyhow::Result<()> {
+        validate_oauth_access_token_subject(record)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO oauth_access_tokens (
-                id, token_hash, client_id, user_id, scopes, resource,
-                shared_key_hash, created_at, expires_at, revoked_at, last_used_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                id, token_hash, client_id, subject_kind, subject_id, user_id,
+                scopes, resource, shared_key_hash, created_at, expires_at,
+                revoked_at, last_used_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             params![
                 record.id,
                 record.token_hash,
                 record.client_id,
+                record.subject_kind,
+                record.subject_id,
                 record.user_id,
                 record.scopes,
                 record.resource,
@@ -2098,8 +2435,9 @@ impl Database {
     ) -> anyhow::Result<Option<OAuthAccessTokenRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, token_hash, client_id, user_id, scopes, resource,
-                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at
+            "SELECT id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at
              FROM oauth_access_tokens
              WHERE token_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -2154,16 +2492,20 @@ impl Database {
         &self,
         record: &OAuthRefreshTokenRecord,
     ) -> anyhow::Result<()> {
+        validate_oauth_refresh_token_subject(record)?;
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT INTO oauth_refresh_tokens (
-                id, token_hash, client_id, user_id, scopes, resource,
-                shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                id, token_hash, client_id, subject_kind, subject_id, user_id,
+                scopes, resource, shared_key_hash, created_at, expires_at,
+                revoked_at, last_used_at, rotated_from_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 record.id,
                 record.token_hash,
                 record.client_id,
+                record.subject_kind,
+                record.subject_id,
                 record.user_id,
                 record.scopes,
                 record.resource,
@@ -2184,8 +2526,9 @@ impl Database {
     ) -> anyhow::Result<Option<OAuthRefreshTokenRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, token_hash, client_id, user_id, scopes, resource,
-                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+            "SELECT id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at, rotated_from_id
              FROM oauth_refresh_tokens
              WHERE token_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -2244,8 +2587,9 @@ impl Database {
     ) -> anyhow::Result<Option<OAuthRefreshTokenRecord>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, token_hash, client_id, user_id, scopes, resource,
-                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+            "SELECT id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at, rotated_from_id
              FROM oauth_refresh_tokens
              WHERE token_hash = ?1",
         )?;
@@ -2282,6 +2626,14 @@ impl Database {
         access_token_record: &OAuthAccessTokenRecord,
         new_refresh_token_record: &OAuthRefreshTokenRecord,
     ) -> anyhow::Result<RotateResult> {
+        validate_oauth_access_token_subject(access_token_record)?;
+        validate_oauth_refresh_token_subject(new_refresh_token_record)?;
+        validate_oauth_subjects_match(
+            &access_token_record.subject_kind,
+            &access_token_record.subject_id,
+            &new_refresh_token_record.subject_kind,
+            &new_refresh_token_record.subject_id,
+        )?;
         // Scope the transaction so the MutexGuard is dropped after commit.
         {
             let mut conn = self.conn.lock().unwrap();
@@ -2290,8 +2642,9 @@ impl Database {
             // 1. Look up old refresh token (including revoked/expired).
             let old = {
                 let mut stmt = tx.prepare(
-                    "SELECT id, token_hash, client_id, user_id, scopes, resource,
-                            shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                    "SELECT id, token_hash, client_id, subject_kind, subject_id, user_id,
+                            scopes, resource, shared_key_hash, created_at, expires_at,
+                            revoked_at, last_used_at, rotated_from_id
                      FROM oauth_refresh_tokens
                      WHERE token_hash = ?1",
                 )?;
@@ -2334,13 +2687,16 @@ impl Database {
             // 6. Insert new access token.
             tx.execute(
                 "INSERT INTO oauth_access_tokens (
-                    id, token_hash, client_id, user_id, scopes, resource,
-                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
                 params![
                     access_token_record.id,
                     access_token_record.token_hash,
                     access_token_record.client_id,
+                    access_token_record.subject_kind,
+                    access_token_record.subject_id,
                     access_token_record.user_id,
                     access_token_record.scopes,
                     access_token_record.resource,
@@ -2355,13 +2711,16 @@ impl Database {
             // 7. Insert new refresh token.
             tx.execute(
                 "INSERT INTO oauth_refresh_tokens (
-                    id, token_hash, client_id, user_id, scopes, resource,
-                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                    id, token_hash, client_id, subject_kind, subject_id, user_id,
+                    scopes, resource, shared_key_hash, created_at, expires_at,
+                    revoked_at, last_used_at, rotated_from_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
                 params![
                     new_refresh_token_record.id,
                     new_refresh_token_record.token_hash,
                     new_refresh_token_record.client_id,
+                    new_refresh_token_record.subject_kind,
+                    new_refresh_token_record.subject_id,
                     new_refresh_token_record.user_id,
                     new_refresh_token_record.scopes,
                     new_refresh_token_record.resource,
@@ -2486,17 +2845,19 @@ fn row_to_oauth_authorization_code(
         id: row.get(0)?,
         code_hash: row.get(1)?,
         client_id: row.get(2)?,
-        user_id: row.get(3)?,
-        redirect_uri: row.get(4)?,
-        scopes: row.get(5)?,
-        code_challenge: row.get(6)?,
-        code_challenge_method: row.get(7)?,
-        resource: row.get(8)?,
-        shared_key_hash: row.get(9)?,
-        created_at: row.get(10)?,
-        expires_at: row.get(11)?,
-        used_at: row.get(12)?,
-        revoked_at: row.get(13)?,
+        subject_kind: row.get(3)?,
+        subject_id: row.get(4)?,
+        user_id: row.get(5)?,
+        redirect_uri: row.get(6)?,
+        scopes: row.get(7)?,
+        code_challenge: row.get(8)?,
+        code_challenge_method: row.get(9)?,
+        resource: row.get(10)?,
+        shared_key_hash: row.get(11)?,
+        created_at: row.get(12)?,
+        expires_at: row.get(13)?,
+        used_at: row.get(14)?,
+        revoked_at: row.get(15)?,
     })
 }
 
@@ -2505,14 +2866,16 @@ fn row_to_oauth_access_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthAcces
         id: row.get(0)?,
         token_hash: row.get(1)?,
         client_id: row.get(2)?,
-        user_id: row.get(3)?,
-        scopes: row.get(4)?,
-        resource: row.get(5)?,
-        shared_key_hash: row.get(6)?,
-        created_at: row.get(7)?,
-        expires_at: row.get(8)?,
-        revoked_at: row.get(9)?,
-        last_used_at: row.get(10)?,
+        subject_kind: row.get(3)?,
+        subject_id: row.get(4)?,
+        user_id: row.get(5)?,
+        scopes: row.get(6)?,
+        resource: row.get(7)?,
+        shared_key_hash: row.get(8)?,
+        created_at: row.get(9)?,
+        expires_at: row.get(10)?,
+        revoked_at: row.get(11)?,
+        last_used_at: row.get(12)?,
     })
 }
 
@@ -2521,15 +2884,17 @@ fn row_to_oauth_refresh_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthRefr
         id: row.get(0)?,
         token_hash: row.get(1)?,
         client_id: row.get(2)?,
-        user_id: row.get(3)?,
-        scopes: row.get(4)?,
-        resource: row.get(5)?,
-        shared_key_hash: row.get(6)?,
-        created_at: row.get(7)?,
-        expires_at: row.get(8)?,
-        revoked_at: row.get(9)?,
-        last_used_at: row.get(10)?,
-        rotated_from_id: row.get(11)?,
+        subject_kind: row.get(3)?,
+        subject_id: row.get(4)?,
+        user_id: row.get(5)?,
+        scopes: row.get(6)?,
+        resource: row.get(7)?,
+        shared_key_hash: row.get(8)?,
+        created_at: row.get(9)?,
+        expires_at: row.get(10)?,
+        revoked_at: row.get(11)?,
+        last_used_at: row.get(12)?,
+        rotated_from_id: row.get(13)?,
     })
 }
 
@@ -3062,6 +3427,20 @@ mod tests {
         (record, plaintext_secret)
     }
 
+    fn assert_oauth_subject_columns(conn: &Connection, table: &str) {
+        let cols = table_column_info(conn, table).unwrap();
+        assert!(has_column(&cols, "subject_kind"), "{table} subject_kind");
+        assert!(has_column(&cols, "subject_id"), "{table} subject_id");
+        assert!(
+            has_column(&cols, "shared_key_hash"),
+            "{table} shared_key_hash"
+        );
+        assert!(
+            oauth_user_id_is_nullable(&cols),
+            "{table} user_id should allow NULL"
+        );
+    }
+
     #[test]
     fn fresh_database_creates_oauth_tables() {
         let tmp = tempfile::tempdir().unwrap();
@@ -3080,6 +3459,13 @@ mod tests {
                 })
                 .unwrap();
             assert_eq!(count, 0, "table {} should be empty", table);
+        }
+        for table in [
+            "oauth_authorization_codes",
+            "oauth_access_tokens",
+            "oauth_refresh_tokens",
+        ] {
+            assert_oauth_subject_columns(&conn, table);
         }
     }
 
@@ -3156,7 +3542,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash: code_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: Some("E9Melhoa2OwvFrEMTJguCHaoeK1t8URWbuGJSstw-cM".to_string()),
@@ -3176,7 +3564,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.client_id, client.client_id);
-        assert_eq!(fetched.user_id, user.id);
+        assert_eq!(fetched.subject_kind, "managed_user");
+        assert_eq!(fetched.subject_id, user.id);
+        assert_eq!(fetched.user_id, Some(user.id.clone()));
         assert!(!fetched.is_used());
         assert!(!fetched.is_expired(now));
         assert!(fetched.is_expired(now + 301));
@@ -3202,7 +3592,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash: code_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: None,
@@ -3242,7 +3634,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: token_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -3258,7 +3652,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.client_id, client.client_id);
-        assert_eq!(fetched.user_id, user.id);
+        assert_eq!(fetched.subject_kind, "managed_user");
+        assert_eq!(fetched.subject_id, user.id);
+        assert_eq!(fetched.user_id, Some(user.id.clone()));
         assert!(!fetched.is_revoked());
         assert!(!fetched.is_expired(now));
         assert!(fetched.is_expired(now + 3601));
@@ -3280,7 +3676,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: token_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -3314,7 +3712,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: token_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -3347,7 +3747,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: token_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -3364,7 +3766,9 @@ mod tests {
             .unwrap()
             .unwrap();
         assert_eq!(fetched.client_id, client.client_id);
-        assert_eq!(fetched.user_id, user.id);
+        assert_eq!(fetched.subject_kind, "managed_user");
+        assert_eq!(fetched.subject_id, user.id);
+        assert_eq!(fetched.user_id, Some(user.id.clone()));
         assert!(!fetched.is_revoked());
         assert!(!fetched.is_expired(now));
         assert!(fetched.rotated_from_id.is_none());
@@ -3372,7 +3776,7 @@ mod tests {
     }
 
     #[test]
-    fn oauth_bridge_shared_key_hash_records_round_trip() {
+    fn oauth_shared_key_subject_records_round_trip() {
         let tmp = tempfile::tempdir().unwrap();
         let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
         let user = oauth_seed_user(&db, "alice");
@@ -3384,7 +3788,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash: crate::auth::hash_token(&plaintext_ac),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "shared_key".to_string(),
+            subject_id: "hash-a".to_string(),
+            user_id: None,
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: None,
@@ -3402,6 +3808,9 @@ mod tests {
             .get_oauth_authorization_code_by_hash(&auth_code.code_hash)
             .unwrap()
             .unwrap();
+        assert_eq!(fetched_auth_code.subject_kind, "shared_key");
+        assert_eq!(fetched_auth_code.subject_id, "hash-a");
+        assert_eq!(fetched_auth_code.user_id, None);
         assert_eq!(fetched_auth_code.shared_key_hash.as_deref(), Some("hash-a"));
 
         let plaintext_at = crate::auth::generate_oauth_access_token();
@@ -3409,7 +3818,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: crate::auth::hash_token(&plaintext_at),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "shared_key".to_string(),
+            subject_id: "hash-a".to_string(),
+            user_id: None,
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: Some("hash-a".to_string()),
@@ -3423,6 +3834,9 @@ mod tests {
             .get_oauth_access_token_by_hash(&access.token_hash)
             .unwrap()
             .unwrap();
+        assert_eq!(fetched_access.subject_kind, "shared_key");
+        assert_eq!(fetched_access.subject_id, "hash-a");
+        assert_eq!(fetched_access.user_id, None);
         assert_eq!(fetched_access.shared_key_hash.as_deref(), Some("hash-a"));
 
         let plaintext_rt = crate::auth::generate_oauth_refresh_token();
@@ -3430,7 +3844,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: crate::auth::hash_token(&plaintext_rt),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "shared_key".to_string(),
+            subject_id: "hash-a".to_string(),
+            user_id: None,
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: Some("hash-a".to_string()),
@@ -3445,7 +3861,71 @@ mod tests {
             .get_oauth_refresh_token_by_hash(&refresh.token_hash)
             .unwrap()
             .unwrap();
+        assert_eq!(fetched_refresh.subject_kind, "shared_key");
+        assert_eq!(fetched_refresh.subject_id, "hash-a");
+        assert_eq!(fetched_refresh.user_id, None);
         assert_eq!(fetched_refresh.shared_key_hash.as_deref(), Some("hash-a"));
+    }
+
+    #[test]
+    fn oauth_subject_validation_rejects_invalid_combinations() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+        let now = chrono::Utc::now().timestamp();
+
+        let valid = OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: "hash-valid".to_string(),
+            client_id: client.client_id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: None,
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+
+        let mut record = valid.clone();
+        record.id = uuid::Uuid::new_v4().to_string();
+        record.token_hash = "hash-shared-with-user".to_string();
+        record.subject_kind = "shared_key".to_string();
+        record.subject_id = "hash-a".to_string();
+        record.user_id = Some(user.id.clone());
+        record.shared_key_hash = Some("hash-a".to_string());
+        assert!(db.insert_oauth_access_token(&record).is_err());
+
+        let mut record = valid.clone();
+        record.id = uuid::Uuid::new_v4().to_string();
+        record.token_hash = "hash-shared-missing-hash".to_string();
+        record.subject_kind = "shared_key".to_string();
+        record.subject_id = "hash-a".to_string();
+        record.user_id = None;
+        record.shared_key_hash = None;
+        assert!(db.insert_oauth_access_token(&record).is_err());
+
+        let mut record = valid.clone();
+        record.id = uuid::Uuid::new_v4().to_string();
+        record.token_hash = "hash-managed-missing-user".to_string();
+        record.user_id = None;
+        assert!(db.insert_oauth_access_token(&record).is_err());
+
+        let mut record = valid.clone();
+        record.id = uuid::Uuid::new_v4().to_string();
+        record.token_hash = "hash-managed-mismatch".to_string();
+        record.subject_id = "other-user".to_string();
+        assert!(db.insert_oauth_access_token(&record).is_err());
+
+        let mut record = valid;
+        record.id = uuid::Uuid::new_v4().to_string();
+        record.token_hash = "hash-unknown-kind".to_string();
+        record.subject_kind = "unknown".to_string();
+        assert!(db.insert_oauth_access_token(&record).is_err());
     }
 
     #[test]
@@ -3466,6 +3946,7 @@ mod tests {
                     code_challenge TEXT,
                     code_challenge_method TEXT,
                     resource TEXT,
+                    shared_key_hash TEXT,
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
                     used_at INTEGER,
@@ -3478,6 +3959,7 @@ mod tests {
                     user_id TEXT NOT NULL,
                     scopes TEXT NOT NULL DEFAULT '',
                     resource TEXT,
+                    shared_key_hash TEXT,
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
                     revoked_at INTEGER,
@@ -3490,6 +3972,7 @@ mod tests {
                     user_id TEXT NOT NULL,
                     scopes TEXT NOT NULL DEFAULT '',
                     resource TEXT,
+                    shared_key_hash TEXT,
                     created_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
                     revoked_at INTEGER,
@@ -3498,26 +3981,26 @@ mod tests {
                 );
                 INSERT INTO oauth_authorization_codes (
                     id, code_hash, client_id, user_id, redirect_uri, scopes,
-                    code_challenge, code_challenge_method, resource,
+                    code_challenge, code_challenge_method, resource, shared_key_hash,
                     created_at, expires_at, used_at, revoked_at
                 ) VALUES (
                     'legacy-code', 'legacy-code-hash', 'legacy-client', 'legacy-user',
-                    'https://example.com/callback', 'runtime:read', NULL, NULL, NULL,
+                    'https://example.com/callback', 'runtime:read', NULL, NULL, NULL, 'legacy-hash',
                     1, 301, NULL, NULL
                 );
                 INSERT INTO oauth_access_tokens (
-                    id, token_hash, client_id, user_id, scopes, resource,
+                    id, token_hash, client_id, user_id, scopes, resource, shared_key_hash,
                     created_at, expires_at, revoked_at, last_used_at
                 ) VALUES (
                     'legacy-access', 'legacy-access-hash', 'legacy-client', 'legacy-user',
-                    'runtime:read', NULL, 1, 3601, NULL, NULL
+                    'runtime:read', NULL, 'legacy-hash', 1, 3601, NULL, NULL
                 );
                 INSERT INTO oauth_refresh_tokens (
-                    id, token_hash, client_id, user_id, scopes, resource,
+                    id, token_hash, client_id, user_id, scopes, resource, shared_key_hash,
                     created_at, expires_at, revoked_at, last_used_at, rotated_from_id
                 ) VALUES (
                     'legacy-refresh', 'legacy-refresh-hash', 'legacy-client', 'legacy-user',
-                    'runtime:read', NULL, 1, 2592001, NULL, NULL, NULL
+                    'runtime:read', NULL, 'legacy-hash', 1, 2592001, NULL, NULL, NULL
                 );
                 ",
             )
@@ -3532,6 +4015,40 @@ mod tests {
         assert!(auth_code_cols.iter().any(|c| c == "shared_key_hash"));
         assert!(access_cols.iter().any(|c| c == "shared_key_hash"));
         assert!(refresh_cols.iter().any(|c| c == "shared_key_hash"));
+        assert_oauth_subject_columns(&conn, "oauth_authorization_codes");
+        assert_oauth_subject_columns(&conn, "oauth_access_tokens");
+        assert_oauth_subject_columns(&conn, "oauth_refresh_tokens");
+        let auth_subject: (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT subject_kind, subject_id, user_id FROM oauth_authorization_codes WHERE id = 'legacy-code'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let access_subject: (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT subject_kind, subject_id, user_id FROM oauth_access_tokens WHERE id = 'legacy-access'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        let refresh_subject: (String, String, Option<String>) = conn
+            .query_row(
+                "SELECT subject_kind, subject_id, user_id FROM oauth_refresh_tokens WHERE id = 'legacy-refresh'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            auth_subject,
+            (
+                "managed_user".to_string(),
+                "legacy-user".to_string(),
+                Some("legacy-user".to_string())
+            )
+        );
+        assert_eq!(access_subject, auth_subject);
+        assert_eq!(refresh_subject, auth_subject);
         let auth_code_shared_key_hash: Option<String> = conn
             .query_row(
                 "SELECT shared_key_hash FROM oauth_authorization_codes WHERE id = 'legacy-code'",
@@ -3553,9 +4070,20 @@ mod tests {
                 |row| row.get(0),
             )
             .unwrap();
-        assert!(auth_code_shared_key_hash.is_none());
-        assert!(access_shared_key_hash.is_none());
-        assert!(refresh_shared_key_hash.is_none());
+        assert_eq!(auth_code_shared_key_hash.as_deref(), Some("legacy-hash"));
+        assert_eq!(access_shared_key_hash.as_deref(), Some("legacy-hash"));
+        assert_eq!(refresh_shared_key_hash.as_deref(), Some("legacy-hash"));
+        drop(conn);
+        drop(db);
+
+        let db = Database::open(&path).unwrap();
+        let conn = db.conn.lock().unwrap();
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM oauth_access_tokens", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(count, 1, "subject migration should be idempotent");
     }
 
     #[test]
@@ -3572,7 +4100,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: token_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -3624,7 +4154,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: at_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -3653,7 +4185,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash: rt_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -3683,7 +4217,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash: ac_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: None,
@@ -3727,7 +4263,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash: code_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: None,
@@ -3765,7 +4303,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash: code_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: None,
@@ -3806,7 +4346,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash: code_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: None,
@@ -3842,7 +4384,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             code_hash: code_hash.clone(),
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             redirect_uri: "https://example.com/callback".to_string(),
             scopes: "runtime:read".to_string(),
             code_challenge: None,

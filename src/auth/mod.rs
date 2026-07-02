@@ -574,10 +574,23 @@ impl TokenVerifier for OAuth2Verifier {
             }
         }
 
+        if at_record.subject_kind == "shared_key" {
+            return Err("shared-key OAuth2 subject is not supported yet".to_string());
+        }
+        if at_record.subject_kind != "managed_user" {
+            return Err("unsupported OAuth2 subject".to_string());
+        }
+
+        let user_id = at_record
+            .user_id
+            .as_deref()
+            .filter(|value| !value.is_empty())
+            .ok_or_else(|| "managed-user OAuth2 token missing user_id".to_string())?;
+
         // Verify the owning user is not disabled (consistent with
         // PatVerifier behavior).
         let user = db
-            .get_user_by_id(&at_record.user_id)
+            .get_user_by_id(user_id)
             .ok()
             .flatten()
             .ok_or_else(|| "user not found".to_string())?;
@@ -1475,7 +1488,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: scopes.to_string(),
             resource: None,
             shared_key_hash: shared_key_hash.map(str::to_string),
@@ -2051,6 +2066,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth2_verifier_rejects_shared_key_subject_without_user_lookup() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let now = chrono::Utc::now().timestamp();
+        let plaintext = generate_oauth_access_token();
+        let token_hash = hash_token(&plaintext);
+        let record = crate::models::OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash,
+            client_id: client.client_id.clone(),
+            subject_kind: "shared_key".to_string(),
+            subject_id: "test-hash-a".to_string(),
+            user_id: None,
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: Some("test-hash-a".to_string()),
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&record).unwrap();
+
+        let verifier = OAuth2Verifier;
+        let err = verifier
+            .verify(&config, Some(&db), &plaintext)
+            .await
+            .expect_err("shared-key OAuth2 subject is not enabled in this phase");
+        assert_eq!(err, "shared-key OAuth2 subject is not supported yet");
+        let stored = db
+            .get_oauth_access_token_by_hash(&record.token_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.last_used_at, None);
+    }
+
+    #[tokio::test]
     async fn oauth2_verifier_rejects_unknown_access_token() {
         let config = gate_test_config_oauth2(Some("secret"));
         let (_tmp, db) = gate_test_db();
@@ -2077,7 +2131,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -2125,7 +2181,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,
@@ -2840,7 +2898,9 @@ mod tests {
             id: uuid::Uuid::new_v4().to_string(),
             token_hash,
             client_id: client.client_id.clone(),
-            user_id: user.id.clone(),
+            subject_kind: "managed_user".to_string(),
+            subject_id: user.id.clone(),
+            user_id: Some(user.id.clone()),
             scopes: "runtime:read".to_string(),
             resource: None,
             shared_key_hash: None,

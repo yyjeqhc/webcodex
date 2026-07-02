@@ -18,7 +18,6 @@
 use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use serde_json::{json, Value};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -41,12 +40,22 @@ mod agent_init;
 #[path = "../build_info.rs"]
 mod build_info;
 
+mod webcodex_cli;
+
 use admin_cli::{
     build_admin_request, parse_admin_cli, run_admin_command, AdminCliCommand, AdminOptions,
 };
 use agent_init::{
     run_agent_init, AgentInitOptions, DEFAULT_INIT_PROJECTS_DIR, DEFAULT_POLL_INTERVAL_MS,
     TRANSPORT_WEBSOCKET,
+};
+#[cfg(test)]
+use webcodex_cli::parse_env_content_value;
+use webcodex_cli::{
+    default_server_paths, generate_bootstrap_token, generate_local_agent_token,
+    generate_local_api_token, hash_local_token, is_effective_root, local_token_prefix,
+    read_env_file_value, read_pairing_server_env_file_value, render_server_env,
+    render_token_generate, resolve_token, token_prefix,
 };
 
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
@@ -1930,99 +1939,6 @@ where
         .ok_or_else(|| format!("{} requires a value", flag))
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ServerPathDefaults {
-    data_dir: PathBuf,
-    env_file: PathBuf,
-}
-
-fn default_server_paths() -> ServerPathDefaults {
-    if is_effective_root() {
-        return ServerPathDefaults {
-            data_dir: PathBuf::from("/var/lib/webcodex"),
-            env_file: PathBuf::from("/etc/webcodex/webcodex.env"),
-        };
-    }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    ServerPathDefaults {
-        data_dir: home.join(".local/share/webcodex"),
-        env_file: home.join(".config/webcodex/webcodex.env"),
-    }
-}
-
-#[cfg(unix)]
-fn is_effective_root() -> bool {
-    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-        for line in status.lines() {
-            if let Some(rest) = line.strip_prefix("Uid:") {
-                let mut parts = rest.split_whitespace();
-                let _real = parts.next();
-                if let Some(effective) = parts.next() {
-                    return effective == "0";
-                }
-            }
-        }
-    }
-    std::env::var("USER").is_ok_and(|u| u == "root")
-}
-
-#[cfg(not(unix))]
-fn is_effective_root() -> bool {
-    false
-}
-
-fn generate_bootstrap_token() -> String {
-    format!(
-        "wc_boot_{}{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
-    )
-}
-
-fn generate_local_api_token() -> String {
-    format!(
-        "wc_pat_{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
-    )
-}
-
-fn generate_local_agent_token() -> String {
-    format!(
-        "wc_agent_{}{}",
-        Uuid::new_v4().simple(),
-        Uuid::new_v4().simple()
-    )
-}
-
-fn hash_local_token(token: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(token.as_bytes());
-    format!("{:x}", hasher.finalize())
-}
-
-fn local_token_prefix(token: &str) -> String {
-    token[..token.len().min(16)].to_string()
-}
-
-fn render_token_generate(opts: TokenGenerateOptions) -> String {
-    let token = if opts.kind == "agent" {
-        generate_local_agent_token()
-    } else {
-        generate_local_api_token()
-    };
-    let hash = hash_local_token(&token);
-    format!(
-        "Token:\n{}\n\nHash:\nsha256:{}\n\nPrefix:\n{}\n",
-        token,
-        hash,
-        local_token_prefix(&token)
-    )
-}
-
 fn resolve_account_credential(
     explicit: &Option<String>,
     env_name: &Option<String>,
@@ -2173,20 +2089,6 @@ async fn post_json_with_bearer(req: &admin_cli::AdminCliRequest) -> Result<(), S
     Ok(())
 }
 
-fn render_server_env(opts: &ServerInitOptions, token: &str) -> String {
-    let mut content = String::new();
-    content.push_str(&format!("WEBCODEX_ADDR={}\n", opts.listen.trim()));
-    content.push_str(&format!("WEBCODEX_DATA={}\n", opts.data_dir.display()));
-    content.push_str(&format!("WEBCODEX_TOKEN={}\n", token));
-    if let Some(public_url) = &opts.public_url {
-        content.push_str(&format!(
-            "WEBCODEX_PUBLIC_URL={}\n",
-            public_url.trim().trim_end_matches('/')
-        ));
-    }
-    content
-}
-
 fn write_text_file(
     path: &Path,
     content: &str,
@@ -2247,49 +2149,6 @@ fn write_text_file(
         }
     }
     Ok(())
-}
-
-fn read_env_file_value(path: &Path, key: &str) -> Result<Option<String>, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read env file {}: {}", path.display(), e))?;
-    Ok(parse_env_content_value(&content, key))
-}
-
-fn read_pairing_server_env_file_value(path: &Path, key: &str) -> Result<Option<String>, String> {
-    let content = std::fs::read_to_string(path).map_err(|e| {
-        format!(
-            "failed to read server env file {}: {}; pairing create is a server/admin-side command. Run it on the server or pass a server/admin token file.",
-            path.display(),
-            e
-        )
-    })?;
-    Ok(parse_env_content_value(&content, key))
-}
-
-fn parse_env_content_value(content: &str, key: &str) -> Option<String> {
-    for line in content.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
-        }
-        let line = line.strip_prefix("export ").unwrap_or(line).trim();
-        let Some((k, value)) = line.split_once('=') else {
-            continue;
-        };
-        if k.trim() != key {
-            continue;
-        }
-        let value = value.trim();
-        let value = if (value.starts_with('"') && value.ends_with('"'))
-            || (value.starts_with('\'') && value.ends_with('\''))
-        {
-            &value[1..value.len() - 1]
-        } else {
-            value
-        };
-        return Some(value.to_string());
-    }
-    None
 }
 
 fn discover_webcodex_binary() -> Option<PathBuf> {
@@ -2383,47 +2242,6 @@ fn systemctl_available() -> bool {
 
 fn is_systemd_platform() -> bool {
     cfg!(target_os = "linux") && systemctl_available()
-}
-
-/// Resolve the bootstrap token for setup/admin commands. Order:
-/// `--token` > `--token-file` > `WEBCODEX_TOKEN`. Errors never echo the token.
-fn resolve_token(opts: &AdminOptions, env_key: &str) -> Result<String, String> {
-    if let Some(token) = &opts.token {
-        let token = token.trim().to_string();
-        if token.is_empty() {
-            return Err("--token cannot be empty".to_string());
-        }
-        return Ok(token);
-    }
-    if let Some(path) = &opts.token_file {
-        let token = std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read token file {}: {}", path.display(), e))?
-            .trim()
-            .to_string();
-        if token.is_empty() {
-            return Err("--token-file cannot be empty".to_string());
-        }
-        return Ok(token);
-    }
-    let token = std::env::var(env_key)
-        .map_err(|_| format!("--token, --token-file, or {} is required", env_key))?
-        .trim()
-        .to_string();
-    if token.is_empty() {
-        return Err(format!("{} cannot be empty", env_key));
-    }
-    Ok(token)
-}
-
-/// Return a short non-secret prefix of a token, e.g. `wc_abcd…`. Never
-/// returns enough to reconstruct the token.
-fn token_prefix(token: &str) -> String {
-    let take = token.chars().take(8).collect::<String>();
-    if token.chars().count() > 8 {
-        format!("{}…", take)
-    } else {
-        take
-    }
 }
 
 /// Write `content` to `path` with 0600 permissions on Unix, creating parent

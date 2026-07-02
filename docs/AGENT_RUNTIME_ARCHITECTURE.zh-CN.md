@@ -180,7 +180,11 @@ ChatGPT upload
   -> user download
 ```
 
-这同时支撑代码审查、文档转换、GUI 测试、安装器验证、构建排障和 incident reporting。Artifacts 应该携带 provenance 和 retention metadata：session id、project id、source、creator、content type、size、SHA-256、preview support 和 download routing。Desktop screenshots 和 before/after evidence 应该使用与 generated reports、build outputs 相同的 artifact system。
+这同时支撑代码审查、文档转换、实验分析、图片检查、GUI 测试、安装器验证、构建排障和 incident reporting。上传/下载不只是便利性 I/O，而是让任务从纯代码编辑扩展成完整工程 workflow 的路径：有输入、有执行、有观察、有生成产物，也有可审查证据。
+
+Artifact Bus 应该把常见非代码任务一等化：上传实验结果压缩包、CSV/Excel、PDF、截图、测试图片、安装包或配置文件；让 agent 在 bounded workspace 中分析或转换；再把图表、修复后的文件、日志、报告、截图和构建产物作为 downloadable artifacts 返回给用户。对于本地网站或 UI 调试，未来 screenshot provider 可以把页面 before/after 状态捕获成 artifacts，让模型根据视觉结果调试布局、比较视觉回归，并用证据报告 UI 修改，而不只依赖 build output。
+
+Artifacts 应该携带 provenance 和 retention metadata：session id、project id、source、creator、content type、size、SHA-256、preview support 和 download routing。Desktop screenshots 和 before/after evidence 应该使用与 generated reports、build outputs 相同的 artifact system。
 
 ## Capability providers
 

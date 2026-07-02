@@ -98,7 +98,21 @@ ChatGPT upload
   -> user download
 ```
 
-这同时支持 coding 和 desktop 场景：
+这同时支持 coding 和 desktop 场景，也是 WebCodex 从“coding agent”扩展到“engineering workstation”的主要桥梁。上传/下载让用户可以提供数据、图片、文档、安装包、配置文件、截图或日志；agent 可以分析、转换、测试或打包这些输入；runtime 再把生成的报告、图表、修复文件、构建产物、日志和视觉证据返回给用户。
+
+常见 flow 包括：
+
+```text
+上传实验 CSV 或结果压缩包 -> 分析数据 -> 下载图表和报告
+上传截图或测试图片 -> 检查视觉证据 -> 下载标注后的输出
+运行本地 Web UI -> 捕获截图 -> 调整布局 -> 保存 before/after 证据
+上传安装包或样例文件 -> 运行冒烟测试 -> 下载日志和截图
+上传文档或配置 -> 转换或修复 -> 下载修正后的 artifact
+```
+
+这正是 WebCodex 可以超过 ordinary coding agents 的地方。普通 coding agent 通常可以改文件、跑测试，但很难把真实任务输入和输出纳入 session，也很难检查生成图片，或把截图证据附到最终报告里。
+
+初始 artifact categories 应包括：
 
 ```text
 上传安装包
@@ -110,6 +124,7 @@ ChatGPT upload
 下载构建产物
 下载测试报告
 下载修复后的文件
+下载 before/after UI 证据
 ```
 
 Artifacts 未来应携带稳定 metadata，例如 id、type、source、session id、project id、creator、SHA-256、size、retention policy、preview support 和 download routing。

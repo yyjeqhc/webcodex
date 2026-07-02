@@ -178,7 +178,11 @@ ChatGPT upload
   -> user download
 ```
 
-This supports code review, document transformation, GUI testing, installer validation, build triage, and incident reporting. Artifacts should carry provenance and retention metadata: session id, project id, source, creator, content type, size, SHA-256, preview support, and download routing. Desktop screenshots and before/after evidence should use the same artifact system as generated reports and build outputs.
+This supports code review, document transformation, experiment analysis, image inspection, GUI testing, installer validation, build triage, and incident reporting. Upload/download is not just convenience I/O: it is the path that lets a task move from pure code editing to a full engineering workflow with inputs, execution, observation, generated outputs, and reviewable evidence.
+
+Artifact Bus should make common non-code tasks first-class: upload experiment result archives, CSV/Excel files, PDFs, screenshots, test images, installers, or configuration files; let the agent analyze or transform them in a bounded workspace; then return plots, repaired files, logs, reports, screenshots, and build outputs as downloadable artifacts. For local web or UI work, a future screenshot provider can capture before/after page states as artifacts so the model can debug layout, compare visual regressions, and report UI changes with evidence instead of only relying on build output.
+
+Artifacts should carry provenance and retention metadata: session id, project id, source, creator, content type, size, SHA-256, preview support, and download routing. Desktop screenshots and before/after evidence should use the same artifact system as generated reports and build outputs.
 
 ## Capability providers
 

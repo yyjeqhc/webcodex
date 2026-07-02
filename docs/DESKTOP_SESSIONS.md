@@ -98,7 +98,21 @@ ChatGPT upload
   -> user download
 ```
 
-This supports both coding and desktop scenarios:
+This supports both coding and desktop scenarios, and it is the main bridge from "coding agent" to "engineering workstation" tasks. Upload/download allows the user to provide data, images, documents, installers, configuration files, screenshots, or logs; the agent can then analyze, transform, test, or package them; and the runtime can return generated reports, plots, repaired files, build outputs, logs, and visual evidence.
+
+Common flows include:
+
+```text
+upload experiment CSVs or result archives -> analyze data -> download plots and report
+upload screenshots or test images -> inspect visual evidence -> download annotated output
+run a local web UI -> capture screenshots -> adjust layout -> save before/after evidence
+upload installer or sample files -> run smoke test -> download logs and screenshots
+upload documents or configs -> transform or repair -> download the corrected artifact
+```
+
+This is where WebCodex can exceed ordinary coding agents. A coding agent can usually edit files and run tests, but it often cannot move real task inputs and outputs through a session, inspect generated images, or attach screenshot evidence to a final report.
+
+Initial artifact categories should include:
 
 ```text
 upload installers
@@ -110,6 +124,7 @@ download screenshots
 download build outputs
 download test reports
 download repaired files
+download before/after UI evidence
 ```
 
 Artifacts should eventually carry stable metadata such as id, type, source, session id, project id, creator, SHA-256, size, retention policy, preview support, and download routing.

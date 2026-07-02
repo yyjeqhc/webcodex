@@ -379,6 +379,9 @@ pub struct OAuth2Config {
     /// Whether PKCE (S256) is required for authorization code flows. Default
     /// `true`.
     pub require_pkce: bool,
+    /// Whether the public shared-key OAuth bridge authorize flow is enabled.
+    /// Default `false`.
+    pub shared_key_bridge_enabled: bool,
 }
 
 impl Default for OAuth2Config {
@@ -390,6 +393,7 @@ impl Default for OAuth2Config {
             refresh_token_ttl_secs: 2_592_000,
             authorization_code_ttl_secs: 300,
             require_pkce: true,
+            shared_key_bridge_enabled: false,
         }
     }
 }
@@ -422,6 +426,8 @@ impl OAuth2Config {
             .filter(|v| *v > 0)
             .unwrap_or(300);
         let require_pkce = env_flag("WEBCODEX_OAUTH2_REQUIRE_PKCE").unwrap_or(true);
+        let shared_key_bridge_enabled =
+            env_flag("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE").unwrap_or(false);
         Self {
             issuer,
             enabled,
@@ -429,6 +435,7 @@ impl OAuth2Config {
             refresh_token_ttl_secs,
             authorization_code_ttl_secs,
             require_pkce,
+            shared_key_bridge_enabled,
         }
     }
 }
@@ -701,6 +708,7 @@ mod tests {
         std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
+        std::env::remove_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
 
         let cfg = OAuth2Config::from_env();
         assert!(!cfg.enabled);
@@ -709,6 +717,7 @@ mod tests {
         assert_eq!(cfg.refresh_token_ttl_secs, 2_592_000);
         assert_eq!(cfg.authorization_code_ttl_secs, 300);
         assert!(cfg.require_pkce);
+        assert!(!cfg.shared_key_bridge_enabled);
     }
 
     #[test]
@@ -720,6 +729,7 @@ mod tests {
         std::env::set_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "86400");
         std::env::set_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "600");
         std::env::set_var("WEBCODEX_OAUTH2_REQUIRE_PKCE", "false");
+        std::env::set_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE", "true");
 
         let cfg = OAuth2Config::from_env();
         assert!(cfg.enabled);
@@ -728,6 +738,7 @@ mod tests {
         assert_eq!(cfg.refresh_token_ttl_secs, 86400);
         assert_eq!(cfg.authorization_code_ttl_secs, 600);
         assert!(!cfg.require_pkce);
+        assert!(cfg.shared_key_bridge_enabled);
 
         std::env::remove_var("WEBCODEX_OAUTH2_ENABLED");
         std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
@@ -735,6 +746,7 @@ mod tests {
         std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
+        std::env::remove_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
     }
 
     #[test]

@@ -649,6 +649,92 @@ fn authorize_consent_html(
     )
 }
 
+fn authorize_bridge_html(
+    client_name: &str,
+    client_id: &str,
+    redirect_uri: &str,
+    scopes: &[String],
+    resource: Option<&str>,
+    original_query: &str,
+    error: Option<&str>,
+) -> String {
+    let scope_items = scopes
+        .iter()
+        .map(|s| format!("<li>{}</li>", html_escape(s)))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let resource_html = resource
+        .map(|r| format!("<p>Resource: <code>{}</code></p>", html_escape(r)))
+        .unwrap_or_default();
+    let error_html = match error {
+        Some(msg) => format!(r#"<p class="error">{}</p>"#, html_escape(msg)),
+        None => String::new(),
+    };
+    let hidden_fields: String = url::form_urlencoded::parse(original_query.as_bytes())
+        .map(|(k, v)| {
+            format!(
+                r#"  <input type="hidden" name="{}" value="{}">"#,
+                html_escape(k.as_ref()),
+                html_escape(v.as_ref())
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    format!(
+        r#"<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Authorize WebCodex shared key</title>
+</head>
+<body>
+<h1>Authorize WebCodex shared key</h1>
+<p>Client: <strong>{client_name}</strong> ({client_id})</p>
+<p>Redirect URI: <code>{redirect_uri}</code></p>
+{resource_html}
+<p>The application is requesting the following scopes:</p>
+<ul>
+{scope_items}
+</ul>
+{error_html}
+<form method="post" action="/oauth/authorize/bridge">
+{hidden_fields}
+  <label>Shared key<br>
+    <input type="password" name="shared_key" autocomplete="current-password" required>
+  </label>
+  <button type="submit">Continue</button>
+</form>
+</body>
+</html>"#,
+        client_name = html_escape(client_name),
+        client_id = html_escape(client_id),
+        redirect_uri = html_escape(redirect_uri),
+        resource_html = resource_html,
+        scope_items = scope_items,
+        error_html = error_html,
+        hidden_fields = hidden_fields,
+    )
+}
+
+fn is_managed_credential_like(value: &str) -> bool {
+    value.starts_with("wc_")
+}
+
+fn bridge_shared_key_hash(value: &str) -> Result<String, &'static str> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Err("a shared key is required");
+    }
+    if is_managed_credential_like(value) {
+        return Err("managed credentials cannot be used as shared keys");
+    }
+
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
 /// Validate a `return_to` value submitted from the login form. It must be a
 /// same-origin relative path to prevent open redirect. Accepted form:
 /// starts with a single `/`, is not `//...` or `/\...`, and must point at the
@@ -1403,6 +1489,233 @@ fn is_authorize_identity_allowed(ctx: &AuthContext) -> bool {
     matches!(ctx.kind, AuthKind::Bootstrap | AuthKind::ApiToken)
 }
 
+#[derive(Clone)]
+struct BridgeAuthorizeValidated {
+    parsed: OAuthAuthorizeRequest,
+    client: crate::models::OAuthClientRecord,
+    scopes: String,
+    resource: Option<String>,
+}
+
+fn is_shared_key_bridge_query(query: &str) -> Result<bool, OAuthAuthorizeError> {
+    match decoded_authorize_param(query, "bridge")? {
+        Some(value) if value == "shared_key" => Ok(true),
+        Some(_) => Err(OAuthAuthorizeError::InvalidRequest("unsupported bridge")),
+        None => Ok(false),
+    }
+}
+
+fn validate_bridge_authorize_request(
+    res: &mut Response,
+    config: &crate::Config,
+    db: &crate::Database,
+    query: &str,
+) -> Option<BridgeAuthorizeValidated> {
+    let parsed = match parse_authorize_query(query) {
+        Ok(parsed) => parsed,
+        Err(_) => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "invalid authorization request",
+            );
+            return None;
+        }
+    };
+
+    if parsed.client_id.is_empty() {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "missing client_id",
+        );
+        return None;
+    }
+
+    let client = match db.get_oauth_client_by_client_id(&parsed.client_id) {
+        Ok(Some(client)) => client,
+        Ok(None) => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "invalid client_id",
+            );
+            return None;
+        }
+        Err(_) => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "server_error",
+                "internal error",
+            );
+            return None;
+        }
+    };
+
+    if parsed.redirect_uri.is_empty() {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "missing redirect_uri",
+        );
+        return None;
+    }
+
+    if !client
+        .redirect_uris_vec()
+        .iter()
+        .any(|registered| registered == &parsed.redirect_uri)
+    {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::BAD_REQUEST,
+            "invalid_request",
+            "redirect_uri mismatch",
+        );
+        return None;
+    }
+
+    if parsed.response_type.is_empty() || parsed.response_type != "code" {
+        redirect_with_oauth_error(
+            res,
+            &parsed.redirect_uri,
+            "unsupported_response_type",
+            parsed.state.as_deref(),
+        );
+        return None;
+    }
+
+    if parsed.code_challenge.is_empty()
+        || parsed.code_challenge_method.is_empty()
+        || parsed.code_challenge_method != "S256"
+    {
+        redirect_with_oauth_error(
+            res,
+            &parsed.redirect_uri,
+            "invalid_request",
+            parsed.state.as_deref(),
+        );
+        return None;
+    }
+
+    let scopes =
+        match normalize_bridge_oauth_scopes(parsed.scope.as_deref(), &client.allowed_scopes) {
+            Ok(scopes) => scopes,
+            Err(_) => {
+                redirect_with_oauth_error(
+                    res,
+                    &parsed.redirect_uri,
+                    "invalid_scope",
+                    parsed.state.as_deref(),
+                );
+                return None;
+            }
+        };
+
+    let resource = match validate_authorize_resource(parsed.resource.as_deref(), config) {
+        Ok(resource) => resource,
+        Err(_) => {
+            redirect_with_oauth_error(
+                res,
+                &parsed.redirect_uri,
+                "invalid_target",
+                parsed.state.as_deref(),
+            );
+            return None;
+        }
+    };
+
+    Some(BridgeAuthorizeValidated {
+        parsed,
+        client,
+        scopes,
+        resource,
+    })
+}
+
+fn render_bridge_authorize_form(
+    res: &mut Response,
+    validated: &BridgeAuthorizeValidated,
+    query: &str,
+    error: Option<&str>,
+) {
+    let scopes = validated
+        .scopes
+        .split_whitespace()
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    let html = authorize_bridge_html(
+        &validated.client.name,
+        &validated.client.client_id,
+        &validated.parsed.redirect_uri,
+        &scopes,
+        validated.resource.as_deref(),
+        query,
+        error,
+    );
+    res.status_code(if error.is_some() {
+        StatusCode::BAD_REQUEST
+    } else {
+        StatusCode::OK
+    });
+    res.render(Text::Html(html));
+}
+
+fn issue_bridge_authorization_code(
+    res: &mut Response,
+    config: &crate::Config,
+    db: &crate::Database,
+    validated: &BridgeAuthorizeValidated,
+    shared_key_hash: String,
+) {
+    let now = chrono::Utc::now().timestamp();
+    let plaintext_code = generate_oauth_authorization_code();
+    let code_hash = hash_token(&plaintext_code);
+    let record = OAuthAuthorizationCodeRecord {
+        id: uuid::Uuid::new_v4().to_string(),
+        code_hash,
+        client_id: validated.client.client_id.clone(),
+        subject_kind: "shared_key".to_string(),
+        subject_id: shared_key_hash.clone(),
+        user_id: None,
+        redirect_uri: validated.parsed.redirect_uri.clone(),
+        scopes: validated.scopes.clone(),
+        resource: validated.resource.clone(),
+        code_challenge: Some(validated.parsed.code_challenge.clone()),
+        code_challenge_method: Some("S256".to_string()),
+        shared_key_hash: Some(shared_key_hash),
+        created_at: now,
+        expires_at: now + config.oauth2.authorization_code_ttl_secs,
+        used_at: None,
+        revoked_at: None,
+    };
+
+    if db
+        .insert_oauth_authorization_code(&record, &record.code_hash)
+        .is_err()
+    {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "internal error",
+        );
+        return;
+    }
+
+    redirect_with_authorization_code(
+        res,
+        &validated.parsed.redirect_uri,
+        &plaintext_code,
+        validated.parsed.state.as_deref(),
+    );
+}
+
 /// Authorization endpoint.
 ///
 /// `/oauth/authorize` is mounted **without** `AuthMiddleware`. The handler
@@ -1463,6 +1776,36 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
 
     let query = req.uri().query().unwrap_or("").to_string();
 
+    match is_shared_key_bridge_query(&query) {
+        Ok(true) => {
+            if !config.oauth2.shared_key_bridge_enabled {
+                oauth_authorize_direct_error(
+                    res,
+                    StatusCode::NOT_FOUND,
+                    "invalid_request",
+                    "shared-key OAuth bridge is not enabled",
+                );
+                return;
+            }
+            let Some(validated) = validate_bridge_authorize_request(res, &config, &db, &query)
+            else {
+                return;
+            };
+            render_bridge_authorize_form(res, &validated, &query, None);
+            return;
+        }
+        Ok(false) => {}
+        Err(_) => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "unsupported bridge",
+            );
+            return;
+        }
+    }
+
     // Path 1: Bearer token (first-party direct issuance). A PAT (ApiToken)
     // with a concrete user_id goes straight to code issuance. Bootstrap is
     // rejected because it has no user_id to bind the authorization code to.
@@ -1512,6 +1855,100 @@ pub(crate) async fn oauth_authorize(req: &mut Request, depot: &mut Depot, res: &
     };
     res.status_code(StatusCode::OK);
     res.render(Text::Html(authorize_login_html(&return_to, None)));
+}
+
+#[handler]
+pub(crate) async fn oauth_authorize_bridge(
+    req: &mut Request,
+    depot: &mut Depot,
+    res: &mut Response,
+) {
+    let Some(config) = crate::auth::get_config(depot) else {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "no config",
+        );
+        return;
+    };
+
+    if !config.oauth2.enabled {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::NOT_FOUND,
+            "invalid_request",
+            "OAuth2 is not enabled",
+        );
+        return;
+    }
+
+    if !config.oauth2.shared_key_bridge_enabled {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::NOT_FOUND,
+            "invalid_request",
+            "shared-key OAuth bridge is not enabled",
+        );
+        return;
+    }
+
+    let Some(db) = crate::auth::get_db(depot) else {
+        oauth_authorize_direct_error(
+            res,
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "server_error",
+            "DB not available",
+        );
+        return;
+    };
+
+    let pairs = match parse_form_body(req).await {
+        Some(pairs) => pairs,
+        None => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "invalid request body",
+            );
+            return;
+        }
+    };
+
+    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+    for (key, value) in pairs.iter().filter(|(key, _)| key != "shared_key") {
+        serializer.append_pair(key, value);
+    }
+    let query = serializer.finish();
+
+    match is_shared_key_bridge_query(&query) {
+        Ok(true) => {}
+        _ => {
+            oauth_authorize_direct_error(
+                res,
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                "unsupported bridge",
+            );
+            return;
+        }
+    }
+
+    let Some(validated) = validate_bridge_authorize_request(res, &config, &db, &query) else {
+        return;
+    };
+
+    let submitted = form_field(&pairs, "shared_key").unwrap_or("");
+    let shared_key_hash = match bridge_shared_key_hash(submitted) {
+        Ok(hash) => hash,
+        Err(message) => {
+            render_bridge_authorize_form(res, &validated, &query, Some(message));
+            return;
+        }
+    };
+
+    issue_bridge_authorization_code(res, &config, &db, &validated, shared_key_hash);
 }
 
 /// First-party direct issuance path: validate the authorize query against the
@@ -2769,6 +3206,13 @@ const OAUTH_SCOPES_SUPPORTED: &[&str] = &[
     scopes::SCOPE_ACCOUNT_MANAGE,
 ];
 
+const OAUTH_BRIDGE_SCOPES_SUPPORTED: &[&str] = &[
+    scopes::SCOPE_RUNTIME_READ,
+    scopes::SCOPE_PROJECT_READ,
+    scopes::SCOPE_PROJECT_WRITE,
+    scopes::SCOPE_JOB_RUN,
+];
+
 /// Return the canonical global OAuth scope registry.
 ///
 /// The order is stable and is used for authorization-time normalization.
@@ -2820,6 +3264,20 @@ pub(crate) fn normalize_oauth_scopes(
     }
 
     Ok(normalized.join(" "))
+}
+
+fn normalize_bridge_oauth_scopes(
+    requested: Option<&str>,
+    client_allowed: &str,
+) -> Result<String, OAuthAuthorizeError> {
+    let normalized = normalize_oauth_scopes(requested, client_allowed)?;
+    if normalized
+        .split_whitespace()
+        .any(|scope| !OAUTH_BRIDGE_SCOPES_SUPPORTED.contains(&scope))
+    {
+        return Err(OAuthAuthorizeError::InvalidScope("invalid scope"));
+    }
+    Ok(normalized)
 }
 
 /// Return protected resource metadata (RFC 9728 §3.1).
@@ -2907,7 +3365,8 @@ mod tests {
     use super::*;
     use crate::auth::{
         generate_account_credential, generate_agent_token, generate_api_token,
-        generate_oauth_authorization_code, hash_token, token_prefix,
+        generate_oauth_authorization_code, hash_token, token_prefix, AuthKind, OAuth2Verifier,
+        TokenVerifier,
     };
     use crate::models::{
         AccountCredentialRecord, ApiKeyRecord, OAuthAuthorizationCodeRecord, OAuthClientRecord,
@@ -2939,6 +3398,13 @@ mod tests {
             access_token_ttl_secs: 3600,
             refresh_token_ttl_secs: 2_592_000,
             ..OAuth2Config::default()
+        }
+    }
+
+    fn oauth2_enabled_bridge() -> OAuth2Config {
+        OAuth2Config {
+            shared_key_bridge_enabled: true,
+            ..oauth2_enabled()
         }
     }
 
@@ -3326,6 +3792,42 @@ mod tests {
         ])
     }
 
+    fn valid_bridge_authorize_url(
+        client: &OAuthClientRecord,
+        redirect_uri: &str,
+        scope: &str,
+    ) -> String {
+        authorize_url(&[
+            ("bridge", "shared_key"),
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", redirect_uri),
+            ("scope", scope),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+        ])
+    }
+
+    fn bridge_form_body(
+        client: &OAuthClientRecord,
+        redirect_uri: &str,
+        scope: &str,
+        shared_key: &str,
+    ) -> String {
+        form_body(&[
+            ("bridge", "shared_key"),
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", redirect_uri),
+            ("scope", scope),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+            ("shared_key", shared_key),
+        ])
+    }
+
     fn valid_authorize_url_with_resource(
         client: &OAuthClientRecord,
         redirect_uri: &str,
@@ -3693,7 +4195,8 @@ mod tests {
                 Router::with_path("oauth/authorize")
                     .get(oauth_authorize)
                     .push(Router::with_path("login").post(oauth_authorize_login))
-                    .push(Router::with_path("consent").post(oauth_authorize_consent)),
+                    .push(Router::with_path("consent").post(oauth_authorize_consent))
+                    .push(Router::with_path("bridge").post(oauth_authorize_bridge)),
             )
             .push(
                 Router::with_path("api/oauth/clients")
@@ -3851,6 +4354,429 @@ mod tests {
         // The login page must not reveal the original query token or echo
         // any secret; it only carries the return_to path.
         assert!(body.contains("return_to"));
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_get_disabled_creates_no_code() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url =
+            valid_bridge_authorize_url(&client, "https://example.com/callback", "runtime:read");
+        let before = auth_code_count(&db);
+
+        let resp = TestClient::get(&url).send(&service).await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::NOT_FOUND));
+        assert_no_location(&resp);
+        assert_eq!(auth_code_count(&db), before);
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_post_disabled_creates_no_code() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let body = bridge_form_body(
+            &client,
+            "https://example.com/callback",
+            "runtime:read",
+            "shared-secret",
+        );
+        let before = auth_code_count(&db);
+
+        let resp = post_form("http://localhost/oauth/authorize/bridge", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::NOT_FOUND));
+        assert_no_location(&resp);
+        assert_eq!(auth_code_count(&db), before);
+    }
+
+    #[tokio::test]
+    async fn bridge_disabled_does_not_break_managed_user_authorize() {
+        let config = test_config(oauth2_enabled());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let token = seed_user_token(&db, &user);
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url = valid_authorize_url(&client, "https://example.com/callback");
+
+        let (_resp, _location, _parsed, code) =
+            authorize_success(&service, &db, &url, &token).await;
+        let record = auth_code_by_plaintext(&db, &code);
+
+        assert_eq!(record.subject_kind, "managed_user");
+        assert_eq!(record.user_id.as_deref(), Some(user.id.as_str()));
+        assert_eq!(record.shared_key_hash, None);
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_get_invalid_client_or_redirect_creates_no_code() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let invalid_client_url = authorize_url(&[
+            ("bridge", "shared_key"),
+            ("response_type", "code"),
+            ("client_id", "wc_client_missing"),
+            ("redirect_uri", "https://example.com/callback"),
+            ("scope", "runtime:read"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+        ]);
+        let mismatch_url = valid_bridge_authorize_url(
+            &client,
+            "https://attacker.example/callback",
+            "runtime:read",
+        );
+
+        for url in [invalid_client_url, mismatch_url] {
+            let before = auth_code_count(&db);
+            let resp = TestClient::get(&url).send(&service).await;
+            assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+            assert_no_location(&resp);
+            assert_eq!(auth_code_count(&db), before);
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_rejects_missing_or_invalid_pkce_without_code() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let urls = [
+            authorize_url(&[
+                ("bridge", "shared_key"),
+                ("response_type", "code"),
+                ("client_id", &client.client_id),
+                ("redirect_uri", "https://example.com/callback"),
+                ("scope", "runtime:read"),
+                ("code_challenge_method", "S256"),
+            ]),
+            authorize_url(&[
+                ("bridge", "shared_key"),
+                ("response_type", "code"),
+                ("client_id", &client.client_id),
+                ("redirect_uri", "https://example.com/callback"),
+                ("scope", "runtime:read"),
+                ("code_challenge", "challenge-1"),
+                ("code_challenge_method", "plain"),
+            ]),
+        ];
+
+        for url in urls {
+            let before = auth_code_count(&db);
+            let resp = TestClient::get(&url).send(&service).await;
+            assert_eq!(auth_code_count(&db), before);
+            assert_ne!(resp.status_code, Some(StatusCode::OK));
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_get_renders_form_and_creates_no_code() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let url =
+            valid_bridge_authorize_url(&client, "https://example.com/callback", "runtime:read");
+        let before = auth_code_count(&db);
+
+        let mut resp = TestClient::get(&url).send(&service).await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        assert_no_location(&resp);
+        assert_eq!(auth_code_count(&db), before);
+        let text = resp.take_string().await.unwrap_or_default();
+        assert!(text.contains("/oauth/authorize/bridge"));
+        assert!(text.contains("name=\"shared_key\""));
+        assert!(!text.contains("wc_oac_"));
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_post_rejects_empty_or_managed_key_without_code() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+
+        for submitted in ["   ", "wc_pat_not_a_shared_key"] {
+            let body = bridge_form_body(
+                &client,
+                "https://example.com/callback",
+                "runtime:read",
+                submitted,
+            );
+            let before = auth_code_count(&db);
+            let mut resp = post_form("http://localhost/oauth/authorize/bridge", body)
+                .send(&service)
+                .await;
+            assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST));
+            assert_no_location(&resp);
+            assert_eq!(auth_code_count(&db), before);
+            let text = resp.take_string().await.unwrap_or_default();
+            let trimmed = submitted.trim();
+            if !trimmed.is_empty() {
+                assert!(!text.contains(trimmed));
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_valid_shared_key_creates_shared_key_code() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+        let shared_key = "shared-secret-value";
+        let expected_hash = bridge_shared_key_hash(shared_key).unwrap();
+        let body = bridge_form_body(
+            &client,
+            "https://example.com/callback",
+            "runtime:read project:read",
+            shared_key,
+        );
+        let before = auth_code_count(&db);
+
+        let resp = post_form("http://localhost/oauth/authorize/bridge", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        assert_eq!(auth_code_count(&db), before + 1);
+        let location = location_header(&resp).expect("success redirect");
+        let parsed = url::Url::parse(&location).unwrap();
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
+        let code = params.get("code").expect("code");
+        let record = auth_code_by_plaintext(&db, code);
+        assert_eq!(record.subject_kind, "shared_key");
+        assert_eq!(record.subject_id, expected_hash);
+        assert_eq!(record.user_id, None);
+        assert_eq!(
+            record.shared_key_hash.as_deref(),
+            Some(record.subject_id.as_str())
+        );
+        assert_eq!(record.scopes, "runtime:read project:read");
+        assert_ne!(record.code_hash, *code);
+
+        let leaked: i64 = db
+            .conn_for_tests()
+            .query_row(
+                "SELECT COUNT(*) FROM oauth_authorization_codes
+                 WHERE code_hash LIKE ?1 OR client_id LIKE ?1 OR subject_id LIKE ?1
+                    OR COALESCE(user_id, '') LIKE ?1 OR redirect_uri LIKE ?1
+                    OR scopes LIKE ?1 OR COALESCE(code_challenge, '') LIKE ?1
+                    OR COALESCE(code_challenge_method, '') LIKE ?1
+                    OR COALESCE(resource, '') LIKE ?1 OR COALESCE(shared_key_hash, '') LIKE ?1",
+                [format!("%{}%", shared_key)],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(leaked, 0, "plaintext shared key must not be stored");
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_code_exchanges_to_shared_key_tokens_and_verifies() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Bridge App");
+        let verifier = "bridge-code-verifier";
+        let challenge = pkce_s256_challenge(verifier);
+        let shared_key = "bridge-shared-secret";
+        let expected_hash = bridge_shared_key_hash(shared_key).unwrap();
+        let service = Service::new(build_router(config.clone(), db.clone()));
+        let body = form_body(&[
+            ("bridge", "shared_key"),
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://example.com/callback"),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("shared_key", shared_key),
+        ]);
+        let resp = post_form("http://localhost/oauth/authorize/bridge", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        let location = location_header(&resp).expect("success redirect");
+        let parsed = url::Url::parse(&location).unwrap();
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        let code = params.get("code").expect("code").clone();
+
+        let exchange_body = form_body(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", "https://example.com/callback"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+            ("code_verifier", verifier),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", exchange_body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        let access_token = json["access_token"].as_str().unwrap();
+        let refresh_token = json["refresh_token"].as_str().unwrap();
+        assert_eq!(json["scope"], "runtime:read");
+        assert_eq!(
+            access_token_subject_by_plaintext(&db, access_token),
+            (
+                "shared_key".to_string(),
+                expected_hash.clone(),
+                None,
+                Some(expected_hash.clone())
+            )
+        );
+        assert_eq!(
+            refresh_token_subject_by_plaintext(&db, refresh_token),
+            (
+                "shared_key".to_string(),
+                expected_hash.clone(),
+                None,
+                Some(expected_hash.clone())
+            )
+        );
+
+        let ctx = OAuth2Verifier
+            .verify(config.as_ref(), Some(&db), access_token)
+            .await
+            .unwrap()
+            .expect("bridge access token should verify");
+        assert_eq!(ctx.kind, AuthKind::OAuth2Token);
+        assert_eq!(ctx.user_id, None);
+        assert_eq!(ctx.token_kind.as_deref(), Some("oauth2_shared_key"));
+        assert_eq!(ctx.shared_key_hash.as_deref(), Some(expected_hash.as_str()));
+        assert!(ctx.has_scope(crate::auth::SCOPE_RUNTIME_READ));
+        assert!(!ctx.has_scope(crate::auth::SCOPE_PROJECT_WRITE));
+        assert!(!ctx.has_scope(crate::auth::SCOPE_ACCOUNT_MANAGE));
+
+        let mut resp = TestClient::post("http://localhost/api/oauth/clients/list")
+            .add_header("authorization", &format!("Bearer {}", access_token), true)
+            .body("{}")
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+        let body: serde_json::Value = resp.take_json().await.unwrap();
+        assert_eq!(body["error"], "insufficient_scope");
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_rejects_denied_scopes_and_allows_project_write_job_run() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let denied_client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read project:read project:write job:run account:manage",
+        );
+        let allowed_client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://allowed.example/callback",
+            "runtime:read project:write job:run",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+
+        for scope in ["account:manage", "agent:register", "admin"] {
+            let url =
+                valid_bridge_authorize_url(&denied_client, "https://example.com/callback", scope);
+            let before = auth_code_count(&db);
+            let resp = TestClient::get(&url).send(&service).await;
+            assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+            assert_eq!(auth_code_count(&db), before);
+            let location = location_header(&resp).expect("invalid_scope redirect");
+            let parsed = url::Url::parse(&location).unwrap();
+            let params: std::collections::HashMap<String, String> =
+                parsed.query_pairs().into_owned().collect();
+            assert_eq!(
+                params.get("error").map(String::as_str),
+                Some("invalid_scope")
+            );
+        }
+
+        let body = bridge_form_body(
+            &allowed_client,
+            "https://allowed.example/callback",
+            "project:write job:run",
+            "shared-key-with-write-run",
+        );
+        let before = auth_code_count(&db);
+        let resp = post_form("http://localhost/oauth/authorize/bridge", body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        assert_eq!(auth_code_count(&db), before + 1);
+        let location = location_header(&resp).expect("success redirect");
+        let parsed = url::Url::parse(&location).unwrap();
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        let code = params.get("code").expect("code");
+        let record = auth_code_by_plaintext(&db, code);
+        assert_eq!(record.scopes, "project:write job:run");
+        assert_eq!(record.subject_kind, "shared_key");
     }
 
     #[tokio::test]

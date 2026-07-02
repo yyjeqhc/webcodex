@@ -71,12 +71,20 @@ Implemented in Phase 2e-3:
   access tokens, agent tokens, account credentials, and bootstrap are rejected
   as authorize identities.
 
+Implemented in shared-key bridge phase:
+
+- Public shared-key bridge authorize flow behind disabled-by-default
+  `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true`.
+- `GET /oauth/authorize?bridge=shared_key` renders a minimal shared-key form
+  only after client and redirect validation.
+- `POST /oauth/authorize/bridge` revalidates the request, stores only the
+  shared-key hash, and issues `subject_kind = shared_key` authorization codes
+  capped to runtime/project/job scopes.
+
 Still not implemented:
 
 - OpenID Connect metadata (`/.well-known/openid-configuration`).
-- MCP resource/audience binding.
-- Bearer-like OAuth bridge for OAuth-only hosts.
-
+- MCP resource/audience binding beyond the existing optional `resource` check.
 ## Goals
 
 - Define `GET /oauth/authorize` for the OAuth2 authorization code flow.
@@ -100,35 +108,41 @@ Still not implemented:
 
 ## Bearer-like OAuth bridge
 
-A bearer-like OAuth bridge product flow is future work. It may let a user enter
-a shared key on a WebCodex-hosted OAuth authorization page and receive an OAuth
-access token for OAuth-only hosts.
+The shared-key OAuth bridge lets a user enter a shared key on a WebCodex-hosted
+OAuth authorization page and receive OAuth access/refresh tokens for OAuth-only
+hosts after the authorization-code exchange.
 
-Public shared-key OAuth bridge issuance is not implemented yet. The internal
-OAuth subject model substrate now distinguishes `managed_user` and `shared_key`
-subjects on authorization codes, access tokens, and refresh tokens. Public
-bridge endpoint design is tracked in
-[OAUTH2_BRIDGE_THREAT_MODEL.md](OAUTH2_BRIDGE_THREAT_MODEL.md).
+Public shared-key OAuth bridge issuance is implemented behind the explicit
+`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true` flag, which defaults to disabled. The
+flow uses:
 
-OAuth2Verifier now dispatches managed-user and shared-key OAuth subjects.
-Managed OAuth tokens keep OAuth current-session identity semantics; public
-shared-key bridge tokens are not available yet.
+```text
+GET /oauth/authorize?bridge=shared_key
+POST /oauth/authorize/bridge
+```
 
-That bridge would preserve host OAuth semantics. It would not make blank OAuth
-client fields behave like no-auth, shared-key quick start, or a static Bearer
-header.
+Bridge-issued authorization codes use `subject_kind = shared_key`,
+`subject_id = shared_key_hash`, `user_id = NULL`, and `shared_key_hash`. The
+submitted shared key is trimmed, rejected if empty or `wc_`-prefixed, and only
+its hash is stored. The plaintext shared key is not stored or redirected.
+
+The bridge preserves host OAuth semantics. Blank OAuth client fields do not
+become no-auth, shared-key quick start, or a static Bearer header.
 
 ## OAuth bridge implementation constraints
 
-OAuth bridge public issuance remains future work. Its implementation must
-preserve OAuth semantics: blank OAuth client fields are never bearer/no-auth
-fallback, open anonymous mode must not be bridgeable into OAuth tokens, and
-bridge-issued access tokens must still enforce OAuth scopes. A shared-key bridge
-token must preserve shared-key group isolation semantics without storing
-plaintext shared keys. Do not model shared-key bridge users as managed users
-unless there is an explicit account binding. Do not use a fake `user_id` hack
-such as `shared-key:<hash>` without documenting and testing the isolation model.
-Agent transport endpoints must remain unavailable to OAuth2 tokens.
+OAuth bridge public issuance preserves OAuth semantics: blank OAuth client
+fields are never bearer/no-auth fallback, open anonymous mode is not bridgeable
+into OAuth tokens, and bridge-issued access tokens still enforce OAuth scopes. A
+shared-key bridge token preserves shared-key group isolation semantics without
+storing plaintext shared keys. Bridge issuance does not model shared-key users
+as managed users, does not synthesize fake `user_id` values, and keeps agent
+transport endpoints unavailable to OAuth2 tokens.
+
+Bridge scope issuance is capped to `runtime:read`, `project:read`,
+`project:write`, and `job:run`; `account:manage`, `admin`, and `agent:*` scopes
+are rejected for bridge-issued codes even when a normal managed-user OAuth
+client could otherwise request them.
 
 ## Identity Source
 
@@ -346,6 +360,10 @@ create a code.
 - Plaintext authorization codes are not logged.
 - Only hashes are persisted for authorization codes, access tokens, refresh
   tokens, and client secrets.
+- Bridge-submitted plaintext shared keys are not stored; bridge authorization
+  codes store only `shared_key_hash`.
+- Bridge-issued codes are capped to runtime/project/job scopes and cannot carry
+  `account:manage`, `admin`, or `agent:*` scopes.
 
 ## Test Plan For Phase 2e-1
 

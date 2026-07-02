@@ -2,10 +2,11 @@
 
 ## Status
 
-The OAuth subject model substrate exists, and `OAuth2Verifier` now dispatches
-both `managed_user` and `shared_key` OAuth subjects. No public bridge issuance
-endpoint or UI exists yet. OAuth code, access-token, and refresh-token rows
-distinguish `managed_user` and `shared_key` subjects.
+The OAuth subject model substrate exists, `OAuth2Verifier` dispatches both
+`managed_user` and `shared_key` OAuth subjects, and the public shared-key
+bridge authorize flow is implemented behind the explicit disabled-by-default
+`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true` flag. OAuth code, access-token, and
+refresh-token rows distinguish `managed_user` and `shared_key` subjects.
 
 The current internal chain is:
 
@@ -46,7 +47,7 @@ This design does not add or permit:
 - OAuth token access to agent transport endpoints.
 - Plaintext shared key storage.
 - Fake managed user identity.
-- A public bridge endpoint in this commit.
+- Public bridge issuance without the explicit config flag.
 
 ## Identity Decision
 
@@ -60,8 +61,8 @@ The core identity decision is now explicit:
 Shared-key bridge OAuth tokens are shared-key principal tokens, not managed-user tokens.
 ```
 
-Public bridge issuance still remains unimplemented until the authorize route/UI,
-shared-key validation, scope cap, and endpoint contract are added and tested.
+Public bridge issuance is available only through the explicit shared-key bridge
+route and remains disabled unless the operator enables the bridge flag.
 
 ## Threat Model
 
@@ -157,10 +158,10 @@ Reasons:
 
 ## Recommended v1
 
-Recommended v1 is now the shared-key principal OAuth model for pure quick-start
-OAuth onboarding. The public bridge endpoint still must not be implemented until
-its route/UI, shared-key validation, scope cap, and endpoint contract are added
-and tested.
+Recommended v1 is the shared-key principal OAuth model for pure quick-start
+OAuth onboarding. The public bridge endpoint is implemented behind an explicit
+config flag with shared-key validation, a strict scope cap, and route-level
+tests.
 
 Do not use synthetic managed users. Do not overload `user_id`. Managed-user
 OAuth remains supported for formal managed-account delegation, but the bridge
@@ -174,25 +175,23 @@ Suggested staged roadmap:
 3. Phase C: implement public shared-key bridge authorize route/UI behind an
    explicit config flag and strict scope policy.
 
-## Endpoint Contract Draft
+## Endpoint Contract
 
-This is a draft contract only. It does not imply that these routes exist.
-
-Proposed route shape:
+Implemented route shape:
 
 ```text
 GET /oauth/authorize?bridge=shared_key
 POST /oauth/authorize/bridge
 ```
 
-`GET /oauth/authorize?bridge=shared_key` would validate the OAuth request and
-render a bridge form only after the OAuth boundary is trustworthy.
-`POST /oauth/authorize/bridge` would verify the bridge subject requirements and
-issue an authorization code with `shared_key_hash`.
+`GET /oauth/authorize?bridge=shared_key` validates the OAuth request and renders
+a bridge form only after the OAuth boundary is trustworthy. It never issues a
+code. `POST /oauth/authorize/bridge` revalidates the full request, validates the
+submitted shared key, and issues an authorization code with `shared_key_hash`.
 
 Required contract:
 
-- Disabled by default behind an explicit config flag.
+- Disabled by default behind `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true`.
 - Validate `client_id` and exact `redirect_uri` before rendering any bridge
   form or redirecting.
 - Require `response_type=code`.
@@ -208,11 +207,11 @@ Required contract:
 - Access and refresh tokens inherit the OAuth subject fields and
   `shared_key_hash` through the existing token exchange substrate.
 - Refresh rotation preserves the OAuth subject fields and `shared_key_hash`.
-- Normalize requested scopes against the OAuth client's `allowed_scopes` and
-  the global OAuth scope registry.
-- Do not grant dangerous scopes such as `account:manage` or `admin` to a
-  shared-key bridge unless explicitly justified and tested.
-- OAuth2 tokens remain rejected on agent transport endpoints.
+- Normalize requested/default scopes against the OAuth client's
+  `allowed_scopes` and the global OAuth scope registry, then cap bridge-issued
+  scopes to `runtime:read`, `project:read`, `project:write`, and `job:run`.
+- Reject `account:manage`, `admin`, and `agent:*` scopes for shared-key bridge
+  issuance even if the OAuth client otherwise allows them.
 
 - Managed-account-bound tokens continue to use `subject_kind = managed_user`
   and require a real managed user row.
@@ -238,23 +237,20 @@ Current OAuth delegation excludes these scopes:
 - `agent:job_update`
 - `admin`
 
-Shared-key bridge OAuth tokens should default to runtime, project, and job
-scopes only. They must not receive account-management or admin scopes by
-default.
+Shared-key bridge OAuth tokens are capped to runtime, project, and job scopes
+only. They never receive account-management, admin, or agent-transport scopes.
 
-Recommended bridge policy:
+Implemented bridge policy:
 
-- Allow by default: `runtime:read`, `project:read`.
-- Allow only after explicit product/security review: `project:write`,
-  `job:run`.
-- Deny by default: `account:manage`.
-- Always deny for OAuth bridge tokens: `admin`, `agent:register`,
-  `agent:poll`, `agent:result`, `agent:job_update`.
+- Allow when requested/defaulted and client-allowed: `runtime:read`,
+  `project:read`, `project:write`, `job:run`.
+- Reject for bridge issuance: `account:manage`, `admin`, `agent:register`,
+  `agent:poll`, `agent:result`, `agent:job_update`, and future `agent:*`
+  scopes.
 
-`account:manage` is globally delegable for normal OAuth clients today, but a
-shared-key bridge token is not a normal managed-user delegation unless the
-managed-account-bound model is selected and explicitly justified. Even then,
-bridge issuance should not grant `account:manage` by default.
+`account:manage` is globally delegable for normal managed-user OAuth clients
+today, but shared-key bridge issuance rejects it because a shared-key principal
+is not a managed-user delegation.
 
 ## Current Session Decision
 
@@ -267,12 +263,9 @@ current-session identity for an OAuth2 token follows OAuth token/user/client
 fields first; `shared_key_hash` is only a fallback stable id and is not used to
 aggregate bridge sessions across OAuth subjects.
 
-## Acceptance Tests for Future Implementation
+## Acceptance Tests
 
-Before any public bridge endpoint is implemented, tests must cover:
-
-- Disabled by default.
-- Invalid `client_id` returns a direct error with no redirect.
+The public bridge implementation covers:
 - `redirect_uri` exact match is required before any redirect or form render.
 - PKCE S256 is required.
 - `state` is preserved.

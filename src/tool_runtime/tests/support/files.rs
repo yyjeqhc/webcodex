@@ -1,0 +1,288 @@
+use super::runtime::runtime_with_project;
+use crate::tool_runtime::git::{
+    apply_show_changes_untracked_previews, git_log_command, parse_show_changes_output,
+    show_changes_command, split_show_changes_stdout,
+};
+use crate::tool_runtime::helpers::{run_command_sync, shell_escape_simple};
+use crate::tool_runtime::types::{LocalJobKiller, TerminateOutcome};
+use crate::tool_runtime::{ApplyTextEditInput, ApplyTextEditKind, ToolRuntime};
+use serde_json::{json, Value};
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+pub(in crate::tool_runtime::tests) fn init_git_repo(root: &Path) {
+    for cmd in [
+        "git init",
+        "git config user.email webcodex-test@example.com",
+        "git config user.name 'WebCodex Test'",
+    ] {
+        let (exit_code, stdout, stderr, _) = run_command_sync(cmd, root, 30);
+        assert_eq!(
+            exit_code, 0,
+            "git setup command failed: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+pub(in crate::tool_runtime::tests) fn commit_file(
+    root: &Path,
+    path: &str,
+    content: &str,
+    subject: &str,
+) {
+    fs::write(root.join(path), content).unwrap();
+    for cmd in [
+        format!("git add -- {}", shell_escape_simple(path)),
+        format!("git commit -m {}", shell_escape_simple(subject)),
+    ] {
+        let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, root, 30);
+        assert_eq!(
+            exit_code, 0,
+            "git commit helper command failed: {cmd}\nstdout:\n{stdout}\nstderr:\n{stderr}"
+        );
+    }
+}
+
+pub(in crate::tool_runtime::tests) fn git_log_stdout(
+    root: &Path,
+    limit: usize,
+    skip: usize,
+) -> String {
+    let command = git_log_command(limit, skip);
+    let (exit_code, stdout, stderr, _) = run_command_sync(&command, root, 30);
+    assert_eq!(
+        exit_code, 0,
+        "git log helper command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    stdout
+}
+
+pub(in crate::tool_runtime::tests) fn show_changes_output_from_command(
+    root: &Path,
+    include_diff: bool,
+) -> Value {
+    let command = show_changes_command(include_diff);
+    let (exit_code, stdout, stderr, _) = run_command_sync(&command, root, 30);
+    assert_eq!(
+        exit_code, 0,
+        "show_changes command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let (status_stdout, head_stdout, diff_stat, diff_stdout, untracked_preview_stdout) =
+        split_show_changes_stdout(&stdout, include_diff);
+    let mut output = parse_show_changes_output(
+        "demo",
+        &status_stdout,
+        &head_stdout,
+        &diff_stat,
+        include_diff.then_some(diff_stdout.as_str()),
+        20,
+        80,
+        Some(exit_code),
+        &stderr,
+    );
+    if include_diff {
+        apply_show_changes_untracked_previews(&mut output, &untracked_preview_stdout);
+    }
+    output
+}
+
+/// Write a fake on-disk local job simulating a job that survived a restart.
+pub(in crate::tool_runtime::tests) fn write_fake_job(
+    root: &Path,
+    job_id: &str,
+    project: &str,
+    path: &str,
+    status: &str,
+    stdout: &str,
+    stderr: &str,
+    meta_extra: Value,
+) -> PathBuf {
+    let dir = root.join(format!(".codex/jobs/{}", job_id));
+    fs::create_dir_all(&dir).unwrap();
+    let mut meta = json!({
+        "job_id": job_id,
+        "project": project,
+        "path": path,
+        "command": "echo test",
+        "status": "running",
+        "created_at": 1000,
+        "started_at": 1000,
+        "max_runtime_secs": 3600,
+        "executor": "local",
+        "kind": "shell",
+    });
+    if let (Value::Object(ref mut m), Value::Object(extra)) = (&mut meta, meta_extra) {
+        for (k, v) in extra {
+            m.insert(k, v);
+        }
+    }
+    fs::write(
+        dir.join("metadata.json"),
+        serde_json::to_string_pretty(&meta).unwrap(),
+    )
+    .unwrap();
+    fs::write(dir.join("status"), status).unwrap();
+    fs::write(dir.join("stdout.log"), stdout).unwrap();
+    fs::write(dir.join("stderr.log"), stderr).unwrap();
+    dir
+}
+
+/// A deterministic fake process-killer for testing timeout/stop invariants.
+/// Records which (pid, pgid) pairs it was asked to terminate and reports
+/// AlreadyGone so the runtime persists a terminal status without touching
+/// any real process.
+#[derive(Default, Clone)]
+pub(in crate::tool_runtime::tests) struct FakeJobKiller {
+    calls: Arc<std::sync::Mutex<Vec<(i64, i64)>>>,
+}
+
+impl FakeJobKiller {
+    pub(in crate::tool_runtime::tests) fn calls(&self) -> Vec<(i64, i64)> {
+        self.calls.lock().unwrap().clone()
+    }
+}
+
+impl LocalJobKiller for FakeJobKiller {
+    fn terminate_group(&self, pid: i64, pgid: i64) -> TerminateOutcome {
+        self.calls.lock().unwrap().push((pid, pgid));
+        TerminateOutcome::AlreadyGone
+    }
+}
+
+pub(in crate::tool_runtime::tests) fn runtime_with_fake_killer(
+    root: &Path,
+    project_id: &str,
+) -> (ToolRuntime, FakeJobKiller) {
+    let mut runtime = runtime_with_project(root, project_id);
+    let killer = FakeJobKiller::default();
+    let killer_dyn: Arc<dyn LocalJobKiller> = Arc::new(killer.clone());
+    runtime.job_killer = killer_dyn;
+    (runtime, killer)
+}
+
+/// Write a fake on-disk local job plus a `pid` file and `process_group_id`
+/// metadata field, simulating a job spawned by the current code.
+pub(in crate::tool_runtime::tests) fn write_fake_job_with_pgid(
+    root: &Path,
+    job_id: &str,
+    project: &str,
+    path: &str,
+    status: &str,
+    pid: i64,
+    meta_extra: Value,
+) -> PathBuf {
+    let dir = write_fake_job(root, job_id, project, path, status, "", "", meta_extra);
+    fs::write(dir.join("pid"), pid.to_string()).unwrap();
+    dir
+}
+
+/// A small patch carrying a distinctive marker line so tests can prove the
+/// patch body never leaks into the shell `command` string.
+pub(in crate::tool_runtime::tests) fn marker_patch(filename: &str, marker: &str) -> String {
+    format!(
+        "diff --git a/{f} b/{f}\nnew file mode 100644\n--- /dev/null\n+++ b/{f}\n\
+             @@ -0,0 +1 @@\n+{m}\n",
+        f = filename,
+        m = marker,
+    )
+}
+
+/// A patch deliberately larger than the agent shell command limit
+/// (`MAX_COMMAND_LEN` = 8000 bytes) so tests can prove the patch still
+/// validates/applies via `stdin` rather than the command string.
+pub(in crate::tool_runtime::tests) fn large_marker_patch(filename: &str, marker: &str) -> String {
+    let mut s = String::new();
+    s.push_str(&format!(
+        "diff --git a/{f} b/{f}\nnew file mode 100644\n--- /dev/null\n+++ b/{f}\n\
+             @@ -0,0 +1,200 @@\n",
+        f = filename,
+    ));
+    s.push_str(&format!("+{m}\n", m = marker));
+    for i in 0..199 {
+        s.push_str(&format!("+line-{:04}-{}\n", i, "x".repeat(48)));
+    }
+    s
+}
+
+pub(in crate::tool_runtime::tests) fn python3_available() -> bool {
+    std::process::Command::new("python3")
+        .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
+
+/// Run a fixed helper script locally with a JSON payload on stdin, in the
+/// given cwd, and return the parsed JSON object the helper prints.
+pub(in crate::tool_runtime::tests) fn run_helper_locally(
+    helper: &str,
+    payload: &Value,
+    cwd: &Path,
+) -> Value {
+    let stdin = serde_json::to_string(payload).unwrap();
+    let mut child = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(helper)
+        .current_dir(cwd)
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn python3");
+    use std::io::Write;
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(stdin.as_bytes())
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "helper exited {:?}: stderr={}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
+        panic!(
+            "helper returned invalid JSON: {} (got: {})",
+            e,
+            stdout.trim()
+        )
+    })
+}
+
+/// Compute a lowercase hex sha256 of a string (test helper).
+pub(in crate::tool_runtime::tests) fn sha256_hex(s: &str) -> String {
+    // Use the same approach as the python helper: sha256 of utf-8 bytes.
+    // We shell out to python3 to avoid pulling a sha256 crate into tests.
+    let child = std::process::Command::new("python3")
+        .arg("-c")
+        .arg(
+            "import sys,hashlib;sys.stdout.write(hashlib.sha256(sys.argv[1].encode()).hexdigest())",
+        )
+        .arg(s)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn python3");
+    let output = child.wait_with_output().unwrap();
+    String::from_utf8(output.stdout).unwrap()
+}
+
+pub(in crate::tool_runtime::tests) fn text_edit(
+    kind: ApplyTextEditKind,
+    old_text: Option<&str>,
+    new_text: Option<&str>,
+    anchor_text: Option<&str>,
+) -> ApplyTextEditInput {
+    ApplyTextEditInput {
+        kind,
+        old_text: old_text.map(str::to_string),
+        new_text: new_text.map(str::to_string),
+        anchor_text: anchor_text.map(str::to_string),
+    }
+}

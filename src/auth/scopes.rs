@@ -381,6 +381,7 @@ mod tests {
             ("POST", "/oauth/revoke"),
             ("POST", "/oauth/authorize/login"),
             ("POST", "/oauth/authorize/consent"),
+            ("POST", "/oauth/authorize/bridge"),
         ] {
             assert_eq!(
                 oauth_route_scope_policy_for_path_method(method, path),

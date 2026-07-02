@@ -3211,6 +3211,9 @@ const OAUTH_BRIDGE_SCOPES_SUPPORTED: &[&str] = &[
     scopes::SCOPE_JOB_RUN,
 ];
 
+const OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE: &str =
+    "bridge tokens are limited to runtime:read, project:read, project:write, job:run";
+
 /// Return the canonical global OAuth scope registry.
 ///
 /// The order is stable and is used for authorization-time normalization.
@@ -3273,7 +3276,9 @@ fn normalize_bridge_oauth_scopes(
         .split_whitespace()
         .any(|scope| !OAUTH_BRIDGE_SCOPES_SUPPORTED.contains(&scope))
     {
-        return Err(OAuthAuthorizeError::InvalidScope("invalid scope"));
+        return Err(OAuthAuthorizeError::InvalidScope(
+            OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE,
+        ));
     }
     Ok(normalized)
 }
@@ -3557,6 +3562,20 @@ mod tests {
             normalize_oauth_scopes(Some(" \t\n"), "project:write runtime:read admin").unwrap();
 
         assert_eq!(normalized, "runtime:read project:write");
+    }
+
+    #[test]
+    fn normalize_bridge_oauth_scopes_rejects_account_scope_with_bridge_message() {
+        let err = normalize_bridge_oauth_scopes(
+            Some("account:manage"),
+            "runtime:read project:read account:manage",
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            err,
+            OAuthAuthorizeError::InvalidScope(OAUTH_BRIDGE_INVALID_SCOPE_MESSAGE)
+        );
     }
 
     #[test]
@@ -4592,6 +4611,122 @@ mod tests {
                 assert!(!text.contains(trimmed));
             }
         }
+    }
+
+    #[tokio::test]
+    async fn bridge_authorize_post_revalidates_hidden_fields_without_code() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let client = seed_client_with_redirects_and_scopes(
+            &db,
+            &user,
+            "https://example.com/callback",
+            "runtime:read",
+        );
+        let service = Service::new(build_router(config, db.clone()));
+
+        let direct_error_cases = [
+            (
+                "missing bridge hidden field",
+                form_body(&[
+                    ("response_type", "code"),
+                    ("client_id", &client.client_id),
+                    ("redirect_uri", "https://example.com/callback"),
+                    ("scope", "runtime:read"),
+                    ("state", "state-1"),
+                    ("code_challenge", "challenge-1"),
+                    ("code_challenge_method", "S256"),
+                    ("shared_key", "shared-secret"),
+                ]),
+            ),
+            (
+                "missing response_type",
+                form_body(&[
+                    ("bridge", "shared_key"),
+                    ("client_id", &client.client_id),
+                    ("redirect_uri", "https://example.com/callback"),
+                    ("scope", "runtime:read"),
+                    ("state", "state-1"),
+                    ("code_challenge", "challenge-1"),
+                    ("code_challenge_method", "S256"),
+                    ("shared_key", "shared-secret"),
+                ]),
+            ),
+            (
+                "tampered redirect_uri",
+                form_body(&[
+                    ("bridge", "shared_key"),
+                    ("response_type", "code"),
+                    ("client_id", &client.client_id),
+                    ("redirect_uri", "https://attacker.example/callback"),
+                    ("scope", "runtime:read"),
+                    ("state", "state-1"),
+                    ("code_challenge", "challenge-1"),
+                    ("code_challenge_method", "S256"),
+                    ("shared_key", "shared-secret"),
+                ]),
+            ),
+            (
+                "tampered client_id",
+                form_body(&[
+                    ("bridge", "shared_key"),
+                    ("response_type", "code"),
+                    ("client_id", "wc_client_missing"),
+                    ("redirect_uri", "https://example.com/callback"),
+                    ("scope", "runtime:read"),
+                    ("state", "state-1"),
+                    ("code_challenge", "challenge-1"),
+                    ("code_challenge_method", "S256"),
+                    ("shared_key", "shared-secret"),
+                ]),
+            ),
+        ];
+
+        for (name, body) in direct_error_cases {
+            let before = auth_code_count(&db);
+            let resp = post_form("http://localhost/oauth/authorize/bridge", body)
+                .send(&service)
+                .await;
+            assert_eq!(resp.status_code, Some(StatusCode::BAD_REQUEST), "{name}");
+            assert_no_location(&resp);
+            assert_eq!(auth_code_count(&db), before, "{name}");
+        }
+
+        let unsupported_response_type = form_body(&[
+            ("bridge", "shared_key"),
+            ("response_type", "token"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://example.com/callback"),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", "challenge-1"),
+            ("code_challenge_method", "S256"),
+            ("shared_key", "shared-secret"),
+        ]);
+        let before = auth_code_count(&db);
+        let resp = post_form(
+            "http://localhost/oauth/authorize/bridge",
+            unsupported_response_type,
+        )
+        .send(&service)
+        .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        assert_eq!(auth_code_count(&db), before);
+        let location = location_header(&resp).expect("unsupported response_type redirect");
+        let parsed = url::Url::parse(&location).unwrap();
+        assert_eq!(
+            parsed.as_str().split('?').next(),
+            Some("https://example.com/callback")
+        );
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        assert_eq!(
+            params.get("error").map(String::as_str),
+            Some("unsupported_response_type")
+        );
+        assert_eq!(params.get("state").map(String::as_str), Some("state-1"));
+        assert!(!params.contains_key("code"));
     }
 
     #[tokio::test]

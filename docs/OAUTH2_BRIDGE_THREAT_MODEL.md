@@ -46,6 +46,11 @@ require direct Bearer shared-key fallback to be enabled. The bridge is an
 operator/deployment feature and is not advertised through non-standard OAuth
 metadata fields.
 
+Direct Bearer shared-key fallback may carry lightweight agent-transport scopes
+for agent surfaces. Bridge-issued shared-key OAuth tokens are intentionally more
+restrictive: they are capped to runtime/project/job scopes and never receive
+`agent:*` scopes.
+
 ## Non-goals
 
 This design does not add or permit:
@@ -197,6 +202,11 @@ POST /oauth/authorize/bridge
 a bridge form only after the OAuth boundary is trustworthy. It never issues a
 code. `POST /oauth/authorize/bridge` revalidates the full request, validates the
 submitted shared key, and issues an authorization code with `shared_key_hash`.
+
+The current bridge form does not rely on managed-user browser session
+authorization; it validates the submitted shared key and full OAuth request on
+POST. A CSRF nonce can be considered if future managed-session semantics are
+added to the bridge.
 
 Required contract:
 

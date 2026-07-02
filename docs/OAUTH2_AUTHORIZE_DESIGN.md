@@ -128,6 +128,10 @@ non-empty, non-managed-prefix shared keys in the bridge form and groups the
 resulting OAuth subject by `shared_key_hash`; it does not require direct Bearer
 shared-key fallback to be enabled.
 
+Direct Bearer shared-key fallback may have lightweight agent-transport scopes
+for agent surfaces. Bridge-issued shared-key OAuth tokens are intentionally more
+restrictive and never receive `agent:*` scopes.
+
 Bridge-issued authorization codes use `subject_kind = shared_key`,
 `subject_id = shared_key_hash`, `user_id = NULL`, and `shared_key_hash`. The
 submitted shared key is trimmed, rejected if empty or `wc_`-prefixed, and only
@@ -137,6 +141,11 @@ The bridge preserves host OAuth semantics. Blank OAuth client fields do not
 become no-auth, shared-key quick start, or a static Bearer header. The bridge is
 a deployment/operator feature and is not advertised through non-standard fields
 in OAuth metadata.
+
+The current bridge form does not rely on managed-user browser session
+authorization; POST revalidates the full OAuth request and submitted shared key.
+A CSRF nonce can be considered if future managed-session semantics are added to
+the bridge.
 
 ## OAuth bridge implementation constraints
 

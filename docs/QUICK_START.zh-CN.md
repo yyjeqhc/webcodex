@@ -31,13 +31,13 @@ webcodex-cli server up --public-url <URL>
 webcodex-cli connect <URL> --key <KEY> --root <PROJECT>
 ```
 
-GPT Action / MCP 使用同一个密钥：
+当 GPT Action / MCP Host 支持静态 Bearer/API-key 认证时，GPT Action / MCP 使用同一个密钥：
 
 ```text
 Authorization: Bearer <KEY>
 ```
 
-server 按 `shared_key_hash` 给共享密钥 caller 分组：使用同一个 key 的 agent 和 GPT/MCP caller 可以互相可见，不同 key 的 group 互不可见。共享密钥是非管理员 quick-start auth；它不是 managed user，也不应被当作生产 IAM。
+在 ChatGPT custom connectors 中，这条路径应选择 **访问令牌/API 密钥**，不要选择 OAuth。server 按 `shared_key_hash` 给共享密钥 caller 分组：使用同一个 key 的 agent 和 GPT/MCP caller 可以互相可见，不同 key 的 group 互不可见。共享密钥是非管理员 quick-start auth；它不是 managed user，也不应被当作生产 IAM。
 
 ### B. Open demo mode（匿名，仅限临时 demo）
 
@@ -47,13 +47,25 @@ webcodex-cli connect <URL> --open --root <PROJECT>
 webcodex-agent --config <generated-agent.toml>
 ```
 
-server 必须显式使用 `--open`（`WEBCODEX_ALLOW_ANONYMOUS=true`），client 也必须显式使用 `connect --open`。生成的 agent config 使用 `token = ""`；`webcodex-agent` 会把它当作不发送 Authorization，GPT Actions / MCP 也应留空 Authorization。
+server 必须显式使用 `--open`（`WEBCODEX_ALLOW_ANONYMOUS=true`），client 也必须显式使用 `connect --open`。生成的 agent config 使用 `token = ""`；`webcodex-agent` 会把它当作不发送 Authorization。对 GPT Actions / MCP Host 来说，只有在 Host 明确提供 **无认证**、**None** 或 no-auth 设置时才使用这条路径。OAuth client 字段留空并不等于 no auth。
 
 Open demo mode 只适合 localhost、可信 LAN 和临时 demo。不要把它作为长期公网模式使用。匿名 open caller 共享同一个 demo current-session principal，因此 open group 内的 session state 是共享的。
 
 ### C. Managed production mode
 
 生产部署使用 pairing、`setup single-user`、`wc_pat_*` user token 和 `wc_agent_*` agent token。Managed mode 支持多用户、可撤销 token、每用户 scope 和更适合审计的 ownership。完整 managed 流程保留在下方第 1-4 节。
+
+## GPT Action / MCP Host 认证兼容性
+
+不同 Host 展示认证设置的方式不一样。
+
+| Host UI 选项 | WebCodex 模式 | 说明 |
+| --- | --- | --- |
+| 访问令牌/API 密钥、静态 Bearer 或自定义 `Authorization` header | 共享密钥 quick start 或 managed PAT | quick start 使用 shared key；managed mode 使用 `wc_pat_*`。Host 会把它作为 `Authorization: Bearer ...` 发送。 |
+| 无认证、None 或不配置认证 | Open demo mode | server 必须用 `--open` 启动；不要把它暴露成长期公网模式。 |
+| OAuth | Managed OAuth | 只有在 WebCodex 已按该 Host 期望配置 OAuth flow 时才选择。 |
+
+不要选择 OAuth 后把 client 字段留空，并期待它变成 shared-key 或 open 行为。OAuth client 字段留空通常表示 Host 会尝试 OAuth metadata discovery、dynamic client registration 或 client metadata discovery。如果某个 Host 只支持 OAuth，那么 shared-key quick start 不能直接通过这个 UI 配置。未来可以增加一个 OAuth bridge：在 OAuth 授权页里让用户输入 shared key，并把它映射成 OAuth access token；但那仍然是 OAuth flow，不是静态 Bearer header。
 
 ## 0. 安装 binaries
 

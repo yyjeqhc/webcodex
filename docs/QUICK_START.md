@@ -31,13 +31,13 @@ Connect an agent from a project directory with the same shared key you will give
 webcodex-cli connect <URL> --key <KEY> --root <PROJECT>
 ```
 
-Configure GPT Action / MCP with that key:
+Configure GPT Action / MCP with that key when the host supports static bearer/API-key authentication:
 
 ```text
 Authorization: Bearer <KEY>
 ```
 
-The server groups shared-key callers by `shared_key_hash`: the agent and GPT/MCP caller using the same key can see each other, while different keys cannot. A shared key is non-admin quick-start auth; it is not a managed user and should not be treated as production IAM.
+In ChatGPT custom connectors, choose **Access token / API key** for this path, not OAuth. The server groups shared-key callers by `shared_key_hash`: the agent and GPT/MCP caller using the same key can see each other, while different keys cannot. A shared key is non-admin quick-start auth; it is not a managed user and should not be treated as production IAM.
 
 ### B. Open demo mode (anonymous, temporary only)
 
@@ -47,13 +47,25 @@ webcodex-cli connect <URL> --open --root <PROJECT>
 webcodex-agent --config <generated-agent.toml>
 ```
 
-`--open` must be explicit on the server (`WEBCODEX_ALLOW_ANONYMOUS=true`) and on the client (`connect --open`). The generated agent config uses `token = ""`; `webcodex-agent` treats that as no Authorization, and GPT Actions / MCP should leave Authorization empty.
+`--open` must be explicit on the server (`WEBCODEX_ALLOW_ANONYMOUS=true`) and on the client (`connect --open`). The generated agent config uses `token = ""`; `webcodex-agent` treats that as no Authorization. For GPT Actions / MCP hosts, use this path only when the host has an explicit **None**, **No authentication**, or no-auth setting. Leaving OAuth client fields blank is not the same as no auth.
 
 Open demo mode is only for localhost, trusted LANs, and temporary demos. Do not use it as a long-running public internet mode. Anonymous open callers share one demo current-session principal, so session state is shared within the open group.
 
 ### C. Managed production mode
 
 Use pairing, `setup single-user`, `wc_pat_*` user tokens, and `wc_agent_*` agent tokens for production. Managed mode supports multi-user deployment, revocable tokens, per-user scopes, and audit-friendly ownership. The full managed flow is preserved in Sections 1-4 below.
+
+## GPT Action / MCP host authentication compatibility
+
+Hosts do not present authentication settings the same way.
+
+| Host UI option | WebCodex mode | Notes |
+| --- | --- | --- |
+| Access token / API key, static bearer, or custom `Authorization` header | Shared-key quick start or managed PAT | Use the shared key for quick start, or `wc_pat_*` for managed mode. The token is sent as `Authorization: Bearer ...`. |
+| None, No authentication, or unauthenticated access | Open demo mode | Requires the server to be started with `--open`; do not expose this as a long-running public mode. |
+| OAuth | Managed OAuth | Use only when WebCodex is configured for the OAuth flow expected by that host. |
+
+Do not select OAuth and leave the client fields blank expecting shared-key or open behavior. Blank OAuth client fields usually mean the host will try OAuth metadata discovery, dynamic client registration, or client metadata discovery. If the host is OAuth-only, shared-key quick start cannot be configured directly through that UI. A future OAuth bridge can provide a bearer-like user experience by letting the OAuth authorization page map a user-entered shared key to an OAuth access token, but that is still an OAuth flow, not a static bearer header.
 
 ## 0. Install binaries
 

@@ -1965,11 +1965,12 @@ mod tests {
         record
     }
 
-    fn seed_oauth_access_token(
+    fn seed_oauth_access_token_with_shared_key_hash(
         db: &crate::Database,
         client: &crate::models::OAuthClientRecord,
         user: &crate::models::UserRecord,
         scopes: &str,
+        shared_key_hash: Option<&str>,
     ) -> String {
         let now = chrono::Utc::now().timestamp();
         let plaintext = crate::auth::generate_oauth_access_token();
@@ -1980,6 +1981,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: scopes.to_string(),
             resource: None,
+            shared_key_hash: shared_key_hash.map(str::to_string),
             created_at: now,
             expires_at: now + 3600,
             revoked_at: None,
@@ -1990,11 +1992,24 @@ mod tests {
     }
 
     fn phase2_oauth_service(scopes: &str) -> (tempfile::TempDir, salvo::Service, String) {
+        phase2_oauth_service_with_shared_key_hash(scopes, None)
+    }
+
+    fn phase2_oauth_service_with_shared_key_hash(
+        scopes: &str,
+        shared_key_hash: Option<&str>,
+    ) -> (tempfile::TempDir, salvo::Service, String) {
         let config = test_config_oauth2(Some("secret"));
         let (tmp, db) = test_db();
         let user = seed_user(&db, "alice");
         let client = seed_oauth_client(&db, &user);
-        let token = seed_oauth_access_token(&db, &client, &user, scopes);
+        let token = seed_oauth_access_token_with_shared_key_hash(
+            &db,
+            &client,
+            &user,
+            scopes,
+            shared_key_hash,
+        );
         let project_dir = tmp.path().join("project");
         std::fs::create_dir(&project_dir).unwrap();
         std::fs::write(project_dir.join("README.md"), "hello\n").unwrap();
@@ -4169,6 +4184,41 @@ mod tests {
         assert_ne!(status, StatusCode::FORBIDDEN, "body: {:?}", body);
 
         let (_tmp, service, token) = phase2_oauth_service("project:read");
+        let (status, body, challenge) = oauth_tools_call(
+            &service,
+            &token,
+            "run_job",
+            json!({"project": "demo", "command": "echo hi"}),
+        )
+        .await;
+        assert_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_JOB_RUN),
+        );
+    }
+
+    #[tokio::test]
+    async fn bridge_oauth2_tools_call_still_requires_project_read_and_job_run_scopes() {
+        let (_tmp, service, token) =
+            phase2_oauth_service_with_shared_key_hash("runtime:read", Some("hash-a"));
+        let (status, body, challenge) = oauth_tools_call(
+            &service,
+            &token,
+            "read_file",
+            json!({"project": "demo", "path": "README.md"}),
+        )
+        .await;
+        assert_oauth_scope_rejected(
+            status,
+            &body,
+            challenge.as_deref(),
+            Some(crate::auth::SCOPE_PROJECT_READ),
+        );
+
+        let (_tmp, service, token) =
+            phase2_oauth_service_with_shared_key_hash("project:read", Some("hash-a"));
         let (status, body, challenge) = oauth_tools_call(
             &service,
             &token,

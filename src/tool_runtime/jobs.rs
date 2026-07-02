@@ -316,7 +316,11 @@ pub(crate) fn stop_local_job(
 
 impl ToolRuntime {
     pub(crate) fn local_jobs_visible_to_auth(auth: Option<&AuthContext>) -> bool {
-        !auth.map(|auth| auth.is_lightweight()).unwrap_or(false)
+        !auth
+            .map(|auth| {
+                auth.is_lightweight() || (auth.is_oauth_token() && auth.shared_key_hash.is_some())
+            })
+            .unwrap_or(false)
     }
 
     pub(crate) async fn run_job(

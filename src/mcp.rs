@@ -1032,6 +1032,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: scopes.to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 3600,
             revoked_at: None,

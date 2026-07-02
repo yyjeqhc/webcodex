@@ -130,8 +130,9 @@ pub struct AuthContext {
     /// Phase 3: the `allowed_client_id` bound to an agent token. `None` for
     /// bootstrap auth and user tokens.
     pub allowed_client_id: Option<String>,
-    /// Quick-start shared-key mode: the SHA-256 hex of the bearer token used
-    /// for lightweight group isolation. `None` for all managed auth kinds.
+    /// Quick-start shared-key mode, or an internally issued OAuth bridge token:
+    /// the SHA-256 hex of the shared key used for lightweight group isolation.
+    /// Plaintext shared keys are never stored.
     pub shared_key_hash: Option<String>,
 }
 
@@ -603,7 +604,7 @@ impl TokenVerifier for OAuth2Verifier {
             is_bootstrap: false,
             token_kind: Some("oauth2".to_string()),
             allowed_client_id: Some(at_record.client_id.clone()),
-            shared_key_hash: None,
+            shared_key_hash: at_record.shared_key_hash.clone(),
         }))
     }
 }
@@ -1457,6 +1458,16 @@ mod tests {
         user: &crate::models::UserRecord,
         scopes: &str,
     ) -> (crate::models::OAuthAccessTokenRecord, String) {
+        gate_seed_oauth_access_token_with_shared_key_hash(db, client, user, scopes, None)
+    }
+
+    fn gate_seed_oauth_access_token_with_shared_key_hash(
+        db: &crate::Database,
+        client: &crate::models::OAuthClientRecord,
+        user: &crate::models::UserRecord,
+        scopes: &str,
+        shared_key_hash: Option<&str>,
+    ) -> (crate::models::OAuthAccessTokenRecord, String) {
         let now = chrono::Utc::now().timestamp();
         let plaintext = generate_oauth_access_token();
         let token_hash = hash_token(&plaintext);
@@ -1467,6 +1478,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: scopes.to_string(),
             resource: None,
+            shared_key_hash: shared_key_hash.map(str::to_string),
             created_at: now,
             expires_at: now + 3600,
             revoked_at: None,
@@ -2009,6 +2021,33 @@ mod tests {
             ctx.allowed_client_id.as_deref(),
             Some(client.client_id.as_str())
         );
+        assert_eq!(ctx.shared_key_hash, None);
+    }
+
+    #[tokio::test]
+    async fn oauth2_verifier_preserves_bridge_shared_key_hash() {
+        let config = gate_test_config_oauth2(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let user = gate_seed_user(&db, "alice");
+        let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
+        let (_at, plaintext) = gate_seed_oauth_access_token_with_shared_key_hash(
+            &db,
+            &client,
+            &user,
+            "runtime:read",
+            Some("test-hash-a"),
+        );
+
+        let verifier = OAuth2Verifier;
+        let ctx = verifier
+            .verify(&config, Some(&db), &plaintext)
+            .await
+            .unwrap()
+            .expect("bridge access token should verify");
+        assert_eq!(ctx.kind, AuthKind::OAuth2Token);
+        assert_eq!(ctx.user_id.as_deref(), Some(user.id.as_str()));
+        assert_eq!(ctx.username.as_deref(), Some(user.username.as_str()));
+        assert_eq!(ctx.shared_key_hash.as_deref(), Some("test-hash-a"));
     }
 
     #[tokio::test]
@@ -2041,6 +2080,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now - 7200,
             expires_at: now - 1, // already expired
             revoked_at: None,
@@ -2088,6 +2128,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 2_592_000,
             revoked_at: None,
@@ -2802,6 +2843,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 2_592_000,
             revoked_at: None,
@@ -2823,12 +2865,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn auth_middleware_rejects_oauth2_on_agent_path_without_updating_last_used() {
+    async fn auth_middleware_rejects_bridge_oauth2_on_agent_path_without_updating_last_used() {
         let config = gate_test_config_oauth2(Some("secret"));
         let (_tmp, db) = gate_test_db();
         let user = gate_seed_user(&db, "alice");
         let (client, _secret) = gate_seed_oauth_client(&db, &user, "Test App");
-        let (at, plaintext) = gate_seed_oauth_access_token(&db, &client, &user, "runtime:read");
+        let (at, plaintext) = gate_seed_oauth_access_token_with_shared_key_hash(
+            &db,
+            &client,
+            &user,
+            "runtime:read",
+            Some("test-hash-a"),
+        );
+        assert_eq!(at.shared_key_hash.as_deref(), Some("test-hash-a"));
         assert!(at.last_used_at.is_none(), "precondition");
 
         let service = salvo::Service::new(gate_router(config, db.clone()));

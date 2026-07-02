@@ -100,9 +100,14 @@ Still not implemented:
 
 ## Bearer-like OAuth bridge
 
-A bearer-like OAuth bridge is future work. It may let a user enter a shared key
-on a WebCodex-hosted OAuth authorization page and receive an OAuth access token
-for OAuth-only hosts.
+A bearer-like OAuth bridge product flow is future work. It may let a user enter
+a shared key on a WebCodex-hosted OAuth authorization page and receive an OAuth
+access token for OAuth-only hosts.
+
+The internal token substrate may carry an optional `shared_key_hash` on
+WebCodex-issued OAuth access and refresh tokens so bridge-issued tokens can
+reuse shared-key group isolation. No public bridge issuance endpoint, login UI,
+or shared-key-to-OAuth exchange route is exposed yet.
 
 That bridge would preserve host OAuth semantics. It would not make blank OAuth
 client fields behave like no-auth, shared-key quick start, or a static Bearer
@@ -110,15 +115,15 @@ header.
 
 ## OAuth bridge implementation constraints
 
-OAuth bridge remains future work. Its implementation must preserve OAuth
-semantics: blank OAuth client fields are never bearer/no-auth fallback, open
-anonymous mode must not be bridgeable into OAuth tokens, and bridge-issued
-access tokens must still enforce OAuth scopes. A shared-key bridge token must
-preserve shared-key group isolation semantics without storing plaintext shared
-keys. Do not model shared-key bridge users as managed users unless there is an
-explicit account binding. Do not use a fake `user_id` hack such as
-`shared-key:<hash>` without documenting and testing the isolation model. Agent
-transport endpoints must remain unavailable to OAuth2 tokens.
+OAuth bridge public issuance remains future work. Its implementation must
+preserve OAuth semantics: blank OAuth client fields are never bearer/no-auth
+fallback, open anonymous mode must not be bridgeable into OAuth tokens, and
+bridge-issued access tokens must still enforce OAuth scopes. A shared-key bridge
+token must preserve shared-key group isolation semantics without storing
+plaintext shared keys. Do not model shared-key bridge users as managed users
+unless there is an explicit account binding. Do not use a fake `user_id` hack
+such as `shared-key:<hash>` without documenting and testing the isolation model.
+Agent transport endpoints must remain unavailable to OAuth2 tokens.
 
 ## Identity Source
 

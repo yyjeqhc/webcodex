@@ -324,6 +324,9 @@ pub struct OAuthAccessTokenRecord {
     pub scopes: String,
     /// Audience / resource indicator for MCP OAuth.
     pub resource: Option<String>,
+    /// Optional shared-key group hash for internally issued bridge tokens.
+    /// Plaintext shared keys are never stored.
+    pub shared_key_hash: Option<String>,
     pub created_at: i64,
     pub expires_at: i64,
     pub revoked_at: Option<i64>,
@@ -342,6 +345,9 @@ pub struct OAuthRefreshTokenRecord {
     pub scopes: String,
     /// Audience / resource indicator for MCP OAuth.
     pub resource: Option<String>,
+    /// Optional shared-key group hash inherited by rotated bridge tokens.
+    /// Plaintext shared keys are never stored.
+    pub shared_key_hash: Option<String>,
     pub created_at: i64,
     pub expires_at: i64,
     pub revoked_at: Option<i64>,

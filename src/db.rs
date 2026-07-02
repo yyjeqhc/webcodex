@@ -415,6 +415,7 @@ impl Database {
                 user_id TEXT NOT NULL,
                 scopes TEXT NOT NULL DEFAULT '',
                 resource TEXT,
+                shared_key_hash TEXT,
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL,
                 revoked_at INTEGER,
@@ -433,6 +434,7 @@ impl Database {
                 user_id TEXT NOT NULL,
                 scopes TEXT NOT NULL DEFAULT '',
                 resource TEXT,
+                shared_key_hash TEXT,
                 created_at INTEGER NOT NULL,
                 expires_at INTEGER NOT NULL,
                 revoked_at INTEGER,
@@ -447,6 +449,7 @@ impl Database {
             ",
         )?;
 
+        Self::migrate_oauth_bridge_columns(&conn)?;
         Self::migrate_users_and_api_keys(&conn)?;
         conn.execute_batch(
             "
@@ -464,6 +467,19 @@ impl Database {
             CREATE INDEX IF NOT EXISTS idx_account_credentials_user_id ON account_credentials(user_id);
             ",
         )?;
+        Ok(())
+    }
+
+    fn migrate_oauth_bridge_columns(conn: &Connection) -> anyhow::Result<()> {
+        for table in ["oauth_access_tokens", "oauth_refresh_tokens"] {
+            let cols = table_columns(conn, table)?;
+            if !cols.iter().any(|c| c == "shared_key_hash") {
+                conn.execute(
+                    &format!("ALTER TABLE {} ADD COLUMN shared_key_hash TEXT", table),
+                    [],
+                )?;
+            }
+        }
         Ok(())
     }
 
@@ -1998,8 +2014,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO oauth_access_tokens (
                     id, token_hash, client_id, user_id, scopes, resource,
-                    created_at, expires_at, revoked_at, last_used_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     access_token_record.id,
                     access_token_record.token_hash,
@@ -2007,6 +2023,7 @@ impl Database {
                     access_token_record.user_id,
                     access_token_record.scopes,
                     access_token_record.resource,
+                    access_token_record.shared_key_hash,
                     access_token_record.created_at,
                     access_token_record.expires_at,
                     access_token_record.revoked_at,
@@ -2018,8 +2035,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO oauth_refresh_tokens (
                     id, token_hash, client_id, user_id, scopes, resource,
-                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     refresh_token_record.id,
                     refresh_token_record.token_hash,
@@ -2027,6 +2044,7 @@ impl Database {
                     refresh_token_record.user_id,
                     refresh_token_record.scopes,
                     refresh_token_record.resource,
+                    refresh_token_record.shared_key_hash,
                     refresh_token_record.created_at,
                     refresh_token_record.expires_at,
                     refresh_token_record.revoked_at,
@@ -2049,8 +2067,8 @@ impl Database {
         conn.execute(
             "INSERT INTO oauth_access_tokens (
                 id, token_hash, client_id, user_id, scopes, resource,
-                created_at, expires_at, revoked_at, last_used_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                shared_key_hash, created_at, expires_at, revoked_at, last_used_at
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 record.id,
                 record.token_hash,
@@ -2058,6 +2076,7 @@ impl Database {
                 record.user_id,
                 record.scopes,
                 record.resource,
+                record.shared_key_hash,
                 record.created_at,
                 record.expires_at,
                 record.revoked_at,
@@ -2074,7 +2093,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, token_hash, client_id, user_id, scopes, resource,
-                    created_at, expires_at, revoked_at, last_used_at
+                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at
              FROM oauth_access_tokens
              WHERE token_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -2133,8 +2152,8 @@ impl Database {
         conn.execute(
             "INSERT INTO oauth_refresh_tokens (
                 id, token_hash, client_id, user_id, scopes, resource,
-                created_at, expires_at, revoked_at, last_used_at, rotated_from_id
-             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 record.id,
                 record.token_hash,
@@ -2142,6 +2161,7 @@ impl Database {
                 record.user_id,
                 record.scopes,
                 record.resource,
+                record.shared_key_hash,
                 record.created_at,
                 record.expires_at,
                 record.revoked_at,
@@ -2159,7 +2179,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, token_hash, client_id, user_id, scopes, resource,
-                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
              FROM oauth_refresh_tokens
              WHERE token_hash = ?1 AND revoked_at IS NULL",
         )?;
@@ -2219,7 +2239,7 @@ impl Database {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, token_hash, client_id, user_id, scopes, resource,
-                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
              FROM oauth_refresh_tokens
              WHERE token_hash = ?1",
         )?;
@@ -2246,8 +2266,8 @@ impl Database {
     ///
     /// Returns `Ok(RotateResult::Rotated(record))` on success, where `record`
     /// is the old (now-revoked) refresh token. The caller can use its
-    /// `user_id`, `scopes`, `resource`, and `client_id` to construct the
-    /// success response.
+    /// `user_id`, `scopes`, `resource`, `shared_key_hash`, and `client_id` to
+    /// construct the success response.
     pub fn rotate_oauth_refresh_token(
         &self,
         refresh_token_hash: &str,
@@ -2265,7 +2285,7 @@ impl Database {
             let old = {
                 let mut stmt = tx.prepare(
                     "SELECT id, token_hash, client_id, user_id, scopes, resource,
-                            created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                            shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
                      FROM oauth_refresh_tokens
                      WHERE token_hash = ?1",
                 )?;
@@ -2309,8 +2329,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO oauth_access_tokens (
                     id, token_hash, client_id, user_id, scopes, resource,
-                    created_at, expires_at, revoked_at, last_used_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
                 params![
                     access_token_record.id,
                     access_token_record.token_hash,
@@ -2318,6 +2338,7 @@ impl Database {
                     access_token_record.user_id,
                     access_token_record.scopes,
                     access_token_record.resource,
+                    access_token_record.shared_key_hash,
                     access_token_record.created_at,
                     access_token_record.expires_at,
                     access_token_record.revoked_at,
@@ -2329,8 +2350,8 @@ impl Database {
             tx.execute(
                 "INSERT INTO oauth_refresh_tokens (
                     id, token_hash, client_id, user_id, scopes, resource,
-                    created_at, expires_at, revoked_at, last_used_at, rotated_from_id
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    shared_key_hash, created_at, expires_at, revoked_at, last_used_at, rotated_from_id
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     new_refresh_token_record.id,
                     new_refresh_token_record.token_hash,
@@ -2338,6 +2359,7 @@ impl Database {
                     new_refresh_token_record.user_id,
                     new_refresh_token_record.scopes,
                     new_refresh_token_record.resource,
+                    new_refresh_token_record.shared_key_hash,
                     new_refresh_token_record.created_at,
                     new_refresh_token_record.expires_at,
                     new_refresh_token_record.revoked_at,
@@ -2479,10 +2501,11 @@ fn row_to_oauth_access_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthAcces
         user_id: row.get(3)?,
         scopes: row.get(4)?,
         resource: row.get(5)?,
-        created_at: row.get(6)?,
-        expires_at: row.get(7)?,
-        revoked_at: row.get(8)?,
-        last_used_at: row.get(9)?,
+        shared_key_hash: row.get(6)?,
+        created_at: row.get(7)?,
+        expires_at: row.get(8)?,
+        revoked_at: row.get(9)?,
+        last_used_at: row.get(10)?,
     })
 }
 
@@ -2494,11 +2517,12 @@ fn row_to_oauth_refresh_token(row: &rusqlite::Row) -> rusqlite::Result<OAuthRefr
         user_id: row.get(3)?,
         scopes: row.get(4)?,
         resource: row.get(5)?,
-        created_at: row.get(6)?,
-        expires_at: row.get(7)?,
-        revoked_at: row.get(8)?,
-        last_used_at: row.get(9)?,
-        rotated_from_id: row.get(10)?,
+        shared_key_hash: row.get(6)?,
+        created_at: row.get(7)?,
+        expires_at: row.get(8)?,
+        revoked_at: row.get(9)?,
+        last_used_at: row.get(10)?,
+        rotated_from_id: row.get(11)?,
     })
 }
 
@@ -3211,6 +3235,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 3600,
             revoked_at: None,
@@ -3228,6 +3253,7 @@ mod tests {
         assert!(!fetched.is_expired(now));
         assert!(fetched.is_expired(now + 3601));
         assert!(fetched.last_used_at.is_none());
+        assert!(fetched.shared_key_hash.is_none());
     }
 
     #[test]
@@ -3247,6 +3273,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 3600,
             revoked_at: None,
@@ -3280,6 +3307,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 3600,
             revoked_at: None,
@@ -3312,6 +3340,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 2_592_000,
             revoked_at: None,
@@ -3329,6 +3358,105 @@ mod tests {
         assert!(!fetched.is_revoked());
         assert!(!fetched.is_expired(now));
         assert!(fetched.rotated_from_id.is_none());
+        assert!(fetched.shared_key_hash.is_none());
+    }
+
+    #[test]
+    fn oauth_bridge_shared_key_hash_records_round_trip() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = Database::open(&tmp.path().join("oauth.db")).unwrap();
+        let user = oauth_seed_user(&db, "alice");
+        let (client, _) = oauth_seed_client(&db, &user, "Test App");
+        let now = chrono::Utc::now().timestamp();
+
+        let plaintext_at = crate::auth::generate_oauth_access_token();
+        let access = OAuthAccessTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: crate::auth::hash_token(&plaintext_at),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: Some("hash-a".to_string()),
+            created_at: now,
+            expires_at: now + 3600,
+            revoked_at: None,
+            last_used_at: None,
+        };
+        db.insert_oauth_access_token(&access).unwrap();
+        let fetched_access = db
+            .get_oauth_access_token_by_hash(&access.token_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched_access.shared_key_hash.as_deref(), Some("hash-a"));
+
+        let plaintext_rt = crate::auth::generate_oauth_refresh_token();
+        let refresh = OAuthRefreshTokenRecord {
+            id: uuid::Uuid::new_v4().to_string(),
+            token_hash: crate::auth::hash_token(&plaintext_rt),
+            client_id: client.client_id.clone(),
+            user_id: user.id.clone(),
+            scopes: "runtime:read".to_string(),
+            resource: None,
+            shared_key_hash: Some("hash-a".to_string()),
+            created_at: now,
+            expires_at: now + 2_592_000,
+            revoked_at: None,
+            last_used_at: None,
+            rotated_from_id: None,
+        };
+        db.insert_oauth_refresh_token(&refresh).unwrap();
+        let fetched_refresh = db
+            .get_oauth_refresh_token_by_hash(&refresh.token_hash)
+            .unwrap()
+            .unwrap();
+        assert_eq!(fetched_refresh.shared_key_hash.as_deref(), Some("hash-a"));
+    }
+
+    #[test]
+    fn oauth_bridge_shared_key_hash_columns_are_migrated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("legacy-oauth.db");
+        {
+            let conn = rusqlite::Connection::open(&path).unwrap();
+            conn.execute_batch(
+                "
+                CREATE TABLE oauth_access_tokens (
+                    id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    client_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    scopes TEXT NOT NULL DEFAULT '',
+                    resource TEXT,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    revoked_at INTEGER,
+                    last_used_at INTEGER
+                );
+                CREATE TABLE oauth_refresh_tokens (
+                    id TEXT PRIMARY KEY,
+                    token_hash TEXT NOT NULL UNIQUE,
+                    client_id TEXT NOT NULL,
+                    user_id TEXT NOT NULL,
+                    scopes TEXT NOT NULL DEFAULT '',
+                    resource TEXT,
+                    created_at INTEGER NOT NULL,
+                    expires_at INTEGER NOT NULL,
+                    revoked_at INTEGER,
+                    last_used_at INTEGER,
+                    rotated_from_id TEXT
+                );
+                ",
+            )
+            .unwrap();
+        }
+
+        let db = Database::open(&path).unwrap();
+        let conn = db.conn.lock().unwrap();
+        let access_cols = table_columns(&conn, "oauth_access_tokens").unwrap();
+        let refresh_cols = table_columns(&conn, "oauth_refresh_tokens").unwrap();
+        assert!(access_cols.iter().any(|c| c == "shared_key_hash"));
+        assert!(refresh_cols.iter().any(|c| c == "shared_key_hash"));
     }
 
     #[test]
@@ -3348,6 +3476,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 2_592_000,
             revoked_at: None,
@@ -3399,6 +3528,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 3600,
             revoked_at: None,
@@ -3427,6 +3557,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 2_592_000,
             revoked_at: None,

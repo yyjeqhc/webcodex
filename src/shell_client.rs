@@ -91,6 +91,7 @@ impl ShellClientAuthGroup {
     pub(crate) fn from_auth(auth: &crate::auth::AuthContext) -> Option<Self> {
         match auth.kind {
             crate::auth::AuthKind::SharedKey => auth.shared_key_hash.clone().map(Self::SharedKey),
+            crate::auth::AuthKind::OAuth2Token => auth.shared_key_hash.clone().map(Self::SharedKey),
             crate::auth::AuthKind::OpenAnonymous => Some(Self::OpenAnonymous),
             _ => None,
         }
@@ -3637,6 +3638,22 @@ mod tests {
         }
     }
 
+    fn oauth_bridge_auth_context(hash: &str, scopes: Vec<&str>) -> crate::auth::AuthContext {
+        crate::auth::AuthContext {
+            kind: crate::auth::AuthKind::OAuth2Token,
+            user_id: Some("user-bridge".to_string()),
+            username: Some("bridge-user".to_string()),
+            api_key_id: Some("oauth-access-token".to_string()),
+            api_key_name: None,
+            role: Some("user".to_string()),
+            scopes: scopes.into_iter().map(str::to_string).collect(),
+            is_bootstrap: false,
+            token_kind: Some("oauth2".to_string()),
+            allowed_client_id: Some("oauth-client".to_string()),
+            shared_key_hash: Some(hash.to_string()),
+        }
+    }
+
     fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
         ShellAgentProjectSummary {
             id: id.to_string(),
@@ -3736,6 +3753,12 @@ mod tests {
         let registry = ShellClientRegistry::default();
         let shared_a = shared_key_auth_context("hash-a");
         let shared_b = shared_key_auth_context("hash-b");
+        let bridge_a = oauth_bridge_auth_context("hash-a", vec![]);
+        let managed_oauth = oauth_bridge_auth_context("", vec![]);
+        let managed_oauth = crate::auth::AuthContext {
+            shared_key_hash: None,
+            ..managed_oauth
+        };
         let open = open_auth_context();
         let bootstrap = auth_context(None, true);
 
@@ -3784,8 +3807,19 @@ mod tests {
             .map(|c| c.client_id)
             .collect();
         assert_eq!(visible_to_a, vec!["shared-a"]);
+        let visible_to_bridge_a: Vec<String> = registry
+            .list_clients_for_auth(Some(&bridge_a))
+            .await
+            .into_iter()
+            .map(|c| c.client_id)
+            .collect();
+        assert_eq!(visible_to_bridge_a, vec!["shared-a"]);
         assert!(registry
             .assert_client_access(Some(&shared_a), "shared-a")
+            .await
+            .is_ok());
+        assert!(registry
+            .assert_client_access(Some(&bridge_a), "shared-a")
             .await
             .is_ok());
         assert!(registry
@@ -3798,6 +3832,16 @@ mod tests {
             .await
             .unwrap_err()
             .contains("unknown shell client"));
+        assert!(registry
+            .assert_client_access(Some(&bridge_a), "shared-b")
+            .await
+            .unwrap_err()
+            .contains("unknown shell client"));
+        assert!(registry
+            .assert_client_access(Some(&bridge_a), "open")
+            .await
+            .unwrap_err()
+            .contains("unknown shell client"));
 
         let visible_to_open: Vec<String> = registry
             .list_clients_for_auth(Some(&open))
@@ -3806,6 +3850,15 @@ mod tests {
             .map(|c| c.client_id)
             .collect();
         assert_eq!(visible_to_open, vec!["open"]);
+        assert_eq!(
+            ShellClientAuthGroup::from_auth(&open),
+            Some(ShellClientAuthGroup::OpenAnonymous)
+        );
+        assert_eq!(
+            ShellClientAuthGroup::from_auth(&bridge_a),
+            Some(ShellClientAuthGroup::SharedKey("hash-a".to_string()))
+        );
+        assert_eq!(ShellClientAuthGroup::from_auth(&managed_oauth), None);
 
         let visible_to_bootstrap: Vec<String> = registry
             .list_clients_for_auth(Some(&bootstrap))
@@ -5001,6 +5054,28 @@ mod tests {
         let alice = auth_context(Some("alice"), false);
         let err = require_agent_transport_scope(Some(&alice), "agent:register").unwrap_err();
         assert!(err.contains("missing required scope"), "got: {}", err);
+    }
+
+    #[test]
+    fn oauth_bridge_token_remains_blocked_from_agent_transport() {
+        let bridge = oauth_bridge_auth_context(
+            "hash-a",
+            vec![
+                "agent:register",
+                "agent:poll",
+                "agent:result",
+                "agent:job_update",
+            ],
+        );
+        assert!(!bridge.is_lightweight());
+        assert!(enforce_agent_transport(Some(&bridge), "client-a")
+            .unwrap_err()
+            .contains("user tokens are not allowed"));
+        assert!(
+            require_agent_transport_scope(Some(&bridge), "agent:register")
+                .unwrap_err()
+                .contains("missing required scope")
+        );
     }
 
     #[tokio::test]

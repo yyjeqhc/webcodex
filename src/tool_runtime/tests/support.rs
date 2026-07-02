@@ -576,6 +576,22 @@ pub(super) fn shared_key_auth_context(hash: &str) -> crate::auth::AuthContext {
     }
 }
 
+pub(super) fn oauth_bridge_auth_context(hash: &str, scopes: &[&str]) -> crate::auth::AuthContext {
+    crate::auth::AuthContext {
+        kind: crate::auth::AuthKind::OAuth2Token,
+        user_id: Some("user-bridge".to_string()),
+        username: Some("bridge-user".to_string()),
+        api_key_id: Some("oauth-access-token".to_string()),
+        api_key_name: None,
+        role: Some("user".to_string()),
+        scopes: scopes.iter().map(|scope| (*scope).to_string()).collect(),
+        is_bootstrap: false,
+        token_kind: Some("oauth2".to_string()),
+        allowed_client_id: Some("oauth-client".to_string()),
+        shared_key_hash: Some(hash.to_string()),
+    }
+}
+
 pub(super) fn open_auth_context() -> crate::auth::AuthContext {
     crate::auth::AuthContext {
         kind: crate::auth::AuthKind::OpenAnonymous,

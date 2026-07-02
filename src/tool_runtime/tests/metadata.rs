@@ -137,6 +137,8 @@ async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
     let runtime = test_runtime();
     let shared_a = shared_key_auth("hash-a");
     let shared_b = shared_key_auth("hash-b");
+    let bridge_a = oauth_bridge_auth_context("hash-a", &[crate::auth::SCOPE_PROJECT_READ]);
+    let bridge_b = oauth_bridge_auth_context("hash-b", &[crate::auth::SCOPE_PROJECT_READ]);
     let open = open_auth();
     let bootstrap = bootstrap_auth();
 
@@ -156,6 +158,99 @@ async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
         .map(|project| project["id"].as_str().unwrap())
         .collect();
     assert_eq!(ids, vec!["agent:client-a:proj-a"]);
+
+    let result = runtime
+        .dispatch_with_auth(ToolCall::ListProjects, Some(&bridge_a))
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let ids: Vec<&str> = result
+        .output
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|project| project["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["agent:client-a:proj-a"]);
+
+    let bridge_read = tokio::spawn({
+        let runtime = runtime.clone();
+        let bridge_a = bridge_a.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project: "agent:client-a:proj-a".to_string(),
+                        path: "README.md".to_string(),
+                        session_id: None,
+                        start_line: None,
+                        limit: Some(1),
+                        with_line_numbers: None,
+                    },
+                    Some(&bridge_a),
+                )
+                .await
+        }
+    });
+    let req = next_agent_request_for_client(&runtime, "client-a")
+        .await
+        .expect("bridge read_file should enqueue for shared-key group A");
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        "client-a",
+        "inst-client-a",
+        &req.request_id,
+        0,
+        "bridge\n",
+        "",
+    )
+    .await;
+    let result = bridge_read.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReadFile {
+                project: "agent:client-b:proj-b".to_string(),
+                path: "README.md".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            Some(&bridge_a),
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_project");
+
+    let result = runtime
+        .dispatch_with_auth(ToolCall::ListProjects, Some(&bridge_b))
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let ids: Vec<&str> = result
+        .output
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|project| project["id"].as_str().unwrap())
+        .collect();
+    assert_eq!(ids, vec!["agent:client-b:proj-b"]);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReadFile {
+                project: "agent:client-a:proj-a".to_string(),
+                path: "README.md".to_string(),
+                session_id: None,
+                start_line: None,
+                limit: None,
+                with_line_numbers: None,
+            },
+            Some(&bridge_b),
+        )
+        .await;
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_project");
 
     let result = runtime
         .dispatch_with_auth(ToolCall::ListProjects, Some(&open))

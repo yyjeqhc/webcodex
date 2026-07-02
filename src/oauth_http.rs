@@ -2266,6 +2266,7 @@ async fn handle_authorization_code_grant(
         user_id: code_record.user_id.clone(),
         scopes: code_record.scopes.clone(),
         resource: code_record.resource.clone(),
+        shared_key_hash: None,
         created_at: now,
         expires_at: at_expires_at,
         revoked_at: None,
@@ -2279,6 +2280,7 @@ async fn handle_authorization_code_grant(
         user_id: code_record.user_id.clone(),
         scopes: code_record.scopes.clone(),
         resource: code_record.resource.clone(),
+        shared_key_hash: None,
         created_at: now,
         expires_at: rt_expires_at,
         revoked_at: None,
@@ -2361,10 +2363,10 @@ async fn handle_refresh_token_grant(
     let new_at_hash = hash_token(&new_access_token);
     let new_rt_hash = hash_token(&new_refresh_token);
 
-    // We need user_id/scopes/resource from the old refresh token to
-    // construct the new records. The DB helper handles the lookup, but we
-    // need to pass the records in. We'll do a preliminary read to get
-    // metadata, then call the rotation helper.
+    // We need user_id/scopes/resource/shared_key_hash from the old refresh token
+    // to construct the new records. The DB helper handles the lookup, but we
+    // need to pass the records in. We'll do a preliminary read to get metadata,
+    // then call the rotation helper.
     //
     // To avoid TOCTOU, the rotation helper re-validates everything inside
     // its transaction. The metadata read here is only for constructing the
@@ -2428,6 +2430,7 @@ async fn handle_refresh_token_grant(
         user_id: old_rt_metadata.user_id.clone(),
         scopes: old_rt_metadata.scopes.clone(),
         resource: old_rt_metadata.resource.clone(),
+        shared_key_hash: old_rt_metadata.shared_key_hash.clone(),
         created_at: now,
         expires_at: at_expires_at,
         revoked_at: None,
@@ -2441,6 +2444,7 @@ async fn handle_refresh_token_grant(
         user_id: old_rt_metadata.user_id.clone(),
         scopes: old_rt_metadata.scopes.clone(),
         resource: old_rt_metadata.resource.clone(),
+        shared_key_hash: old_rt_metadata.shared_key_hash.clone(),
         created_at: now,
         expires_at: new_rt_expires_at,
         revoked_at: None,
@@ -3514,6 +3518,36 @@ mod tests {
         scopes: &str,
         resource: Option<&str>,
     ) -> (crate::models::OAuthRefreshTokenRecord, String) {
+        seed_refresh_token_with_resource_and_shared_key_hash(
+            db, client, user, scopes, resource, None,
+        )
+    }
+
+    fn seed_refresh_token_with_shared_key_hash(
+        db: &crate::Database,
+        client: &OAuthClientRecord,
+        user: &UserRecord,
+        scopes: &str,
+        shared_key_hash: &str,
+    ) -> (crate::models::OAuthRefreshTokenRecord, String) {
+        seed_refresh_token_with_resource_and_shared_key_hash(
+            db,
+            client,
+            user,
+            scopes,
+            None,
+            Some(shared_key_hash),
+        )
+    }
+
+    fn seed_refresh_token_with_resource_and_shared_key_hash(
+        db: &crate::Database,
+        client: &OAuthClientRecord,
+        user: &UserRecord,
+        scopes: &str,
+        resource: Option<&str>,
+        shared_key_hash: Option<&str>,
+    ) -> (crate::models::OAuthRefreshTokenRecord, String) {
         let now = chrono::Utc::now().timestamp();
         let plaintext = crate::auth::generate_oauth_refresh_token();
         let token_hash = hash_token(&plaintext);
@@ -3524,6 +3558,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: scopes.to_string(),
             resource: resource.map(str::to_string),
+            shared_key_hash: shared_key_hash.map(str::to_string),
             created_at: now,
             expires_at: now + 2_592_000, // 30 days
             revoked_at: None,
@@ -3552,6 +3587,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: scopes.to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now,
             expires_at: now + 3600, // 1 hour
             revoked_at: None,
@@ -3641,6 +3677,19 @@ mod tests {
             .unwrap()
     }
 
+    fn access_token_shared_key_hash_by_plaintext(
+        db: &crate::Database,
+        plaintext_token: &str,
+    ) -> Option<String> {
+        db.conn_for_tests()
+            .query_row(
+                "SELECT shared_key_hash FROM oauth_access_tokens WHERE token_hash = ?1",
+                [&hash_token(plaintext_token)],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
     fn refresh_token_resource_by_plaintext(
         db: &crate::Database,
         plaintext_token: &str,
@@ -3648,6 +3697,19 @@ mod tests {
         db.conn_for_tests()
             .query_row(
                 "SELECT resource FROM oauth_refresh_tokens WHERE token_hash = ?1",
+                [&hash_token(plaintext_token)],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
+    fn refresh_token_shared_key_hash_by_plaintext(
+        db: &crate::Database,
+        plaintext_token: &str,
+    ) -> Option<String> {
+        db.conn_for_tests()
+            .query_row(
+                "SELECT shared_key_hash FROM oauth_refresh_tokens WHERE token_hash = ?1",
                 [&hash_token(plaintext_token)],
                 |row| row.get(0),
             )
@@ -5824,6 +5886,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn oauth_refresh_token_preserves_bridge_shared_key_hash() {
+        let config = test_config(oauth2_enabled_no_pkce());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Test App");
+        let (_old_rt, old_rt_plaintext) =
+            seed_refresh_token_with_shared_key_hash(&db, &client, &user, "runtime:read", "hash-a");
+
+        let service = Service::new(build_router(config, db.clone()));
+        let body = form_body(&[
+            ("grant_type", "refresh_token"),
+            ("refresh_token", &old_rt_plaintext),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", body)
+            .send(&service)
+            .await;
+
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        let access_token = json["access_token"].as_str().unwrap();
+        let refresh_token = json["refresh_token"].as_str().unwrap();
+
+        assert_eq!(
+            access_token_shared_key_hash_by_plaintext(&db, access_token).as_deref(),
+            Some("hash-a")
+        );
+        assert_eq!(
+            refresh_token_shared_key_hash_by_plaintext(&db, refresh_token).as_deref(),
+            Some("hash-a")
+        );
+    }
+
+    #[tokio::test]
     async fn refresh_token_new_tokens_stored_only_as_hashes() {
         let config = test_config(oauth2_enabled_no_pkce());
         let (_tmp, db) = test_db();
@@ -6070,6 +6167,7 @@ mod tests {
             user_id: user.id.clone(),
             scopes: "runtime:read".to_string(),
             resource: None,
+            shared_key_hash: None,
             created_at: now - 600,
             expires_at: now - 1, // already expired
             revoked_at: None,

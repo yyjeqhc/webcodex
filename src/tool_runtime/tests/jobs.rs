@@ -878,6 +878,8 @@ async fn runtime_job_tools_filter_agent_jobs_by_auth_group() {
     let runtime = test_runtime();
     let shared_a = shared_key_auth_context("hash-a");
     let shared_b = shared_key_auth_context("hash-b");
+    let bridge_a = oauth_bridge_auth_context("hash-a", &[crate::auth::SCOPE_JOB_RUN]);
+    let bridge_b = oauth_bridge_auth_context("hash-b", &[crate::auth::SCOPE_JOB_RUN]);
     let open = open_auth_context();
     let bootstrap = bootstrap_auth_context();
 
@@ -904,6 +906,28 @@ async fn runtime_job_tools_filter_agent_jobs_by_auth_group() {
         )
         .await;
     assert_eq!(listed_job_ids(&list_a), vec![job_a.clone()]);
+
+    let list_bridge = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            },
+            Some(&bridge_a),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&list_bridge), vec![job_a.clone()]);
+
+    let list_bridge_b = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            },
+            Some(&bridge_b),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&list_bridge_b), vec![job_b.clone()]);
 
     let list_open = runtime
         .dispatch_with_auth(
@@ -938,6 +962,26 @@ async fn runtime_job_tools_filter_agent_jobs_by_auth_group() {
                     job_id: job_b.clone(),
                 },
                 Some(&shared_a),
+            )
+            .await,
+    );
+    assert_unknown_job(
+        runtime
+            .dispatch_with_auth(
+                ToolCall::JobStatus {
+                    job_id: job_a.clone(),
+                },
+                Some(&bridge_b),
+            )
+            .await,
+    );
+    assert_unknown_job(
+        runtime
+            .dispatch_with_auth(
+                ToolCall::JobStatus {
+                    job_id: job_b.clone(),
+                },
+                Some(&bridge_a),
             )
             .await,
     );
@@ -1025,10 +1069,11 @@ async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
         },
     );
     let shared = shared_key_auth_context("hash-local");
+    let bridge = oauth_bridge_auth_context("hash-local", &[crate::auth::SCOPE_JOB_RUN]);
     let open = open_auth_context();
     let bootstrap = bootstrap_auth_context();
 
-    for auth in [&shared, &open] {
+    for auth in [&shared, &bridge, &open] {
         let result = runtime
             .dispatch_with_auth(
                 ToolCall::ListJobs {

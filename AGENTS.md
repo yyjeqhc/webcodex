@@ -198,3 +198,141 @@ Every agent final response must include:
 - **Full suite yes/no** — whether `cargo test --bin webcodex` was run
 - **Commit hash** — if a commit was created
 - **Known limitations** — skipped checks, ignored tests, or deferred work
+
+---
+
+## 10. Standing Task Contracts / Prompt Compression
+
+Subsequent tasks **inherit** the safety (§2), editing (§3), branch/commit (§4),
+validation (§5), test organization (§6), architecture (§7), and session (§8)
+rules defined in this document. User prompts do **not** need to repeat
+no-tag / no-push / no-publish / no-release / no-rebase / no-amend / no-secrets
+directives each time.
+
+When a user prompt conflicts with AGENTS.md rules, **the stricter, safer
+constraint wins**.
+
+Pre-task checklist:
+
+1. Run `git status --short --branch` and `git log` (recent 5-6 entries).
+2. If the worktree is not clean, **stop and report** — do not overwrite another
+   contributor's changes.
+3. Prefer small, incremental commits. Separate behavior changes from
+   pure-documentation changes.
+
+Single-turn scope guideline: if a task would require more than roughly **30
+distinct modification actions** or span multiple subsystems, stop and present a
+plan before proceeding. This prevents runaway scope in a single pass.
+
+Final report for development tasks should be concise:
+
+- changed files
+- behavior change (if any)
+- validation result
+- full suite yes/no
+- commit hash
+- known limitations
+
+Review-only or analysis tasks do not need the full development report format.
+
+---
+
+## 11. Default WebCodex Implementation Constraints
+
+These rules supplement §3 (Editing and Refactoring Rules) and are expected to
+apply to every development task unless explicitly overridden.
+
+- **Do not** use shell `sed`/`perl`/`python` as the primary editing mechanism.
+  Prefer structured line-edit tools or standard editor patches.
+- Shell is for **inspection, testing, and diagnostics only**.
+- Release docs, changelogs, packaging, and deploy config are **read-only**
+  unless the user explicitly requests changes.
+- When adding or renaming a runtime tool, **all** registry, metadata, OAuth
+  scope policy, MCP, OpenAPI, and test entries must be updated in the same
+  commit (see §7 Architecture Invariants).
+- Auth / OAuth / DB changes must pass at minimum:
+
+  ```
+  cargo fmt --check
+  cargo check --all-targets
+  cargo test --bin webcodex oauth -- --nocapture
+  cargo test --bin webcodex scope -- --nocapture
+  cargo test --bin webcodex metadata -- --nocapture
+  git diff --check
+  git status --short --branch
+  ```
+
+---
+
+## 12. OAuth Bridge Standing Decision
+
+Reference: `docs/OAUTH2_BRIDGE_THREAT_MODEL.md` (full threat model, endpoint
+contract draft, scope policy, acceptance tests, and open questions).
+
+These are **decided v1 constraints**. Do not re-litigate them in implementation
+tasks unless the user explicitly opens a design discussion.
+
+### Supported identity paths
+
+- **Formal managed-user OAuth** remains fully supported (existing behavior).
+- **Low-config OAuth onboarding** for MCP / AI platforms should use explicit
+  shared-key OAuth principal support.
+- **Synthetic managed users are rejected.** Do not create rows like
+  `user_id = shared-key:<hash>` and do not auto-insert user rows for shared
+  keys.
+
+### Subject model contract
+
+OAuth token subject model must explicitly distinguish two kinds:
+
+| kind | identifier | notes |
+|---|---|---|
+| `managed_user` | `user_id` | existing managed-account OAuth flow |
+| `shared_key` | `shared_key_hash` | non-managed principal; no user row required |
+
+Key invariants:
+
+- `shared_key_hash` affects shared-key project and job visibility.
+- `shared_key_hash` does **not** convert an `OAuth2Token` into
+  `AuthKind::SharedKey`.
+- A shared-key OAuth principal **must not** receive `account:manage`, `admin`,
+  or agent-transport scopes by default.
+- A shared-key OAuth principal **may** use `runtime`, `project`, and `job`
+  scopes according to OAuth scope policy.
+- OAuth2 tokens remain **rejected** on agent transport endpoints.
+- Current-session identity remains OAuth identity semantics unless a future
+  task explicitly changes it.
+
+### Non-goals for v1 bridge
+
+- No blank OAuth field fallback.
+- No open anonymous bridge.
+- No plaintext shared key storage.
+- No public bridge endpoint until subject model and tests are stable.
+
+---
+
+## 13. OAuth Bridge Implementation Order
+
+This is the approved sequencing for implementing the shared-key OAuth bridge.
+Do not skip ahead to later phases until earlier phases are stable and tested.
+
+1. **Subject model schema refactor**
+   - `oauth_authorization_codes`, `oauth_access_tokens`, and
+     `oauth_refresh_tokens` support `managed_user` and `shared_key` subjects.
+   - A shared-key subject must **not** require a managed-user lookup.
+
+2. **OAuth2Verifier subject dispatch**
+   - `managed_user` branch checks user existence and disabled state.
+   - `shared_key` branch requires `shared_key_hash` and constructs a
+     non-managed OAuth `AuthContext`.
+
+3. **Scope policy enforcement**
+   - Allow `runtime`, `project`, and `job` scopes as explicitly configured.
+   - Reject `admin`, `account:manage`, and agent-transport scopes for
+     shared-key OAuth tokens.
+
+4. **Public authorize UI / route**
+   - Implement **only after** subject model and tests are stable.
+   - Must not include blank OAuth field fallback, open anonymous bridge, or
+     plaintext shared key storage.

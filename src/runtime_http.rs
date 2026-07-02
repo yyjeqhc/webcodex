@@ -10,9 +10,14 @@ use serde_json::{json, Value};
 use std::sync::Arc;
 
 mod import_http;
+mod jobs;
 mod projects;
 
 pub use import_http::import_conversation_files_to_project;
+pub use jobs::{
+    codex_run, job_log, job_status, job_stop, job_tail, jobs_list, projects_run_job,
+    projects_run_shell,
+};
 pub use projects::{projects_create, projects_list, projects_register};
 
 /// Generic runtime tool call body. `tool` is required; `params` carries the
@@ -31,39 +36,6 @@ struct ToolCallRequest {
     /// Compatibility alias for `params`. Ignored when `params` is present.
     #[serde(default)]
     pub arguments: Value,
-}
-
-#[derive(Debug, Deserialize)]
-struct CodexRunRequest {
-    pub project: String,
-    pub prompt: String,
-    #[serde(default)]
-    pub approval_mode: Option<String>,
-    #[serde(default)]
-    pub timeout_secs: Option<i64>,
-    #[serde(default)]
-    pub cwd: Option<String>,
-    #[serde(default)]
-    pub extra_args: Option<Vec<String>>,
-}
-
-#[derive(Debug, Deserialize)]
-struct JobStatusRequest {
-    pub job_id: String,
-}
-
-#[derive(Debug, Deserialize)]
-struct JobLogRequest {
-    pub job_id: String,
-    #[serde(default)]
-    pub offset: Option<usize>,
-    #[serde(default)]
-    pub tail_lines: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct JobStopRequest {
-    pub job_id: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -117,18 +89,6 @@ struct ValidatePatchRequest {
     pub session_id: Option<String>,
     #[serde(default)]
     pub deny_sensitive_paths: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct RunShellRequest {
-    pub project: String,
-    pub command: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub timeout_secs: Option<u64>,
-    #[serde(default)]
-    pub cwd: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -229,21 +189,6 @@ struct SearchProjectTextRequest {
     pub context_before: Option<usize>,
     #[serde(default)]
     pub context_after: Option<usize>,
-}
-
-#[derive(Debug, Deserialize)]
-struct ListJobsRequest {
-    #[serde(default)]
-    pub limit: Option<usize>,
-    #[serde(default)]
-    pub status: Option<String>,
-}
-
-#[derive(Debug, Deserialize)]
-struct JobTailRequest {
-    pub job_id: String,
-    #[serde(default)]
-    pub tail_lines: Option<usize>,
 }
 
 fn runtime(depot: &Depot) -> Option<Arc<ToolRuntime>> {
@@ -429,148 +374,6 @@ fn extract_recording_session_id(body: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
-}
-
-#[handler]
-pub async fn codex_run(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/codex/run", "runCodexTask");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: CodexRunRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let project = Some(body.project.clone());
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunCodex {
-                project: body.project,
-                prompt: body.prompt,
-                session_id: None,
-                approval_mode: body.approval_mode,
-                timeout_secs: body.timeout_secs,
-                cwd: body.cwd,
-                extra_args: body.extra_args,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "run_codex", project, result);
-}
-
-#[handler]
-pub async fn job_status(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/jobs/status", "jobStatus");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: JobStatusRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::JobStatus {
-                job_id: body.job_id,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "job_status", None, result);
-}
-
-#[handler]
-pub async fn job_log(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/jobs/log", "jobLog");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: JobLogRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::JobLog {
-                job_id: body.job_id,
-                offset: body.offset,
-                tail_lines: body.tail_lines,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "job_log", None, result);
-}
-
-/// Stop a local runtime job by terminating its process group and marking it
-/// `stopped`. This is a thin wrapper over `ToolRuntime::stop_job`; it is
-/// intentionally NOT exposed as a GPT Action (absent from openapi.json) so
-/// remote ChatGPT callers cannot drive an explicit kill. Only jobs the
-/// runtime created and recorded can be stopped.
-#[handler]
-pub async fn job_stop(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/jobs/stop", "jobStop");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: JobStopRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let result = runtime.stop_job(body.job_id).await;
-    render_result(res, &audit, "job_stop", None, result);
 }
 
 #[handler]
@@ -1063,115 +866,6 @@ pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut
     render_result(res, &audit, "write_project_file", project, result);
 }
 
-/// `POST /api/projects/run_job` — thin REST wrapper over
-/// `ToolCall::RunJob`. Starts an async background shell job in an
-/// agent-registered project and returns a `job_id`. Execution with side
-/// effects; requires Bearer auth and the agent async shell job capability.
-/// Dedicated GPT Action (`startProjectShellJob`); also reachable via
-/// callRuntimeTool / MCP tools/call. Poll with `getRuntimeJobStatus` and read
-/// output with `getRuntimeJobTail` / `getRuntimeJobLog`.
-#[derive(Debug, Deserialize)]
-struct StartProjectShellJobRequest {
-    pub project: String,
-    pub command: String,
-    #[serde(default)]
-    pub session_id: Option<String>,
-    #[serde(default)]
-    pub timeout_secs: Option<i64>,
-    #[serde(default)]
-    pub cwd: Option<String>,
-}
-
-/// `POST /api/projects/run_job` handler. Thin wrapper: parse request, auth,
-/// audit, and dispatch to `ToolRuntime` via `ToolCall::RunJob`. All business
-/// logic (capability checks, owner boundary, job creation) stays in
-/// `ToolRuntime`.
-#[handler]
-pub async fn projects_run_job(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/projects/run_job", "startProjectShellJob");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: StartProjectShellJobRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let project = Some(body.project.clone());
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunJob {
-                project: body.project,
-                command: body.command,
-                session_id: body.session_id,
-                timeout_secs: body.timeout_secs,
-                cwd: body.cwd,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "run_job", project, result);
-}
-
-/// `POST /api/projects/run_shell` — thin GPT Actions wrapper over
-/// `ToolCall::RunShell`. Executable with side effects; requires the owning
-/// agent's shell capability and Bearer auth.
-#[handler]
-pub async fn projects_run_shell(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(
-        req,
-        depot,
-        "/api/projects/run_shell",
-        "runProjectShellCommand",
-    );
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: RunShellRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let project = Some(body.project.clone());
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::RunShell {
-                project: body.project,
-                command: body.command,
-                session_id: body.session_id,
-                timeout_secs: body.timeout_secs,
-                cwd: body.cwd,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "run_shell", project, result);
-}
-
 #[handler]
 pub async fn runtime_status(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/runtime/status", "getRuntimeStatus");
@@ -1320,78 +1014,6 @@ pub async fn projects_git_diff_summary(req: &mut Request, depot: &mut Depot, res
     render_result(res, &audit, "git_diff_summary", Some(project), result);
 }
 
-/// `ToolCall::ListJobs`. Bounded job summaries (no stdout/stderr bodies).
-#[handler]
-pub async fn jobs_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/jobs/list", "listRuntimeJobs");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: ListJobsRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::ListJobs {
-                limit: body.limit,
-                status: body.status,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "list_jobs", None, result);
-}
-
-/// `ToolCall::JobTail`. Bounded stdout/stderr tails for a job.
-#[handler]
-pub async fn job_tail(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/jobs/tail", "getRuntimeJobTail");
-    let Some(runtime) = runtime(depot) else {
-        res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
-        res.render(json_error(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            "Tool runtime not configured",
-        ));
-        return;
-    };
-    let body: JobTailRequest = match req.parse_json().await {
-        Ok(body) => body,
-        Err(e) => {
-            res.status_code(StatusCode::BAD_REQUEST);
-            res.render(json_error(
-                StatusCode::BAD_REQUEST,
-                format!("Invalid JSON: {}", e),
-            ));
-            return;
-        }
-    };
-    let auth = depot.obtain::<crate::auth::AuthContext>().ok().cloned();
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::JobTail {
-                job_id: body.job_id,
-                tail_lines: body.tail_lines,
-            },
-            auth.as_ref(),
-        )
-        .await;
-    render_result(res, &audit, "job_tail", None, result);
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1405,6 +1027,7 @@ mod tests {
     use std::time::Duration;
 
     mod import_http_tests;
+    mod jobs_tests;
     mod projects_tests;
 
     fn test_config(token: Option<&str>) -> Arc<crate::Config> {
@@ -1765,10 +1388,6 @@ mod tests {
                 json!({"project": "demo", "patch": "diff"}),
             ),
             (
-                "/api/projects/run_shell",
-                json!({"project": "demo", "command": "echo hi"}),
-            ),
-            (
                 "/api/projects/validate_patch",
                 json!({"project": "demo", "patch": "diff"}),
             ),
@@ -2012,82 +1631,6 @@ mod tests {
     }
 
     // =========================================================================
-    // runProjectShellCommand
-    // =========================================================================
-
-    #[tokio::test]
-    async fn http_projects_run_shell_rejects_server_configured_project() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let runtime = Arc::new(runtime_with_local_project(tmp_proj.path(), "demo"));
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let mut resp = TestClient::post("http://localhost/api/projects/run_shell")
-            .bearer_auth("secret")
-            .json(&json!({"project": "demo", "command": "echo hi"}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], false);
-        assert!(body["error"].as_str().unwrap().contains("unknown_project"));
-    }
-
-    #[tokio::test]
-    async fn dedicated_run_shell_with_session_id_records_event() {
-        let config = test_config(Some("secret"));
-        let (_tmp, db) = test_db();
-        let tmp_proj = tempfile::tempdir().unwrap();
-        let caps = crate::shell_protocol::ShellClientCapabilities::default();
-        let (runtime, registry) =
-            register_import_agent_with_capabilities(tmp_proj.path(), Some(caps)).await;
-        let service = Service::new(build_projects_router(config, db, runtime));
-
-        let mut resp = TestClient::post("http://localhost/api/tools/call")
-            .bearer_auth("secret")
-            .json(&json!({"tool": "start_session", "params": {"project": "agent:importer:demo"}}))
-            .send(&service)
-            .await;
-        let start_body: Value = resp.take_json().await.unwrap();
-        let session_id = start_body["output"]["session_id"].as_str().unwrap();
-
-        let request = async {
-            TestClient::post("http://localhost/api/projects/run_shell")
-                .bearer_auth("secret")
-                .json(&json!({
-                    "project": "agent:importer:demo",
-                    "command": "echo hi",
-                    "session_id": session_id
-                }))
-                .send(&service)
-                .await
-        };
-        let complete = complete_one_agent_request(registry.clone(), "hi\n", "", 0);
-        let (mut resp, _) = tokio::join!(request, complete);
-        assert_eq!(effective_status(&resp), StatusCode::OK);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], true);
-        assert_eq!(body["output"]["session_recorded"], true);
-
-        let mut resp = TestClient::post("http://localhost/api/tools/call")
-            .bearer_auth("secret")
-            .json(&json!({"tool": "session_summary", "params": {"session_id": session_id}}))
-            .send(&service)
-            .await;
-        let summary: Value = resp.take_json().await.unwrap();
-        assert_eq!(summary["output"]["counts"]["tool_calls"], 1);
-        assert_eq!(summary["output"]["counts"]["shell_like"], 1);
-        assert!(summary["output"]["events"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .any(|event| event["tool_name"] == "run_shell"
-                && event["status"] == "succeeded"
-                && event["exit_code"] == 0));
-    }
-
-    // =========================================================================
     // getRuntimeStatus / /api/runtime/status
     // =========================================================================
 
@@ -2163,8 +1706,6 @@ mod tests {
                 json!({"project": "demo", "pattern": "fn"}),
             ),
             ("/api/projects/git_diff_summary", json!({"project": "demo"})),
-            ("/api/jobs/list", json!({})),
-            ("/api/jobs/tail", json!({"job_id": "abc"})),
         ] {
             let resp = TestClient::post(&format!("http://localhost{}", path))
                 .json(&body)
@@ -2205,18 +1746,6 @@ mod tests {
             body["error"].as_str().is_some_and(|e| !e.is_empty()),
             "list_files should return a structured runtime error"
         );
-
-        // list_jobs reaches the runtime and returns a bounded summary list
-        // even with no jobs present.
-        let mut resp = TestClient::post("http://localhost/api/jobs/list")
-            .bearer_auth("secret")
-            .json(&json!({}))
-            .send(&service)
-            .await;
-        assert_eq!(effective_status(&resp), StatusCode::OK);
-        let body: Value = resp.take_json().await.unwrap();
-        assert_eq!(body["success"], true);
-        assert!(body["output"]["jobs"].is_array());
     }
 
     // =========================================================================
@@ -3744,74 +3273,45 @@ mod tests {
     }
 
     // =========================================================================
-    // Dedicated writeProjectFile / startProjectShellJob GPT Actions — auth gate
-    // + dispatch wiring. write_file reuses the existing REST wrapper; run_job
-    // is a new thin wrapper over ToolCall::RunJob. Both are still reachable
-    // via callRuntimeTool / MCP.
+    // Dedicated writeProjectFile GPT Action - auth gate + dispatch wiring.
+    // write_file reuses the existing REST wrapper and is still reachable via
+    // callRuntimeTool / MCP.
     // =========================================================================
 
     #[tokio::test]
-    async fn http_dedicated_write_file_and_run_job_require_bearer_auth() {
+    async fn http_dedicated_write_file_requires_bearer_auth() {
         let (_tmp, service) = phase2_service();
-        for (path, body) in [
-            (
-                "/api/projects/write_file",
-                json!({"project": "demo", "path": "x.txt", "content": "a"}),
-            ),
-            (
-                "/api/projects/run_job",
-                json!({"project": "demo", "command": "echo hi"}),
-            ),
-        ] {
-            let resp = TestClient::post(&format!("http://localhost{}", path))
-                .json(&body)
-                .send(&service)
-                .await;
-            assert_eq!(
-                effective_status(&resp),
-                StatusCode::UNAUTHORIZED,
-                "{} should require auth",
-                path
-            );
-        }
+        let resp = TestClient::post("http://localhost/api/projects/write_file")
+            .json(&json!({"project": "demo", "path": "x.txt", "content": "a"}))
+            .send(&service)
+            .await;
+
+        assert_eq!(effective_status(&resp), StatusCode::UNAUTHORIZED);
     }
 
     #[tokio::test]
-    async fn http_dedicated_write_file_and_run_job_dispatch_to_runtime() {
-        // With a correct bearer token the dedicated routes reach the runtime.
+    async fn http_dedicated_write_file_dispatches_to_runtime() {
+        // With a correct bearer token the dedicated route reaches the runtime.
         // The project id is not agent-registered, so the runtime returns a
         // structured error (not a 401/404) — proving the request was
         // authenticated, deserialized, and dispatched to ToolRuntime.
         let (_tmp, service) = phase2_service();
-        for (path, body) in [
-            (
-                "/api/projects/write_file",
-                json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}),
-            ),
-            (
-                "/api/projects/run_job",
-                json!({"project": "agent:nope:nope", "command": "echo hi"}),
-            ),
-        ] {
-            let mut resp = TestClient::post(&format!("http://localhost{}", path))
-                .bearer_auth("secret")
-                .json(&body)
-                .send(&service)
-                .await;
-            assert_eq!(
-                effective_status(&resp),
-                StatusCode::BAD_REQUEST,
-                "{} should reach runtime and return structured error",
-                path
-            );
-            let body: Value = resp.take_json().await.unwrap();
-            assert_eq!(body["success"], false);
-            assert!(
-                body["error"].as_str().is_some_and(|e| !e.is_empty()),
-                "{} should return a structured runtime error",
-                path
-            );
-        }
+        let mut resp = TestClient::post("http://localhost/api/projects/write_file")
+            .bearer_auth("secret")
+            .json(&json!({"project": "agent:nope:nope", "path": "x.txt", "content": "a"}))
+            .send(&service)
+            .await;
+        assert_eq!(
+            effective_status(&resp),
+            StatusCode::BAD_REQUEST,
+            "write_file should reach runtime and return structured error",
+        );
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert!(
+            body["error"].as_str().is_some_and(|e| !e.is_empty()),
+            "write_file should return a structured runtime error"
+        );
     }
 
     #[tokio::test]

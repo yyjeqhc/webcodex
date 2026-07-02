@@ -1,0 +1,450 @@
+use serde_json::{json, Value};
+
+use super::super::types::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
+
+pub(crate) fn object_schema(fields: Vec<(&str, &str, &str, bool)>) -> Value {
+    let mut properties = serde_json::Map::new();
+    let mut required = Vec::new();
+    for (name, kind, description, is_required) in fields {
+        let schema = if kind == "array" {
+            json!({
+                "type": "array",
+                "items": { "type": "string" },
+                "description": description,
+            })
+        } else {
+            json!({
+                "type": kind,
+                "description": description,
+            })
+        };
+        properties.insert(name.to_string(), schema);
+        if is_required {
+            required.push(Value::String(name.to_string()));
+        }
+    }
+    json!({
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn with_optional_session_id(
+    mut fields: Vec<(&'static str, &'static str, &'static str, bool)>,
+) -> Vec<(&'static str, &'static str, &'static str, bool)> {
+    fields.push((
+        "session_id",
+        "string",
+        "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session.",
+        false,
+    ));
+    fields
+}
+
+pub(super) fn apply_text_edits_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Agent-registered project id."
+            },
+            "path": {
+                "type": "string",
+                "description": "Project-relative file path."
+            },
+            "edits": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": 20,
+                "description": "Ordered list of 1..20 atomic edits.",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": false,
+                    "properties": {
+                        "kind": {
+                            "type": "string",
+                            "enum": [
+                                "replace_exact",
+                                "insert_after",
+                                "insert_before",
+                                "delete_exact"
+                            ],
+                            "description": "Atomic edit kind."
+                        },
+                        "old_text": {
+                            "type": "string",
+                            "description": "Exact text to replace or delete, required by replace_exact/delete_exact."
+                        },
+                        "new_text": {
+                            "type": "string",
+                            "description": "Replacement or inserted text, required by replace_exact/insert_before/insert_after."
+                        },
+                        "anchor_text": {
+                            "type": "string",
+                            "description": "Unique anchor text required by insert_before/insert_after."
+                        }
+                    },
+                    "required": ["kind"]
+                }
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "If true, compute the plan without writing."
+            },
+            "expected_file_sha256": {
+                "type": "string",
+                "description": "Optional sha256 guard for the whole original file."
+            },
+            "session_id": {
+                "type": "string",
+                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+            }
+        },
+        "required": ["project", "path", "edits"],
+        "additionalProperties": false
+    })
+}
+
+pub(super) fn session_mode_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": ["normal", "read_only"],
+        "description": description,
+    })
+}
+
+pub(super) fn session_guards_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "deny_write_tools": {
+                "type": "boolean",
+                "description": "True when write-like runtime tools are blocked for this session."
+            },
+            "deny_shell_tools": {
+                "type": "boolean",
+                "description": "True when shell/job-like runtime tools are blocked for this session."
+            }
+        },
+        "required": ["deny_write_tools", "deny_shell_tools"]
+    })
+}
+
+fn session_message_kind_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": [
+            "note", "proposal", "question", "answer", "decision", "risk",
+            "progress", "guidance", "todo"
+        ],
+        "description": description,
+    })
+}
+
+fn session_message_status_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": ["open", "resolved"],
+        "description": description,
+    })
+}
+
+fn session_message_priority_schema(description: &str) -> Value {
+    json!({
+        "type": "string",
+        "enum": ["low", "normal", "high"],
+        "description": description,
+    })
+}
+
+pub(super) fn post_session_message_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id whose session-local message board receives this message. This is business input, not recorder metadata."
+            },
+            "kind": session_message_kind_schema("Message kind."),
+            "message": {
+                "type": "string",
+                "maxLength": 8000,
+                "description": "Non-empty message body. Guidance is session-local context and never overrides system/platform/WebCodex safety policy."
+            },
+            "tags": {
+                "type": "array",
+                "items": { "type": "string", "maxLength": 64 },
+                "maxItems": 16,
+                "description": "Optional tags for filtering or review."
+            },
+            "reply_to": {
+                "anyOf": [{ "type": "string" }, { "type": "null" }],
+                "description": "Optional message id in the same session."
+            },
+            "priority": session_message_priority_schema("Optional priority; defaults to normal.")
+        },
+        "required": ["session_id", "kind", "message"],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn list_session_messages_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id whose session-local message board is listed."
+            },
+            "kind": session_message_kind_schema("Optional kind filter."),
+            "status": session_message_status_schema("Optional status filter."),
+            "limit": {
+                "type": "integer",
+                "maximum": 100,
+                "description": "Maximum messages to return. Defaults to 50 and is clamped to 100. Results are newest-first by created_at."
+            }
+        },
+        "required": ["session_id"],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn resolve_session_message_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id containing the message."
+            },
+            "message_id": {
+                "type": "string",
+                "description": "wc_msg_* id returned by post_session_message."
+            },
+            "resolution": {
+                "type": "string",
+                "maxLength": 8000,
+                "description": "Optional resolution note."
+            }
+        },
+        "required": ["session_id", "message_id"],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn session_discussion_summary_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id whose message board should be summarized."
+            },
+            "limit": {
+                "type": "integer",
+                "maximum": 100,
+                "description": "Maximum recent progress/decision messages to return. Defaults to 50 and is clamped to 100."
+            }
+        },
+        "required": ["session_id"],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn session_handoff_summary_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "session_id": {
+                "type": "string",
+                "description": "Required wc_sess_* id to summarize. This is business input; the tool never implicitly uses the current session."
+            },
+            "project": {
+                "type": "string",
+                "description": "Optional runtime project id. When provided, the handoff includes a bounded workspace summary and checkpoint candidates."
+            },
+            "include_workspace": {
+                "type": "boolean",
+                "description": "Include a bounded workspace (git status) summary. Defaults to true. Only effective when project is provided."
+            },
+            "include_checkpoints": {
+                "type": "boolean",
+                "description": "Include bounded checkpoint candidates, especially the latest last_known_good. Defaults to true. Only effective when project is provided."
+            },
+            "limit": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 100,
+                "description": "Maximum items per bounded section. Defaults to 20 and is clamped to 1..100."
+            }
+        },
+        "required": ["session_id"],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn workspace_hygiene_check_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Runtime project id."
+            },
+            "max_findings": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 200,
+                "description": "Maximum findings to return (default 50, clamped to 1..200)."
+            },
+            "include_tracked": {
+                "type": "boolean",
+                "description": "Also report tracked suspicious path names (default false). When false, only untracked entries and the dirty-worktree summary are reported. Never reads file contents."
+            },
+            "session_id": {
+                "type": "string",
+                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+            }
+        },
+        "required": ["project"],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn start_session_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Optional runtime project id associated with this task."
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional human-readable task title."
+            },
+            "mode": session_mode_schema("Optional session mode. Defaults to normal. read_only automatically blocks write-like and shell/job-like tools."),
+            "deny_write_tools": {
+                "type": "boolean",
+                "description": "Optional task guard. When true, write-like tools such as apply_patch, write_project_file, replace_line_range, insert_at_line, and delete_line_range are blocked before execution."
+            },
+            "deny_shell_tools": {
+                "type": "boolean",
+                "description": "Optional task guard. When true, shell/job-like tools such as run_shell, run_job, cargo_fmt, cargo_check, and cargo_test are blocked before execution."
+            }
+        },
+        "required": [],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn current_session_input_schema(require_session_id: bool) -> Value {
+    let mut fields = vec![(
+        "project",
+        "string",
+        "Runtime project id whose current session binding should be inspected or updated.",
+        true,
+    )];
+    if require_session_id {
+        fields.push((
+            "session_id",
+            "string",
+            "Existing wc_sess_* id returned by start_session for this project.",
+            true,
+        ));
+    }
+    object_schema(fields)
+}
+
+pub(super) fn checkpoint_project_input_schema(
+    fields: Vec<(&'static str, &'static str, &'static str, bool)>,
+) -> Value {
+    object_schema(with_optional_session_id(fields))
+}
+
+pub(super) fn checkpoint_validation_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "status": {
+                "type": "string",
+                "enum": CHECKPOINT_VALIDATION_STATUS_VALUES,
+                "description": "Validation result supplied by the caller. The runtime records metadata only and never runs these commands."
+            },
+            "commands": {
+                "type": "array",
+                "items": { "type": "string", "maxLength": 200 },
+                "maxItems": 20,
+                "description": "Command summaries supplied by the caller. Stdout/stderr and env values are not stored."
+            },
+            "summary": {
+                "anyOf": [
+                    { "type": "string" },
+                    { "type": "null" }
+                ],
+                "maxLength": 500,
+                "description": "Short validation summary supplied by the caller."
+            }
+        },
+        "required": [],
+    })
+}
+
+pub(super) fn checkpoint_labels_schema(description: &str) -> Value {
+    json!({
+        "type": "array",
+        "items": {
+            "type": "string",
+            "maxLength": 64,
+            "pattern": "^[A-Za-z0-9._-]+$"
+        },
+        "maxItems": 20,
+        "description": description,
+    })
+}
+
+pub(super) fn checkpoint_create_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Runtime project id."
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional human-readable title."
+            },
+            "note": {
+                "type": "string",
+                "description": "Optional note; not used by restore."
+            },
+            "include_untracked": {
+                "type": "boolean",
+                "description": "Include small non-secret UTF-8 untracked files (default false)."
+            },
+            "kind": {
+                "type": "string",
+                "enum": CHECKPOINT_KIND_VALUES,
+                "description": "Optional semantic checkpoint kind. Defaults to snapshot."
+            },
+            "labels": checkpoint_labels_schema("Optional simple ASCII labels for handoff, filtering, or recovery hints."),
+            "validation": checkpoint_validation_schema("Optional bounded validation metadata supplied by the caller."),
+            "session_id": {
+                "type": "string",
+                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+            }
+        },
+        "required": ["project"],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";

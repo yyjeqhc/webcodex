@@ -211,6 +211,18 @@ async fn read_only_session_rejects_write_project_file_before_mutation() {
         SessionMode::ReadOnly,
         sessions::SessionGuards::default(),
     );
+    let message_text = "guard risk message must stay out of hint";
+    runtime
+        .sessions
+        .post_message(sessions::PostSessionMessageInput {
+            session_id: session.session_id.clone(),
+            kind: sessions::SessionMessageKind::Risk,
+            message: message_text.to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority: sessions::SessionMessagePriority::High,
+        })
+        .unwrap();
 
     let result = runtime
         .dispatch(ToolCall::WriteProjectFile {
@@ -230,6 +242,14 @@ async fn read_only_session_rejects_write_project_file_before_mutation() {
     assert_eq!(result.output["mode"], "read_only");
     assert_eq!(result.output["session_recorded"], true);
     assert!(result.output["session_event_id"].as_str().is_some());
+    assert_eq!(result.output["session_hint"]["has_open_messages"], true);
+    assert_eq!(result.output["session_hint"]["open_counts"]["risk"], 1);
+    assert_eq!(result.output["session_hint"]["highest_priority"], "high");
+    let serialized_hint = serde_json::to_string(&result.output["session_hint"]).unwrap();
+    assert!(
+        !serialized_hint.contains(message_text),
+        "session_hint leaked message text: {serialized_hint}"
+    );
     assert!(!tmp.path().join("should-not-exist.txt").exists());
     let summary = runtime
         .sessions
@@ -547,5 +567,12 @@ fn project_tool_schemas_include_optional_session_id() {
         assert!(spec.output_schema["properties"]["output"]["properties"]
             .get("session_event_id")
             .is_some());
+        let session_hint =
+            &spec.output_schema["properties"]["output"]["properties"]["session_hint"];
+        assert_eq!(session_hint["type"], "object");
+        assert_eq!(
+            session_hint["properties"]["suggested_next_tool"]["enum"],
+            json!(["session_discussion_summary"])
+        );
     }
 }

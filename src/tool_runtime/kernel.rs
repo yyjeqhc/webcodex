@@ -124,7 +124,12 @@ impl ToolRuntime {
                     result.error.as_deref(),
                     Some("tool_disabled"),
                 );
-                super::add_session_telemetry_hint(&mut result, session_id, event_id);
+                super::add_session_telemetry_hint(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    event_id,
+                );
             }
             return ToolCallOutcome {
                 success: false,
@@ -150,7 +155,12 @@ impl ToolRuntime {
                     result.error.as_deref(),
                     Some("session_guard_denied"),
                 );
-                super::add_session_telemetry_hint(&mut result, session_id, event_id);
+                super::add_session_telemetry_hint(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    event_id,
+                );
                 return ToolCallOutcome {
                     success: false,
                     result: Some(result),
@@ -250,7 +260,12 @@ impl ToolRuntime {
         // recorder session, so the inner dispatch does not emit it. The hint
         // preserves any existing business `output.session_id`.
         if let Some(session_id) = context.session_id {
-            super::add_session_telemetry_hint(&mut result, session_id, outer_event_id);
+            super::add_session_telemetry_hint(
+                &mut result,
+                &self.sessions,
+                session_id,
+                outer_event_id,
+            );
         }
         ToolCallOutcome {
             success: result.success,

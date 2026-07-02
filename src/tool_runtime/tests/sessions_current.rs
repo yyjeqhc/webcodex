@@ -1,9 +1,29 @@
 //! Current-session binding tests: bind, unbind, isolation, stale eviction.
 
-use super::super::{current_session_principal, kernel, sessions, ToolCall};
+use super::super::{current_session_principal, kernel, sessions, ToolCall, ToolRuntime};
 use super::support::*;
 use crate::shell_protocol::{ShellClientCapabilities, ShellClientRegisterRequest};
 use serde_json::json;
+
+fn post_store_message(
+    runtime: &ToolRuntime,
+    session_id: &str,
+    kind: sessions::SessionMessageKind,
+    priority: sessions::SessionMessagePriority,
+    message: &str,
+) {
+    runtime
+        .sessions
+        .post_message(sessions::PostSessionMessageInput {
+            session_id: session_id.to_string(),
+            kind,
+            message: message.to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority,
+        })
+        .unwrap();
+}
 
 #[test]
 fn open_anonymous_current_session_principal_is_stable() {
@@ -198,6 +218,13 @@ async fn bound_current_session_records_project_tool_without_session_id() {
         )
         .await;
     assert!(bind.success, "{:?}", bind.error);
+    post_store_message(
+        &runtime,
+        &session.session_id,
+        sessions::SessionMessageKind::Todo,
+        sessions::SessionMessagePriority::High,
+        "current session todo",
+    );
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -227,6 +254,9 @@ async fn bound_current_session_records_project_tool_without_session_id() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["session_recorded"], true);
     assert_eq!(result.output["session_id"], session.session_id);
+    assert_eq!(result.output["session_hint"]["has_open_messages"], true);
+    assert_eq!(result.output["session_hint"]["open_counts"]["todo"], 1);
+    assert_eq!(result.output["session_hint"]["highest_priority"], "high");
 
     let summary = runtime
         .sessions
@@ -456,6 +486,20 @@ async fn explicit_session_id_wins_over_current_session() {
         )
         .await;
     assert!(bind.success, "{:?}", bind.error);
+    post_store_message(
+        &runtime,
+        &current.session_id,
+        sessions::SessionMessageKind::Risk,
+        sessions::SessionMessagePriority::High,
+        "current session risk",
+    );
+    post_store_message(
+        &runtime,
+        &explicit.session_id,
+        sessions::SessionMessageKind::Todo,
+        sessions::SessionMessagePriority::Low,
+        "explicit session todo",
+    );
 
     let task = tokio::spawn({
         let runtime = runtime.clone();
@@ -493,6 +537,9 @@ async fn explicit_session_id_wins_over_current_session() {
     let result = task.await.unwrap();
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["session_id"], explicit.session_id);
+    assert_eq!(result.output["session_hint"]["open_counts"]["todo"], 1);
+    assert_eq!(result.output["session_hint"]["open_counts"]["risk"], 0);
+    assert_eq!(result.output["session_hint"]["highest_priority"], "low");
     assert_eq!(
         runtime
             .sessions
@@ -510,6 +557,78 @@ async fn explicit_session_id_wins_over_current_session() {
             .counts
             .tool_calls,
         1
+    );
+}
+
+#[tokio::test]
+async fn unknown_explicit_session_id_does_not_fallback_to_current_session() {
+    let runtime = runtime_with_agent_project("current-missing-explicit");
+    register_agent(
+        &runtime,
+        "current-missing-explicit",
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("current-missing-explicit");
+    let bootstrap = auth_context(None, true);
+    let current = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("current".to_string()));
+    let bind = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "bind_current_session",
+                json!({"project": project, "session_id": current.session_id}),
+            )
+            .unwrap(),
+            Some(&bootstrap),
+        )
+        .await;
+    assert!(bind.success, "{:?}", bind.error);
+    post_store_message(
+        &runtime,
+        &current.session_id,
+        sessions::SessionMessageKind::Guidance,
+        sessions::SessionMessagePriority::High,
+        "current guidance must not leak through fallback",
+    );
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ReadFile {
+                project: project.clone(),
+                path: "README.md".to_string(),
+                session_id: Some("wc_sess_missing".to_string()),
+                start_line: None,
+                limit: Some(1),
+                with_line_numbers: None,
+            },
+            Some(&bootstrap),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "unknown_session_id");
+    assert_eq!(result.output["session_id"], "wc_sess_missing");
+    assert!(result.output.get("session_hint").is_none());
+    assert_eq!(
+        runtime
+            .sessions
+            .summary(&current.session_id, Some(20))
+            .unwrap()
+            .counts
+            .tool_calls,
+        0
+    );
+    assert!(
+        next_agent_request_for_instance(&runtime, "current-missing-explicit", "inst")
+            .await
+            .is_none(),
+        "unknown explicit session_id must not enqueue via current-session fallback"
     );
 }
 

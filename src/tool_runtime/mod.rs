@@ -260,7 +260,12 @@ fn current_session_unavailable_result(message: impl Into<String>) -> ToolResult 
     )
 }
 
-fn add_session_telemetry_hint(result: &mut ToolResult, session_id: &str, event_id: Option<String>) {
+fn add_session_telemetry_hint(
+    result: &mut ToolResult,
+    sessions: &sessions::SessionStore,
+    session_id: &str,
+    event_id: Option<String>,
+) {
     let mut output = match std::mem::take(&mut result.output) {
         Value::Object(map) => map,
         other => {
@@ -285,6 +290,12 @@ fn add_session_telemetry_hint(result: &mut ToolResult, session_id: &str, event_i
     }
     if let Some(event_id) = event_id {
         output.insert("session_event_id".to_string(), Value::String(event_id));
+    }
+    if let Some(hint) = sessions.inbox_hint(session_id) {
+        output.insert(
+            "session_hint".to_string(),
+            serde_json::to_value(hint).unwrap_or(Value::Null),
+        );
     }
     result.output = Value::Object(output);
 }
@@ -892,7 +903,7 @@ impl ToolRuntime {
                     result.error.as_deref(),
                     Some("tool_disabled"),
                 );
-                add_session_telemetry_hint(&mut result, session_id, event_id);
+                add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
             }
             return result;
         }
@@ -912,7 +923,7 @@ impl ToolRuntime {
                     result.error.as_deref(),
                     Some("session_guard_denied"),
                 );
-                add_session_telemetry_hint(&mut result, session_id, event_id);
+                add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
                 return result;
             }
         }
@@ -938,7 +949,7 @@ impl ToolRuntime {
                     err.error.as_deref(),
                     None,
                 );
-                add_session_telemetry_hint(&mut err, session_id, event_id);
+                add_session_telemetry_hint(&mut err, &self.sessions, session_id, event_id);
             }
             return err;
         }
@@ -951,7 +962,7 @@ impl ToolRuntime {
                 result.error.as_deref(),
                 None,
             );
-            add_session_telemetry_hint(&mut result, session_id, event_id);
+            add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
         }
         result
     }

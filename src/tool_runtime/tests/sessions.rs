@@ -1,10 +1,64 @@
 //! Core session lifecycle and summary tests.
 
+use super::super::sessions::{SessionMessageKind, SessionMessagePriority};
 use super::super::types::*;
-use super::super::ToolCall;
+use super::super::{ToolCall, ToolResult, ToolRuntime};
 use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;
 use serde_json::Value;
+
+async fn post_session_message(
+    runtime: &ToolRuntime,
+    session_id: &str,
+    kind: SessionMessageKind,
+    priority: SessionMessagePriority,
+    message: &str,
+) -> String {
+    let result = runtime
+        .dispatch(ToolCall::PostSessionMessage {
+            session_id: session_id.to_string(),
+            kind,
+            message: message.to_string(),
+            tags: Vec::new(),
+            reply_to: None,
+            priority,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    result.output["message_id"].as_str().unwrap().to_string()
+}
+
+async fn read_agent_file_for_session(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    session_id: Option<String>,
+) -> ToolResult {
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project,
+                        path: "README.md".to_string(),
+                        session_id,
+                        start_line: None,
+                        limit: Some(1),
+                        with_line_numbers: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_agent_request_for_instance(runtime, client_id, "inst")
+        .await
+        .expect("read_file should enqueue an agent request");
+    complete_patch_agent_request(runtime, client_id, &req.request_id, 0, "hello\n", "").await;
+    task.await.unwrap()
+}
 
 #[tokio::test]
 async fn read_file_with_session_id_records_event_without_content() {
@@ -63,6 +117,7 @@ async fn read_file_with_session_id_records_event_without_content() {
     assert_eq!(result.output["session_recorded"], true);
     assert_eq!(result.output["session_id"], session.session_id);
     assert!(result.output["session_event_id"].as_str().is_some());
+    assert!(result.output.get("session_hint").is_none());
     let summary = runtime
         .sessions
         .summary(&session.session_id, Some(20))
@@ -131,6 +186,185 @@ async fn no_session_id_keeps_old_behavior_without_telemetry_hint() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["content"], "hello");
     assert!(result.output.get("session_recorded").is_none());
+    assert!(result.output.get("session_hint").is_none());
+}
+
+#[tokio::test]
+async fn session_inbox_hint_reports_open_guidance_without_text() {
+    let client_id = "inbox-guidance";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("hint".to_string()));
+    let message_text = "sensitive guidance body should not be in the hint";
+    post_session_message(
+        &runtime,
+        &session.session_id,
+        SessionMessageKind::Guidance,
+        SessionMessagePriority::High,
+        message_text,
+    )
+    .await;
+
+    let result = read_agent_file_for_session(
+        &runtime,
+        client_id,
+        project,
+        Some(session.session_id.clone()),
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let hint = &result.output["session_hint"];
+    assert_eq!(hint["has_open_messages"], true);
+    assert_eq!(hint["open_counts"]["guidance"], 1);
+    assert_eq!(hint["open_counts"]["question"], 0);
+    assert_eq!(hint["open_counts"]["todo"], 0);
+    assert_eq!(hint["open_counts"]["risk"], 0);
+    assert_eq!(hint["highest_priority"], "high");
+    assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+    let serialized_hint = serde_json::to_string(hint).unwrap();
+    assert!(
+        !serialized_hint.contains(message_text),
+        "session_hint leaked message text: {serialized_hint}"
+    );
+}
+
+#[tokio::test]
+async fn session_inbox_hint_counts_question_todo_and_risk() {
+    let client_id = "inbox-counts";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("counts".to_string()));
+    post_session_message(
+        &runtime,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        SessionMessagePriority::Low,
+        "todo body",
+    )
+    .await;
+    post_session_message(
+        &runtime,
+        &session.session_id,
+        SessionMessageKind::Question,
+        SessionMessagePriority::Normal,
+        "question body",
+    )
+    .await;
+    post_session_message(
+        &runtime,
+        &session.session_id,
+        SessionMessageKind::Risk,
+        SessionMessagePriority::Low,
+        "risk body",
+    )
+    .await;
+    post_session_message(
+        &runtime,
+        &session.session_id,
+        SessionMessageKind::Note,
+        SessionMessagePriority::High,
+        "note body must not affect hint",
+    )
+    .await;
+
+    let result = read_agent_file_for_session(
+        &runtime,
+        client_id,
+        project,
+        Some(session.session_id.clone()),
+    )
+    .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let hint = &result.output["session_hint"];
+    assert_eq!(hint["has_open_messages"], true);
+    assert_eq!(hint["open_counts"]["guidance"], 0);
+    assert_eq!(hint["open_counts"]["question"], 1);
+    assert_eq!(hint["open_counts"]["todo"], 1);
+    assert_eq!(hint["open_counts"]["risk"], 1);
+    assert_eq!(hint["highest_priority"], "normal");
+    assert_eq!(hint["suggested_next_tool"], "session_discussion_summary");
+}
+
+#[tokio::test]
+async fn session_inbox_hint_disappears_after_message_resolved() {
+    let client_id = "inbox-resolve";
+    let runtime = runtime_with_agent_project(client_id);
+    register_agent(
+        &runtime,
+        client_id,
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id(client_id);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("resolve".to_string()));
+    let message_id = post_session_message(
+        &runtime,
+        &session.session_id,
+        SessionMessageKind::Todo,
+        SessionMessagePriority::High,
+        "resolve me",
+    )
+    .await;
+
+    let before = read_agent_file_for_session(
+        &runtime,
+        client_id,
+        project.clone(),
+        Some(session.session_id.clone()),
+    )
+    .await;
+    assert!(before.output.get("session_hint").is_some());
+
+    let resolved = runtime
+        .dispatch(ToolCall::ResolveSessionMessage {
+            session_id: session.session_id.clone(),
+            message_id,
+            resolution: Some("done".to_string()),
+        })
+        .await;
+    assert!(resolved.success, "{:?}", resolved.error);
+
+    let after = read_agent_file_for_session(
+        &runtime,
+        client_id,
+        project,
+        Some(session.session_id.clone()),
+    )
+    .await;
+    assert!(after.success, "{:?}", after.error);
+    assert!(after.output.get("session_hint").is_none());
 }
 
 #[tokio::test]

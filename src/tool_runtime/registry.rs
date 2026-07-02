@@ -146,6 +146,48 @@ fn open_object_schema(description: &str) -> Value {
     })
 }
 
+fn session_hint_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "Optional lightweight hint that the recorder session has open guidance, question, todo, or risk messages. Counts only; never includes message text.",
+        "properties": {
+            "has_open_messages": {
+                "type": "boolean",
+                "description": "True when any counted open session-local message exists."
+            },
+            "open_counts": {
+                "type": "object",
+                "description": "Open message counts by counted kind.",
+                "properties": {
+                    "guidance": { "type": "integer", "minimum": 0 },
+                    "question": { "type": "integer", "minimum": 0 },
+                    "todo": { "type": "integer", "minimum": 0 },
+                    "risk": { "type": "integer", "minimum": 0 }
+                },
+                "required": ["guidance", "question", "todo", "risk"],
+                "additionalProperties": false
+            },
+            "highest_priority": {
+                "type": "string",
+                "enum": ["low", "normal", "high"],
+                "description": "Highest priority among counted open messages."
+            },
+            "suggested_next_tool": {
+                "type": "string",
+                "enum": ["session_discussion_summary"],
+                "description": "Tool to call when the model needs the bounded message details."
+            }
+        },
+        "required": [
+            "has_open_messages",
+            "open_counts",
+            "highest_priority",
+            "suggested_next_tool"
+        ],
+        "additionalProperties": false
+    })
+}
+
 fn session_mode_schema(description: &str) -> Value {
     json!({
         "type": "string",
@@ -511,6 +553,7 @@ fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
                 "Session event id for the recorded finished tool call.",
             ),
         ),
+        ("session_hint", session_hint_schema()),
     ]);
     let properties = output_properties
         .into_iter()

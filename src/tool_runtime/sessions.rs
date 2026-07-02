@@ -315,6 +315,22 @@ pub(crate) struct SessionDiscussionSummary {
     pub(crate) recent_decisions: Vec<SessionMessage>,
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+pub(crate) struct SessionInboxOpenCounts {
+    pub(crate) guidance: usize,
+    pub(crate) question: usize,
+    pub(crate) todo: usize,
+    pub(crate) risk: usize,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct SessionInboxHint {
+    pub(crate) has_open_messages: bool,
+    pub(crate) open_counts: SessionInboxOpenCounts,
+    pub(crate) highest_priority: SessionMessagePriority,
+    pub(crate) suggested_next_tool: &'static str,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum SessionMessageError {
     UnknownSession,
@@ -821,6 +837,13 @@ impl SessionStore {
         Ok(build_discussion_summary(record, limit))
     }
 
+    pub(crate) fn inbox_hint(&self, session_id: &str) -> Option<SessionInboxHint> {
+        let mut inner = self.inner.lock().expect("session store mutex poisoned");
+        inner.touch(session_id);
+        let record = inner.sessions.get(session_id)?;
+        build_inbox_hint(record)
+    }
+
     fn push_event(&self, event: SessionEvent) {
         let persisted = {
             let mut inner = self.inner.lock().expect("session store mutex poisoned");
@@ -1304,6 +1327,45 @@ fn build_discussion_summary(record: &SessionRecord, limit: usize) -> SessionDisc
         ),
         recent_progress: take_recent_kind(record, SessionMessageKind::Progress, None, limit),
         recent_decisions: take_recent_kind(record, SessionMessageKind::Decision, None, limit),
+    }
+}
+
+fn build_inbox_hint(record: &SessionRecord) -> Option<SessionInboxHint> {
+    let mut counts = SessionInboxOpenCounts::default();
+    let mut highest_priority = None;
+
+    for message in record
+        .messages
+        .iter()
+        .filter(|message| message.status == SessionMessageStatus::Open)
+    {
+        match message.kind {
+            SessionMessageKind::Guidance => counts.guidance += 1,
+            SessionMessageKind::Question => counts.question += 1,
+            SessionMessageKind::Todo => counts.todo += 1,
+            SessionMessageKind::Risk => counts.risk += 1,
+            _ => continue,
+        }
+        if highest_priority
+            .is_none_or(|priority| priority_rank(message.priority) > priority_rank(priority))
+        {
+            highest_priority = Some(message.priority);
+        }
+    }
+
+    highest_priority.map(|priority| SessionInboxHint {
+        has_open_messages: true,
+        open_counts: counts,
+        highest_priority: priority,
+        suggested_next_tool: "session_discussion_summary",
+    })
+}
+
+fn priority_rank(priority: SessionMessagePriority) -> u8 {
+    match priority {
+        SessionMessagePriority::Low => 0,
+        SessionMessagePriority::Normal => 1,
+        SessionMessagePriority::High => 2,
     }
 }
 

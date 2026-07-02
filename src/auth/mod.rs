@@ -791,9 +791,12 @@ fn is_managed_token_prefix(token: &str) -> bool {
 }
 
 /// SHA-256 hex of a shared key, used for lightweight group isolation. Two
-/// requests presenting the same key land in the same group.
-fn shared_key_hash_of(token: &str) -> String {
+/// requests presenting the same key land in the same group. The shared key is
+/// trimmed before hashing so direct shared-key visibility and the OAuth bridge
+/// derive the same group hash from the same submitted secret.
+pub(crate) fn shared_key_hash_of(token: &str) -> String {
     use sha2::{Digest, Sha256};
+    let token = token.trim();
     let mut hasher = Sha256::new();
     hasher.update(token.as_bytes());
     format!("{:x}", hasher.finalize())

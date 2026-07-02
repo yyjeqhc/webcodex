@@ -121,13 +121,22 @@ GET /oauth/authorize?bridge=shared_key
 POST /oauth/authorize/bridge
 ```
 
+The direct shared-key fallback flag is separate: `WEBCODEX_SHARED_KEY_ENABLED`
+controls direct Bearer shared-key fallback only. `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE`
+controls OAuth bridge shared-key entry. Enabling the bridge flag accepts
+non-empty, non-managed-prefix shared keys in the bridge form and groups the
+resulting OAuth subject by `shared_key_hash`; it does not require direct Bearer
+shared-key fallback to be enabled.
+
 Bridge-issued authorization codes use `subject_kind = shared_key`,
 `subject_id = shared_key_hash`, `user_id = NULL`, and `shared_key_hash`. The
 submitted shared key is trimmed, rejected if empty or `wc_`-prefixed, and only
 its hash is stored. The plaintext shared key is not stored or redirected.
 
 The bridge preserves host OAuth semantics. Blank OAuth client fields do not
-become no-auth, shared-key quick start, or a static Bearer header.
+become no-auth, shared-key quick start, or a static Bearer header. The bridge is
+a deployment/operator feature and is not advertised through non-standard fields
+in OAuth metadata.
 
 ## OAuth bridge implementation constraints
 

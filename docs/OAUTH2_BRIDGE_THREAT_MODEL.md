@@ -37,6 +37,15 @@ Important current design facts:
 - Current-session identity is still keyed by OAuth token semantics; any future
   shared-key OAuth aggregation semantics require an explicit design change.
 
+Bridge flag semantics are intentionally separate from direct shared-key auth:
+`WEBCODEX_SHARED_KEY_ENABLED` controls direct Bearer shared-key fallback, while
+`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE` controls OAuth bridge shared-key entry.
+When the bridge flag is enabled, the bridge accepts non-empty, non-managed-prefix
+shared keys and groups issued OAuth subjects by `shared_key_hash`; it does not
+require direct Bearer shared-key fallback to be enabled. The bridge is an
+operator/deployment feature and is not advertised through non-standard OAuth
+metadata fields.
+
 ## Non-goals
 
 This design does not add or permit:

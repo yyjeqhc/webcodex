@@ -26,7 +26,7 @@
 
 use crate::auth::{
     generate_oauth_access_token, generate_oauth_authorization_code, generate_oauth_refresh_token,
-    hash_token, scopes, AuthContext, AuthKind,
+    hash_token, scopes, shared_key_hash_of, AuthContext, AuthKind,
 };
 use crate::models::{
     OAuthAccessTokenRecord, OAuthAuthorizationCodeRecord, OAuthRefreshTokenRecord,
@@ -730,9 +730,7 @@ fn bridge_shared_key_hash(value: &str) -> Result<String, &'static str> {
         return Err("managed credentials cannot be used as shared keys");
     }
 
-    let mut hasher = Sha256::new();
-    hasher.update(value.as_bytes());
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(shared_key_hash_of(value))
 }
 
 /// Validate a `return_to` value submitted from the login form. It must be a
@@ -3473,6 +3471,22 @@ mod tests {
     }
 
     #[test]
+    fn bridge_shared_key_hash_matches_shared_key_visibility_hash() {
+        assert_eq!(
+            bridge_shared_key_hash("shared-secret").unwrap(),
+            shared_key_hash_of("shared-secret")
+        );
+        assert_eq!(
+            bridge_shared_key_hash("  shared-secret  ").unwrap(),
+            shared_key_hash_of("shared-secret")
+        );
+        assert_eq!(
+            bridge_shared_key_hash("shared-secret").unwrap(),
+            shared_key_hash_of("  shared-secret  ")
+        );
+    }
+
+    #[test]
     fn normalize_oauth_scopes_defaults_to_client_global_intersection() {
         let normalized =
             normalize_oauth_scopes(None, "project:write runtime:read agent:poll admin").unwrap();
@@ -4175,6 +4189,11 @@ mod tests {
         (record, plaintext)
     }
 
+    #[handler]
+    async fn test_agent_register_handler(res: &mut Response) {
+        res.render(Json(serde_json::json!({"ok": true})));
+    }
+
     fn build_router(config: Arc<crate::Config>, db: Arc<crate::Database>) -> Router {
         let session_store = Arc::new(AuthorizeSessionStore::new());
         build_router_with_session(config, db, session_store)
@@ -4204,6 +4223,11 @@ mod tests {
                     .push(Router::with_path("create").post(oauth_clients_create))
                     .push(Router::with_path("list").post(oauth_clients_list))
                     .push(Router::with_path("revoke").post(oauth_clients_revoke)),
+            )
+            .push(
+                Router::with_path("api/shell/agent/register")
+                    .hoop(crate::AuthMiddleware)
+                    .post(test_agent_register_handler),
             )
             .push(Router::with_path(".well-known/oauth-protected-resource").get(oauth_metadata))
             .push(
@@ -4719,6 +4743,85 @@ mod tests {
         assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
         let body: serde_json::Value = resp.take_json().await.unwrap();
         assert_eq!(body["error"], "insufficient_scope");
+    }
+
+    #[tokio::test]
+    async fn bridge_issued_access_token_is_rejected_on_agent_path_without_updating_last_used() {
+        let config = test_config(oauth2_enabled_bridge());
+        let (_tmp, db) = test_db();
+        let user = seed_user(&db, "alice");
+        let (client, secret) = seed_client(&db, &user, "Bridge App");
+        let verifier = "bridge-code-verifier";
+        let challenge = pkce_s256_challenge(verifier);
+        let shared_key = "bridge-shared-secret";
+        let expected_hash = bridge_shared_key_hash(shared_key).unwrap();
+        let service = Service::new(build_router(config, db.clone()));
+
+        let authorize_body = form_body(&[
+            ("bridge", "shared_key"),
+            ("response_type", "code"),
+            ("client_id", &client.client_id),
+            ("redirect_uri", "https://example.com/callback"),
+            ("scope", "runtime:read"),
+            ("state", "state-1"),
+            ("code_challenge", &challenge),
+            ("code_challenge_method", "S256"),
+            ("shared_key", shared_key),
+        ]);
+        let resp = post_form("http://localhost/oauth/authorize/bridge", authorize_body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FOUND));
+        let location = location_header(&resp).expect("success redirect");
+        let parsed = url::Url::parse(&location).unwrap();
+        let params: std::collections::HashMap<String, String> =
+            parsed.query_pairs().into_owned().collect();
+        let code = params.get("code").expect("code").clone();
+
+        let exchange_body = form_body(&[
+            ("grant_type", "authorization_code"),
+            ("code", &code),
+            ("redirect_uri", "https://example.com/callback"),
+            ("client_id", &client.client_id),
+            ("client_secret", &secret),
+            ("code_verifier", verifier),
+        ]);
+        let mut resp = post_form("http://localhost/oauth/token", exchange_body)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::OK));
+        let json: serde_json::Value = resp.take_json().await.unwrap();
+        let access_token = json["access_token"].as_str().unwrap();
+        let (access_token_id, shared_key_hash, before_last_used): (
+            String,
+            Option<String>,
+            Option<i64>,
+        ) = db
+            .conn_for_tests()
+            .query_row(
+                "SELECT id, shared_key_hash, last_used_at FROM oauth_access_tokens WHERE token_hash = ?1",
+                [&hash_token(access_token)],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap();
+        assert_eq!(shared_key_hash.as_deref(), Some(expected_hash.as_str()));
+        assert!(before_last_used.is_none(), "precondition");
+
+        let resp = TestClient::post("http://localhost/api/shell/agent/register")
+            .add_header("authorization", &format!("Bearer {}", access_token), true)
+            .send(&service)
+            .await;
+        assert_eq!(resp.status_code, Some(StatusCode::FORBIDDEN));
+
+        let after_last_used: Option<i64> = db
+            .conn_for_tests()
+            .query_row(
+                "SELECT last_used_at FROM oauth_access_tokens WHERE id = ?1",
+                [&access_token_id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(after_last_used, before_last_used);
     }
 
     #[tokio::test]

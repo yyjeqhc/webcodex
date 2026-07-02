@@ -39,6 +39,14 @@ WebCodex has its own runtime model:
 
 A WebCodex-native instruction layer should describe this environment. It should be called something like **Agent Operating Contract** or **WebCodex Runtime Instruction**. It is not a replacement for `AGENTS.md`, project instructions, or a user's task prompt. It is the stable runtime contract injected by WebCodex so the model knows how to act safely through this runtime.
 
+## Access and onboarding modes
+
+WebCodex access should be layered so temporary convenience paths are not confused with production identity:
+
+- **Open demo mode:** the server must explicitly use `--open` or `WEBCODEX_ALLOW_ANONYMOUS=true`, and the client uses `connect --open`. The generated agent token is empty, so the agent, GPT Actions, and MCP do not send Authorization. This is for localhost, trusted LANs, and temporary demos only; open anonymous callers share one demo current-session principal.
+- **Shared-key quick start mode:** `server up` keeps anonymous access off by default and enables shared-key quick start. The agent and GPT/MCP caller use the same Bearer key, and the server groups them by `shared_key_hash`; callers with the same key can see each other, while different key groups are isolated. A shared key is not an admin token and not a managed user.
+- **Managed production mode:** pairing, `setup single-user`, `wc_pat_*`, and `wc_agent_*` provide the production path for multiple users, revocable tokens, scopes, and audit-friendly ownership. Shared-key quick start should not replace managed production identity.
+
 ## Agent Operating Contract
 
 The operating contract should teach the model the invariant workflow:
@@ -83,6 +91,9 @@ job:
 
 artifact:
   save, inspect, chunked read, generated images, imported files, reports, zips
+
+desktop:
+  screenshot, window inventory, input actions, desktop evidence, replay records
 
 checkpoint:
   create, list, show, delete workspace checkpoints
@@ -154,6 +165,21 @@ WebCodex can improve agent reliability without changing the model by improving e
 
 These are runtime and tool-design improvements. They are as important as adding new tools.
 
+## Artifact bus and evidence artifacts
+
+Artifacts should become a cross-cutting runtime bus, not a narrow file helper. The long-term flow should be:
+
+```text
+ChatGPT upload
+  -> WebCodex artifact
+  -> agent workspace / desktop session
+  -> generated logs, screenshots, builds, reports
+  -> WebCodex artifact
+  -> user download
+```
+
+This supports code review, document transformation, GUI testing, installer validation, build triage, and incident reporting. Artifacts should carry provenance and retention metadata: session id, project id, source, creator, content type, size, SHA-256, preview support, and download routing. Desktop screenshots and before/after evidence should use the same artifact system as generated reports and build outputs.
+
 ## Capability providers
 
 The current `ToolKernel` and metadata foundation should eventually support provider-style capabilities. Providers are backend integrations that implement stable runtime capabilities.
@@ -178,6 +204,9 @@ Docker/systemd/nginx/cert providers:
 
 Artifact providers:
   generated images, PDFs, zips, imported files, reports
+
+Desktop providers:
+  screenshot, window_list, focus_window, input control, action_trace
 
 Message providers:
   future email, chat, webhook, or agent-to-agent notifications
@@ -224,6 +253,20 @@ WebCodex can become useful as an AI operations control plane before it becomes a
 
 This direction must be policy-first. Read-only diagnostics should be separate from mutating operations. Restart, delete, deploy, raw shell, and admin-class operations should have explicit scopes, risk metadata, and approval semantics.
 
+## Desktop Sessions / Computer Use direction
+
+Computer use should be treated as a future visual execution backend for WebCodex, not as naked mouse control. The product concept is **WebCodex Desktop Sessions**: controlled, auditable, replayable desktop engineering sessions. See [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) for the detailed strategy.
+
+The useful loop is:
+
+```text
+observe -> decide/propose -> authorize -> act -> verify -> record -> replay/report
+```
+
+This direction covers engineering scenarios where API, CLI, and MCP surfaces are missing or incomplete: Windows installer tests, GUI application smoke tests, browser workflows with login state, IDE-assisted debugging, OBS or web build platform operation, Electron/Qt testing, remote desktop distribution testing, and game or AI game debugging.
+
+Desktop authority should be separate from shell authority. Screenshot and window inventory can be low-risk observation tools; clipboard, keyboard, mouse, and autonomous visual loops require stronger session policy and explicit approval. Screenshots should become evidence artifacts, with records such as `before.png`, `action.json`, `after.png`, and `observation.md` for critical actions. The default deployment posture should recommend VMs, test accounts, temporary desktops, and dedicated OS users rather than a user's primary desktop.
+
 ## Multi-agent and open-world direction
 
 A long-term extension of WebCodex is a shared agent runtime space:
@@ -253,18 +296,21 @@ Recent WebCodex work already points toward this architecture:
 - `tool_manifest` makes runtime introspection more compact and ergonomic.
 - `apply_text_edits` and line-edit tools reduce reliance on shell-based source rewriting.
 - Artifact read/write tools prepare the runtime for generated media, imported files, reports, and future world objects.
+- Lightweight onboarding now has explicit open demo, shared-key quick start, and managed production layers.
+- Desktop Session design gives future Computer Use a place in the runtime without reducing it to raw coordinate clicking.
 
 The next step is to keep these features coherent under one architecture rather than letting them become unrelated utilities.
 
 ## Near-term priorities
 
 1. Finish project identity ergonomics: resolver, validation, and clear ambiguity errors.
-2. Keep OAuth2 and GPT Action/MCP setup documented as first-class entry points.
+2. Keep open demo, shared-key quick start, managed production, and GPT Action/MCP setup documented as first-class entry points.
 3. Strengthen `tool_manifest`, `ToolMetadata`, and recommended flows so models choose safer tools.
 4. Expand session semantics carefully: persistence, message board, guards, and current-session rules must stay consistent.
-5. Add policy-first operations capabilities before dangerous remediation tools.
-6. Design provider abstractions before implementing LSP, Tree-sitter, systemd, Docker, or messaging integrations.
-7. Treat design documents as architecture constraints, not marketing text.
+5. Productize the artifact bus before building broad desktop automation.
+6. Add policy-first operations capabilities before dangerous remediation tools.
+7. Design provider abstractions before implementing LSP, Tree-sitter, systemd, Docker, messaging, or desktop providers.
+8. Treat design documents as architecture constraints, not marketing text.
 
 ## Non-goals
 
@@ -274,6 +320,7 @@ This document does not require immediate implementation of:
 - Tree-sitter indexing;
 - a plugin marketplace;
 - multi-agent open-world hosting;
+- unrestricted computer use or generic RPA;
 - image generation or message sending;
 - read-only shell policy redesign;
 - a replacement for existing GPT Action or MCP compatibility.

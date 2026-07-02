@@ -25,14 +25,15 @@
 
 ## 战略设计文档
 
-14. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — WebCodex 长期 runtime 架构：agent operating contract、tool standard library、execution IR、安全模型、optimizer、capability providers、coding、operations 和 multi-agent 方向。
+14. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — WebCodex 长期 runtime 架构：access modes、agent operating contract、tool standard library、execution IR、安全模型、optimizer、artifact bus、desktop sessions、providers、coding、operations 和 multi-agent 方向。
+15. [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) / [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) — 未来 WebCodex Desktop Session 战略：面向工程工作流的可控、可审计、可回放 computer-use session。
 
 ## 建议保留的参考文档
 
-15. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — 构建/安装快速参考；内容与部署文档有重叠，但适合作为命令速查。
-16. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) — agent auth、identity、protocol 和 policy 摘要。
-17. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — 本地端到端验证脚本和文档扫描建议。
-18. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — GPT Actions 和 MCP 设置截图说明。
+16. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — 构建/安装快速参考；内容与部署文档有重叠，但适合作为命令速查。
+17. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) — agent auth、identity、protocol 和 policy 摘要。
+18. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — 本地端到端验证脚本和文档扫描建议。
+19. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — GPT Actions 和 MCP 设置截图说明。
 
 ## 已从公开文档集中移除
 

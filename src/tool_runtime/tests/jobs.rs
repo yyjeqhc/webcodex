@@ -1071,6 +1071,7 @@ async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
     let shared = shared_key_auth_context("hash-local");
     let bridge = oauth_bridge_auth_context("hash-local", &[crate::auth::SCOPE_JOB_RUN]);
     let open = open_auth_context();
+    let managed_oauth = managed_oauth_auth_context("alice", Some("hash-local"));
     let bootstrap = bootstrap_auth_context();
 
     for auth in [&shared, &bridge, &open] {
@@ -1095,6 +1096,27 @@ async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
                 .await,
         );
     }
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ListJobs {
+                limit: None,
+                status: None,
+            },
+            Some(&managed_oauth),
+        )
+        .await;
+    assert_eq!(listed_job_ids(&result), vec!["job-local".to_string()]);
+    let status = runtime
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id: "job-local".to_string(),
+            },
+            Some(&managed_oauth),
+        )
+        .await;
+    assert!(status.success, "{:?}", status.error);
+    assert_eq!(status.output["job_id"], "job-local");
 
     let result = runtime
         .dispatch_with_auth(

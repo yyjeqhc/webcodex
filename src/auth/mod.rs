@@ -619,7 +619,7 @@ impl TokenVerifier for OAuth2Verifier {
                     is_bootstrap: false,
                     token_kind: Some("oauth2".to_string()),
                     allowed_client_id: Some(at_record.client_id.clone()),
-                    shared_key_hash: at_record.shared_key_hash.clone(),
+                    shared_key_hash: None,
                 }
             }
             "shared_key" => {
@@ -2112,7 +2112,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn oauth2_verifier_preserves_bridge_shared_key_hash() {
+    async fn oauth2_verifier_ignores_managed_user_stray_shared_key_hash() {
         let config = gate_test_config_oauth2(Some("secret"));
         let (_tmp, db) = gate_test_db();
         let user = gate_seed_user(&db, "alice");
@@ -2130,11 +2130,13 @@ mod tests {
             .verify(&config, Some(&db), &plaintext)
             .await
             .unwrap()
-            .expect("bridge access token should verify");
+            .expect("managed-user access token should verify");
         assert_eq!(ctx.kind, AuthKind::OAuth2Token);
         assert_eq!(ctx.user_id.as_deref(), Some(user.id.as_str()));
         assert_eq!(ctx.username.as_deref(), Some(user.username.as_str()));
-        assert_eq!(ctx.shared_key_hash.as_deref(), Some("test-hash-a"));
+        assert_eq!(ctx.token_kind.as_deref(), Some("oauth2"));
+        assert_eq!(ctx.shared_key_hash, None);
+        assert!(!ctx.is_oauth_shared_key_subject());
     }
 
     #[tokio::test]
@@ -2169,6 +2171,7 @@ mod tests {
             Some(client.client_id.as_str())
         );
         assert_eq!(ctx.shared_key_hash.as_deref(), Some("test-hash-a"));
+        assert!(ctx.is_oauth_shared_key_subject());
         assert!(ctx.scopes.contains(&"runtime:read".to_string()));
         assert!(!ctx.is_admin());
 

@@ -91,7 +91,9 @@ impl ShellClientAuthGroup {
     pub(crate) fn from_auth(auth: &crate::auth::AuthContext) -> Option<Self> {
         match auth.kind {
             crate::auth::AuthKind::SharedKey => auth.shared_key_hash.clone().map(Self::SharedKey),
-            crate::auth::AuthKind::OAuth2Token => auth.shared_key_hash.clone().map(Self::SharedKey),
+            crate::auth::AuthKind::OAuth2Token if auth.is_oauth_shared_key_subject() => {
+                auth.shared_key_hash.clone().map(Self::SharedKey)
+            }
             crate::auth::AuthKind::OpenAnonymous => Some(Self::OpenAnonymous),
             _ => None,
         }
@@ -3654,6 +3656,25 @@ mod tests {
         }
     }
 
+    fn managed_oauth_auth_context(
+        username: &str,
+        shared_key_hash: Option<&str>,
+    ) -> crate::auth::AuthContext {
+        crate::auth::AuthContext {
+            kind: crate::auth::AuthKind::OAuth2Token,
+            user_id: Some(format!("user-{}", username)),
+            username: Some(username.to_string()),
+            api_key_id: Some("oauth-access-token".to_string()),
+            api_key_name: None,
+            role: Some("user".to_string()),
+            scopes: Vec::new(),
+            is_bootstrap: false,
+            token_kind: Some("oauth2".to_string()),
+            allowed_client_id: Some("oauth-client".to_string()),
+            shared_key_hash: shared_key_hash.map(str::to_string),
+        }
+    }
+
     fn project_summary(id: &str, path: &str) -> ShellAgentProjectSummary {
         ShellAgentProjectSummary {
             id: id.to_string(),
@@ -3754,11 +3775,7 @@ mod tests {
         let shared_a = shared_key_auth_context("hash-a");
         let shared_b = shared_key_auth_context("hash-b");
         let bridge_a = oauth_bridge_auth_context("hash-a", vec![]);
-        let managed_oauth = oauth_bridge_auth_context("", vec![]);
-        let managed_oauth = crate::auth::AuthContext {
-            shared_key_hash: None,
-            ..managed_oauth
-        };
+        let managed_oauth = managed_oauth_auth_context("alice", Some("hash-a"));
         let open = open_auth_context();
         let bootstrap = auth_context(None, true);
 
@@ -3858,7 +3875,25 @@ mod tests {
             ShellClientAuthGroup::from_auth(&bridge_a),
             Some(ShellClientAuthGroup::SharedKey("hash-a".to_string()))
         );
+        assert!(bridge_a.is_oauth_shared_key_subject());
         assert_eq!(ShellClientAuthGroup::from_auth(&managed_oauth), None);
+        assert!(!managed_oauth.is_oauth_shared_key_subject());
+        let visible_to_managed_oauth: Vec<String> = registry
+            .list_clients_for_auth(Some(&managed_oauth))
+            .await
+            .into_iter()
+            .map(|c| c.client_id)
+            .collect();
+        assert_eq!(visible_to_managed_oauth, vec!["managed"]);
+        assert!(registry
+            .assert_client_access(Some(&managed_oauth), "managed")
+            .await
+            .is_ok());
+        assert!(registry
+            .assert_client_access(Some(&managed_oauth), "shared-a")
+            .await
+            .unwrap_err()
+            .contains("unknown shell client"));
 
         let visible_to_bootstrap: Vec<String> = registry
             .list_clients_for_auth(Some(&bootstrap))

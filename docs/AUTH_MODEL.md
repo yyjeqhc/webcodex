@@ -9,6 +9,7 @@ WebCodex separates bootstrap administration, account onboarding, runtime API acc
 | Credential | Used by | Purpose | Do not use for |
 | --- | --- | --- | --- |
 | `WEBCODEX_TOKEN` | server admin | bootstrap/root admin | GPT/MCP/agent daily use |
+| shared key | agent + GPT/MCP quick start | shared-key group onboarding | production IAM/admin |
 | `wc_acct_xxx` | user CLI | create local PAT/agent token | GPT/MCP/agent |
 | `wc_pat_xxx` | GPT Action/MCP/API | runtime tools | agent connection |
 | `wc_agent_xxx` | `webcodex-agent` | connect agent to server | GPT/MCP/runtime API |
@@ -18,6 +19,18 @@ WebCodex separates bootstrap administration, account onboarding, runtime API acc
 `WEBCODEX_TOKEN` is the server bootstrap/root/admin credential. It is configured in the server environment and is used for first-user creation and emergency administration.
 
 Do not put `WEBCODEX_TOKEN` in GPT Actions, MCP clients, or day-to-day agent configs.
+
+## Shared key quick start
+
+A shared key is a quick-start secret supplied to `connect --key <KEY>` and to GPT Actions or MCP only when the host supports static bearer/API-key authentication. It is sent as:
+
+```text
+Authorization: Bearer <KEY>
+```
+
+The server groups shared-key callers by `shared_key_hash`. A shared key is not an admin credential, not a managed user identity, and not production IAM.
+
+Static bearer/API-key host auth can be used with either a shared key for quick start or a `wc_pat_xxx` token for managed mode. OAuth is a separate flow; blank OAuth client fields do not become no-auth or static bearer.
 
 ## `wc_acct_xxx`
 

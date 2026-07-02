@@ -9,6 +9,7 @@ WebCodex 把 bootstrap administration、account onboarding、runtime API access 
 | Credential | 使用方 | 用途 | 不要用于 |
 | --- | --- | --- | --- |
 | `WEBCODEX_TOKEN` | server admin | bootstrap/root admin | GPT/MCP/agent 日常使用 |
+| shared key | agent + GPT/MCP quick start | shared-key group onboarding | production IAM/admin |
 | `wc_acct_xxx` | user CLI | 创建本地 PAT/agent token | GPT/MCP/agent |
 | `wc_pat_xxx` | GPT Action/MCP/API | runtime tools | agent connection |
 | `wc_agent_xxx` | `webcodex-agent` | 连接 agent 到 server | GPT/MCP/runtime API |
@@ -18,6 +19,18 @@ WebCodex 把 bootstrap administration、account onboarding、runtime API access 
 `WEBCODEX_TOKEN` 是 server bootstrap/root/admin credential。它配置在 server environment 中，用于 first-user creation 和 emergency administration。
 
 不要把 `WEBCODEX_TOKEN` 放进 GPT Actions、MCP clients 或日常 agent configs。
+
+## Shared key quick start
+
+shared key 是 quick-start secret：agent 通过 `connect --key <KEY>` 使用它；GPT Actions 或 MCP 只有在 Host 支持静态 Bearer/API-key 认证时才使用它。请求形态是：
+
+```text
+Authorization: Bearer <KEY>
+```
+
+server 按 `shared_key_hash` 给 shared-key caller 分组。shared key 不是 admin credential，不是 managed user identity，也不是 production IAM。
+
+静态 Bearer/API-key 认证既可以承载 shared key，也可以承载 managed mode 的 `wc_pat_xxx`。OAuth 是独立 flow；OAuth client 字段留空不会变成 no-auth，也不会变成静态 Bearer。
 
 ## `wc_acct_xxx`
 

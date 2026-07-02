@@ -15,9 +15,9 @@
 4. [OPERATIONS.md](OPERATIONS.md) — server 初始化、client enrollment、pairing、项目注册、token 模型、session 工作流和 smoke 测试。
 5. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) — 第一次 server 部署、第一次 client enrollment、service 模式、非 service 前台/后台模式，以及 PATH/shell-profile 处理。
 6. [DEPLOYMENT.md](DEPLOYMENT.md) / [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) — 生产部署、server bootstrap、agent service、账户凭据、enrollment 和运维流程。
-7. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) — 创建 GPT Action、导入 OpenAPI、配置 `wc_pat_xxx` 认证并使用 runtime tools。
-8. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) — MCP endpoint、`wc_pat_xxx` 认证、客户端配置示例和排障。
-9. [AUTH_MODEL.md](AUTH_MODEL.md) / [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md) — `WEBCODEX_TOKEN`、`wc_acct_xxx`、`wc_pat_xxx`、`wc_agent_xxx`、`client_id`、runtime project id 和 hash storage。
+7. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) — 创建 GPT Action、导入 OpenAPI、用 shared key 或 `wc_pat_xxx` 配置静态 Bearer/API-key 认证并使用 runtime tools。
+8. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) — MCP endpoint、用 shared key 或 `wc_pat_xxx` 配置静态 Bearer/API-key 认证、客户端配置示例和排障。
+9. [AUTH_MODEL.md](AUTH_MODEL.md) / [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md) — shared key、`WEBCODEX_TOKEN`、`wc_acct_xxx`、`wc_pat_xxx`、`wc_agent_xxx`、`client_id`、runtime project id 和 hash storage。
 10. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) / [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) — agent `projects.d/*.toml` 注册格式、顶层 `id/path` 和项目管理工具。
 11. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) — QUIC、WebSocket、polling、`auto` fallback 和 transport validation。
 12. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) — prepared shell env snapshots、profile 配置、解析规则和安全边界。

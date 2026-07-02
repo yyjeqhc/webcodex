@@ -157,29 +157,25 @@ Current implementations:
   and client-revoked tokens. Returns `Ok(None)` for non-`wc_oat_*` tokens,
   allowing `PatVerifier` to handle them.
 
-## OAuth2 extension points (future phase)
+## OAuth2 implementation status
 
-The following items are reserved for the OAuth2 implementation:
+The current bearer pipeline is:
 
-| Item | Type | Status |
-| --- | --- | --- |
-| `AuthMethod::OAuth2` | Enum variant | Defined, not yet constructed |
-| `OAuth2Verifier` | Struct | Stub — always returns "not recognized" |
-| `Principal::from_oauth2_claims_stub()` | Method | Returns `Err` (placeholder) |
+1. Extract bearer token.
+2. Try `PatVerifier` first for bootstrap, PATs, agent tokens, and account
+   credentials.
+3. If `PatVerifier` returns `None`, try `OAuth2Verifier`.
+4. `OAuth2Verifier` validates WebCodex-issued opaque `wc_oat_*` access tokens
+   and maps them to `AuthKind::OAuth2Token`.
 
-When OAuth2 is implemented, the pipeline will be:
+PATs and OAuth2 access tokens coexist on regular HTTP API and MCP paths.
+OAuth2 access tokens remain rejected on agent transport paths. JWT/JWKS/OIDC
+metadata can be added later where required by MCP or OIDC clients.
 
-1. Extract bearer token
-2. Try `PatVerifier` first (existing PAT/agent tokens)
-3. If `PatVerifier` returns `None`, try `OAuth2Verifier`
-4. `OAuth2Verifier` validates the token and maps claims to `AuthContext`
-
-`OAuth2Verifier` will validate WebCodex-issued OAuth2 access tokens. The
-initial implementation may use opaque DB-backed access tokens.
-JWT/JWKS/OIDC metadata can be added later where required by MCP clients.
-
-No OAuth2 endpoints will be exposed in this phase. The GPT Actions / MCP /
-REST surface continues to accept only the existing token formats.
+A bearer-like OAuth bridge for OAuth-only hosts is future work. It may let a
+user enter a shared key on a WebCodex-hosted OAuth authorization page and
+receive an OAuth access token, but it would still be an OAuth flow, not static
+Bearer/API-key auth and not blank OAuth fields.
 
 ## Scopes
 

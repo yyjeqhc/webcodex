@@ -38,7 +38,7 @@ GPT Actions 和 MCP 共享同一个 `ToolRuntime`。GPT Actions 提供 typed RES
 
    ![设置 Action 认证](assets/gpt-action-4.png)
 
-   选择 API key / HTTP authentication，把 auth type 设置为 **Bearer**，并粘贴 `wc_pat_xxx` personal API token。不要使用 `WEBCODEX_TOKEN`、`wc_acct_xxx` 或 `wc_agent_xxx`。
+   选择 API key / HTTP authentication，把 auth type 设置为 **Bearer**。quick start 粘贴 shared key；managed mode 粘贴 `wc_pat_xxx` personal API token。shared-key quick start 不要选择 OAuth。不要使用 `WEBCODEX_TOKEN`、`wc_acct_xxx` 或 `wc_agent_xxx`。
 
 5. **导入 OpenAPI schema 并填写必要 metadata。**
 
@@ -57,9 +57,11 @@ GPT Actions 和 MCP 共享同一个 `ToolRuntime`。GPT Actions 提供 typed RES
 
 ## 认证
 
-在 GPT Action 设置中配置 Bearer/API-key 认证。secret 值必须是 `wc_pat_xxx` personal API token。
+在 GPT Action 设置中配置 Bearer/API-key 认证。静态 Bearer/API-key 认证既可以承载 shared key，也可以承载 managed mode 的 `wc_pat_xxx`。
 
-推荐流程：管理员签发一次性的 `wc_acct_xxx` account credential，用户再运行 `webcodex-cli token create-local`，在本地生成 `wc_pat_xxx`，服务器只登记它的 hash。
+生产部署推荐流程：管理员签发一次性的 `wc_acct_xxx` account credential，用户再运行 `webcodex-cli token create-local`，在本地生成 `wc_pat_xxx`，服务器只登记它的 hash。
+
+OAuth 是独立 flow。OAuth client 字段留空通常表示 Host 可能尝试 OAuth metadata discovery、dynamic client registration 或 client metadata discovery；它不会变成 no-auth，也不会变成静态 Bearer。
 
 不要把 `WEBCODEX_TOKEN`、`wc_acct_xxx` 或 `wc_agent_xxx` 粘贴到 GPT Actions 或 MCP 凭据中：
 
@@ -73,12 +75,12 @@ GPT Actions 要求 WebCodex server 有 public HTTPS URL。
 
 ## Token 选择
 
-- GPT Actions / MCP / `/api/tools/list` / `/api/tools/call`：使用 `wc_pat_xxx`。
+- GPT Actions / MCP / `/api/tools/list` / `/api/tools/call`：quick start 使用 shared key；managed mode 使用 `wc_pat_xxx`。
 - Server bootstrap 和 emergency admin：使用 `WEBCODEX_TOKEN`。
 - 本地自助注册 PAT / agent token：只在 `webcodex-cli token create-local` 或 `webcodex-cli agent-token create-local` 中使用 `wc_acct_xxx`。
 - Agent 连接：只在 `webcodex-agent` config 中使用 `wc_agent_xxx`。
 
-如果 GPT Action 配置成 `wc_acct_xxx`，它不能调用 runtime tools，而且会把错误类型的 secret 暴露到错误的 surface。应生成 PAT：
+如果 GPT Action 配置成 `wc_acct_xxx`，它不能调用 runtime tools，而且会把错误类型的 secret 暴露到错误的 surface。managed mode 应生成 PAT：
 
 ```bash
 webcodex-cli token create-local \

@@ -2,10 +2,11 @@
 
 ## Status
 
-Phase 2e-2 authorization server metadata and authorize identity hardening.
-`/oauth/authorize` is mounted behind `AuthMiddleware`; after successful
-validation it issues an authorization code and redirects back to the validated
-client redirect URI.
+Phase 2e-3 client management and minimal authorize UX. `/oauth/authorize`
+accepts either a first-party Bearer PAT for direct authorization-code issuance
+or a short-lived first-party authorize-session cookie for the browser login and
+consent path. After successful validation it issues an authorization code and
+redirects back to the validated client redirect URI.
 
 This document is the implementation contract for Phase 2e. It describes the
 request contract, state machine, security invariants, storage shape, and test
@@ -24,7 +25,9 @@ Implemented in Phase 2e-1a:
 
 Implemented in Phase 2e-1b:
 
-- `GET /oauth/authorize` mounted behind `AuthMiddleware`.
+- `GET /oauth/authorize` mounted behind `AuthMiddleware` for the initial
+  validation phase; Phase 2e-3 replaced this with handler self-validation for
+  Bearer PAT and authorize-session identity.
 - OAuth2 enable gate and authenticated `AuthContext.user_id` requirement.
 - Client lookup and exact registered `redirect_uri` validation.
 - Direct 400 errors before `client_id` and `redirect_uri` are trusted.
@@ -58,11 +61,21 @@ Implemented in Phase 2e-2:
   `token_endpoint_auth_methods_supported = ["client_secret_post", "none"]`,
   and `scopes_supported` from the global OAuth scope registry.
 
+Implemented in Phase 2e-3:
+
+- First-party OAuth client management API:
+  `/api/oauth/clients/{create,list,revoke}`.
+- Minimal browser login + consent UX on `/oauth/authorize`, backed by a
+  short-lived in-memory first-party session cookie.
+- Bearer PAT direct authorization-code issuance remains supported; OAuth2
+  access tokens, agent tokens, account credentials, and bootstrap are rejected
+  as authorize identities.
+
 Still not implemented:
 
 - OpenID Connect metadata (`/.well-known/openid-configuration`).
-- Route-level OAuth scope enforcement.
 - MCP resource/audience binding.
+- Bearer-like OAuth bridge for OAuth-only hosts.
 
 ## Goals
 
@@ -75,41 +88,43 @@ Still not implemented:
 
 ## Non-goals
 
-- No `/oauth/authorize` route in Phase 2e-0. Phase 2e-1b mounts the route for
-  validation only.
-- No HTML login page, username/password flow, consent page, or third-party
-  cookie session.
-- No changes to `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, or
-  `AuthMiddleware` behavior.
+- No full username/password account system; the current login page accepts a
+  first-party PAT and creates only a short-lived authorize-session cookie.
+- No third-party cookie session or persistent DB-backed browser session.
+- No changes to `/oauth/token`, `/oauth/revoke`, `OAuth2Verifier`, or existing
+  PAT behavior.
 - No `/.well-known/openid-configuration`.
 - No MCP `securitySchemes` changes, GPT Action configuration changes,
-  `client_credentials` grant, device code flow, route-level scope enforcement,
-  JWT, JWKS, or broad auth architecture refactor.
+  `client_credentials` grant, device code flow, JWT, JWKS, or broad auth
+  architecture refactor.
+
+## Bearer-like OAuth bridge
+
+A bearer-like OAuth bridge is future work. It may let a user enter a shared key
+on a WebCodex-hosted OAuth authorization page and receive an OAuth access token
+for OAuth-only hosts.
+
+That bridge would preserve host OAuth semantics. It would not make blank OAuth
+client fields behave like no-auth, shared-key quick start, or a static Bearer
+header.
 
 ## Identity Source
 
-Phase 2e-1 should implement an authenticated first-party authorization
-endpoint:
+The current authorize endpoint accepts first-party WebCodex identity through
+two paths:
 
-- `GET /oauth/authorize` is protected by the existing `AuthMiddleware`.
-- The caller must already hold first-party WebCodex auth. The authorize
-  handler allowlist accepts `AuthKind::Bootstrap` and `AuthKind::ApiToken`.
+- `GET /oauth/authorize` with a first-party Bearer PAT whose `AuthContext`
+  includes a concrete `user_id` may issue an authorization code directly.
+- Browser login posts a PAT to `/oauth/authorize/login`, stores only an opaque
+  short-lived authorize-session cookie, and then `/oauth/authorize/consent`
+  revalidates client, redirect URI, scopes, and PKCE before issuing a code.
 - OAuth2 access tokens cannot be used to obtain new authorization codes.
-- Agent tokens and account credentials are not valid authorize identities; if
-  they reach the handler, they are rejected, and existing AuthMiddleware
-  surface gates may reject them earlier.
-- The authorizing user is `AuthContext.user_id`.
-- Requests with no authenticated user must fail and must not create a code.
-- No independent browser username/password login page is introduced.
-- No third-party cookie session is introduced.
-- No consent UI is introduced in the first implementation.
+- Agent tokens, account credentials, and bootstrap are not valid authorize
+  identities. Bootstrap is rejected because it has no `user_id` to bind an
+  authorization code to.
+- Requests with no authenticated user show the minimal login page or fail
+  validation; they must not create a code.
 - Approval is first-party and based on a registered client plus allowed scopes.
-
-If `AuthMiddleware` later proves unsuitable for browser-based sign-in because
-it only supports bearer-token authentication, the compatible alternative is to
-add a first-party WebCodex browser session layer and map that session to the
-same `AuthContext` shape. That is explicitly a later phase; Phase 2e-1 should
-use AuthMiddleware.
 
 ## Request Parameters
 
@@ -378,7 +393,7 @@ Do not advertise unimplemented features:
 - No `jwks_uri`, `userinfo_endpoint`, registration endpoint, device
   authorization endpoint, introspection endpoint, claims metadata, or ID token
   signing algorithms.
-- No route-level scope enforcement or MCP resource/audience binding yet.
+- No MCP resource/audience binding yet.
 
 ## Implementation Sequencing
 
@@ -386,18 +401,20 @@ Completed Phase 2e-1 order:
 
 1. Add authorize request parsing and error types.
 2. Add scope normalization helper and tests.
-3. Mount `GET /oauth/authorize` behind `AuthMiddleware`.
+3. Mount `GET /oauth/authorize` and validate first-party Bearer PAT or
+   authorize-session identity in the handler.
 4. Implement client and exact redirect URI validation.
 5. Implement post-redirect-trust validation for `response_type`, PKCE,
    `scope`, and `resource`.
 6. Insert hashed authorization code metadata on validation success.
 7. Redirect with plaintext `code` and decoded/re-encoded `state`.
 8. Add authorization server metadata in the next metadata phase.
+9. Add first-party client management and the minimal browser login/consent UX.
 
 ## Open Questions
 
-- Should a later browser UI introduce explicit consent for third-party
-  clients, or will WebCodex continue treating all registered OAuth clients as
+- Should a later browser UI add richer consent semantics for third-party
+  clients, or will WebCodex continue treating registered OAuth clients as
   first-party integrations?
 - Should `resource` become required for MCP-bound tokens once audience
   enforcement exists?

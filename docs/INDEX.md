@@ -15,9 +15,9 @@ Start with the product README ([English](../README.md), [简体中文](../README
 4. [OPERATIONS.md](OPERATIONS.md) — server initialization, client enrollment, pairing, project registration, token model, session workflow, and smoke testing.
 5. [QUICK_START.md](QUICK_START.md) / [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) — first server deployment, first client enrollment, service mode, no-service foreground/background modes, and PATH/shell-profile handling.
 6. [DEPLOYMENT.md](DEPLOYMENT.md) / [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) — production server bootstrap, agent service installation, account credential onboarding, enrollment, and operations guide.
-7. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) — create a GPT Action, import OpenAPI, configure `wc_pat_xxx` auth, and use runtime tools.
-8. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) — MCP endpoint, `wc_pat_xxx` auth, example client config, and troubleshooting.
-9. [AUTH_MODEL.md](AUTH_MODEL.md) / [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md) — `WEBCODEX_TOKEN`, `wc_acct_xxx`, `wc_pat_xxx`, `wc_agent_xxx`, `client_id`, runtime project ids, and hash storage.
+7. [GPT_ACTIONS.md](GPT_ACTIONS.md) / [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) — create a GPT Action, import OpenAPI, configure static Bearer/API-key auth with a shared key or `wc_pat_xxx`, and use runtime tools.
+8. [MCP.md](MCP.md) / [MCP.zh-CN.md](MCP.zh-CN.md) — MCP endpoint, static Bearer/API-key auth with a shared key or `wc_pat_xxx`, example client config, and troubleshooting.
+9. [AUTH_MODEL.md](AUTH_MODEL.md) / [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md) — shared key, `WEBCODEX_TOKEN`, `wc_acct_xxx`, `wc_pat_xxx`, `wc_agent_xxx`, `client_id`, runtime project ids, and hash storage.
 10. [AGENT_PROJECTS.md](AGENT_PROJECTS.md) / [AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) — agent `projects.d/*.toml` registry format, top-level `id/path`, and project management tools.
 11. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) — QUIC, WebSocket, polling, `auto` fallback, and transport validation.
 12. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) — prepared shell env snapshots, profile config, resolution rules, and safety boundaries.

@@ -152,7 +152,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         "info": {
             "title": "WebCodex Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. runCodexTask is optional delegation only when Codex CLI is installed and the user explicitly wants a Codex subtask. All endpoints require Bearer auth; GPT Actions and MCP should use a personal API token. MCP and GPT Actions share the same ToolRuntime."
+            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. runCodexTask is optional delegation only when Codex CLI is installed and the user explicitly wants a Codex subtask. All endpoints require Bearer auth; static bearer/API-key hosts may use a shared key for quick start or wc_pat_* for managed mode. MCP and GPT Actions share the same ToolRuntime."
         },
         "servers": [
             {
@@ -839,7 +839,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "bearerAuth": {
                     "type": "http",
                     "scheme": "bearer",
-                    "description": "Bearer token. GPT Actions and MCP should send a Phase 2 personal API token; WEBCODEX_TOKEN is the server bootstrap/admin credential."
+                    "description": "Bearer token. Static bearer/API-key hosts may send a shared key for quick start or wc_pat_* for managed mode; WEBCODEX_TOKEN is the server bootstrap/admin credential."
                 }
             },
             "schemas": schemas()

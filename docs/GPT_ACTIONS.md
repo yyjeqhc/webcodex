@@ -38,7 +38,7 @@ Use the screenshots with the checklist below:
 
    ![Set Action authentication](assets/gpt-action-4.png)
 
-   Choose API key / HTTP authentication, set the auth type to **Bearer**, and paste a `wc_pat_xxx` personal API token. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
+   Choose API key / HTTP authentication, set the auth type to **Bearer**, and paste either the shared key for quick start or a `wc_pat_xxx` personal API token for managed mode. Do not choose OAuth for the shared-key quick start. Do not use `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx`.
 
 5. **Import the OpenAPI schema and required metadata.**
 
@@ -57,9 +57,11 @@ Use the screenshots with the checklist below:
 
 ## Authentication
 
-Configure the GPT Action with Bearer/API-key authentication in the GPT Action settings. The secret value must be a `wc_pat_xxx` personal API token.
+Configure the GPT Action with Bearer/API-key authentication in the GPT Action settings. Static bearer/API-key host auth can be used with either a shared key for quick start or a `wc_pat_xxx` token for managed mode.
 
-Use a `wc_pat_xxx` personal API token for GPT Actions and MCP. The recommended explicit flow is: an administrator issues a one-time `wc_acct_xxx` account credential, then the user runs `webcodex-cli token create-local` locally to generate a `wc_pat_xxx` and register only its hash with the server.
+For production, use a `wc_pat_xxx` personal API token for GPT Actions and MCP. The recommended explicit flow is: an administrator issues a one-time `wc_acct_xxx` account credential, then the user runs `webcodex-cli token create-local` locally to generate a `wc_pat_xxx` and register only its hash with the server.
+
+OAuth is a separate flow. Blank OAuth client fields usually mean the host may attempt OAuth metadata discovery, dynamic client registration, or client metadata discovery; they do not become no-auth or static bearer.
 
 Do not paste or store `WEBCODEX_TOKEN`, `wc_acct_xxx`, or `wc_agent_xxx` as a GPT Actions or MCP credential. `WEBCODEX_TOKEN` is only for server bootstrap/root/admin work, `wc_acct_xxx` is only for local token self-registration, and `wc_agent_xxx` is only for `webcodex-agent` WebSocket connectivity. Pairing/enrollment remains available as a shortcut: `webcodex-cli pairing create` creates a short-lived `wc_pair_*` code on the server/admin side, and `webcodex-cli client enroll` exchanges that code on the client side.
 
@@ -72,12 +74,12 @@ GPT Actions require a public HTTPS URL for the WebCodex server.
 
 Credential purpose summary:
 
-- GPT Actions / MCP / `/api/tools/list` / `/api/tools/call`: use `wc_pat_xxx`.
+- GPT Actions / MCP / `/api/tools/list` / `/api/tools/call`: use the shared key for quick start, or `wc_pat_xxx` for managed mode.
 - Server bootstrap and emergency admin: use `WEBCODEX_TOKEN`.
 - Local self-registration of PATs and agent tokens: use `wc_acct_xxx` only with `webcodex-cli token create-local` or `webcodex-cli agent-token create-local`.
 - Agent connection: use `wc_agent_xxx` only in `webcodex-agent` config.
 
-A GPT Action configured with `wc_acct_xxx` will not be able to call runtime tools and leaks the wrong secret into the wrong surface. Generate a PAT instead:
+A GPT Action configured with `wc_acct_xxx` will not be able to call runtime tools and leaks the wrong secret into the wrong surface. For managed mode, generate a PAT instead:
 
 ```bash
 webcodex-cli token create-local \

@@ -219,4 +219,4 @@ for REST, polling, MCP, and GPT Actions.
 
 systemd services do not read interactive shell startup files such as `~/.bashrc`. If commands need Rust/Cargo, Node, or Codex CLI, expose them through configured agent shell profiles or through the service manager's environment.
 
-`runCodexTask` is optional and requires Codex CLI on the agent machine. It does not start a new `webcodex-agent`.
+Codex delegation is currently hidden from model-facing runtime surfaces. Run Codex outside WebCodex, or wait for a future explicit opt-in feature flag.

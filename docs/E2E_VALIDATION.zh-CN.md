@@ -28,7 +28,7 @@ Authorization: Bearer <token>
 
 ## Codex CLI
 
-Codex validation 是可选的。`runCodexTask` 需要 agent host 上有 Codex CLI。Local E2E tests 可以使用 stub Codex binary；这不会启动单独的 `webcodex-agent`。
+Codex delegation 当前已从模型可见 runtime surface 隐藏。内部 local validation 仍可为保留的 runner 使用 stub Codex binary，但 GPT Actions 和 MCP clients 应使用 structured edit tools 加 `run_job` / `run_shell` 验证流程。
 
 ## Management setup
 

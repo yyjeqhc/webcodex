@@ -4,7 +4,7 @@
 
 Self-hosted runtime for letting ChatGPT GPT Actions and MCP clients work on private code through a controlled server and a local execution agent.
 
-WebCodex is for developers and teams who want an AI assistant to inspect repositories, edit files, run Git/test/build commands, and optionally launch Codex CLI workflows without handing project execution to a hosted black box.
+WebCodex is for developers and teams who want an AI assistant to inspect repositories, edit files, and run controlled Git/test/build commands without handing project execution to a hosted black box.
 
 ## Why it exists
 
@@ -46,7 +46,7 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 - Read files, list files, search text, inspect Git status/diffs, validate/apply patches, and run bounded project commands.
 - Prefer structured source edits with `replace_line_range`, `insert_at_line`, and `delete_line_range` when line numbers are known.
 - Run Rust-oriented checks through structured Cargo helpers when configured.
-- Optionally start Codex CLI jobs on an agent machine that already has Codex CLI installed and authenticated.
+- Codex CLI delegation is currently hidden from model-facing runtime surfaces; run Codex outside WebCodex until a future explicit opt-in is available.
 - Track task sessions with `start_session`, `session_summary`, and session-aware `show_changes`.
 - Use `ToolMetadata` and `ToolKernel` foundation for consistent OAuth scope checks and session recording across REST and MCP.
 - Separate credentials for admins, account onboarding, GPT/MCP tokens, and agents.
@@ -67,7 +67,7 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 | Agent-backed project registry | Working; project ids use `agent:<client_id>:<project_id>`. |
 | Structured line edits | Working; preferred for scoped source edits with known line numbers. |
 | Git/file/patch/shell/Cargo tools | Working; shell execution should remain bounded and project-scoped. |
-| Codex CLI job launcher | Optional; requires Codex CLI on the agent machine. |
+| Codex CLI delegation | Hidden from GPT Actions, MCP, and runtime tool discovery pending an explicit opt-in. |
 | Release artifacts | Planned v0.2.0 GitHub release will publish `linux-x64`, `linux-arm64`, and `darwin-arm64` artifacts. |
 | Windows and `darwin-x64` binaries | Not planned for v0.2.0 release artifacts. |
 

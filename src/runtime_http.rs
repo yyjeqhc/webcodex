@@ -3281,6 +3281,11 @@ mod tests {
         assert!(names.iter().any(|n| n == "git_diff_summary"));
         assert!(names.iter().any(|n| n == "git_log"));
         assert!(names.iter().any(|n| n == "show_changes"));
+        assert!(
+            !names.iter().any(|n| n == "run_codex"),
+            "model-facing tools/list names must not include run_codex: {:?}",
+            names
+        );
         assert_eq!(body["count"], names.len());
         for tool in body["tools"].as_array().unwrap() {
             assert!(tool["inputSchema"].is_object());
@@ -3295,6 +3300,39 @@ mod tests {
         // names and tools must stay in sync.
         let tools_count = body["tools"].as_array().unwrap().len();
         assert_eq!(tools_count, names.len());
+    }
+
+    #[tokio::test]
+    async fn http_tools_call_run_codex_returns_disabled_without_creating_job() {
+        let (_tmp, service) = phase2_service();
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({
+                "tool": "run_codex",
+                "params": {
+                    "project": "demo",
+                    "prompt": "summarize"
+                }
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::BAD_REQUEST);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], false);
+        assert_eq!(body["output"]["code"], "run_codex_disabled");
+        let err = body["error"].as_str().unwrap();
+        assert!(err.contains("currently disabled"), "{err}");
+        assert!(!err.contains("/"), "error must not leak local paths: {err}");
+
+        let mut resp = TestClient::post("http://localhost/api/tools/call")
+            .bearer_auth("secret")
+            .json(&json!({"tool": "list_jobs", "params": {}}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["output"]["jobs"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]

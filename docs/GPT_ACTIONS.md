@@ -119,9 +119,9 @@ Use `webcodex-cli` for those management tasks.
 8. Use `writeProjectFile` only for new files or deliberate small whole-file overwrites; use `replaceProjectFileText` only for short exact substring changes.
 9. `runProjectShellCommand` or `startProjectShellJob` — execute only bounded commands in registered projects after file edits are complete.
 10. Call `callRuntimeTool` with `session_summary` to inspect recorded tool calls, then use `show_changes` for the current worktree state.
-11. `runCodexTask` — optional advanced path when Codex CLI is installed and configured on the agent machine.
+11. Prefer structured edit tools and the controlled `runProjectShellCommand` / `startProjectShellJob` validation flow for coding tasks.
 
-`runCodexTask` does not launch a new agent. It asks the already connected agent to run the Codex CLI in a project.
+Codex delegation is currently hidden from GPT Actions and model-facing runtime tool discovery. Operators who want Codex should run it outside WebCodex, or wait for a future explicit opt-in feature flag.
 
 `show_changes` is a read-only project inspection tool available through
 `callRuntimeTool`. It summarizes branch/head, modified/added/deleted/renamed/

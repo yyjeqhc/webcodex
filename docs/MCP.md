@@ -78,9 +78,10 @@ Typical MCP tools include:
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
 - Project commands and jobs: `run_shell`, `run_job`, `job_status`, `job_log`, `job_tail`.
 - Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
-- Optional Codex CLI launcher: `run_codex`.
 
-Use the structured line edit tools when you already know the target line range. Use patch tools for broader multi-file changes. Treat `run_shell` as a diagnostics/build/test fallback, not as the first source-editing path.
+Codex delegation (`run_codex`) is currently hidden from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex, or wait for a future explicit opt-in feature flag.
+
+Use the structured line edit tools when you already know the target line range. Use patch tools for broader multi-file changes. Treat `run_shell` and `run_job` as diagnostics/build/test fallbacks, not as the first source-editing path.
 
 Use `show_changes` near the end of a task to summarize the current worktree,
 check for untracked smoke/tmp/test files, review `git diff --stat`, request

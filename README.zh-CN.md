@@ -4,7 +4,7 @@
 
 WebCodex 是一个自托管 runtime，用于让 ChatGPT GPT Actions 和 MCP 客户端通过受控服务器与本地执行 agent 操作私有代码。
 
-WebCodex 面向希望让 AI 助手检查仓库、编辑文件、运行 Git/测试/构建命令，并可选启动 Codex CLI 工作流的开发者和团队；项目执行仍保留在你控制的机器上，而不是交给托管黑盒。
+WebCodex 面向希望让 AI 助手检查仓库、编辑文件，并运行受控 Git/测试/构建命令的开发者和团队；项目执行仍保留在你控制的机器上，而不是交给托管黑盒。
 
 ## 为什么需要它
 
@@ -46,7 +46,7 @@ registered project directory
 - 读取文件、列出文件、搜索文本、检查 Git 状态/diff、校验/应用 patch，并运行受限的项目命令。
 - 已知目标行号时，优先使用 `replace_line_range`、`insert_at_line` 和 `delete_line_range` 做结构化源码编辑。
 - 在配置完成后，通过结构化 Cargo 工具运行 Rust 相关检查。
-- 在 agent 机器已经安装并认证 Codex CLI 时，可选启动 Codex CLI job。
+- Codex CLI delegation 当前已从模型可见 runtime surface 隐藏；需要 Codex 时请在 WebCodex 外部手动运行，直到未来显式 opt-in 功能恢复。
 - 通过 `start_session`、`session_summary` 和 session-aware `show_changes` 跟踪任务会话。
 - 通过 `ToolMetadata` 和 `ToolKernel` 基础设施，在 REST 和 MCP 之间实现一致的 OAuth scope 检查和会话记录。
 - 区分管理员、账户开通、GPT/MCP token 和 agent token 的凭据边界。
@@ -67,7 +67,7 @@ registered project directory
 | agent-backed project registry | 可用；项目 id 格式为 `agent:<client_id>:<project_id>`。 |
 | 结构化行编辑 | 可用；已知目标行号时是推荐的局部源码编辑方式。 |
 | Git/file/patch/shell/Cargo tools | 可用；shell 执行应保持受限并限定在项目内。 |
-| Codex CLI job launcher | 可选；需要 agent 机器上已有 Codex CLI。 |
+| Codex CLI delegation | 暂时从 GPT Actions、MCP 和 runtime tool discovery 隐藏，等待未来显式 opt-in。 |
 | Release artifacts | 计划发布的 v0.2.0 GitHub release 将包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64` artifacts。 |
 | Windows 和 `darwin-x64` binaries | v0.2.0 release artifacts 暂不计划包含。 |
 

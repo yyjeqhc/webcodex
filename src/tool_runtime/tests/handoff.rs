@@ -19,10 +19,11 @@ async fn session_handoff_summary_is_known_and_in_specs() {
         specs.iter().any(|s| s.name == "session_handoff_summary"),
         "session_handoff_summary must appear in tool_specs"
     );
-    assert_eq!(
-        KNOWN_TOOL_NAMES.len(),
-        specs.len(),
-        "KNOWN_TOOL_NAMES must stay in sync with tool_specs"
+    assert!(
+        specs
+            .iter()
+            .all(|spec| KNOWN_TOOL_NAMES.contains(&spec.name.as_str())),
+        "tool_specs must remain a subset of known parser names"
     );
     assert!(
         crate::tool_runtime::metadata::lookup_tool_metadata("session_handoff_summary").is_some()
@@ -541,7 +542,7 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     assert!(!metadata.shell_like);
     assert_eq!(metadata.oauth_scope, Some("runtime:read"));
 
-    // OpenAPI operation count must stay 28.
+    // OpenAPI operation count must stay 27 while Codex delegation is hidden.
     let spec = crate::openapi::build_openapi_spec();
     let tool_desc = &spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
         ["description"]
@@ -557,7 +558,7 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 28, "OpenAPI operation count must remain 28");
+    assert_eq!(count, 27, "OpenAPI operation count must remain 27");
 }
 
 // =========================================================================

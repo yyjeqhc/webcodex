@@ -182,4 +182,4 @@ Authorization: Bearer <token>
 
 systemd services 不读取交互式 shell 启动文件，例如 `~/.bashrc`。如果命令需要 Rust/Cargo、Node 或 Codex CLI，请通过 agent shell profiles 或 service manager environment 暴露它们。
 
-`runCodexTask` 是可选能力，需要 agent 机器上已有 Codex CLI。它不会启动新的 `webcodex-agent`。
+Codex delegation 当前已从模型可见 runtime surface 隐藏。需要 Codex 时请在 WebCodex 外部运行，或等待未来显式 opt-in feature flag。

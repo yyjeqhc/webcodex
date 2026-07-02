@@ -367,9 +367,9 @@ The OpenAPI GPT Actions management surface intentionally excludes users, API tok
 
 MCP uses the same user API token and the same `ToolRuntime` as GPT Actions.
 
-## Optional Codex CLI jobs
+## Codex CLI delegation
 
-`runCodexTask` is optional. It requires the Codex CLI to be installed and configured on the agent machine. It does not start a new `webcodex-agent`; it delegates work to an already connected agent.
+Codex delegation is currently hidden from GPT Actions, MCP `tools/list`, runtime tool discovery, and generic model-facing dispatch. Operators who want Codex should run it outside WebCodex, or wait for a future explicit opt-in feature flag.
 
 ## Smoke checks
 

@@ -899,10 +899,27 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "tool_manifest",
 ];
 
+/// Runtime tools that remain implemented/parser-recognized but are deliberately
+/// hidden from model-facing discovery surfaces.
+pub const MODEL_HIDDEN_TOOL_NAMES: &[&str] = &["run_codex"];
+
 /// Returns `true` if `name` is a recognized runtime tool name. Public so the
 /// HTTP/MCP adapters can decide whether to emit the rich "unknown tool" error.
 pub fn is_known_tool_name(name: &str) -> bool {
     KNOWN_TOOL_NAMES.iter().any(|n| *n == name)
+}
+
+pub fn is_model_hidden_tool_name(name: &str) -> bool {
+    MODEL_HIDDEN_TOOL_NAMES.iter().any(|n| *n == name)
+}
+
+fn model_visible_tool_names_csv() -> String {
+    KNOWN_TOOL_NAMES
+        .iter()
+        .copied()
+        .filter(|name| !is_model_hidden_tool_name(name))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 impl ToolCall {
@@ -917,7 +934,7 @@ impl ToolCall {
                  (POST /api/tools/list) or the list_tools runtime tool to \
                  discover accepted tool names.",
                 name,
-                KNOWN_TOOL_NAMES.join(", ")
+                model_visible_tool_names_csv()
             ));
         }
         let mut wrapped = serde_json::Map::new();

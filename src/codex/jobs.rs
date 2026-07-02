@@ -2731,13 +2731,9 @@ mod tests {
             "legacy JobOpResponse must not appear in generated GPT Actions schema"
         );
 
-        let run_codex_desc = spec["paths"]["/api/codex/run"]["post"]["description"]
-            .as_str()
-            .unwrap();
         assert!(
-            run_codex_desc.contains("job_id"),
-            "current runCodexTask description should mention job_id, got: {}",
-            run_codex_desc
+            spec["paths"]["/api/codex/run"].is_null(),
+            "Codex delegation must stay hidden from generated GPT Actions schema"
         );
     }
 

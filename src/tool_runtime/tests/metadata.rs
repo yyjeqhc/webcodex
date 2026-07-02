@@ -821,10 +821,9 @@ async fn agent_tool_allows_bootstrap_token_for_run_job() {
 }
 
 #[tokio::test]
-async fn server_configured_local_project_is_not_runtime_surface() {
-    // The ChatGPT runtime surface is agent-registered only. A server-side
-    // local project config may still exist in older internal modules, but
-    // ToolRuntime must not treat it as an exposed project.
+async fn run_codex_is_disabled_before_project_resolution() {
+    // Codex delegation remains implemented underneath, but model-facing runtime
+    // dispatch must reject it before project resolution or job creation.
     let tmp = tempfile::tempdir().unwrap();
     let runtime = runtime_with_codex(tmp.path(), CodexConfig::default());
     let result = runtime
@@ -842,7 +841,8 @@ async fn server_configured_local_project_is_not_runtime_surface() {
         )
         .await;
     assert!(!result.success);
-    assert!(result.error.unwrap().contains("unknown_project"));
+    assert_eq!(result.output["code"], "run_codex_disabled");
+    assert!(result.error.unwrap().contains("currently disabled"));
 }
 
 #[test]
@@ -857,6 +857,31 @@ fn runtime_status_is_in_tool_specs() {
         names.iter().any(|n| n == "runtime_status"),
         "runtime_status must be in tool_specs: {:?}",
         names
+    );
+}
+
+#[tokio::test]
+async fn tool_manifest_hides_run_codex_from_model_facing_surface() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    let tools = result.output["tools"].as_array().unwrap();
+    assert!(
+        !tools.iter().any(|tool| tool["name"] == "run_codex"),
+        "tool_manifest tools must not include run_codex: {:?}",
+        tools
+    );
+    let serialized = result.output.to_string();
+    assert!(
+        !serialized.contains("run_codex"),
+        "tool_manifest output must not advertise run_codex: {}",
+        serialized
     );
 }
 
@@ -1424,6 +1449,11 @@ async fn runtime_status_tools_summary_lists_names() {
     assert!(
         names.iter().any(|n| n == "runtime_status"),
         "tools.names must include runtime_status: {:?}",
+        names
+    );
+    assert!(
+        !names.iter().any(|n| n == "run_codex"),
+        "runtime_status tools.names must not include hidden run_codex: {:?}",
         names
     );
     assert_eq!(tools["count"], names.len() as i64);

@@ -339,11 +339,22 @@ fn from_tool_name_unknown_tool_lists_available_tools_and_hint() {
 #[test]
 fn known_tool_names_matches_spec_count() {
     let runtime = test_runtime();
-    let spec_count = runtime.tool_specs().len();
-    assert_eq!(
-        KNOWN_TOOL_NAMES.len(),
-        spec_count,
-        "KNOWN_TOOL_NAMES must stay in sync with tool_specs()"
+    let specs = runtime.tool_specs();
+    for spec in &specs {
+        assert!(
+            KNOWN_TOOL_NAMES.contains(&spec.name.as_str()),
+            "{} spec must be known to ToolCall",
+            spec.name
+        );
+        assert!(
+            !is_model_hidden_tool_name(&spec.name),
+            "{} must not be model-hidden when exposed in tool_specs()",
+            spec.name
+        );
+    }
+    assert!(
+        specs.len() < KNOWN_TOOL_NAMES.len(),
+        "tool_specs() should be a public subset while hidden tools remain implemented"
     );
     // Every known name must be recognized (i.e. must NOT yield the
     // "unknown tool" error). Unit tools parse with null args; non-unit
@@ -371,6 +382,11 @@ fn known_tool_names_matches_spec_count() {
     // An unknown name must still produce the unknown-tool error.
     let err = ToolCall::from_tool_name("not_a_real_tool", Value::Null).unwrap_err();
     assert!(err.contains("unknown tool"));
+    assert!(
+        !err.contains("run_codex"),
+        "unknown-tool guidance must not advertise hidden tools: {}",
+        err
+    );
 }
 
 #[test]

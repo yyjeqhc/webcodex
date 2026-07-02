@@ -67,4 +67,4 @@ The server routes project tool calls to the owning connected agent.
 
 ## Optional Codex jobs
 
-Codex jobs are a project tool path, not an agent lifecycle mechanism. `runCodexTask` requires the Codex CLI on the agent host and does not start a new `webcodex-agent`.
+Codex delegation is currently hidden from model-facing runtime surfaces. The retained runner is a project tool path, not an agent lifecycle mechanism, and should be invoked outside WebCodex until a future explicit opt-in is available.

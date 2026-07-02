@@ -1,7 +1,10 @@
 use serde_json::{json, Value};
 
 use super::metadata::tool_metadata;
-use super::types::{ToolSpec, CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
+use super::types::{
+    is_model_hidden_tool_name, ToolSpec, CHECKPOINT_KIND_VALUES,
+    CHECKPOINT_VALIDATION_STATUS_VALUES,
+};
 use super::ToolRuntime;
 
 pub(crate) fn object_schema(fields: Vec<(&str, &str, &str, bool)>) -> Value {
@@ -370,7 +373,7 @@ fn start_session_input_schema() -> Value {
             },
             "deny_shell_tools": {
                 "type": "boolean",
-                "description": "Optional task guard. When true, shell/job-like tools such as run_shell, run_job, run_codex, cargo_fmt, cargo_check, and cargo_test are blocked before execution."
+                "description": "Optional task guard. When true, shell/job-like tools such as run_shell, run_job, cargo_fmt, cargo_check, and cargo_test are blocked before execution."
             }
         },
         "required": [],
@@ -1544,7 +1547,7 @@ fn output_schema_for_tool(name: &str) -> Value {
 
 impl ToolRuntime {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
-        vec![
+        let specs = vec![
             ToolSpec {
                 name: "list_tools".to_string(),
                 description: "List tools exposed by this WebCodex runtime.".to_string(),
@@ -2395,7 +2398,11 @@ impl ToolRuntime {
                 output_schema: output_schema_for_tool("apply_text_edits"),
                 annotations: tool_annotations("apply_text_edits"),
             },
-        ]
+        ];
+        specs
+            .into_iter()
+            .filter(|spec| !is_model_hidden_tool_name(&spec.name))
+            .collect()
     }
 
     /// The sorted list of accepted runtime tool names (mirrors `tool_specs`).
@@ -2447,7 +2454,7 @@ impl ToolRuntime {
             ]),
             "shell": pick(&["run_shell", "run_job", "cargo_fmt", "cargo_check", "cargo_test"]),
             "jobs": pick(&[
-                "run_codex", "run_job", "job_status", "job_log",
+                "run_job", "job_status", "job_log",
                 "list_jobs", "job_tail"
             ]),
             "runtime": pick(&[
@@ -2485,7 +2492,6 @@ impl ToolRuntime {
             "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",
             "Checkpoint: after tests pass, call workspace_checkpoint_create before broad edits; use show/list to inspect, restore with confirm=true only when HEAD still matches.",
             "Cleanup: use delete_project_files / git_restore_paths / discard_untracked instead of ad hoc rm.",
-            "Codex: run_codex is optional delegation only when explicitly requested and Codex CLI is configured; otherwise use direct WebCodex tools.",
         ]
     }
 }

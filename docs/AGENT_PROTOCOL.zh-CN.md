@@ -67,4 +67,4 @@ Server 会把 project tool calls 路由到拥有该项目的 connected agent。
 
 ## Optional Codex jobs
 
-Codex jobs 是 project tool path，不是 agent lifecycle mechanism。`runCodexTask` 需要 agent host 上已有 Codex CLI，并且不会启动新的 `webcodex-agent`。
+Codex delegation 当前已从模型可见 runtime surface 隐藏。保留的 runner 是 project tool path，不是 agent lifecycle mechanism；在未来显式 opt-in 可用前，应在 WebCodex 外部调用 Codex。

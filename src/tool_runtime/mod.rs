@@ -45,10 +45,25 @@ use types::{
     AgentCapability, LocalJobKiller, LocalJobRecord, SystemJobKiller, ACTIVE_JOB_STATUSES,
 };
 
+pub(crate) const RUN_CODEX_DISABLED_MESSAGE: &str =
+    "run_codex is currently disabled on model-facing surfaces; use run_job or external local Codex manually.";
+
+pub(crate) fn run_codex_disabled_result() -> ToolResult {
+    ToolResult::err_with_output(
+        RUN_CODEX_DISABLED_MESSAGE,
+        json!({
+            "code": "run_codex_disabled",
+            "tool": "run_codex",
+            "message": RUN_CODEX_DISABLED_MESSAGE,
+        }),
+    )
+}
+
 #[derive(Clone)]
 pub struct ToolRuntime {
     pub projects: Arc<ProjectsState>,
     pub shell_clients: Arc<ShellClientRegistry>,
+    #[allow(dead_code)]
     pub codex: Arc<CodexConfig>,
     pub runtime_info: Arc<RuntimeInfo>,
     pub(crate) checkpoint_store: checkpoint::CheckpointStore,
@@ -860,6 +875,28 @@ impl ToolRuntime {
             if !self.sessions.contains_session(session_id) {
                 return unknown_session_result(session_id);
             }
+        }
+        if matches!(&call, ToolCall::RunCodex { .. }) {
+            let mut result = run_codex_disabled_result();
+            if let Some(session_id) = session_id.as_deref() {
+                let session_start = self.sessions.record_tool_call_started(
+                    Some(session_id),
+                    transport,
+                    call.tool_name(),
+                    &call.session_log_arguments(),
+                );
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_start,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some("tool_disabled"),
+                );
+                add_session_telemetry_hint(&mut result, session_id, event_id);
+            }
+            return result;
+        }
+        if let Some(session_id) = session_id.as_deref() {
             if let Some(denial) = self.sessions.guard_denial(session_id, call.tool_name()) {
                 let session_start = self.sessions.record_tool_call_started(
                     Some(session_id),
@@ -1462,24 +1499,14 @@ impl ToolRuntime {
             } => self.run_job(project, command, timeout_secs, cwd).await,
 
             ToolCall::RunCodex {
-                project,
-                prompt,
+                project: _,
+                prompt: _,
                 session_id: _,
-                approval_mode,
-                timeout_secs,
-                cwd,
-                extra_args,
-            } => {
-                self.run_codex(
-                    project,
-                    prompt,
-                    approval_mode,
-                    timeout_secs,
-                    cwd,
-                    extra_args,
-                )
-                .await
-            }
+                approval_mode: _,
+                timeout_secs: _,
+                cwd: _,
+                extra_args: _,
+            } => run_codex_disabled_result(),
 
             ToolCall::JobStatus { job_id } => self.job_status_for_auth(job_id, auth).await,
 

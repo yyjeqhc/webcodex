@@ -1,7 +1,8 @@
 use super::sessions::SessionTransport;
 use super::types::{is_checkpoint_kind, is_checkpoint_validation_status};
 use super::{
-    session_guard_denied_result, unknown_session_result, ToolCall, ToolResult, ToolRuntime,
+    run_codex_disabled_result, session_guard_denied_result, unknown_session_result, ToolCall,
+    ToolResult, ToolRuntime,
 };
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
@@ -106,6 +107,33 @@ impl ToolRuntime {
                     project: None,
                 };
             }
+        }
+        if request.tool_name == "run_codex" {
+            let mut result = run_codex_disabled_result();
+            if let Some(session_id) = context.session_id {
+                let session_event = self.sessions.record_tool_call_started(
+                    Some(session_id),
+                    context.transport.into(),
+                    &request.tool_name,
+                    &guard_denial_log_arguments(&request.tool_name, &request.arguments),
+                );
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_event,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some("tool_disabled"),
+                );
+                super::add_session_telemetry_hint(&mut result, session_id, event_id);
+            }
+            return ToolCallOutcome {
+                success: false,
+                result: Some(result),
+                error_status: None,
+                project: None,
+            };
+        }
+        if let Some(session_id) = context.session_id {
             if let Some(denial) = self.sessions.guard_denial(session_id, &request.tool_name) {
                 let session_event = self.sessions.record_tool_call_started(
                     Some(session_id),

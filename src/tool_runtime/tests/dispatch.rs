@@ -47,6 +47,37 @@ fn cargo_runtime_tools_are_known_and_parse() {
     ));
 }
 
+#[tokio::test]
+async fn dispatch_rejects_run_codex_before_creating_job() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::RunCodex {
+            project: SAMPLE_PROJECT.to_string(),
+            prompt: "summarize".to_string(),
+            session_id: None,
+            approval_mode: None,
+            timeout_secs: None,
+            cwd: None,
+            extra_args: None,
+        })
+        .await;
+    assert_eq!(result.success, false);
+    assert_eq!(result.output["code"], "run_codex_disabled");
+    let err = result.error.as_deref().unwrap();
+    assert!(err.contains("currently disabled"), "{err}");
+    assert!(!err.contains('/'), "error must not leak local paths: {err}");
+
+    let jobs = runtime
+        .dispatch(ToolCall::ListJobs {
+            limit: None,
+            status: None,
+        })
+        .await;
+    assert!(jobs.success, "{:?}", jobs.error);
+    assert_eq!(jobs.output["count"], 0);
+    assert_eq!(jobs.output["jobs"].as_array().unwrap().len(), 0);
+}
+
 #[test]
 fn cargo_command_builders_use_expected_defaults_and_escaping() {
     assert_eq!(cargo_fmt_command(true), "cargo fmt -- --check");

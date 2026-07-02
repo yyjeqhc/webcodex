@@ -17,7 +17,7 @@ fn public_url() -> String {
 ///
 /// Order is grouped by recommended GPT call flow:
 /// 1. discovery (`listRuntimeTools`, `listProjects`, `getRuntimeStatus`)
-/// 2. code tasks (`runCodexTask`, `getRuntimeJobStatus`, `getRuntimeJobLog`)
+/// 2. job inspection (`getRuntimeJobStatus`, `getRuntimeJobLog`)
 /// 3. project inspection (`readProjectFile`, `getProjectGitStatus`,
 ///    `getProjectGitDiff`, `getProjectGitDiffSummary`, `listProjectFiles`,
 ///    `searchProjectText`)
@@ -32,9 +32,9 @@ fn public_url() -> String {
 /// promotes the safer structured text replacement action, and this phase
 /// promotes `write_project_file` and `run_job` to dedicated GPT Actions, so a
 /// custom GPT can drive the coding loop without `callRuntimeTool` for common
-/// edits and async command execution. Codex is an optional advanced
-/// capability. `callRuntimeTool` remains as an advanced escape hatch; prefer
-/// the dedicated typed actions.
+/// edits and async command execution. Codex delegation is intentionally hidden
+/// from GPT Actions for now. `callRuntimeTool` remains as an advanced escape
+/// hatch; prefer the dedicated typed actions.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
@@ -42,7 +42,6 @@ const GPT_ACTION_OPS: &[&str] = &[
     "registerProject",
     "createProject",
     "getRuntimeStatus",
-    "runCodexTask",
     "getRuntimeJobStatus",
     "getRuntimeJobLog",
     "readProjectFile",
@@ -89,6 +88,7 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/codex/job",
     "/api/codex/report",
     "/api/codex/projects",
+    "/api/codex/run",
     "/api/shell/run",
     "/api/shell/job",
     "/api/shell/file",
@@ -152,7 +152,7 @@ pub(crate) fn build_openapi_spec() -> Value {
         "info": {
             "title": "WebCodex Runtime API",
             "version": env!("CARGO_PKG_VERSION"),
-            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. runCodexTask is optional delegation only when Codex CLI is installed and the user explicitly wants a Codex subtask. All endpoints require Bearer auth; static bearer/API-key hosts may use a shared key for quick start or wc_pat_* for managed mode. MCP and GPT Actions share the same ToolRuntime."
+            "description": "Self-hosted tool runtime for ChatGPT. Flow: call listProjects (or listRuntimeTools), inspect with readProjectFile/getProjectGitStatus/git diff tools, edit with structured file/patch actions, and validate with cargo/job tools. Codex delegation is hidden from GPT Actions for now; run Codex outside WebCodex if needed. All endpoints require Bearer auth; static bearer/API-key hosts may use a shared key for quick start or wc_pat_* for managed mode. MCP and GPT Actions share the same ToolRuntime."
         },
         "servers": [
             {
@@ -246,37 +246,11 @@ pub(crate) fn build_openapi_spec() -> Value {
                     "ToolResult"
                 )
             },
-            "/api/codex/run": {
-                "post": operation_with_examples(
-                    "runCodexTask",
-                    "Run Codex CLI task",
-                    "Optional Codex delegation. Mutation with side effects; requires Bearer auth. Starts Codex CLI asynchronously in an agent-registered project and returns a job_id. Use only when the user explicitly asks to delegate to Codex and the agent has Codex CLI configured; otherwise use runtime tools directly.",
-                    "CodexRunRequest",
-                    "ToolResult",
-                    json!({
-                        "projectAndPrompt": {
-                            "summary": "Start a Codex task in a project",
-                            "value": {
-                                "project": "webcodex",
-                                "prompt": "Inspect the codebase and summarize the runtime architecture."
-                            }
-                        },
-                        "withTimeout": {
-                            "summary": "Start a Codex task with an explicit timeout",
-                            "value": {
-                                "project": "webcodex",
-                                "prompt": "Run the test suite and report failures.",
-                                "timeout_secs": 600
-                            }
-                        }
-                    })
-                )
-            },
             "/api/jobs/status": {
                 "post": operation_with_examples(
                     "getRuntimeJobStatus",
                     "Get job status",
-                    "Read-only. Returns status, timing, and exit metadata for a runtime job. Use this to poll the job_id returned by runCodexTask until status is completed, failed, stopped, or lost.",
+                    "Read-only. Returns status, timing, and exit metadata for a runtime job. Use this to poll the job_id returned by run_job until status is completed, failed, stopped, or lost.",
                     "JobStatusRequest",
                     "ToolResult",
                     json!({
@@ -293,7 +267,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getRuntimeJobLog",
                     "Get job log",
-                    "Read-only. Returns bounded stdout/stderr text for a runtime job. Use the job_id returned by runCodexTask. Output is always bounded; use tail_lines to limit the trailing stdout window and offset (next_stdout_line) for pagination.",
+                    "Read-only. Returns bounded stdout/stderr text for a runtime job. Use the job_id returned by run_job. Output is always bounded; use tail_lines to limit the trailing stdout window and offset (next_stdout_line) for pagination.",
                     "JobLogRequest",
                     "ToolResult",
                     json!({
@@ -339,7 +313,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "getRuntimeJobTail",
                     "Get job tail",
-                    "Read-only bounded stdout/stderr tails for a runtime job. Defaults to a bounded tail so the caller never reads full logs by default. Use the job_id returned by runCodexTask.",
+                    "Read-only bounded stdout/stderr tails for a runtime job. Defaults to a bounded tail so the caller never reads full logs by default. Use the job_id returned by run_job.",
                     "JobTailRequest",
                     "ToolResult",
                     json!({
@@ -947,8 +921,7 @@ fn is_consequential_operation(operation_id: &str) -> bool {
         | "registerProject"
         | "createProject" => false,
 
-        "runCodexTask"
-        | "applyProjectPatch"
+        "applyProjectPatch"
         | "applyProjectPatchChecked"
         | "writeProjectFile"
         | "importConversationFilesToProject"
@@ -1023,7 +996,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, run_codex, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Use listRuntimeTools for all names."
                 },
                 "recording_session_id": {
                     "type": "string",
@@ -1447,41 +1420,6 @@ fn schemas() -> Value {
                 }
             }
         },
-        "CodexRunRequest": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": ["project", "prompt"],
-            "description": "Start a Codex CLI task. `project` must be an agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`. `prompt` is the instruction passed to Codex CLI.",
-            "properties": {
-                "project": {
-                    "type": "string",
-                    "description": "Agent-registered runtime project id from listProjects, such as `agent:<client_id>:<project_id>`."
-                },
-                "prompt": {
-                    "type": "string",
-                    "description": "Instruction prompt passed to Codex CLI. Must be non-empty and within CODEX_MAX_PROMPT_BYTES."
-                },
-                "approval_mode": {
-                    "type": "string",
-                    "description": "Optional Codex approval mode. Empty/none/off/disabled omit --approval-mode (use this if the Codex CLI does not support the flag). Other values (e.g. full-auto, suggest) are passed via --approval-mode."
-                },
-                "timeout_secs": {
-                    "type": "integer",
-                    "description": "Maximum runtime in seconds. Defaults to CODEX_DEFAULT_TIMEOUT_SECS (3600)."
-                },
-                "cwd": {
-                    "type": "string",
-                    "description": "Optional project-relative working directory. The owning agent enforces its cwd policy."
-                },
-                "extra_args": {
-                    "type": "array",
-                    "items": {
-                        "type": "string"
-                    },
-                    "description": "Optional additional Codex CLI arguments. Each entry must be present in CODEX_ALLOWED_EXTRA_ARGS (empty by default)."
-                }
-            }
-        },
         "JobStatusRequest": {
             "type": "object",
             "additionalProperties": false,
@@ -1490,7 +1428,7 @@ fn schemas() -> Value {
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "Runtime job id returned by runCodexTask or run_job."
+                    "description": "Runtime job id returned by run_job."
                 }
             }
         },
@@ -1502,7 +1440,7 @@ fn schemas() -> Value {
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "Runtime job id returned by runCodexTask or run_job."
+                    "description": "Runtime job id returned by run_job."
                 },
                 "offset": {
                     "type": "integer",
@@ -1897,7 +1835,7 @@ fn schemas() -> Value {
             "properties": {
                 "job_id": {
                     "type": "string",
-                    "description": "Runtime job id returned by runCodexTask or run_job."
+                    "description": "Runtime job id returned by run_job."
                 },
                 "tail_lines": {
                     "type": "integer",
@@ -2129,7 +2067,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(count, 28);
+        assert_eq!(count, 27);
     }
 
     #[test]
@@ -2162,7 +2100,6 @@ mod tests {
             "createProject",
         ];
         let consequential = [
-            "runCodexTask",
             "applyProjectPatch",
             "applyProjectPatchChecked",
             "writeProjectFile",
@@ -2185,7 +2122,7 @@ mod tests {
         for id in consequential {
             assert_eq!(flags.get(id), Some(&true), "{} should be consequential", id);
         }
-        assert_eq!(flags.len(), 28);
+        assert_eq!(flags.len(), 27);
     }
 
     #[test]
@@ -2237,7 +2174,6 @@ mod tests {
             "/api/projects/register",
             "/api/projects/create",
             "/api/runtime/status",
-            "/api/codex/run",
             "/api/jobs/status",
             "/api/jobs/log",
             "/api/jobs/list",
@@ -2433,20 +2369,28 @@ mod tests {
     }
 
     #[test]
-    fn openapi_guides_codex_as_optional_delegation() {
+    fn openapi_hides_codex_delegation_from_model_facing_spec() {
         let spec = build_openapi_spec();
-        // runCodexTask is available, but should not be advertised as the default
-        // first step for normal project inspection/editing.
-        let run_codex = &spec["paths"]["/api/codex/run"]["post"]["description"]
+        assert!(
+            spec["paths"].get("/api/codex/run").is_none(),
+            "Codex delegation must not be exposed as a GPT Action path"
+        );
+        let serialized = serde_json::to_string(&spec).unwrap();
+        assert!(
+            !serialized.contains("runCodexTask"),
+            "Codex delegation operation id must stay hidden from OpenAPI"
+        );
+        assert!(
+            !serialized.contains("CodexRunRequest"),
+            "Codex delegation request schema must stay hidden from OpenAPI"
+        );
+        let tool_desc = spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
+            ["description"]
             .as_str()
             .unwrap();
         assert!(
-            run_codex.contains("Optional Codex delegation"),
-            "runCodexTask description should mark Codex as optional"
-        );
-        assert!(
-            run_codex.contains("explicitly asks"),
-            "runCodexTask should not be the default action for every code task"
+            !tool_desc.contains("run_codex"),
+            "callRuntimeTool allowed-name description must not advertise run_codex"
         );
         // callRuntimeTool should be marked advanced/generic.
         let call_tool = &spec["paths"]["/api/tools/call"]["post"]["description"]
@@ -2492,7 +2436,6 @@ mod tests {
             "cargo_fmt",
             "cargo_check",
             "cargo_test",
-            "run_codex",
             "job_status",
             "job_log",
         ] {
@@ -2507,12 +2450,10 @@ mod tests {
     #[test]
     fn openapi_key_actions_have_examples() {
         let spec = build_openapi_spec();
-        // runCodexTask, getRuntimeJobStatus, getRuntimeJobLog, and
-        // callRuntimeTool must ship with at least one request example so GPT
-        // has a concrete template to follow. Phase 3 dedicated actions are
-        // also required to carry examples.
+        // getRuntimeJobStatus, getRuntimeJobLog, and callRuntimeTool must ship
+        // with at least one request example so GPT has a concrete template to
+        // follow. Phase 3 dedicated actions are also required to carry examples.
         for (path, label) in [
-            ("/api/codex/run", "runCodexTask"),
             ("/api/jobs/status", "getRuntimeJobStatus"),
             ("/api/jobs/log", "getRuntimeJobLog"),
             ("/api/projects/read_file", "readProjectFile"),
@@ -2652,11 +2593,9 @@ mod tests {
         // discardUntrackedFiles) are executable actions with side effects; their
         // descriptions must call out the execution risk/side effects and the
         // Bearer-auth requirement so GPT callers understand they are not
-        // read-only inspection. runCodexTask is also a mutation (starts an
-        // async process with side effects) and is included in this guard.
+        // read-only inspection.
         let spec = build_openapi_spec();
         for path in [
-            "/api/codex/run",
             "/api/projects/apply_patch",
             "/api/projects/apply_patch_checked",
             "/api/projects/run_shell",
@@ -2686,11 +2625,8 @@ mod tests {
             );
         }
         // The patch/shell/cleanup/write mutations must also mention the agent
-        // shell capability. runCodexTask does not require the shell capability
-        // directly (it starts a Codex process), so it is excluded from this
-        // sub-check. startProjectShellJob requires the async shell job
-        // capability (checked separately below), not the plain shell
-        // capability.
+        // shell capability. startProjectShellJob requires the async shell job
+        // capability (checked separately below), not the plain shell capability.
         for path in [
             "/api/projects/apply_patch",
             "/api/projects/apply_patch_checked",
@@ -3028,7 +2964,7 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 28, "operation count must stay 28");
+        assert_eq!(count, 27, "operation count must stay 27");
     }
 
     #[test]
@@ -3082,7 +3018,7 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 28, "operation count must stay 28");
+        assert_eq!(count, 27, "operation count must stay 27");
     }
 
     #[test]
@@ -3144,7 +3080,7 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_is_twenty_eight_after_import_action() {
+    fn openapi_operation_count_is_twenty_seven_after_hiding_codex_delegation() {
         // Phase 3 promoted 10 core runtime tools to dedicated GPT Actions,
         // bringing the schema from 12 to 22 ops. Phase 5 promotes
         // replace_in_file to a dedicated GPT Action (replaceProjectFileText),
@@ -3153,6 +3089,7 @@ mod tests {
         // GPT Actions, bringing the count to 25. The project management phase
         // promotes register_project (registerProject) and create_project
         // (createProject) to dedicated GPT Actions, bringing the count to 27.
+        // Hiding Codex delegation keeps the current GPT Action count at 27.
         // The surface must stay <= 30.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
@@ -3162,8 +3099,8 @@ mod tests {
             .map(|m| m.as_object().unwrap().len())
             .sum();
         assert_eq!(
-            count, 28,
-            "GPT Actions schema must be 28 operations after adding the single import Action"
+            count, 27,
+            "GPT Actions schema must be 27 operations while Codex delegation is hidden"
         );
         assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
     }
@@ -3293,10 +3230,10 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_stays_twenty_eight_after_import_action() {
+    fn openapi_operation_count_stays_twenty_seven_after_hiding_codex_delegation() {
         // Phase 3 adds agent token management endpoints to the REST surface
         // but does NOT add them to /openapi.json. The GPT Actions operation
-        // count must remain 27.
+        // count must remain 27 while Codex delegation is hidden.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
             .as_object()
@@ -3305,8 +3242,8 @@ mod tests {
             .map(|m| m.as_object().unwrap().len())
             .sum();
         assert_eq!(
-            count, 28,
-            "GPT Actions schema must remain 28 operations: prior 27 plus the single import Action"
+            count, 27,
+            "GPT Actions schema must remain 27 operations while Codex delegation is hidden"
         );
     }
 }

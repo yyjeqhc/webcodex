@@ -65,9 +65,10 @@ MCP 和 GPT Actions 共享同一个 `ToolRuntime`。通过 MCP 发起的 tool ca
 - Patch workflows：`validate_patch`、`apply_patch_checked`。
 - 项目命令与 jobs：`run_shell`、`run_job`、`job_status`、`job_log`、`job_tail`。
 - Structured Cargo helpers：`cargo_fmt`、`cargo_check`、`cargo_test`。
-- 可选 Codex CLI launcher：`run_codex`。
 
-已知目标行号时，优先使用 structured line edit tools。多文件修改使用 patch tools。把 `run_shell` 当作 diagnostics/build/test fallback，而不是首选源码编辑方式。
+Codex delegation（`run_codex`）当前已从 MCP `tools/list` 和模型可见 runtime discovery 隐藏。需要 Codex 时请在 WebCodex 外部运行，或等待未来显式 opt-in feature flag。
+
+已知目标行号时，优先使用 structured line edit tools。多文件修改使用 patch tools。把 `run_shell` 和 `run_job` 当作 diagnostics/build/test fallback，而不是首选源码编辑方式。
 
 Agent-backed project ids 形如：
 

@@ -29,6 +29,11 @@ fn tool_specs_and_metadata_are_synchronized() {
             // ToolSpec name and intentionally not accepted by ToolCall.
             continue;
         }
+        if is_model_hidden_tool_name(metadata.name) {
+            // Hidden implemented tools keep parser/metadata coverage without
+            // being advertised through model-facing specs.
+            continue;
+        }
         assert!(
             spec_names.contains(metadata.name),
             "{} metadata is not exposed by registry specs",
@@ -148,7 +153,6 @@ fn required_agent_capability_matches_metadata_risk_table() {
         ("cargo_test", ToolRisk::JobRun, AgentCapability::Shell),
         ("read_file", ToolRisk::ReadOnly, AgentCapability::FileRead),
         ("run_job", ToolRisk::JobRun, AgentCapability::AsyncJobs),
-        ("run_codex", ToolRisk::JobRun, AgentCapability::AsyncJobs),
         (
             "list_project_files",
             ToolRisk::ReadOnly,
@@ -573,7 +577,6 @@ fn tool_specs_covers_expected_tool_set() {
         "runtime_status",
         "run_shell",
         "run_job",
-        "run_codex",
         "job_status",
         "job_log",
         "read_file",
@@ -620,6 +623,11 @@ fn tool_specs_covers_expected_tool_set() {
             names
         );
     }
+    assert!(
+        !names.iter().any(|n| n == "run_codex"),
+        "run_codex must stay hidden from model-facing tool_specs: {:?}",
+        names
+    );
 }
 
 #[test]
@@ -957,7 +965,7 @@ fn tool_specs_annotations_cover_safety_hints() {
         assert_eq!(annotations["readOnlyHint"], false);
         assert_eq!(annotations["openWorldHint"], false);
     }
-    for name in ["run_shell", "run_job", "run_codex"] {
+    for name in ["run_shell", "run_job"] {
         assert_eq!(spec_named(&specs, name).annotations["openWorldHint"], true);
     }
     for name in [
@@ -1066,10 +1074,16 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
         specs.iter().any(|s| s.name == "apply_text_edits"),
         "apply_text_edits must appear in tool_specs (list_tools + MCP tools/list)"
     );
-    assert_eq!(
-        KNOWN_TOOL_NAMES.len(),
-        specs.len(),
-        "KNOWN_TOOL_NAMES must stay in sync with tool_specs"
+    for spec in &specs {
+        assert!(
+            KNOWN_TOOL_NAMES.contains(&spec.name.as_str()),
+            "{} must be recognized by ToolCall",
+            spec.name
+        );
+    }
+    assert!(
+        specs.len() < KNOWN_TOOL_NAMES.len(),
+        "hidden implemented tools should make public specs a strict subset"
     );
     assert!(crate::tool_runtime::metadata::lookup_tool_metadata("apply_text_edits").is_some());
     // The edit category includes the new tool.
@@ -1077,7 +1091,7 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
     let edit = cats["edit"].as_array().expect("edit category present");
     assert!(edit.iter().any(|v| v == "apply_text_edits"));
     // OpenAPI ToolCallRequest description lists the name; operation count
-    // stays 28 (no dedicated op added).
+    // stays 27 while Codex delegation is hidden (no dedicated op added).
     let spec = crate::openapi::build_openapi_spec();
     let tool_desc = &spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
         ["description"]
@@ -1093,5 +1107,5 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 28, "OpenAPI operation count must remain 28");
+    assert_eq!(count, 27, "OpenAPI operation count must remain 27");
 }

@@ -87,7 +87,7 @@ The documented distribution path uses the npm thin installer/wrapper:
 ```bash
 npm install -g @yyjeqhc/webcodex
 ```
-Planned v0.2.0 GitHub release artifacts are `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not planned for v0.2.0 unless a later release adds artifacts. The npm wrapper currently installs v0.1.0 binaries; download GitHub release binaries directly for v0.2.0.
+Planned v0.2.0 GitHub release artifacts are `linux-x64`, `linux-arm64`, and `darwin-arm64`. `darwin-x64`, Windows, and other targets are not planned for v0.2.0 unless a later release adds artifacts. The npm wrapper currently installs v0.1.0 binaries; use matching GitHub release artifacts for v0.2.0 only after those artifacts are published, and do not expect npm to install v0.2.0 until the wrapper and manifest are updated.
 
 
 Initialize the env file:

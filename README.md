@@ -6,6 +6,8 @@ Self-hosted runtime for letting ChatGPT GPT Actions and MCP clients work on priv
 
 WebCodex is for developers and teams who want an AI assistant to inspect repositories, edit files, and run controlled Git/test/build commands without handing project execution to a hosted black box.
 
+Start here: [docs/QUICK_START.md](docs/QUICK_START.md) for onboarding and [docs/CONCEPTS.md](docs/CONCEPTS.md) for vocabulary.
+
 ## Why it exists
 
 Most AI coding integrations force a trade-off:
@@ -81,7 +83,7 @@ This local demo runs on one machine without `sudo`, `/etc`, systemd, HTTPS, Ngin
 npm install -g @yyjeqhc/webcodex
 ```
 
-Or download platform binaries from the GitHub release. The npm wrapper currently installs v0.1.0 binaries; v0.2.0 users should download GitHub release binaries directly until a later npm release updates the wrapper.
+Or use platform binaries from the matching GitHub release when they are published. The npm wrapper currently installs v0.1.0 binaries; do not expect `npm install -g @yyjeqhc/webcodex` to install v0.2.0 until a later npm wrapper and manifest update.
 
 ### 2. Start a local server
 
@@ -229,17 +231,18 @@ The server stores only hashes for user-created PATs and agent tokens. See [docs/
 
 ## Documentation
 
-- Release notes: [docs/RELEASE_NOTES_v0.2.0.md](docs/RELEASE_NOTES_v0.2.0.md)
+- Start here: [docs/QUICK_START.md](docs/QUICK_START.md) / [简体中文](docs/QUICK_START.zh-CN.md)
+- Concepts: [docs/CONCEPTS.md](docs/CONCEPTS.md) / [简体中文](docs/CONCEPTS.zh-CN.md)
 - Operations guide: [docs/OPERATIONS.md](docs/OPERATIONS.md)
 - Install and deploy: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) / [简体中文](docs/DEPLOYMENT.zh-CN.md)
 - Create a GPT Action: [docs/GPT_ACTIONS.md](docs/GPT_ACTIONS.md) / [简体中文](docs/GPT_ACTIONS.zh-CN.md)
-- Quick start: [docs/QUICK_START.md](docs/QUICK_START.md) / [简体中文](docs/QUICK_START.zh-CN.md)
 - Use with MCP: [docs/MCP.md](docs/MCP.md) / [简体中文](docs/MCP.zh-CN.md)
 - Credential model: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) / [简体中文](docs/AUTH_MODEL.zh-CN.md)
 - Agent projects: [docs/AGENT_PROJECTS.md](docs/AGENT_PROJECTS.md) / [简体中文](docs/AGENT_PROJECTS.zh-CN.md)
 - Agent transports: [docs/AGENT_TRANSPORTS.md](docs/AGENT_TRANSPORTS.md) / [简体中文](docs/AGENT_TRANSPORTS.zh-CN.md)
 - Shell profiles: [docs/SHELL_PROFILES.md](docs/SHELL_PROFILES.md) / [简体中文](docs/SHELL_PROFILES.zh-CN.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) / [简体中文](docs/TROUBLESHOOTING.zh-CN.md)
+- Release notes: [docs/RELEASE_NOTES_v0.2.0.md](docs/RELEASE_NOTES_v0.2.0.md)
 - Full documentation index: [docs/INDEX.md](docs/INDEX.md) / [简体中文](docs/INDEX.zh-CN.md)
 
 ## Security notes

@@ -93,7 +93,7 @@ webcodex-cli token create-local \
 
 ## 工具面
 
-GPT Actions surface 有意小于完整 admin API。它包含 runtime、project、git、patch、file、shell/job 和可选 Codex task operations。
+GPT Actions surface 有意小于完整 admin API。它包含 runtime、project、git、patch、file、shell/job、artifact 和 session operations。
 
 它不暴露 user、API-token、agent-token、pairing/enrollment、setup、doctor、npm、server management 或 audit endpoints，例如：
 

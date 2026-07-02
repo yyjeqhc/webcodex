@@ -169,13 +169,17 @@ The current bearer pipeline is:
    and maps them to `AuthKind::OAuth2Token`.
 
 PATs and OAuth2 access tokens coexist on regular HTTP API and MCP paths.
-OAuth2 access tokens remain rejected on agent transport paths. JWT/JWKS/OIDC
-metadata can be added later where required by MCP or OIDC clients.
+OAuth2 access tokens remain rejected on agent transport paths.
 
-A bearer-like OAuth bridge for OAuth-only hosts is future work. It may let a
-user enter a shared key on a WebCodex-hosted OAuth authorization page and
-receive an OAuth access token, but it would still be an OAuth flow, not static
-Bearer/API-key auth and not blank OAuth fields.
+The shared-key OAuth bridge is implemented behind the disabled-by-default
+`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true` flag. It lets OAuth-only hosts use a
+WebCodex OAuth authorization page where the user enters a shared key, but it
+remains an OAuth flow: it is not static Bearer/API-key auth, not no-auth, and
+not blank OAuth fields. Bridge-issued tokens preserve shared-key hash grouping
+and are capped to runtime/project/job scopes.
+
+OIDC, JWT/JWKS, `/.well-known/openid-configuration`, and `userinfo_endpoint`
+are not implemented.
 
 ## Scopes
 

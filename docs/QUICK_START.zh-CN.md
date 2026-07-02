@@ -2,18 +2,24 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-这份文档是 README 中无 sudo 本地 demo 之后的第一次可部署路径。它同时覆盖长期运行的 service 模式和不使用 service 的 agent 模式，但比 [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) 更短。
+这是 WebCodex 的 canonical onboarding 入口。它帮助首次部署者选择路径、安装匹配的二进制文件、连接 server 和 agent，然后再进入 GPT Actions、MCP、Deployment、OAuth 或 Testing 文档，而不需要一次读完整个系统。
 
-| 需求 | 使用 |
-| --- | --- |
-| 单机本地评估，不需要 `sudo`、HTTPS 或 service | README 快速开始 |
-| **最快 server + client（共享密钥）** | **下方快速开始** |
-| **临时 demo（匿名 open 模式）** | **下方快速开始** |
-| 第一次部署 server 和长期运行的 systemd agent | 下方第 1-3 节 |
-| 临时 agent、容器或没有 systemd 的机器 | 下方第 4 节 |
-| 生产加固、Nginx、QUIC、GPT Actions、MCP 细节 | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md) |
+先理解术语时看 [CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md)。如果只是想跑一个不需要 `sudo`、`/etc`、systemd、HTTPS、Nginx 或 QUIC 的单机 demo，请先看 README quick start。
 
 下面的命令形态已对照当前 `webcodex-cli`、`webcodex-agent` 和 `webcodex` 的二进制 help 输出检查。
+
+## 决策树
+
+| 目标 | 从哪里开始 | 下一步阅读 |
+| --- | --- | --- |
+| 单机本地快速体验 | README quick start | 需要 shared-key、service、GPT Actions、MCP 或远程 agent 时再回到本文 |
+| 用一个共享密钥快速评估 server + agent | 下方 A 节 | [AUTH_MODEL.zh-CN.md](AUTH_MODEL.zh-CN.md)、[AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) |
+| 单用户自托管部署，使用可撤销 token | 下方第 1-3 节 | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)、[OPERATIONS.md](OPERATIONS.md) |
+| 接入 GPT Actions | 先完成 server + online agent，再看 [GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md) | 使用 OAuth 时看 [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) |
+| 接入 MCP | 先完成 server + online agent，再看 [MCP.zh-CN.md](MCP.zh-CN.md) | 使用 OAuth 时看 [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) |
+| systemd service 部署 | 下方第 1-3 节 | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)、[TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) |
+| manual/no-service agent 运行 | 下方第 4 节 | [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md)、[AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md) |
+| OAuth-only Host 但希望 low-config shared-key onboarding | 显式启用 OAuth2 和 shared-key bridge | [DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md#oauth2)、[OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md#bearer-like-oauth-bridge) |
 
 ## 快速开始：三条路径
 
@@ -51,9 +57,9 @@ server 必须显式使用 `--open`（`WEBCODEX_ALLOW_ANONYMOUS=true`），client
 
 Open demo mode 只适合 localhost、可信 LAN 和临时 demo。不要把它作为长期公网模式使用。匿名 open caller 共享同一个 demo current-session principal，因此 open group 内的 session state 是共享的。
 
-### C. Managed production mode
+### C. Managed self-hosted mode
 
-生产部署使用 pairing、`setup single-user`、`wc_pat_*` user token 和 `wc_agent_*` agent token。Managed mode 支持多用户、可撤销 token、每用户 scope 和更适合审计的 ownership。完整 managed 流程保留在下方第 1-4 节。
+长期自托管部署使用 pairing 或 account credential、`wc_pat_*` user token 和 `wc_agent_*` agent token。Managed mode 提供可撤销凭据、带 scope 的 PAT 和更清晰的 ownership 记录。它不是 hosted SaaS、租户隔离层或外部身份提供商。完整 managed 流程保留在下方第 1-4 节。
 
 ## GPT Action / MCP Host 认证兼容性
 
@@ -63,9 +69,11 @@ Open demo mode 只适合 localhost、可信 LAN 和临时 demo。不要把它作
 | --- | --- | --- |
 | 访问令牌/API 密钥、静态 Bearer 或自定义 `Authorization` header | 共享密钥 quick start 或 managed PAT | quick start 使用 shared key；managed mode 使用 `wc_pat_*`。Host 会把它作为 `Authorization: Bearer ...` 发送。 |
 | 无认证、None 或不配置认证 | Open demo mode | server 必须用 `--open` 启动；不要把它暴露成长期公网模式。 |
-| OAuth | Managed OAuth | 只有在 WebCodex 已按该 Host 期望配置 OAuth flow 时才选择。 |
+| OAuth | Managed OAuth，或显式启用的 shared-key OAuth bridge | 只有在 WebCodex 已按该 Host 期望配置 OAuth flow 时才选择。 |
 
-不要选择 OAuth 后把 client 字段留空，并期待它变成 shared-key 或 open 行为。OAuth client 字段留空通常表示 Host 会尝试 OAuth metadata discovery、dynamic client registration 或 client metadata discovery。如果某个 Host 只支持 OAuth，那么 shared-key quick start 不能直接通过这个 UI 配置。未来可以增加一个 OAuth bridge：在 OAuth 授权页里让用户输入 shared key，并把它映射成 OAuth access token；但那仍然是 OAuth flow，不是静态 Bearer header。
+不要选择 OAuth 后把 client 字段留空，并期待它变成 shared-key 或 open 行为。OAuth client 字段留空通常表示 Host 会尝试 OAuth metadata discovery、dynamic client registration 或 client metadata discovery。
+
+如果某个 Host 只支持 OAuth，而你希望 low-config shared-key onboarding，请在 WebCodex server 上显式启用 OAuth2 和 shared-key bridge（`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true`）。bridge 会让用户在 WebCodex OAuth 页面输入 shared key，并在 authorization-code exchange 后得到 OAuth token。它仍然遵守 OAuth 语义和 scope，只保存 shared-key hash，不会把匿名 open mode 变成 OAuth，也不会授予 `admin`、`account:manage` 或 `agent:*` scope。
 
 ## 0. 安装 binaries
 
@@ -79,7 +87,13 @@ webcodex-cli -h
 webcodex-agent -h
 ```
 
-计划发布的 v0.2.0 GitHub release artifacts 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。v0.2.0 暂不计划包含 Windows 和 `darwin-x64` artifacts。npm wrapper 当前安装的是 v0.1.0 二进制文件；v0.2.0 用户应直接下载 GitHub release 二进制文件。
+当前安装路径和发布过渡状态：
+
+- `npm install -g @yyjeqhc/webcodex` 是当前公开 npm wrapper 路径，会安装已发布 package/manifest 对应的版本。
+- 在这个仓库中，npm wrapper 仍是 `0.1.0`，manifest 指向 v0.1.0 GitHub release artifacts。
+- v0.2.0 release-prep 路径是在 artifacts 发布后使用 GitHub release artifacts：`linux-x64`、`linux-arm64` 和 `darwin-arm64`。在 npm wrapper 和 manifest 更新前，不要假设 `npm install -g @yyjeqhc/webcodex` 会安装 v0.2.0。
+- v0.2.0 暂不计划包含 Windows 和 `darwin-x64` artifacts。
+- 从开发 checkout 评估未发布代码时，应从本仓库构建二进制文件，而不是让 npm wrapper 代表未发布代码。
 
 ## 1. 第一次部署服务器
 
@@ -401,6 +415,8 @@ curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
 
 - 使用 project-scoped current session 时，请在 `start_session` 时传入 `project`。`project = null` 创建的 session 不能后续绑定到某个具体 project；返回 `session_project_mismatch` 是预期审计语义，不代表 runtime 故障。
 - 如果 `runtime_status` 显示 server project config not configured，只表示 server-side `projects.toml` 未配置。通过已连接 agent 注册的 projects 仍然可以正常可用；用 `list_projects` 查看当前 runtime surface。
+- Codex delegation 当前已从模型可见 surface 隐藏/禁用，包括 GPT Actions、MCP `tools/list`、runtime tool discovery 和 generic model-facing dispatch。不要把 `run_codex` 写成推荐路径。推荐的模型工作流是结构化编辑工具（`replace_line_range`、`insert_at_line`、`delete_line_range`）、patch validation、受控 shell/job validation、`show_changes` 以及 sessions/handoff。
+- 使用 `transport = "auto"` 时，agent 只有在配置了 `[quic]` section 后才会先尝试 QUIC，然后 fallback 到 WebSocket，再 fallback 到 polling。没有 `[quic]` 时，`auto` 会从 WebSocket 开始。
 
 ## 7. 应该选择哪种模式？
 
@@ -412,8 +428,13 @@ curl -sS --oauth2-bearer "$WEBCODEX_PAT" \
 
 ## 8. 下一步文档
 
+- 概念与术语：[CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md)
 - 完整部署细节：[DEPLOYMENT.zh-CN.md](DEPLOYMENT.zh-CN.md)
+- GPT Actions 设置：[GPT_ACTIONS.zh-CN.md](GPT_ACTIONS.zh-CN.md)
+- MCP 设置：[MCP.zh-CN.md](MCP.zh-CN.md)
+- OAuth2 smoke test：[OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md)
 - Agent projects：[AGENT_PROJECTS.zh-CN.md](AGENT_PROJECTS.zh-CN.md)
 - Shell profiles 和 PATH 处理：[SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md)
 - Transport 细节与 QUIC 验证：[AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md)
+- Testing 和 CI lanes：[TESTING.md](TESTING.md)、[CI_LANES.md](CI_LANES.md)
 - 排障：[TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md)

@@ -2,18 +2,24 @@
 
 [English](QUICK_START.md) | [简体中文](QUICK_START.zh-CN.md)
 
-This guide is the first deployable setup path after the no-sudo local demo in the README. It covers both long-running service mode and no-service agent mode, but stays shorter than [DEPLOYMENT.md](DEPLOYMENT.md).
+This is the canonical onboarding entry point for WebCodex. It helps a first-time operator choose a path, install the matching binaries, connect a server and agent, and then continue into GPT Actions, MCP, Deployment, OAuth, or Testing docs without learning every subsystem at once.
 
-| Need | Use |
-| --- | --- |
-| One-machine local evaluation, no `sudo`, no HTTPS, no service | README Quick start |
-| **Quickest server + client (shared key)** | **Quick start below** |
-| **Temporary demo (anonymous open mode)** | **Quick start below** |
-| First server and long-running agent with systemd services | Sections 1-3 below |
-| Temporary agent, container, or machine without systemd | Section 4 below |
-| Production hardening, Nginx, QUIC, GPT Actions, MCP details | [DEPLOYMENT.md](DEPLOYMENT.md) |
+For vocabulary before commands, see [CONCEPTS.md](CONCEPTS.md). For the tiny one-machine demo that avoids `sudo`, `/etc`, systemd, HTTPS, Nginx, and QUIC, see the README quick start first.
 
 The command shapes below were checked against the current binary help output for `webcodex-cli`, `webcodex-agent`, and `webcodex`.
+
+## Decision tree
+
+| Goal | Start with | Then read |
+| --- | --- | --- |
+| Local quick experience on one machine | README quick start | This guide when you want shared-key, service, GPT Actions, MCP, or remote-agent setup |
+| Fast server + agent evaluation with one shared secret | Section A below | [AUTH_MODEL.md](AUTH_MODEL.md), [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) |
+| Single-user self-hosted deployment with revocable tokens | Sections 1-3 below | [DEPLOYMENT.md](DEPLOYMENT.md), [OPERATIONS.md](OPERATIONS.md) |
+| GPT Actions connection | Finish a server + online agent path, then use [GPT_ACTIONS.md](GPT_ACTIONS.md) | [AUTH_MODEL.md](AUTH_MODEL.md), [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) if using OAuth |
+| MCP connection | Finish a server + online agent path, then use [MCP.md](MCP.md) | [AUTH_MODEL.md](AUTH_MODEL.md), [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md) if using OAuth |
+| systemd service deployment | Sections 1-3 below | [DEPLOYMENT.md](DEPLOYMENT.md), [TROUBLESHOOTING.md](TROUBLESHOOTING.md) |
+| Manual/no-service agent run | Section 4 below | [SHELL_PROFILES.md](SHELL_PROFILES.md), [AGENT_PROJECTS.md](AGENT_PROJECTS.md) |
+| OAuth-only host with low-config shared-key onboarding | OAuth2 plus the shared-key bridge, when explicitly enabled | [DEPLOYMENT.md](DEPLOYMENT.md#oauth2), [OAUTH2_AUTHORIZE_DESIGN.md](OAUTH2_AUTHORIZE_DESIGN.md#bearer-like-oauth-bridge) |
 
 ## Quick start: three paths
 
@@ -51,9 +57,9 @@ webcodex-agent --config <generated-agent.toml>
 
 Open demo mode is only for localhost, trusted LANs, and temporary demos. Do not use it as a long-running public internet mode. Anonymous open callers share one demo current-session principal, so session state is shared within the open group.
 
-### C. Managed production mode
+### C. Managed self-hosted mode
 
-Use pairing, `setup single-user`, `wc_pat_*` user tokens, and `wc_agent_*` agent tokens for production. Managed mode supports multi-user deployment, revocable tokens, per-user scopes, and audit-friendly ownership. The full managed flow is preserved in Sections 1-4 below.
+Use pairing or account credentials, `wc_pat_*` user tokens, and `wc_agent_*` agent tokens for long-running self-hosted deployments. Managed mode gives you revocable credentials, scoped PATs, and clearer ownership records. It is not hosted SaaS, tenant isolation, or an external identity provider. The full managed flow is preserved in Sections 1-4 below.
 
 ## GPT Action / MCP host authentication compatibility
 
@@ -63,9 +69,11 @@ Hosts do not present authentication settings the same way.
 | --- | --- | --- |
 | Access token / API key, static bearer, or custom `Authorization` header | Shared-key quick start or managed PAT | Use the shared key for quick start, or `wc_pat_*` for managed mode. The token is sent as `Authorization: Bearer ...`. |
 | None, No authentication, or unauthenticated access | Open demo mode | Requires the server to be started with `--open`; do not expose this as a long-running public mode. |
-| OAuth | Managed OAuth | Use only when WebCodex is configured for the OAuth flow expected by that host. |
+| OAuth | Managed OAuth, or shared-key OAuth bridge when explicitly enabled | Use only when WebCodex is configured for the OAuth flow expected by that host. |
 
-Do not select OAuth and leave the client fields blank expecting shared-key or open behavior. Blank OAuth client fields usually mean the host will try OAuth metadata discovery, dynamic client registration, or client metadata discovery. If the host is OAuth-only, shared-key quick start cannot be configured directly through that UI. A future OAuth bridge can provide a bearer-like user experience by letting the OAuth authorization page map a user-entered shared key to an OAuth access token, but that is still an OAuth flow, not a static bearer header.
+Do not select OAuth and leave the client fields blank expecting shared-key or open behavior. Blank OAuth client fields usually mean the host will try OAuth metadata discovery, dynamic client registration, or client metadata discovery.
+
+If a host is OAuth-only and you want low-config shared-key onboarding, enable OAuth2 and the explicit shared-key bridge (`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE=true`) on the WebCodex server. The bridge lets the user enter a shared key on the WebCodex OAuth page and receive OAuth tokens after the authorization-code exchange. It still enforces OAuth semantics and scopes, stores only the shared-key hash, does not turn open anonymous mode into OAuth, and does not grant `admin`, `account:manage`, or `agent:*` scopes.
 
 ## 0. Install binaries
 
@@ -79,7 +87,13 @@ webcodex-cli -h
 webcodex-agent -h
 ```
 
-Planned v0.2.0 GitHub release artifacts are `linux-x64`, `linux-arm64`, and `darwin-arm64`. Windows and `darwin-x64` artifacts are not planned for v0.2.0. The npm wrapper currently installs v0.1.0 binaries; download GitHub release binaries directly for v0.2.0.
+Current install path and release transition:
+
+- `npm install -g @yyjeqhc/webcodex` is the current public npm wrapper path and installs the package/manifest currently published there.
+- In this repository, the npm wrapper is still `0.1.0` and its manifest points at v0.1.0 GitHub release artifacts.
+- The v0.2.0 release-prep path uses GitHub release artifacts for `linux-x64`, `linux-arm64`, and `darwin-arm64` when those artifacts are published. Do not assume `npm install -g @yyjeqhc/webcodex` installs v0.2.0 until the npm wrapper and manifest are updated.
+- Windows and `darwin-x64` artifacts are not planned for v0.2.0.
+- During development from a checkout, build the binaries from this repository instead of relying on the npm wrapper to represent unreleased code.
 
 ## 1. First server deployment
 
@@ -401,6 +415,8 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
 
 - For project-scoped current sessions, call `start_session` with `project`. A session created with `project = null` cannot later be bound to a specific project; `session_project_mismatch` is the expected audit result, not a runtime outage.
 - If `runtime_status` says the server project config is not configured, it only means server-side `projects.toml` is absent. Agent-registered projects can still be available through connected agents; use `list_projects` to see the active runtime surface.
+- Codex delegation is currently hidden/disabled from model-facing surfaces, including GPT Actions, MCP `tools/list`, runtime tool discovery, and generic model-facing dispatch. Do not make `run_codex` the recommended path. The recommended model workflow is structured edit tools (`replace_line_range`, `insert_at_line`, `delete_line_range`), patch validation, controlled shell/job validation, `show_changes`, and sessions/handoff.
+- With `transport = "auto"`, the agent tries QUIC first only when a `[quic]` section is configured, then falls back to WebSocket and then polling. Without `[quic]`, `auto` starts at WebSocket.
 
 ## 7. Which mode should you choose?
 
@@ -412,8 +428,13 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
 
 ## 8. Next docs
 
+- Concepts and vocabulary: [CONCEPTS.md](CONCEPTS.md)
 - Full deployment details: [DEPLOYMENT.md](DEPLOYMENT.md)
+- GPT Actions setup: [GPT_ACTIONS.md](GPT_ACTIONS.md)
+- MCP setup: [MCP.md](MCP.md)
+- OAuth2 smoke test: [OAUTH2_SMOKE_TEST.md](OAUTH2_SMOKE_TEST.md)
 - Agent projects: [AGENT_PROJECTS.md](AGENT_PROJECTS.md)
 - Shell profiles and PATH handling: [SHELL_PROFILES.md](SHELL_PROFILES.md)
 - Transport details and QUIC validation: [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md)
+- Testing and CI lanes: [TESTING.md](TESTING.md), [CI_LANES.md](CI_LANES.md)
 - Troubleshooting: [TROUBLESHOOTING.md](TROUBLESHOOTING.md)

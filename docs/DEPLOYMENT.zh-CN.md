@@ -86,7 +86,7 @@ token、`userinfo_endpoint`、`client_credentials` grant、device code 流程，
 npm install -g @yyjeqhc/webcodex
 ```
 
-计划发布的 v0.2.0 GitHub release artifacts 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.2.0 暂不计划包含 `darwin-x64`、Windows 和其他目标平台。npm wrapper 当前安装的是 v0.1.0 二进制文件；v0.2.0 用户应直接下载 GitHub release 二进制文件。
+计划发布的 v0.2.0 GitHub release artifacts 包含 `linux-x64`、`linux-arm64` 和 `darwin-arm64`。除非后续 release 增加 artifacts，否则 v0.2.0 暂不计划包含 `darwin-x64`、Windows 和其他目标平台。npm wrapper 当前安装的是 v0.1.0 二进制文件；只有在 v0.2.0 GitHub release artifacts 发布后才使用对应 artifacts，在 wrapper 和 manifest 更新前不要假设 npm 会安装 v0.2.0。
 
 初始化 env 文件：
 

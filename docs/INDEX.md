@@ -34,7 +34,9 @@ Start with the product README ([English](../README.md), [简体中文](../README
 17. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — short build/install command reference; overlaps with deployment but remains useful as a quick reference.
 18. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) — agent auth, identity, protocol, and redacted policy summaries.
 19. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — local end-to-end validation scripts and documentation scan guidance.
-20. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
+20. [TESTING.md](TESTING.md) — test lane definitions, default test principles, and current slow/flaky test inventory notes.
+21. [CI_LANES.md](CI_LANES.md) — proposed CI lane structure for static, contract, integration, security, manual, and smoke validation.
+22. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
 
 ## Removed from the public docs set
 

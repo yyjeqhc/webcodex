@@ -33,7 +33,9 @@
 16. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — 构建/安装快速参考；内容与部署文档有重叠，但适合作为命令速查。
 17. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) — agent auth、identity、protocol 和 policy 摘要。
 18. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — 本地端到端验证脚本和文档扫描建议。
-19. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — GPT Actions 和 MCP 设置截图说明。
+19. [TESTING.md](TESTING.md) — 测试分层、默认测试原则和当前 slow/flaky 测试 inventory 说明。
+20. [CI_LANES.md](CI_LANES.md) — static、contract、integration、security、manual 和 smoke 验证 lane 的 CI 结构提案。
+21. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — GPT Actions 和 MCP 设置截图说明。
 
 ## 已从公开文档集中移除
 

@@ -15,7 +15,6 @@
 //! admin commands as compatibility wrappers; this binary is the new home for
 //! management tooling.
 
-use reqwest::header::CONTENT_TYPE;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -52,14 +51,16 @@ use agent_init::{
 #[cfg(test)]
 use webcodex_cli::parse_env_content_value;
 use webcodex_cli::{
-    default_server_paths, is_effective_root, read_env_file_value, render_token_generate,
-    resolve_token, run_agent_token_create_local, run_client_enroll, run_pairing_create,
-    run_server_init, run_server_install_service, run_server_up, run_token_create_local,
-    token_prefix,
+    default_server_paths, fetch_runtime_status, http_get_json_status, http_post_json_status,
+    is_effective_root, post_json_authed, read_env_file_value, render_token_generate, resolve_token,
+    run_agent_token_create_local, run_client_enroll, run_pairing_create, run_server_init,
+    run_server_install_service, run_server_up, run_token_create_local, token_prefix, ApiCall,
+    HttpStatusSummary,
 };
 #[cfg(test)]
 use webcodex_cli::{
-    ensure_enroll_outputs_available, resolve_account_credential, resolve_pairing_create_token,
+    ensure_enroll_outputs_available, format_error_body, resolve_account_credential,
+    resolve_pairing_create_token,
 };
 
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
@@ -2105,73 +2106,6 @@ fn write_secret_file(path: &Path, content: &str) -> Result<(), String> {
     Ok(())
 }
 
-/// A single authenticated JSON POST against the server. Reuses
-/// `build_admin_request` to construct the path/body for known admin commands,
-/// but accepts arbitrary `(path, body)` so setup can issue its own calls.
-struct ApiCall<'a> {
-    server_url: &'a str,
-    token: &'a str,
-    path: &'a str,
-    body: Value,
-}
-
-async fn post_json_authed(call: ApiCall<'_>) -> Result<Value, String> {
-    let url = format!("{}{}", call.server_url.trim_end_matches('/'), call.path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
-    let resp = client
-        .post(url)
-        .bearer_auth(call.token)
-        .json(&call.body)
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {}", e))?;
-    let status = resp.status();
-    let content_type = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("failed to read response: {}", e))?;
-    if !status.is_success() {
-        return Err(format_error_body(status.as_u16(), &content_type, &text));
-    }
-    serde_json::from_str(&text).map_err(|e| {
-        format!(
-            "failed to parse JSON response: {} (content-type: {})",
-            e, content_type
-        )
-    })
-}
-
-/// Format an error response without echoing the bearer token. For JSON
-/// errors, surface the server's `error` field (sanitized). For non-JSON
-/// errors, report status + content-type only (never the body).
-fn format_error_body(status: u16, content_type: &str, body: &str) -> String {
-    if content_type
-        .split(';')
-        .next()
-        .is_some_and(|ct| ct.trim().eq_ignore_ascii_case("application/json"))
-    {
-        if let Ok(value) = serde_json::from_str::<Value>(body) {
-            if let Some(error) = value.get("error").and_then(Value::as_str) {
-                return format!("request failed: HTTP {}: {}", status, error);
-            }
-            return format!("request failed: HTTP {}: {}", status, value);
-        }
-    }
-    format!(
-        "request failed: HTTP {} (content-type: {})",
-        status, content_type
-    )
-}
-
 #[derive(Debug, Clone)]
 struct DoctorCheck {
     name: String,
@@ -2250,85 +2184,6 @@ fn resolve_doctor_general_token(opts: &DoctorOptions) -> Result<Option<String>, 
         }
     }
     Ok(None)
-}
-
-async fn http_post_json_status(
-    server_url: &str,
-    path: &str,
-    token: Option<&str>,
-    body: Value,
-) -> Result<(u16, String, Option<Value>), String> {
-    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
-    let mut req = client.post(url).json(&body);
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {}", e))?;
-    let status = resp.status().as_u16();
-    let content_type = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("failed to read response: {}", e))?;
-    let json = if content_type
-        .split(';')
-        .next()
-        .is_some_and(|ct| ct.trim().eq_ignore_ascii_case("application/json"))
-    {
-        serde_json::from_str::<Value>(&text).ok()
-    } else {
-        None
-    };
-    Ok((status, content_type, json))
-}
-
-async fn http_get_json_status(
-    server_url: &str,
-    path: &str,
-) -> Result<(u16, String, Option<Value>), String> {
-    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {}", e))?;
-    let status = resp.status().as_u16();
-    let content_type = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("failed to read response: {}", e))?;
-    let json = if content_type
-        .split(';')
-        .next()
-        .is_some_and(|ct| ct.trim().eq_ignore_ascii_case("application/json"))
-    {
-        serde_json::from_str::<Value>(&text).ok()
-    } else {
-        None
-    };
-    Ok((status, content_type, json))
 }
 
 fn rustls_provider() -> Arc<rustls::crypto::CryptoProvider> {
@@ -4070,15 +3925,6 @@ fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, St
     Ok(None)
 }
 
-#[derive(Debug, Clone)]
-struct HttpStatusSummary {
-    reachable: bool,
-    status_code: Option<u16>,
-    content_type: Option<String>,
-    error: Option<String>,
-    output: Option<Value>,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RuntimeBuildMetadata {
     version: Option<String>,
@@ -4234,64 +4080,6 @@ fn doctor_revision_check(
             ),
         ),
     }
-}
-
-async fn fetch_runtime_status(url: &str, token: Option<&str>) -> Result<HttpStatusSummary, String> {
-    let endpoint = format!("{}/api/runtime/status", url.trim_end_matches('/'));
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
-    let mut req = client.post(endpoint).json(&json!({}));
-    if let Some(token) = token {
-        req = req.bearer_auth(token);
-    }
-    let resp = match req.send().await {
-        Ok(resp) => resp,
-        Err(e) => {
-            return Ok(HttpStatusSummary {
-                reachable: false,
-                status_code: None,
-                content_type: None,
-                error: Some(format!("request failed: {}", e)),
-                output: None,
-            });
-        }
-    };
-    let status = resp.status();
-    let content_type = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    if !status.is_success() {
-        return Ok(HttpStatusSummary {
-            reachable: false,
-            status_code: Some(status.as_u16()),
-            content_type: Some(content_type),
-            error: None,
-            output: None,
-        });
-    }
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("failed to read response: {}", e))?;
-    let value: Value = serde_json::from_str(&text).map_err(|e| {
-        format!(
-            "failed to parse JSON response: {} (content-type: {})",
-            e, content_type
-        )
-    })?;
-    let output = value.get("output").cloned().or(Some(value));
-    Ok(HttpStatusSummary {
-        reachable: true,
-        status_code: Some(status.as_u16()),
-        content_type: Some(content_type),
-        error: None,
-        output,
-    })
 }
 
 #[derive(Debug, Clone, Deserialize)]

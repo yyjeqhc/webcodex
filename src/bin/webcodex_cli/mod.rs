@@ -1,4 +1,5 @@
 pub(crate) mod env;
+pub(crate) mod http;
 pub(crate) mod pairing;
 pub(crate) mod server;
 pub(crate) mod token_commands;
@@ -9,6 +10,12 @@ pub(crate) use env::parse_env_content_value;
 pub(crate) use env::{
     default_server_paths, is_effective_root, read_env_file_value,
     read_pairing_server_env_file_value, render_server_env,
+};
+#[cfg(test)]
+pub(crate) use http::format_error_body;
+pub(crate) use http::{
+    fetch_runtime_status, http_get_json_status, http_post_json_status, post_json_authed,
+    post_json_unauthed, ApiCall, HttpStatusSummary,
 };
 #[cfg(test)]
 pub(crate) use pairing::{ensure_enroll_outputs_available, resolve_pairing_create_token};

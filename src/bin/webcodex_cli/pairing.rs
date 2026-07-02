@@ -1,13 +1,13 @@
-use reqwest::header::CONTENT_TYPE;
 use serde_json::{json, Value};
 
 use crate::{
     agent_init::{run_agent_init, AgentInitOptions, DEFAULT_POLL_INTERVAL_MS},
-    format_error_body, post_json_authed, write_text_file, ApiCall, ClientEnrollOptions,
-    PairingCreateOptions,
+    write_text_file, ClientEnrollOptions, PairingCreateOptions,
 };
 
-use super::{read_pairing_server_env_file_value, token_prefix};
+use super::{
+    post_json_authed, post_json_unauthed, read_pairing_server_env_file_value, token_prefix, ApiCall,
+};
 
 pub(crate) fn resolve_pairing_create_token(opts: &PairingCreateOptions) -> Result<String, String> {
     if let Some(token) = &opts.token {
@@ -256,38 +256,4 @@ pub(crate) async fn run_client_enroll(opts: ClientEnrollOptions) -> Result<Strin
         ));
         Ok(out)
     }
-}
-
-async fn post_json_unauthed(server_url: &str, path: &str, body: Value) -> Result<Value, String> {
-    let url = format!("{}{}", server_url.trim_end_matches('/'), path);
-    let client = reqwest::Client::builder()
-        .no_proxy()
-        .build()
-        .map_err(|e| format!("failed to build HTTP client: {}", e))?;
-    let resp = client
-        .post(url)
-        .json(&body)
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {}", e))?;
-    let status = resp.status();
-    let content_type = resp
-        .headers()
-        .get(CONTENT_TYPE)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("unknown")
-        .to_string();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| format!("failed to read response: {}", e))?;
-    if !status.is_success() {
-        return Err(format_error_body(status.as_u16(), &content_type, &text));
-    }
-    serde_json::from_str(&text).map_err(|e| {
-        format!(
-            "failed to parse JSON response: {} (content-type: {})",
-            e, content_type
-        )
-    })
 }

@@ -35,25 +35,26 @@ is the map for setup, auth, operations, and validation docs.
 16. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) — QUIC, WebSocket, polling, `auto` fallback, and transport validation.
 17. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) — agent auth, identity, protocol, and redacted policy summaries.
 18. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) — prepared shell env snapshots, profile config, resolution rules, and safety boundaries.
-19. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) / [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) — deployment troubleshooting and operational checklist.
+19. [TOOL_DEFINITION_REGISTRY.md](TOOL_DEFINITION_REGISTRY.md) — developer architecture plan for migrating hand-written runtime tool metadata, schemas, scopes, visibility, and policy toward a ToolDefinition registry.
+20. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) / [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) — deployment troubleshooting and operational checklist.
 
 ## Testing and CI
 
-20. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — local end-to-end validation scripts and documentation scan guidance.
-21. [TESTING.md](TESTING.md) — test lane definitions, default test principles, and current slow/flaky test inventory notes.
-22. [CI_LANES.md](CI_LANES.md) — proposed CI lane structure for static, contract, integration, security, manual, and smoke validation.
+21. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — local end-to-end validation scripts and documentation scan guidance.
+22. [TESTING.md](TESTING.md) — test lane definitions, default test principles, and current slow/flaky test inventory notes.
+23. [CI_LANES.md](CI_LANES.md) — proposed CI lane structure for static, contract, integration, security, manual, and smoke validation.
 
 ## Install, assets, and release reference
 
-23. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — build/install command reference and npm wrapper / artifact details.
-24. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
-25. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) — v0.2.0 release notes, highlights, known issues, and validation checklist.
-26. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness, artifact, publishing, and post-release smoke checklist.
+24. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — build/install command reference and npm wrapper / artifact details.
+25. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
+26. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) — v0.2.0 release notes, highlights, known issues, and validation checklist.
+27. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness, artifact, publishing, and post-release smoke checklist.
 
 ## Strategy and future work
 
-27. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — long-term WebCodex runtime architecture and provider direction.
-28. [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) / [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) — future Desktop Session strategy for controlled, auditable, replayable computer-use sessions.
+28. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — long-term WebCodex runtime architecture and provider direction.
+29. [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) / [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) — future Desktop Session strategy for controlled, auditable, replayable computer-use sessions.
 
 ## Removed from the public docs set
 

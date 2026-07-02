@@ -66,6 +66,10 @@ The recommended model workflow is to inspect first, use structured edit tools
 when line ranges are known, validate patches before applying them, run bounded
 shell/job checks, then use `show_changes` and session tools before summarizing.
 
+For developer architecture details on migrating runtime tool declarations toward
+a `ToolDefinition` registry, see
+[TOOL_DEFINITION_REGISTRY.md](TOOL_DEFINITION_REGISTRY.md).
+
 Codex delegation (`run_codex`) is currently hidden/disabled from model-facing
 surfaces: GPT Actions, MCP `tools/list`, runtime tool discovery, and generic
 model-facing dispatch. Do not treat it as the recommended path.

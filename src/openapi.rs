@@ -2275,6 +2275,55 @@ mod tests {
             spec["components"]["securitySchemes"]["bearerAuth"]["scheme"],
             "bearer"
         );
+        let description = spec["components"]["securitySchemes"]["bearerAuth"]["description"]
+            .as_str()
+            .expect("bearerAuth description");
+        assert!(
+            description.contains("shared key"),
+            "bearerAuth description must mention shared-key quick start: {description}"
+        );
+        assert!(
+            description.contains("quick start"),
+            "bearerAuth description must mention quick start: {description}"
+        );
+        assert!(
+            description.contains("wc_pat"),
+            "bearerAuth description must mention wc_pat managed tokens: {description}"
+        );
+        assert!(
+            description.contains("managed mode"),
+            "bearerAuth description must mention managed mode: {description}"
+        );
+        assert!(
+            !description.contains("personal API token only")
+                && !description.contains("wc_pat only"),
+            "bearerAuth description must not regress to PAT-only guidance: {description}"
+        );
+    }
+
+    #[test]
+    fn openapi_info_description_mentions_bearer_host_auth_modes() {
+        let spec = build_openapi_spec();
+        let description = spec["info"]["description"]
+            .as_str()
+            .expect("info description");
+        for expected in [
+            "static bearer/API-key hosts",
+            "shared key",
+            "quick start",
+            "wc_pat",
+            "managed mode",
+        ] {
+            assert!(
+                description.contains(expected),
+                "OpenAPI info.description must mention {expected:?}: {description}"
+            );
+        }
+        assert!(
+            !description.contains("personal API token only")
+                && !description.contains("wc_pat only"),
+            "OpenAPI info.description must not regress to PAT-only guidance: {description}"
+        );
     }
 
     #[test]

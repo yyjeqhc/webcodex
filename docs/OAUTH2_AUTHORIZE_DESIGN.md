@@ -108,6 +108,18 @@ That bridge would preserve host OAuth semantics. It would not make blank OAuth
 client fields behave like no-auth, shared-key quick start, or a static Bearer
 header.
 
+## OAuth bridge implementation constraints
+
+OAuth bridge remains future work. Its implementation must preserve OAuth
+semantics: blank OAuth client fields are never bearer/no-auth fallback, open
+anonymous mode must not be bridgeable into OAuth tokens, and bridge-issued
+access tokens must still enforce OAuth scopes. A shared-key bridge token must
+preserve shared-key group isolation semantics without storing plaintext shared
+keys. Do not model shared-key bridge users as managed users unless there is an
+explicit account binding. Do not use a fake `user_id` hack such as
+`shared-key:<hash>` without documenting and testing the isolation model. Agent
+transport endpoints must remain unavailable to OAuth2 tokens.
+
 ## Identity Source
 
 The current authorize endpoint accepts first-party WebCodex identity through

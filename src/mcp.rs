@@ -1559,6 +1559,19 @@ mod tests {
         assert!(method_names.contains(&"notifications/initialized".to_string()));
         assert_eq!(body["auth"]["type"], "bearer");
         assert_eq!(body["auth"]["required"], true);
+        assert_eq!(
+            body["auth"]["header"],
+            "Authorization: Bearer <shared_key_or_wc_pat>"
+        );
+        let auth_json = body["auth"].to_string();
+        assert!(
+            auth_json.contains("shared_key_or_wc_pat"),
+            "MCP auth metadata must advertise shared key or wc_pat bearer use: {auth_json}"
+        );
+        assert!(
+            !auth_json.contains("wc_pat_user_api_token"),
+            "MCP auth metadata must not regress to PAT-only placeholder: {auth_json}"
+        );
     }
 
     // =========================================================================

@@ -503,8 +503,8 @@ fn recoverable_write_rejection(reason: impl AsRef<str>) -> String {
 }
 
 /// Maximum decoded size for one binary project artifact imported through GPT
-/// Actions/runtime tools. Keep bounded because the current agent helper path
-/// carries base64 over stdin.
+/// Actions/runtime tools. Keep bounded because artifact content travels to the
+/// owning agent as base64 in a JSON file-op payload.
 pub(crate) const MAX_PROJECT_ARTIFACT_BYTES: usize = 10 * 1024 * 1024; // 10 MiB
 
 /// Default returned segment size for `read_project_artifact`. This tool returns
@@ -980,220 +980,6 @@ fn edit_match_error(index: usize, kind: super::types::ApplyTextEditKind, msg: &s
     )
 }
 
-/// Fixed python3 helper for binary artifact writes. Payload carries base64 over
-/// stdin; helper decodes and writes bytes atomically on the owning agent.
-pub(crate) const SAVE_PROJECT_ARTIFACT_HELPER: &str = r#"
-import sys, json, hashlib, os, tempfile, base64
-NUL = "\x00"
-def emit(obj):
-    sys.stdout.write(json.dumps(obj))
-    sys.exit(0)
-def invalid(path, msg):
-    emit({"path": path if isinstance(path, str) else None, "bytes_written": 0, "sha256": None, "mime_type": None, "error": msg})
-try:
-    req = json.load(sys.stdin)
-except Exception as e:
-    emit({"path": None, "bytes_written": 0, "sha256": None, "mime_type": None, "error": "invalid json: " + str(e)})
-path = req.get("path", "")
-content_base64 = req.get("content_base64", "")
-mime_type = req.get("mime_type", None)
-overwrite = bool(req.get("overwrite", False))
-max_bytes = int(req.get("max_bytes", 10485760))
-if not isinstance(path, str) or not path or path.startswith("/") or NUL in path or ".." in path.split("/"):
-    invalid(path, "invalid path")
-if not isinstance(content_base64, str) or NUL in content_base64:
-    invalid(path, "content_base64 must be a base64 string without NUL")
-try:
-    data = base64.b64decode(content_base64, validate=True)
-except Exception as e:
-    invalid(path, "invalid base64: " + str(e))
-if len(data) > max_bytes:
-    invalid(path, "decoded artifact too large")
-exists = os.path.lexists(path)
-if exists and not overwrite:
-    invalid(path, "file exists and overwrite is false")
-if exists and os.path.islink(path):
-    invalid(path, "refusing to overwrite symlink artifact path")
-base_dir = os.path.dirname(path) or "."
-tmp = None
-try:
-    os.makedirs(base_dir, exist_ok=True)
-    root = os.path.realpath(os.getcwd())
-    parent = os.path.realpath(base_dir)
-    if parent != root and not parent.startswith(root + os.sep):
-        invalid(path, "artifact path escapes project root")
-    fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-artifact-")
-    with os.fdopen(fd, "wb") as f:
-        f.write(data)
-    if os.path.islink(path):
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-        invalid(path, "refusing to overwrite symlink artifact path")
-    os.replace(tmp, path)
-except Exception as e:
-    if tmp is not None:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    invalid(path, "write failed: " + str(e))
-sha = hashlib.sha256(data).hexdigest()
-emit({"path": path, "bytes_written": len(data), "sha256": sha, "mime_type": mime_type})
-"#;
-
-/// Fixed python3 helper for artifact metadata. Reads bytes only to compute
-/// bounded metadata; zip files are counted but never extracted.
-pub(crate) const READ_PROJECT_ARTIFACT_METADATA_HELPER: &str = r#"
-import sys, json, hashlib, os, mimetypes, zipfile, io, struct
-def emit(obj):
-    sys.stdout.write(json.dumps(obj))
-    sys.exit(0)
-def fail(path, msg):
-    emit({"path": path if isinstance(path, str) else None, "bytes": 0, "sha256": None, "mime_type": None, "error": msg})
-def png_size(data):
-    if len(data) >= 24 and data[:8] == b"\x89PNG\r\n\x1a\n":
-        return struct.unpack(">II", data[16:24])
-    return None
-def webp_size(data):
-    if len(data) >= 30 and data[:4] == b"RIFF" and data[8:12] == b"WEBP" and data[12:16] == b"VP8X":
-        w = 1 + int.from_bytes(data[24:27], "little")
-        h = 1 + int.from_bytes(data[27:30], "little")
-        return (w, h)
-    return None
-def jpeg_size(data):
-    if len(data) < 4 or data[:2] != b"\xff\xd8":
-        return None
-    i = 2
-    while i + 9 < len(data):
-        if data[i] != 0xFF:
-            i += 1
-            continue
-        marker = data[i+1]
-        i += 2
-        if marker in (0xC0,0xC1,0xC2,0xC3,0xC5,0xC6,0xC7,0xC9,0xCA,0xCB,0xCD,0xCE,0xCF):
-            return (int.from_bytes(data[i+5:i+7], "big"), int.from_bytes(data[i+3:i+5], "big"))
-        if i + 2 > len(data):
-            break
-        seg = int.from_bytes(data[i:i+2], "big")
-        if seg < 2:
-            break
-        i += seg
-    return None
-try:
-    req = json.load(sys.stdin)
-except Exception as e:
-    emit({"path": None, "bytes": 0, "sha256": None, "mime_type": None, "error": "invalid json: " + str(e)})
-path = req.get("path", "")
-max_bytes = int(req.get("max_bytes", 10485760))
-if not isinstance(path, str) or not path or path.startswith("/") or ".." in path.split("/"):
-    fail(path, "invalid path")
-root = os.path.realpath(os.getcwd())
-target = os.path.realpath(path)
-if target != root and not target.startswith(root + os.sep):
-    fail(path, "artifact path escapes project root")
-try:
-    with open(path, "rb") as f:
-        data = f.read(max_bytes + 1)
-except Exception as e:
-    fail(path, "read failed: " + str(e))
-if len(data) > max_bytes:
-    fail(path, "artifact too large to inspect")
-sha = hashlib.sha256(data).hexdigest()
-mime = mimetypes.guess_type(path)[0]
-if data.startswith(b"\x89PNG\r\n\x1a\n"):
-    mime = "image/png"
-elif data.startswith(b"\xff\xd8"):
-    mime = "image/jpeg"
-elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-    mime = "image/webp"
-elif data.startswith(b"%PDF-"):
-    mime = "application/pdf"
-elif data.startswith(b"PK\x03\x04") or data.startswith(b"PK\x05\x06"):
-    mime = "application/zip"
-out = {"path": path, "bytes": len(data), "sha256": sha, "mime_type": mime}
-size = png_size(data) or jpeg_size(data) or webp_size(data)
-if size:
-    out["width"], out["height"] = size
-if mime == "application/zip":
-    try:
-        out["archive_entries_count"] = len(zipfile.ZipFile(io.BytesIO(data)).infolist())
-    except Exception:
-        out["archive_entries_count"] = None
-emit(out)
-"#;
-
-/// Fixed python3 helper for artifact content reads. Reads a bounded binary
-/// artifact and returns one base64-encoded content segment plus full-file
-/// sha256/MIME metadata. This is a chunked read helper, not a large-file
-/// transfer mechanism.
-pub(crate) const READ_PROJECT_ARTIFACT_HELPER: &str = r#"
-import sys, json, hashlib, os, mimetypes, base64
-def emit(obj):
-    sys.stdout.write(json.dumps(obj))
-    sys.exit(0)
-def fail(path, msg):
-    emit({"path": path if isinstance(path, str) else None, "mime_type": None, "file_bytes": 0, "sha256": None, "offset": 0, "bytes_returned": 0, "content_base64": "", "next_offset": 0, "truncated": False, "error": msg})
-try:
-    req = json.load(sys.stdin)
-except Exception as e:
-    emit({"path": None, "mime_type": None, "file_bytes": 0, "sha256": None, "offset": 0, "bytes_returned": 0, "content_base64": "", "next_offset": 0, "truncated": False, "error": "invalid json: " + str(e)})
-path = req.get("path", "")
-try:
-    offset = int(req.get("offset", 0))
-    length = int(req.get("length", 32768))
-    max_file_bytes = int(req.get("max_file_bytes", 10485760))
-except Exception:
-    fail(path, "offset, length, and max_file_bytes must be integers")
-if offset < 0:
-    fail(path, "offset must be >= 0")
-if length < 1:
-    fail(path, "length must be >= 1")
-if max_file_bytes < 1:
-    fail(path, "max_file_bytes must be >= 1")
-if not isinstance(path, str) or not path or path.startswith("/") or "\x00" in path or ".." in path.split("/"):
-    fail(path, "invalid path")
-root = os.path.realpath(os.getcwd())
-target = os.path.realpath(path)
-if target != root and not target.startswith(root + os.sep):
-    fail(path, "artifact path escapes project root")
-try:
-    file_bytes = os.path.getsize(path)
-except Exception as e:
-    fail(path, "stat failed: " + str(e))
-if file_bytes > max_file_bytes:
-    fail(path, "artifact too large to read; use metadata or a smaller artifact")
-try:
-    with open(path, "rb") as f:
-        data = f.read()
-except Exception as e:
-    fail(path, "read failed: " + str(e))
-sha = hashlib.sha256(data).hexdigest()
-mime = mimetypes.guess_type(path)[0]
-if data.startswith(b"\x89PNG\r\n\x1a\n"):
-    mime = "image/png"
-elif data.startswith(b"\xff\xd8"):
-    mime = "image/jpeg"
-elif data[:4] == b"RIFF" and data[8:12] == b"WEBP":
-    mime = "image/webp"
-elif data.startswith(b"%PDF-"):
-    mime = "application/pdf"
-elif data.startswith(b"PK\x03\x04") or data.startswith(b"PK\x05\x06"):
-    mime = "application/zip"
-elif data.lstrip()[:1] in (b"{", b"["):
-    mime = "application/json"
-if offset >= file_bytes:
-    segment = b""
-    next_offset = file_bytes
-    truncated = False
-else:
-    next_offset = min(file_bytes, offset + length)
-    segment = data[offset:next_offset]
-    truncated = next_offset < file_bytes
-emit({"path": path, "mime_type": mime, "file_bytes": file_bytes, "sha256": sha, "offset": offset, "bytes_returned": len(segment), "content_base64": base64.b64encode(segment).decode("ascii"), "next_offset": next_offset, "truncated": truncated})
-"#;
-
 impl ToolRuntime {
     pub(crate) async fn delete_project_files(
         &self,
@@ -1217,15 +1003,15 @@ impl ToolRuntime {
     }
 
     // -------------------------------------------------------------------------
-    // Phase 4: structured file edit tools (replace_in_file / write_project_file)
+    // Phase 4: native agent JSON file ops
     // -------------------------------------------------------------------------
     //
-    // Both tools mutate the worktree through the owning agent only. The server
-    // never reads or writes the agent project filesystem directly. Arguments
-    // travel as JSON in a native agent file-op payload; the agent performs the
-    // validation and atomic write, then returns one JSON object on stdout.
+    // Structured edits and project artifact tools run through the owning agent.
+    // The server never reads or writes the agent project filesystem directly.
+    // Arguments travel as JSON in a native agent file-op payload; the agent
+    // performs validation and returns one JSON object on stdout.
 
-    async fn run_structured_edit_file_op(
+    async fn run_agent_json_file_op(
         &self,
         client_id: String,
         cwd: String,
@@ -1349,7 +1135,7 @@ impl ToolRuntime {
             "allow_multiple": allow_multi,
         });
         let obj = match self
-            .run_structured_edit_file_op(
+            .run_agent_json_file_op(
                 client_id,
                 proj.path.clone(),
                 path.clone(),
@@ -1430,7 +1216,7 @@ impl ToolRuntime {
             "expected_content_prefix": expected_content_prefix,
         });
         let obj = match self
-            .run_structured_edit_file_op(
+            .run_agent_json_file_op(
                 client_id,
                 proj.path.clone(),
                 path.clone(),
@@ -1513,15 +1299,21 @@ impl ToolRuntime {
         };
 
         let payload = json!({
-            "path": path,
+            "path": path.clone(),
             "content_base64": content_base64,
             "mime_type": mime_type,
             "overwrite": overwrite.unwrap_or(false),
             "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
         });
-        let command = format!("python3 -c '{}'", SAVE_PROJECT_ARTIFACT_HELPER);
         let obj = match self
-            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .run_agent_json_file_op(
+                client_id,
+                proj.path.clone(),
+                path.clone(),
+                "save_project_artifact",
+                payload,
+                "save_project_artifact",
+            )
             .await
         {
             Ok(v) => v,
@@ -1563,12 +1355,18 @@ impl ToolRuntime {
             Err(e) => return ToolResult::err(e),
         };
         let payload = json!({
-            "path": path,
+            "path": path.clone(),
             "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
         });
-        let command = format!("python3 -c '{}'", READ_PROJECT_ARTIFACT_METADATA_HELPER);
         let obj = match self
-            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .run_agent_json_file_op(
+                client_id,
+                proj.path.clone(),
+                path.clone(),
+                "read_project_artifact_metadata",
+                payload,
+                "read_project_artifact_metadata",
+            )
             .await
         {
             Ok(v) => v,
@@ -1634,14 +1432,20 @@ impl ToolRuntime {
             Err(e) => return ToolResult::err(e),
         };
         let payload = json!({
-            "path": path,
+            "path": path.clone(),
             "offset": offset,
             "length": length,
             "max_file_bytes": MAX_PROJECT_ARTIFACT_BYTES,
         });
-        let command = format!("python3 -c '{}'", READ_PROJECT_ARTIFACT_HELPER);
         let obj = match self
-            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .run_agent_json_file_op(
+                client_id,
+                proj.path.clone(),
+                path.clone(),
+                "read_project_artifact",
+                payload,
+                "read_project_artifact",
+            )
             .await
         {
             Ok(v) => v,
@@ -2859,8 +2663,6 @@ impl ToolRuntime {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::Write;
-    use std::process::{Command, Stdio};
 
     fn unique_temp_dir(name: &str) -> std::path::PathBuf {
         let stamp = std::time::SystemTime::now()
@@ -2875,30 +2677,6 @@ mod tests {
         ));
         std::fs::create_dir_all(&dir).expect("create temp dir");
         dir
-    }
-
-    fn run_python_helper(helper: &str, cwd: &std::path::Path, payload: Value) -> Value {
-        let mut child = Command::new("python3")
-            .arg("-c")
-            .arg(helper)
-            .current_dir(cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .expect("spawn python3 helper");
-        child
-            .stdin
-            .as_mut()
-            .expect("helper stdin")
-            .write_all(payload.to_string().as_bytes())
-            .expect("write helper payload");
-        let output = child.wait_with_output().expect("wait for helper");
-        assert!(
-            output.status.success(),
-            "helper process failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
-        serde_json::from_slice(&output.stdout).expect("helper json stdout")
     }
 
     #[test]
@@ -3167,79 +2945,6 @@ mod tests {
         assert_eq!(effective_search_context(None, None), (0, 0));
         assert_eq!(effective_search_context(Some(3), Some(8)), (3, 8));
         assert_eq!(effective_search_context(Some(21), Some(99)), (20, 20));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn helper_read_project_artifact_rejects_symlink_escape() {
-        let root = unique_temp_dir("artifact-read-root");
-        let outside = unique_temp_dir("artifact-read-outside").join("outside.bin");
-        let outside_content = b"outside-secret-content";
-        std::fs::write(&outside, outside_content).expect("write outside file");
-        std::os::unix::fs::symlink(&outside, root.join("leak.bin")).expect("create symlink");
-
-        let out = run_python_helper(
-            READ_PROJECT_ARTIFACT_HELPER,
-            &root,
-            json!({"path":"leak.bin","offset":0,"length":8,"max_file_bytes":MAX_PROJECT_ARTIFACT_BYTES}),
-        );
-        assert_eq!(out["error"], "artifact path escapes project root");
-        assert!(!out.to_string().contains("outside-secret-content"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn helper_read_project_artifact_metadata_rejects_symlink_escape() {
-        let root = unique_temp_dir("artifact-meta-root");
-        let outside = unique_temp_dir("artifact-meta-outside").join("outside.bin");
-        std::fs::write(&outside, b"outside-secret-content").expect("write outside file");
-        std::os::unix::fs::symlink(&outside, root.join("leak.bin")).expect("create symlink");
-
-        let out = run_python_helper(
-            READ_PROJECT_ARTIFACT_METADATA_HELPER,
-            &root,
-            json!({"path":"leak.bin","max_bytes":MAX_PROJECT_ARTIFACT_BYTES}),
-        );
-        assert_eq!(out["error"], "artifact path escapes project root");
-        assert!(!out.to_string().contains("outside-secret-content"));
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn helper_save_project_artifact_rejects_existing_symlink_target_escape() {
-        let root = unique_temp_dir("artifact-save-root");
-        let outside = unique_temp_dir("artifact-save-outside").join("outside.bin");
-        std::fs::write(&outside, b"outside-secret-content").expect("write outside file");
-        std::os::unix::fs::symlink(&outside, root.join("leak.bin")).expect("create symlink");
-
-        let out = run_python_helper(
-            SAVE_PROJECT_ARTIFACT_HELPER,
-            &root,
-            json!({"path":"leak.bin","content_base64":"bmV3","mime_type":"text/plain","overwrite":true,"max_bytes":MAX_PROJECT_ARTIFACT_BYTES}),
-        );
-        assert_eq!(out["error"], "refusing to overwrite symlink artifact path");
-        assert_eq!(
-            std::fs::read(&outside).expect("outside file remains readable"),
-            b"outside-secret-content"
-        );
-        assert!(!out.to_string().contains("outside-secret-content"));
-    }
-
-    #[test]
-    fn helper_save_project_artifact_allows_normal_nested_write() {
-        let root = unique_temp_dir("artifact-save-normal");
-        let out = run_python_helper(
-            SAVE_PROJECT_ARTIFACT_HELPER,
-            &root,
-            json!({"path":"nested/out.txt","content_base64":"aGVsbG8=","mime_type":"text/plain","overwrite":false,"max_bytes":MAX_PROJECT_ARTIFACT_BYTES}),
-        );
-        assert!(out.get("error").is_none(), "unexpected helper error: {out}");
-        assert_eq!(out["path"], "nested/out.txt");
-        assert_eq!(out["bytes_written"], 5);
-        assert_eq!(
-            std::fs::read(root.join("nested/out.txt")).expect("read written artifact"),
-            b"hello"
-        );
     }
 
     #[test]

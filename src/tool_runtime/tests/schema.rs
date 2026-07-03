@@ -103,18 +103,17 @@ fn required_agent_capability_matches_metadata_risk_table() {
         (
             "save_project_artifact",
             ToolRisk::ProjectWrite,
-            AgentCapability::Shell,
+            AgentCapability::FileWrite,
         ),
-        // Artifact reads use fixed helper commands over the shell path.
         (
             "read_project_artifact_metadata",
             ToolRisk::ReadOnly,
-            AgentCapability::Shell,
+            AgentCapability::FileRead,
         ),
         (
             "read_project_artifact",
             ToolRisk::ReadOnly,
-            AgentCapability::Shell,
+            AgentCapability::FileRead,
         ),
         (
             "replace_line_range",

@@ -215,47 +215,6 @@ pub(in crate::tool_runtime::tests) fn python3_available() -> bool {
         .unwrap_or(false)
 }
 
-/// Run a fixed helper script locally with a JSON payload on stdin, in the
-/// given cwd, and return the parsed JSON object the helper prints.
-pub(in crate::tool_runtime::tests) fn run_helper_locally(
-    helper: &str,
-    payload: &Value,
-    cwd: &Path,
-) -> Value {
-    let stdin = serde_json::to_string(payload).unwrap();
-    let mut child = std::process::Command::new("python3")
-        .arg("-c")
-        .arg(helper)
-        .current_dir(cwd)
-        .stdin(std::process::Stdio::piped())
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .expect("spawn python3");
-    use std::io::Write;
-    child
-        .stdin
-        .take()
-        .unwrap()
-        .write_all(stdin.as_bytes())
-        .unwrap();
-    let output = child.wait_with_output().unwrap();
-    assert!(
-        output.status.success(),
-        "helper exited {:?}: stderr={}",
-        output.status,
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    serde_json::from_str(stdout.trim()).unwrap_or_else(|e| {
-        panic!(
-            "helper returned invalid JSON: {} (got: {})",
-            e,
-            stdout.trim()
-        )
-    })
-}
-
 pub(in crate::tool_runtime::tests) fn text_edit(
     kind: ApplyTextEditKind,
     old_text: Option<&str>,

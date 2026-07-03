@@ -58,8 +58,9 @@ use webcodex_agent::{
 use webcodex_agent::{
     client_profile_agent_config, configured_prepared_shell_job_command,
     configured_shell_job_command, cwd_allowed, default_config_path, dispatch_request, err_cmd,
-    handle_apply_text_edits_file_request, handle_basic_file_request, handle_line_edit_file_request,
-    handle_replace_in_file_request, handle_write_project_file_request, hostname,
+    handle_apply_text_edits_file_request, handle_artifact_file_request, handle_basic_file_request,
+    handle_line_edit_file_request, handle_replace_in_file_request,
+    handle_write_project_file_request, hostname, is_artifact_request_kind,
     is_basic_file_request_kind, is_line_edit_request_kind, is_project_op, load_config, ok_cmd,
     projects_dir, resolve_prepared_shell_profile, resolve_requested_path, run_agent,
     validate_client_profile, validate_line_edit_agent_path, AgentConfig, AgentPolicy,
@@ -456,7 +457,9 @@ fn register(
 }
 
 fn is_file_request_kind(kind: &str) -> bool {
-    is_basic_file_request_kind(kind) || is_line_edit_request_kind(kind)
+    is_basic_file_request_kind(kind)
+        || is_line_edit_request_kind(kind)
+        || is_artifact_request_kind(kind)
 }
 
 fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -> CommandResult {
@@ -503,6 +506,9 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         "file_replace_in_file" => handle_replace_in_file_request(request, &resolved, start),
         "file_write_project_file" => handle_write_project_file_request(request, &resolved, start),
         "file_apply_text_edits" => handle_apply_text_edits_file_request(request, &resolved, start),
+        "file_save_project_artifact"
+        | "file_read_project_artifact_metadata"
+        | "file_read_project_artifact" => handle_artifact_file_request(request, &resolved, start),
         "file_read" | "file_write" | "file_list" => {
             handle_basic_file_request(policy, request, &resolved, start)
         }
@@ -2799,6 +2805,191 @@ shell_profile = "../rust"
             requested_by: "tester".to_string(),
             created_at: 0,
         }
+    }
+
+    fn fake_zip_eocd_with_entries(entries: u16) -> Vec<u8> {
+        let mut bytes = b"PK\x05\x06".to_vec();
+        bytes.extend_from_slice(&[0, 0]); // disk number
+        bytes.extend_from_slice(&[0, 0]); // central directory disk
+        bytes.extend_from_slice(&entries.to_le_bytes());
+        bytes.extend_from_slice(&entries.to_le_bytes());
+        bytes.extend_from_slice(&[0, 0, 0, 0]); // central directory size
+        bytes.extend_from_slice(&[0, 0, 0, 0]); // central directory offset
+        bytes.extend_from_slice(&[0, 0]); // comment length
+        bytes
+    }
+
+    #[test]
+    fn file_save_project_artifact_writes_binary_and_blocks_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let path = "artifacts/imports/tiny.png";
+        let content_base64 = base64::Engine::encode(
+            &base64::engine::general_purpose::STANDARD,
+            [0x89, b'P', b'N', b'G'],
+        );
+        let payload = serde_json::json!({
+            "path": path,
+            "content_base64": content_base64,
+            "mime_type": "image/png",
+            "overwrite": false,
+            "max_bytes": 1024,
+        });
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_save_project_artifact",
+                path,
+                payload.clone(),
+            ),
+        ));
+
+        assert_eq!(out["path"], path);
+        assert_eq!(out["bytes_written"], 4);
+        assert_eq!(out["mime_type"], "image/png");
+        assert_eq!(out["sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(
+            std::fs::read(tmp.path().join(path)).unwrap(),
+            vec![0x89, b'P', b'N', b'G']
+        );
+
+        let out2 = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(tmp.path(), "file_save_project_artifact", path, payload),
+        ));
+        assert!(out2["error"]
+            .as_str()
+            .unwrap()
+            .contains("overwrite is false"));
+    }
+
+    #[test]
+    fn file_read_project_artifact_metadata_counts_zip_without_extracting() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let zip_path = tmp.path().join("sample.zip");
+        std::fs::write(&zip_path, fake_zip_eocd_with_entries(2)).unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_read_project_artifact_metadata",
+                "sample.zip",
+                serde_json::json!({"path": "sample.zip", "max_bytes": 1024}),
+            ),
+        ));
+
+        assert_eq!(out["mime_type"], "application/zip");
+        assert_eq!(out["archive_entries_count"], 2);
+        assert!(!tmp.path().join("a.txt").exists());
+        assert!(!tmp.path().join("b.txt").exists());
+    }
+
+    #[test]
+    fn file_read_project_artifact_reads_binary_chunks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let bytes = [0, 159, 146, 150, b'a', b'b', b'c', b'd'];
+        std::fs::write(tmp.path().join("data.bin"), bytes).unwrap();
+
+        let first = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_read_project_artifact",
+                "data.bin",
+                serde_json::json!({"path": "data.bin", "offset": 0, "length": 4, "max_file_bytes": 1024}),
+            ),
+        ));
+        assert_eq!(first["file_bytes"], bytes.len());
+        assert_eq!(first["offset"], 0);
+        assert_eq!(first["bytes_returned"], 4);
+        assert_eq!(first["next_offset"], 4);
+        assert_eq!(first["truncated"], true);
+        assert_eq!(
+            first["content_base64"],
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes[..4])
+        );
+
+        let second = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_read_project_artifact",
+                "data.bin",
+                serde_json::json!({"path": "data.bin", "offset": 4, "length": 20, "max_file_bytes": 1024}),
+            ),
+        ));
+        assert_eq!(second["sha256"], first["sha256"]);
+        assert_eq!(second["offset"], 4);
+        assert_eq!(second["bytes_returned"], bytes.len() - 4);
+        assert_eq!(second["next_offset"], bytes.len());
+        assert_eq!(second["truncated"], false);
+        assert_eq!(
+            second["content_base64"],
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes[4..])
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_project_artifact_ops_reject_symlink_escape() {
+        let root = tempfile::tempdir().unwrap();
+        let outside_dir = tempfile::tempdir().unwrap();
+        let outside = outside_dir.path().join("outside.bin");
+        std::fs::write(&outside, b"outside-secret-content").unwrap();
+        std::os::unix::fs::symlink(&outside, root.path().join("leak.bin")).unwrap();
+        let mut policy = project_policy(root.path());
+        policy.allowed_roots.push(outside_dir.path().to_path_buf());
+
+        let read = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                root.path(),
+                "file_read_project_artifact",
+                "leak.bin",
+                serde_json::json!({"path":"leak.bin","offset":0,"length":8,"max_file_bytes":1024}),
+            ),
+        ));
+        assert_eq!(read["error"], "artifact path escapes project root");
+        assert!(!read.to_string().contains("outside-secret-content"));
+
+        let metadata = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                root.path(),
+                "file_read_project_artifact_metadata",
+                "leak.bin",
+                serde_json::json!({"path":"leak.bin","max_bytes":1024}),
+            ),
+        ));
+        assert_eq!(metadata["error"], "artifact path escapes project root");
+        assert!(!metadata.to_string().contains("outside-secret-content"));
+
+        let save = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                root.path(),
+                "file_save_project_artifact",
+                "leak.bin",
+                serde_json::json!({
+                    "path":"leak.bin",
+                    "content_base64":"bmV3",
+                    "mime_type":"text/plain",
+                    "overwrite":true,
+                    "max_bytes":1024
+                }),
+            ),
+        ));
+        assert_eq!(save["error"], "refusing to overwrite symlink artifact path");
+        assert_eq!(
+            std::fs::read(&outside).expect("outside file remains readable"),
+            b"outside-secret-content"
+        );
+        assert!(!save.to_string().contains("outside-secret-content"));
     }
 
     #[test]

@@ -1,3 +1,4 @@
+pub(crate) mod artifacts;
 pub(crate) mod config;
 pub(super) mod dispatch;
 pub(crate) mod files;
@@ -7,6 +8,7 @@ pub(crate) mod projects;
 pub(crate) mod shell;
 pub(crate) mod transport;
 
+pub(crate) use artifacts::{handle_artifact_file_request, is_artifact_request_kind};
 pub(crate) use config::{
     client_profile_agent_config, default_config_path, hostname, load_config, projects_dir,
     validate_client_profile, AgentConfig, AgentPolicy, ShellConfig,

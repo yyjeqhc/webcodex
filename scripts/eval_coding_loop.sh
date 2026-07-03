@@ -19,6 +19,16 @@ PROJECT_ID="${EVAL_PROJECT_ID:-coding-loop-eval}"
 TRANSPORT="${EVAL_TRANSPORT:-websocket}"
 TIMEOUT_SECS="${EVAL_TIMEOUT_SECS:-240}"
 RUNTIME_PROJECT_ID="agent:${CLIENT_ID}:${PROJECT_ID}"
+EVAL_MODE="${EVAL_MODE:-compare}"
+
+case "$EVAL_MODE" in
+    baseline|guided|compare)
+        ;;
+    *)
+        echo "[eval] EVAL_MODE must be one of: baseline, guided, compare" >&2
+        exit 2
+        ;;
+esac
 
 PASS=0
 FAIL=0
@@ -37,12 +47,15 @@ LAST_BODY=""
 LAST_SESSION_ID=""
 START_EPOCH="$(date +%s)"
 
+CASE_FLOW_KIND=""
 CASE_NAME=""
+CASE_LABEL=""
 CASE_TOOL_CALLS=0
 CASE_RAW_SHELL_CALLS=0
 CASE_STRUCTURED_EDIT_CALLS=0
 CASE_FAILED_TOOL_CALLS=0
 CASE_RECOVERED_FAILED_TOOL_CALLS=0
+CASE_HANDOFF_AVAILABLE=0
 CASE_FINISH_CALLED=0
 CASE_FINISH_SUCCEEDED=0
 CASE_ASSERT_FAILURES=0
@@ -104,28 +117,57 @@ trap on_abort INT TERM EXIT
 
 if [ "${EVAL_SKIP_RUN:-0}" = "1" ]; then
     log "EVAL_SKIP_RUN=1: skipping service startup and eval execution"
-    python3 - <<'PY'
+    python3 - "$EVAL_MODE" <<'PY'
 import json
+import sys
 
 cases = [
     {"case": "inspect_only", "planned": True},
     {"case": "small_structured_line_edit", "planned": True},
     {"case": "failed_call_recovery", "planned": True},
 ]
+mode = sys.argv[1]
+
+def flow(name):
+    return {
+        "mode": name,
+        "skipped": True,
+        "cases_total": 3,
+        "cases_passed": 0,
+        "cases_failed": 0,
+        "tool_calls_total": 0,
+        "raw_shell_calls": 0,
+        "raw_shell_ratio": 0.0,
+        "structured_edit_calls": 0,
+        "failed_tool_calls": 0,
+        "recovered_failed_tool_calls": 0,
+        "workspace_clean_after_each_case": None,
+        "handoff_available_rate": None,
+        "finish_coding_task_success_rate": None,
+        "cases": cases,
+    }
+
+comparison = {
+    "guided_minus_baseline_tool_calls": None,
+    "guided_minus_baseline_raw_shell_ratio": None,
+    "guided_minus_baseline_structured_edit_calls": None,
+    "guided_handoff_available_delta": None,
+    "guided_cleanup_delta": None,
+}
+
+baseline = flow("baseline") if mode in ("baseline", "compare") else None
+guided = flow("guided") if mode in ("guided", "compare") else None
+selected = [summary for summary in (baseline, guided) if summary is not None]
+
 summary = {
+    "mode": mode,
     "skipped": True,
-    "cases_total": 3,
-    "cases_passed": 0,
-    "cases_failed": 0,
-    "tool_calls_total": 0,
-    "raw_shell_calls": 0,
-    "raw_shell_ratio": 0.0,
-    "structured_edit_calls": 0,
-    "failed_tool_calls": 0,
-    "recovered_failed_tool_calls": 0,
-    "workspace_clean_after_each_case": None,
-    "finish_coding_task_success_rate": None,
-    "cases": cases,
+    "cases_total": sum(item["cases_total"] for item in selected),
+    "cases_passed": sum(item["cases_passed"] for item in selected),
+    "cases_failed": sum(item["cases_failed"] for item in selected),
+    "baseline": baseline,
+    "guided": guided,
+    "comparison": comparison if mode == "compare" else None,
 }
 print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
 PY
@@ -262,6 +304,20 @@ print(json.dumps({
 PY
 }
 
+params_start_session() {
+    local title="$1"
+    python3 - "$RUNTIME_PROJECT_ID" "$title" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "project": sys.argv[1],
+    "title": sys.argv[2],
+    "mode": "normal",
+}, separators=(",", ":")))
+PY
+}
+
 params_finish_task() {
     local session_id="$1"
     python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
@@ -275,6 +331,37 @@ print(json.dumps({
     "include_hygiene": True,
     "include_handoff": True,
     "include_validation_summary": True,
+}, separators=(",", ":")))
+PY
+}
+
+params_session_handoff() {
+    local session_id="$1"
+    python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "session_id": sys.argv[2],
+    "project": sys.argv[1],
+    "include_workspace": True,
+    "include_checkpoints": False,
+    "limit": 50,
+}, separators=(",", ":")))
+PY
+}
+
+params_workspace_hygiene() {
+    local session_id="$1"
+    python3 - "$RUNTIME_PROJECT_ID" "$session_id" <<'PY'
+import json
+import sys
+
+print(json.dumps({
+    "project": sys.argv[1],
+    "session_id": sys.argv[2],
+    "max_findings": 50,
+    "include_tracked": False,
 }, separators=(",", ":")))
 PY
 }
@@ -328,13 +415,13 @@ PY
 
 case_ok() {
     PASS=$((PASS + 1))
-    log "[ok]   ${CASE_NAME}: $*"
+    log "[ok]   ${CASE_LABEL}: $*"
 }
 
 case_fail() {
     FAIL=$((FAIL + 1))
     CASE_ASSERT_FAILURES=$((CASE_ASSERT_FAILURES + 1))
-    log "[FAIL] ${CASE_NAME}: $*"
+    log "[FAIL] ${CASE_LABEL}: $*"
     case_warn "$*"
 }
 
@@ -371,19 +458,22 @@ cleanup_temp_repo_worktree() {
 }
 
 begin_case() {
-    CASE_NAME="$1"
+    CASE_FLOW_KIND="$1"
+    CASE_NAME="$2"
+    CASE_LABEL="${CASE_FLOW_KIND}.${CASE_NAME}"
     CASE_TOOL_CALLS=0
     CASE_RAW_SHELL_CALLS=0
     CASE_STRUCTURED_EDIT_CALLS=0
     CASE_FAILED_TOOL_CALLS=0
     CASE_RECOVERED_FAILED_TOOL_CALLS=0
+    CASE_HANDOFF_AVAILABLE=0
     CASE_FINISH_CALLED=0
     CASE_FINISH_SUCCEEDED=0
     CASE_ASSERT_FAILURES=0
     CASE_WORKSPACE_CLEAN=false
-    CASE_WARNINGS_FILE="$TMP_ROOT/${CASE_NAME}.warnings.jsonl"
+    CASE_WARNINGS_FILE="$TMP_ROOT/${CASE_LABEL}.warnings.jsonl"
     : >"$CASE_WARNINGS_FILE"
-    log "---- case: ${CASE_NAME} ----"
+    log "---- case: ${CASE_LABEL} ----"
     cleanup_temp_repo_worktree
     if workspace_clean_local; then
         case_ok "starts from a clean temporary worktree"
@@ -396,6 +486,7 @@ record_case_summary() {
     local passed="$1"
     local workspace_clean="$2"
     python3 - \
+        "$CASE_FLOW_KIND" \
         "$CASE_NAME" \
         "$passed" \
         "$CASE_TOOL_CALLS" \
@@ -403,6 +494,7 @@ record_case_summary() {
         "$CASE_STRUCTURED_EDIT_CALLS" \
         "$CASE_FAILED_TOOL_CALLS" \
         "$CASE_RECOVERED_FAILED_TOOL_CALLS" \
+        "$CASE_HANDOFF_AVAILABLE" \
         "$workspace_clean" \
         "$CASE_FINISH_CALLED" \
         "$CASE_FINISH_SUCCEEDED" \
@@ -412,22 +504,24 @@ import sys
 
 warnings = []
 try:
-    with open(sys.argv[11], "r", encoding="utf-8") as handle:
+    with open(sys.argv[13], "r", encoding="utf-8") as handle:
         warnings = [json.loads(line) for line in handle if line.strip()]
 except FileNotFoundError:
     warnings = []
 
 summary = {
-    "case": sys.argv[1],
-    "passed": sys.argv[2] == "true",
-    "tool_calls": int(sys.argv[3]),
-    "raw_shell_calls": int(sys.argv[4]),
-    "structured_edit_calls": int(sys.argv[5]),
-    "failed_tool_calls": int(sys.argv[6]),
-    "recovered_failed_tool_calls": int(sys.argv[7]),
-    "workspace_clean": sys.argv[8] == "true",
-    "finish_coding_task_calls": int(sys.argv[9]),
-    "finish_coding_task_successes": int(sys.argv[10]),
+    "mode": sys.argv[1],
+    "case": sys.argv[2],
+    "passed": sys.argv[3] == "true",
+    "tool_calls": int(sys.argv[4]),
+    "raw_shell_calls": int(sys.argv[5]),
+    "structured_edit_calls": int(sys.argv[6]),
+    "failed_tool_calls": int(sys.argv[7]),
+    "recovered_failed_tool_calls": int(sys.argv[8]),
+    "handoff_available": int(sys.argv[9]) > 0,
+    "workspace_clean": sys.argv[10] == "true",
+    "finish_coding_task_calls": int(sys.argv[11]),
+    "finish_coding_task_successes": int(sys.argv[12]),
     "warnings": warnings,
 }
 print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
@@ -451,17 +545,182 @@ end_case() {
     fi
 }
 
-assert_start_session() {
-    local body="$1"
+assert_session_created() {
+    local tool_name="$1"
+    local body="$2"
+    local session_path="$3"
     local session_id
     LAST_SESSION_ID=""
-    assert_success "start_coding_task succeeds" "$body"
-    session_id="$(json_get "$body" output.session.session_id)"
+    assert_success "${tool_name} succeeds" "$body"
+    session_id="$(json_get "$body" "$session_path")"
     if [[ "$session_id" == wc_sess_* ]]; then
-        case_ok "session_id created"
+        case_ok "${tool_name} returned session_id"
         LAST_SESSION_ID="$session_id"
     else
-        case_fail "start_coding_task did not return a wc_sess_* session id"
+        case_fail "${tool_name} did not return a wc_sess_* session id"
+    fi
+}
+
+start_case_session() {
+    local flow_kind="$1"
+    local title="$2"
+    local params
+
+    if [ "$flow_kind" = "guided" ]; then
+        params="$(params_start_task "$title")"
+        call_tool "start_coding_task" "$params"
+        assert_session_created "start_coding_task" "$LAST_BODY" "output.session.session_id"
+    else
+        params="$(params_start_session "$title")"
+        call_tool "start_session" "$params"
+        assert_session_created "start_session" "$LAST_BODY" "output.session_id"
+    fi
+}
+
+assert_handoff_available() {
+    local label="$1"
+    local body="$2"
+    local handoff_path="$3"
+
+    if python3 - "$body" "$handoff_path" <<'PY'
+import json
+import sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(1)
+
+cur = data
+for part in sys.argv[2].split("."):
+    if not part:
+        continue
+    if isinstance(cur, dict):
+        cur = cur.get(part)
+    else:
+        cur = None
+    if cur is None:
+        break
+
+ok = (
+    data.get("success") is True
+    and isinstance(cur, dict)
+    and isinstance(cur.get("session_id"), str)
+    and cur.get("session_id").startswith("wc_sess_")
+)
+sys.exit(0 if ok else 1)
+PY
+    then
+        CASE_HANDOFF_AVAILABLE=1
+        case_ok "$label"
+    else
+        case_fail "$label"
+    fi
+}
+
+assert_handoff_failed_tool_metadata() {
+    local label="$1"
+    local body="$2"
+    local handoff_path="$3"
+
+    if python3 - "$body" "$handoff_path" <<'PY'
+import json
+import sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(1)
+
+cur = data
+for part in sys.argv[2].split("."):
+    if not part:
+        continue
+    if isinstance(cur, dict):
+        cur = cur.get(part)
+    else:
+        cur = None
+    if cur is None:
+        break
+
+handoff = cur if isinstance(cur, dict) else {}
+counts = handoff.get("counts") or {}
+recent = handoff.get("recent_failed_tools") or []
+ok = (
+    data.get("success") is True
+    and counts.get("failed_tool_calls", 0) >= 1
+    and any(item.get("tool_name") == "replace_line_range" for item in recent if isinstance(item, dict))
+)
+sys.exit(0 if ok else 1)
+PY
+    then
+        case_ok "$label"
+    else
+        case_fail "$label"
+    fi
+}
+
+assert_finish_reports_changed_file() {
+    local body="$1"
+
+    if python3 - "$body" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+out = data.get("output") or {}
+changes = ((out.get("changes") or {}).get("show_changes") or {})
+files = changes.get("files") or []
+ok = (
+    data.get("success") is True
+    and (out.get("workspace") or {}).get("clean") is False
+    and any(item.get("path") == "src/lib.rs" for item in files if isinstance(item, dict))
+)
+sys.exit(0 if ok else 1)
+PY
+    then
+        case_ok "finish_coding_task reports changed file"
+    else
+        case_fail "finish_coding_task did not report changed file"
+    fi
+}
+
+complete_case_session() {
+    local flow_kind="$1"
+    local session_id="$2"
+    local case_name="$3"
+    local params
+
+    if [ "$flow_kind" = "guided" ]; then
+        params="$(params_finish_task "$session_id")"
+        call_tool "finish_coding_task" "$params"
+        assert_success "finish_coding_task succeeds" "$LAST_BODY"
+        assert_handoff_available "finish_coding_task includes handoff" "$LAST_BODY" "output.handoff"
+
+        if [ "$case_name" = "small_structured_line_edit" ]; then
+            assert_finish_reports_changed_file "$LAST_BODY"
+        elif [ "$case_name" = "failed_call_recovery" ]; then
+            assert_handoff_failed_tool_metadata \
+                "finish_coding_task handoff includes failed tool metadata" \
+                "$LAST_BODY" \
+                "output.handoff"
+        fi
+    else
+        params="$(params_workspace_hygiene "$session_id")"
+        call_tool "workspace_hygiene_check" "$params"
+        assert_success "workspace_hygiene_check succeeds" "$LAST_BODY"
+
+        params="$(params_session_handoff "$session_id")"
+        call_tool "session_handoff_summary" "$params"
+        assert_success "session_handoff_summary succeeds" "$LAST_BODY"
+        assert_handoff_available "session_handoff_summary returns handoff" "$LAST_BODY" "output"
+
+        if [ "$case_name" = "failed_call_recovery" ]; then
+            assert_handoff_failed_tool_metadata \
+                "session_handoff_summary includes failed tool metadata" \
+                "$LAST_BODY" \
+                "output"
+        fi
     fi
 }
 
@@ -592,14 +851,13 @@ EOF
 }
 
 run_case_inspect_only() {
+    local flow_kind="$1"
     local session_id
     local params
 
-    begin_case "inspect_only"
+    begin_case "$flow_kind" "inspect_only"
 
-    params="$(params_start_task "eval inspect-only")"
-    call_tool "start_coding_task" "$params"
-    assert_start_session "$LAST_BODY"
+    start_case_session "$flow_kind" "eval inspect-only"
     session_id="$LAST_SESSION_ID"
     if [ -z "$session_id" ]; then
         end_case
@@ -674,9 +932,7 @@ PY
     call_tool "show_changes" "$params"
     assert_success "show_changes succeeds" "$LAST_BODY"
 
-    params="$(params_finish_task "$session_id")"
-    call_tool "finish_coding_task" "$params"
-    assert_success "finish_coding_task succeeds" "$LAST_BODY"
+    complete_case_session "$flow_kind" "$session_id" "inspect_only"
 
     if [ "$CASE_RAW_SHELL_CALLS" -eq 0 ]; then
         case_ok "raw shell runtime calls are zero"
@@ -688,14 +944,13 @@ PY
 }
 
 run_case_small_structured_line_edit() {
+    local flow_kind="$1"
     local session_id
     local params
 
-    begin_case "small_structured_line_edit"
+    begin_case "$flow_kind" "small_structured_line_edit"
 
-    params="$(params_start_task "eval small structured line edit")"
-    call_tool "start_coding_task" "$params"
-    assert_start_session "$LAST_BODY"
+    start_case_session "$flow_kind" "eval small structured line edit"
     session_id="$LAST_SESSION_ID"
     if [ -z "$session_id" ]; then
         end_case
@@ -805,29 +1060,7 @@ PY
     call_tool "cargo_check" "$params"
     assert_success "cargo_check validation succeeds" "$LAST_BODY"
 
-    params="$(params_finish_task "$session_id")"
-    call_tool "finish_coding_task" "$params"
-    assert_success "finish_coding_task succeeds" "$LAST_BODY"
-    if python3 - "$LAST_BODY" <<'PY'
-import json
-import sys
-
-data = json.loads(sys.argv[1])
-out = data.get("output") or {}
-changes = ((out.get("changes") or {}).get("show_changes") or {})
-files = changes.get("files") or []
-ok = (
-    data.get("success") is True
-    and (out.get("workspace") or {}).get("clean") is False
-    and any(item.get("path") == "src/lib.rs" for item in files if isinstance(item, dict))
-)
-sys.exit(0 if ok else 1)
-PY
-    then
-        case_ok "finish_coding_task reports changed file"
-    else
-        case_fail "finish_coding_task did not report changed file"
-    fi
+    complete_case_session "$flow_kind" "$session_id" "small_structured_line_edit"
 
     if [ "$CASE_STRUCTURED_EDIT_CALLS" -eq 1 ]; then
         case_ok "exactly one structured edit tool call recorded"
@@ -844,14 +1077,13 @@ PY
 }
 
 run_case_failed_call_recovery() {
+    local flow_kind="$1"
     local session_id
     local params
 
-    begin_case "failed_call_recovery"
+    begin_case "$flow_kind" "failed_call_recovery"
 
-    params="$(params_start_task "eval failed call recovery")"
-    call_tool "start_coding_task" "$params"
-    assert_start_session "$LAST_BODY"
+    start_case_session "$flow_kind" "eval failed call recovery"
     session_id="$LAST_SESSION_ID"
     if [ -z "$session_id" ]; then
         end_case
@@ -948,29 +1180,7 @@ PY
     call_tool "show_changes" "$params"
     assert_success "show_changes after recovery succeeds" "$LAST_BODY"
 
-    params="$(params_finish_task "$session_id")"
-    call_tool "finish_coding_task" "$params"
-    assert_success "finish_coding_task succeeds" "$LAST_BODY"
-    if python3 - "$LAST_BODY" <<'PY'
-import json
-import sys
-
-data = json.loads(sys.argv[1])
-handoff = (data.get("output") or {}).get("handoff") or {}
-counts = handoff.get("counts") or {}
-recent = handoff.get("recent_failed_tools") or []
-ok = (
-    data.get("success") is True
-    and counts.get("failed_tool_calls", 0) >= 1
-    and any(item.get("tool_name") == "replace_line_range" for item in recent if isinstance(item, dict))
-)
-sys.exit(0 if ok else 1)
-PY
-    then
-        case_ok "finish_coding_task handoff includes failed tool metadata"
-    else
-        case_fail "finish_coding_task handoff missing failed tool metadata"
-    fi
+    complete_case_session "$flow_kind" "$session_id" "failed_call_recovery"
 
     if [ "$CASE_RAW_SHELL_CALLS" -eq 0 ]; then
         case_ok "raw shell runtime calls are zero"
@@ -982,7 +1192,7 @@ PY
 }
 
 build_final_summary() {
-    python3 - "$CASE_SUMMARIES_FILE" <<'PY'
+    python3 - "$CASE_SUMMARIES_FILE" "$EVAL_MODE" <<'PY'
 import json
 import sys
 
@@ -993,34 +1203,101 @@ with open(sys.argv[1], "r", encoding="utf-8") as handle:
         if line:
             cases.append(json.loads(line))
 
-tool_calls_total = sum(c["tool_calls"] for c in cases)
-raw_shell_calls = sum(c["raw_shell_calls"] for c in cases)
-finish_calls = sum(c["finish_coding_task_calls"] for c in cases)
-finish_successes = sum(c["finish_coding_task_successes"] for c in cases)
+mode = sys.argv[2]
 
+def summarize(flow_mode):
+    flow_cases = [case for case in cases if case.get("mode") == flow_mode]
+    tool_calls_total = sum(c["tool_calls"] for c in flow_cases)
+    raw_shell_calls = sum(c["raw_shell_calls"] for c in flow_cases)
+    finish_calls = sum(c["finish_coding_task_calls"] for c in flow_cases)
+    finish_successes = sum(c["finish_coding_task_successes"] for c in flow_cases)
+    finish_rate = None
+    if flow_mode == "guided":
+        finish_rate = (finish_successes / finish_calls) if finish_calls else 0.0
+
+    return {
+        "mode": flow_mode,
+        "skipped": False,
+        "cases_total": len(flow_cases),
+        "cases_passed": sum(1 for c in flow_cases if c["passed"]),
+        "cases_failed": sum(1 for c in flow_cases if not c["passed"]),
+        "tool_calls_total": tool_calls_total,
+        "raw_shell_calls": raw_shell_calls,
+        "raw_shell_ratio": (raw_shell_calls / tool_calls_total) if tool_calls_total else 0.0,
+        "structured_edit_calls": sum(c["structured_edit_calls"] for c in flow_cases),
+        "failed_tool_calls": sum(c["failed_tool_calls"] for c in flow_cases),
+        "recovered_failed_tool_calls": sum(c["recovered_failed_tool_calls"] for c in flow_cases),
+        "workspace_clean_after_each_case": all(c["workspace_clean"] for c in flow_cases) if flow_cases else False,
+        "handoff_available_rate": (
+            sum(1 for c in flow_cases if c["handoff_available"]) / len(flow_cases)
+        ) if flow_cases else 0.0,
+        "finish_coding_task_success_rate": finish_rate,
+        "cases": flow_cases,
+    }
+
+def bool_score(value):
+    return 1.0 if value is True else 0.0
+
+baseline = summarize("baseline") if mode in ("baseline", "compare") else None
+guided = summarize("guided") if mode in ("guided", "compare") else None
+
+comparison = None
+if mode == "compare":
+    comparison = {
+        "guided_minus_baseline_tool_calls": guided["tool_calls_total"] - baseline["tool_calls_total"],
+        "guided_minus_baseline_raw_shell_ratio": guided["raw_shell_ratio"] - baseline["raw_shell_ratio"],
+        "guided_minus_baseline_structured_edit_calls": guided["structured_edit_calls"] - baseline["structured_edit_calls"],
+        "guided_handoff_available_delta": guided["handoff_available_rate"] - baseline["handoff_available_rate"],
+        "guided_cleanup_delta": (
+            bool_score(guided["workspace_clean_after_each_case"])
+            - bool_score(baseline["workspace_clean_after_each_case"])
+        ),
+    }
+
+selected = [summary for summary in (baseline, guided) if summary is not None]
 summary = {
+    "mode": mode,
     "skipped": False,
-    "cases_total": len(cases),
-    "cases_passed": sum(1 for c in cases if c["passed"]),
-    "cases_failed": sum(1 for c in cases if not c["passed"]),
-    "tool_calls_total": tool_calls_total,
-    "raw_shell_calls": raw_shell_calls,
-    "raw_shell_ratio": (raw_shell_calls / tool_calls_total) if tool_calls_total else 0.0,
-    "structured_edit_calls": sum(c["structured_edit_calls"] for c in cases),
-    "failed_tool_calls": sum(c["failed_tool_calls"] for c in cases),
-    "recovered_failed_tool_calls": sum(c["recovered_failed_tool_calls"] for c in cases),
-    "workspace_clean_after_each_case": all(c["workspace_clean"] for c in cases) if cases else False,
-    "finish_coding_task_success_rate": (finish_successes / finish_calls) if finish_calls else 0.0,
-    "cases": cases,
+    "cases_total": sum(item["cases_total"] for item in selected),
+    "cases_passed": sum(item["cases_passed"] for item in selected),
+    "cases_failed": sum(item["cases_failed"] for item in selected),
+    "baseline": baseline,
+    "guided": guided,
+    "comparison": comparison,
 }
 print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
 PY
 }
 
 start_eval_services
-run_case_inspect_only
-run_case_small_structured_line_edit
-run_case_failed_call_recovery
+
+run_flow_cases() {
+    local flow_kind="$1"
+    run_case_inspect_only "$flow_kind"
+    run_case_small_structured_line_edit "$flow_kind"
+    run_case_failed_call_recovery "$flow_kind"
+}
+
+run_compare_cases() {
+    run_case_inspect_only "baseline"
+    run_case_inspect_only "guided"
+    run_case_small_structured_line_edit "baseline"
+    run_case_small_structured_line_edit "guided"
+    run_case_failed_call_recovery "baseline"
+    run_case_failed_call_recovery "guided"
+}
+
+case "$EVAL_MODE" in
+    baseline)
+        run_flow_cases "baseline"
+        ;;
+    guided)
+        run_flow_cases "guided"
+        ;;
+    compare)
+        run_compare_cases
+        ;;
+esac
 
 FINAL_SUMMARY="$(build_final_summary)"
 FINAL_FAILED="$(json_get "$FINAL_SUMMARY" cases_failed)"

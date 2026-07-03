@@ -5,19 +5,19 @@ This document describes the minimal WebCodex coding-loop eval harness in
 
 ## Purpose
 
-The harness measures WebCodex runtime and tool-loop mechanics for remote coding
-workflows. It does not evaluate LLM intelligence, prompt quality, Codex CLI
-behavior, tree-sitter, LSP, or diagnostic parsing.
+The harness measures deterministic WebCodex runtime and tool-loop mechanics for
+remote coding workflows. It does not evaluate LLM intelligence, prompt quality,
+Codex CLI behavior, tree-sitter, LSP, or diagnostic parsing.
 
-The current target is a deterministic, low-noise, local signal for whether the
-recommended coding loop is mechanically stable:
+The current target is a low-noise local comparison between two scripted flows:
 
-- start a coding task with an explicit session id,
-- inspect with structured project tools,
-- edit with structured line-edit tools,
-- validate through dedicated validation tools when applicable,
-- finish the coding task with a deterministic handoff summary,
-- leave the disposable workspace clean after every case.
+- `baseline`: a traditional manual runtime tool loop using explicit
+  `start_session`.
+- `guided`: the recommended coding task loop using `start_coding_task` and
+  `finish_coding_task`.
+
+Both flows pass explicit `session_id` values to subsequent tools and do not rely
+on current-session binding.
 
 ## Scope
 
@@ -29,91 +29,143 @@ The harness is intentionally small:
 - no external network dependency,
 - bounded runtime with `EVAL_TIMEOUT_SECS`,
 - no production repository mutation,
-- final machine-readable JSON summary.
+- final machine-readable JSON summary as the last stdout line.
 
 Python is used only inside the script layer for JSON parsing and request
 construction. Runtime paths do not depend on Python helpers.
 
+## Flows
+
+### `baseline`
+
+Baseline is not a bad path. It represents a conventional manual runtime tool
+loop:
+
+1. `start_session`
+2. `search_project_text` / `read_file` / `show_changes`
+3. `replace_line_range` when a case edits source
+4. `cargo_check` when a case validates source
+5. manual closeout with `workspace_hygiene_check` and
+   `session_handoff_summary`
+
+Baseline never calls `start_coding_task` or `finish_coding_task`.
+
+### `guided`
+
+Guided keeps the Stage 3.0 coding-task flow:
+
+1. `start_coding_task`
+2. `search_project_text` / `read_file` / `show_changes`
+3. `replace_line_range` when a case edits source
+4. `cargo_check` when a case validates source
+5. `finish_coding_task`
+
+`start_coding_task` is called with `bind_current=false`; subsequent tools use
+the returned explicit `session_id`.
+
 ## Cases
+
+Each selected flow runs the same three cases. In `EVAL_MODE=compare`, the order
+is interleaved:
+
+1. `baseline.inspect_only`
+2. `guided.inspect_only`
+3. `baseline.small_structured_line_edit`
+4. `guided.small_structured_line_edit`
+5. `baseline.failed_call_recovery`
+6. `guided.failed_call_recovery`
+
+Every case starts by cleaning the disposable repository and ends by cleaning it
+again so baseline and guided cases do not pollute each other.
 
 ### `inspect_only`
 
-Exercises the recommended inspect loop:
-
-1. `start_coding_task`
-2. `search_project_text`
-3. `read_file`
-4. `show_changes`
-5. `finish_coding_task`
-
-Assertions include session id creation, structured
+Exercises structured inspection with `search_project_text`, `read_file`, and
+`show_changes`. Assertions include session id creation, structured
 `search_project_text` fields (`backend`, `matches`, and `truncated`),
-successful `show_changes`, successful `finish_coding_task`, clean disposable
-worktree cleanup, and zero scripted raw shell runtime calls.
+successful closeout handoff, clean disposable worktree cleanup, and zero
+scripted raw shell runtime calls.
 
 ### `small_structured_line_edit`
 
-Exercises a small source edit using line-number metadata:
-
-1. `start_coding_task`
-2. `read_file` with line numbers
-3. `replace_line_range`
-4. `show_changes`
-5. `cargo_check`
-6. `finish_coding_task`
-7. local cleanup of the disposable project
-
-Assertions include structured line-edit usage, no `write_project_file`, no raw
-shell runtime editing, `show_changes`/`finish_coding_task` reporting
-`src/lib.rs`, successful `cargo_check`, and clean worktree cleanup.
+Exercises a small source edit using line-number metadata. Assertions include
+structured line-edit usage, no raw shell runtime editing, `show_changes`
+reporting `src/lib.rs`, successful `cargo_check`, successful closeout handoff,
+and clean worktree cleanup. Guided additionally asserts that
+`finish_coding_task` reports the changed file.
 
 ### `failed_call_recovery`
 
-Exercises recovery after a controlled failed tool call:
-
-1. `start_coding_task`
-2. `replace_line_range` with a deliberately wrong prefix guard
-3. `read_file` to confirm the failed edit did not corrupt the file
-4. corrected `replace_line_range`
-5. `show_changes`
-6. `finish_coding_task`
-7. local cleanup of the disposable project
-
-Assertions include a controlled failed call, unmodified workspace after the
-failed call, successful recovery edit, failed tool metadata in the
-`finish_coding_task` handoff, and clean worktree cleanup.
+Exercises recovery after a controlled failed tool call. Assertions include a
+controlled failed `replace_line_range`, unmodified workspace after the failed
+edit, successful recovery edit, failed tool metadata in the closeout handoff,
+and clean worktree cleanup.
 
 ## Metrics
 
-The final stdout line is a JSON object. Top-level fields include:
+The final stdout line is a JSON object with this top-level shape:
 
-- `cases_total`, `cases_passed`, `cases_failed`
-- `tool_calls_total`
-- `raw_shell_calls`
-- `raw_shell_ratio`
-- `structured_edit_calls`
-- `failed_tool_calls`
-- `recovered_failed_tool_calls`
-- `workspace_clean_after_each_case`
-- `finish_coding_task_success_rate`
-- `cases`
+```json
+{
+  "mode": "compare",
+  "skipped": false,
+  "cases_total": 6,
+  "cases_passed": 6,
+  "cases_failed": 0,
+  "baseline": {},
+  "guided": {},
+  "comparison": {}
+}
+```
 
-Each case summary includes:
+`baseline` and `guided` flow summaries include:
 
-- `case`
-- `passed`
-- `tool_calls`
-- `raw_shell_calls`
-- `structured_edit_calls`
-- `failed_tool_calls`
-- `recovered_failed_tool_calls`
-- `workspace_clean`
-- `finish_coding_task_calls`
-- `finish_coding_task_successes`
-- `warnings`
+```json
+{
+  "mode": "baseline",
+  "skipped": false,
+  "cases_total": 3,
+  "cases_passed": 3,
+  "cases_failed": 0,
+  "tool_calls_total": 0,
+  "raw_shell_calls": 0,
+  "raw_shell_ratio": 0.0,
+  "structured_edit_calls": 0,
+  "failed_tool_calls": 0,
+  "recovered_failed_tool_calls": 0,
+  "workspace_clean_after_each_case": true,
+  "handoff_available_rate": 1.0,
+  "finish_coding_task_success_rate": null,
+  "cases": []
+}
+```
 
-The first implementation counts scripted runtime tool calls from the harness.
-It does not yet parse the full session ledger for hidden model behavior.
+For guided summaries, `finish_coding_task_success_rate` is the successful
+`finish_coding_task` calls divided by attempted `finish_coding_task` calls.
+For baseline summaries, it is always `null`.
+
+Each case summary includes `mode`, `case`, `passed`, `tool_calls`,
+`raw_shell_calls`, `structured_edit_calls`, `failed_tool_calls`,
+`recovered_failed_tool_calls`, `handoff_available`, `workspace_clean`,
+`finish_coding_task_calls`, `finish_coding_task_successes`, and `warnings`.
+
+`comparison` is present only in `EVAL_MODE=compare`:
+
+```json
+{
+  "guided_minus_baseline_tool_calls": 0,
+  "guided_minus_baseline_raw_shell_ratio": 0.0,
+  "guided_minus_baseline_structured_edit_calls": 0,
+  "guided_handoff_available_delta": 0.0,
+  "guided_cleanup_delta": 0.0
+}
+```
+
+The comparison does not require guided to use fewer tool calls. Guided may use
+more calls because it includes `start_coding_task` and `finish_coding_task`
+aggregators. The useful signal is whether guided keeps raw shell use,
+structured edits, handoff availability, cleanup, and failed-call recovery at
+least as stable as baseline.
 
 ## Running
 
@@ -123,15 +175,29 @@ Syntax-only / dry-run mode:
 EVAL_SKIP_RUN=1 bash scripts/eval_coding_loop.sh
 ```
 
-Full local run:
+Run only guided cases:
 
 ```bash
+EVAL_MODE=guided bash scripts/eval_coding_loop.sh
+```
+
+Run only baseline cases:
+
+```bash
+EVAL_MODE=baseline bash scripts/eval_coding_loop.sh
+```
+
+Run baseline and guided comparison, which is the default:
+
+```bash
+EVAL_MODE=compare bash scripts/eval_coding_loop.sh
 bash scripts/eval_coding_loop.sh
 ```
 
 Useful environment overrides:
 
 ```bash
+EVAL_MODE=guided|baseline|compare
 EVAL_PORT=18180
 EVAL_TIMEOUT_SECS=240
 EVAL_TRANSPORT=websocket
@@ -145,9 +211,9 @@ summary.
 
 ## Limitations
 
-- Metrics initially count scripted tool calls, not full model behavior.
-- Validation summaries are not parsed yet.
-- There is no baseline/guided comparison yet.
+- Metrics are scripted tool-call metrics, not full model behavior.
+- Guided may use more tool calls because it includes start/finish aggregators.
+- Validation stderr is not parsed yet.
+- There is no semantic code understanding signal yet.
 - There is no LSP or tree-sitter signal yet.
-- The harness does not parse cargo/test stderr beyond runtime tool success.
 - The harness does not exercise the Codex CLI or any LLM delegation.

@@ -6,6 +6,7 @@
 
 use std::collections::HashSet;
 
+use super::principal::AuthContext;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 
 // ---------------------------------------------------------------------------
@@ -292,6 +293,39 @@ pub(crate) fn required_oauth_scope_for_path_method(
     match oauth_route_scope_policy_for_path_method(method, path) {
         OAuthRouteScopePolicy::Require(scope) => Some(scope),
         _ => None,
+    }
+}
+
+pub(crate) fn enforce_oauth_route_scope(
+    ctx: &AuthContext,
+    method: &str,
+    path: &str,
+) -> Result<(), (Option<&'static str>, String)> {
+    if !ctx.is_oauth_token() {
+        return Ok(());
+    }
+
+    match oauth_route_scope_policy_for_path_method(method, path) {
+        OAuthRouteScopePolicy::Public | OAuthRouteScopePolicy::BodyAware(_) => Ok(()),
+        OAuthRouteScopePolicy::Require(scope) => {
+            if ctx.has_scope(scope) {
+                Ok(())
+            } else {
+                Err((Some(scope), format!("missing required scope: {}", scope)))
+            }
+        }
+        OAuthRouteScopePolicy::FirstPartyOnly => Err((
+            None,
+            "OAuth2 access tokens cannot call first-party-only routes".to_string(),
+        )),
+        OAuthRouteScopePolicy::AgentSurface => Err((
+            None,
+            "OAuth2 access tokens cannot call agent transport routes".to_string(),
+        )),
+        OAuthRouteScopePolicy::Unknown => Err((
+            None,
+            "OAuth2 access tokens cannot call unknown authenticated routes".to_string(),
+        )),
     }
 }
 

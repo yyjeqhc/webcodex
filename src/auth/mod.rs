@@ -429,41 +429,6 @@ pub(crate) fn enforce_token_surface(
     Ok(())
 }
 
-fn enforce_oauth_route_scope(
-    ctx: &AuthContext,
-    method: &str,
-    path: &str,
-) -> Result<(), (Option<&'static str>, String)> {
-    if !ctx.is_oauth_token() {
-        return Ok(());
-    }
-
-    match scopes::oauth_route_scope_policy_for_path_method(method, path) {
-        scopes::OAuthRouteScopePolicy::Public | scopes::OAuthRouteScopePolicy::BodyAware(_) => {
-            Ok(())
-        }
-        scopes::OAuthRouteScopePolicy::Require(scope) => {
-            if ctx.has_scope(scope) {
-                Ok(())
-            } else {
-                Err((Some(scope), format!("missing required scope: {}", scope)))
-            }
-        }
-        scopes::OAuthRouteScopePolicy::FirstPartyOnly => Err((
-            None,
-            "OAuth2 access tokens cannot call first-party-only routes".to_string(),
-        )),
-        scopes::OAuthRouteScopePolicy::AgentSurface => Err((
-            None,
-            "OAuth2 access tokens cannot call agent transport routes".to_string(),
-        )),
-        scopes::OAuthRouteScopePolicy::Unknown => Err((
-            None,
-            "OAuth2 access tokens cannot call unknown authenticated routes".to_string(),
-        )),
-    }
-}
-
 // ---------------------------------------------------------------------------
 // AuthMiddleware — the Salvo handler
 // ---------------------------------------------------------------------------
@@ -557,7 +522,7 @@ impl Handler for AuthMiddleware {
                     return;
                 }
                 if let Err((scope, description)) =
-                    enforce_oauth_route_scope(&ctx, req.method().as_str(), req.uri().path())
+                    scopes::enforce_oauth_route_scope(&ctx, req.method().as_str(), req.uri().path())
                 {
                     render_oauth_insufficient_scope(res, scope, description);
                     ctrl.skip_rest();
@@ -585,9 +550,11 @@ impl Handler for AuthMiddleware {
                         ctrl.skip_rest();
                         return;
                     }
-                    if let Err((scope, description)) =
-                        enforce_oauth_route_scope(&ctx, req.method().as_str(), req.uri().path())
-                    {
+                    if let Err((scope, description)) = scopes::enforce_oauth_route_scope(
+                        &ctx,
+                        req.method().as_str(),
+                        req.uri().path(),
+                    ) {
                         render_oauth_insufficient_scope(res, scope, description);
                         ctrl.skip_rest();
                         return;

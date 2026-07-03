@@ -63,6 +63,76 @@ fn webcodex_cli_help_mentions_pairing_client_and_doctor() {
 }
 
 #[test]
+fn common_help_entrypoints_smoke() {
+    let cases: &[(&[&str], &[&str])] = &[
+        (
+            &["--help"],
+            &[
+                "Usage: webcodex-cli <COMMAND>",
+                "Commands:",
+                "connect <URL>",
+                "server up",
+                "doctor",
+                "setup single-user",
+            ],
+        ),
+        (
+            &["server", "--help"],
+            &[
+                "Usage: webcodex-cli server <COMMAND>",
+                "Commands:",
+                "up",
+                "init",
+                "install-service",
+                "status",
+            ],
+        ),
+        (
+            &["connect", "--help"],
+            &[
+                "Usage: webcodex-cli connect",
+                "Options:",
+                "--key",
+                "--open",
+                "mutually exclusive",
+            ],
+        ),
+        (
+            &["doctor", "--help"],
+            &[
+                "Usage: webcodex-cli doctor",
+                "Options:",
+                "--server-url",
+                "--quic",
+                "--strict",
+                "non-destructive",
+            ],
+        ),
+        (
+            &["setup", "--help"],
+            &[
+                "Usage: webcodex-cli <COMMAND>",
+                "Commands:",
+                "setup single-user",
+                "Common flags",
+                "--server-url URL",
+            ],
+        ),
+    ];
+
+    for (args, expected) in cases {
+        let out = cli_exit(args.iter().copied())
+            .unwrap_or_else(|err| panic!("expected {args:?} help to exit successfully: {err}"));
+        for needle in *expected {
+            assert!(
+                out.contains(needle),
+                "help for {args:?} did not contain {needle:?}\n{out}"
+            );
+        }
+    }
+}
+
+#[test]
 fn webcodex_cli_agent_help_mentions_new_subcommands() {
     match cli_action(["agent", "--help"]) {
         CliAction::Exit { code, stdout, .. } => {
@@ -100,11 +170,4 @@ fn client_enroll_help_documents_profile_and_output_dir_precedence() {
     assert!(help.contains("/etc/webcodex/clients/<profile>"));
     assert!(help.contains("~/.config/webcodex/clients/<profile>"));
     assert!(help.contains("Explicit --output-dir overrides"));
-}
-
-#[test]
-fn top_level_usage_mentions_connect_and_server_up() {
-    let out = cli_exit(["--help"]).unwrap();
-    assert!(out.contains("connect"));
-    assert!(out.contains("server up"));
 }

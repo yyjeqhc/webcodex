@@ -1,12 +1,14 @@
 use serde_json::{json, Value};
 
 use crate::{
-    discover_binary, doctor_revision_check, local_cli_build_metadata, read_optional_token,
-    resolve_doctor_general_token, run_local_agent_doctor, run_quic_doctor_checks,
-    runtime_build_metadata, DoctorCheck, DoctorOptions,
+    discover_binary, read_optional_token, resolve_doctor_general_token, run_local_agent_doctor,
+    run_quic_doctor_checks, DoctorOptions,
 };
 
-use super::{http_get_json_status, http_post_json_status};
+use super::{
+    doctor_revision_check, http_get_json_status, http_post_json_status, local_cli_build_metadata,
+    runtime_build_metadata, DoctorCheck,
+};
 
 pub(crate) async fn run_doctor(opts: DoctorOptions) -> Result<(String, bool), String> {
     let mut checks = Vec::new();

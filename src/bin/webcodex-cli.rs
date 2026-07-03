@@ -52,16 +52,18 @@ use webcodex_cli::parse_env_content_value;
 #[cfg(test)]
 use webcodex_cli::token_prefix;
 use webcodex_cli::{
-    default_server_paths, fetch_runtime_status, http_post_json_status, is_effective_root,
-    read_env_file_value, render_token_generate, run_agent_install_service, run_agent_status,
+    compare_build_commits, default_server_paths, fetch_runtime_status, http_post_json_status,
+    is_effective_root, local_cli_build_metadata, read_env_file_value, render_build_metadata_block,
+    render_token_generate, run_agent_install_service, run_agent_status,
     run_agent_token_create_local, run_client_enroll, run_connect, run_doctor, run_pairing_create,
     run_server_init, run_server_install_service, run_server_up, run_setup_single_user,
-    run_token_create_local,
+    run_token_create_local, runtime_build_metadata, server_status_revision_check, DoctorCheck,
 };
 #[cfg(test)]
 use webcodex_cli::{
-    ensure_enroll_outputs_available, format_error_body, render_agent_systemd_unit,
-    resolve_account_credential, resolve_pairing_create_token,
+    doctor_revision_check, ensure_enroll_outputs_available, format_error_body,
+    render_agent_systemd_unit, resolve_account_credential, resolve_pairing_create_token,
+    RevisionComparison, RuntimeBuildMetadata,
 };
 
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
@@ -2077,39 +2079,6 @@ fn write_secret_file(path: &Path, content: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[derive(Debug, Clone)]
-struct DoctorCheck {
-    name: String,
-    status: &'static str,
-    detail: String,
-}
-
-impl DoctorCheck {
-    fn pass(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            status: "PASS",
-            detail: detail.into(),
-        }
-    }
-
-    fn warn(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            status: "WARN",
-            detail: detail.into(),
-        }
-    }
-
-    fn fail(name: impl Into<String>, detail: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            status: "FAIL",
-            detail: detail.into(),
-        }
-    }
-}
-
 fn discover_binary(name: &str) -> Option<PathBuf> {
     let path = std::env::var_os("PATH")?;
     for dir in std::env::split_paths(&path) {
@@ -3186,163 +3155,6 @@ fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, St
         }
     }
     Ok(None)
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct RuntimeBuildMetadata {
-    version: Option<String>,
-    git_commit: Option<String>,
-    git_dirty: Option<bool>,
-    built_at: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum RevisionComparison {
-    Match,
-    Mismatch { local: String, remote: String },
-    Unknown { reason: String },
-}
-
-fn known_build_commit(value: Option<&str>) -> Option<String> {
-    let value = value?.trim();
-    if value.is_empty() || value.eq_ignore_ascii_case("unknown") {
-        None
-    } else {
-        Some(value.to_string())
-    }
-}
-
-fn compare_build_commits(local: Option<&str>, remote: Option<&str>) -> RevisionComparison {
-    let local = match known_build_commit(local) {
-        Some(commit) => commit,
-        None => {
-            return RevisionComparison::Unknown {
-                reason: "local CLI did not report build.git_commit".to_string(),
-            }
-        }
-    };
-    let remote = match known_build_commit(remote) {
-        Some(commit) => commit,
-        None => {
-            return RevisionComparison::Unknown {
-                reason: "server runtime did not report build.git_commit".to_string(),
-            }
-        }
-    };
-    if local == remote || local.starts_with(&remote) || remote.starts_with(&local) {
-        RevisionComparison::Match
-    } else {
-        RevisionComparison::Mismatch { local, remote }
-    }
-}
-
-fn runtime_build_metadata(output: Option<&Value>) -> RuntimeBuildMetadata {
-    let version = output
-        .and_then(|v| v.get("version"))
-        .and_then(Value::as_str)
-        .map(str::to_string);
-    let build = output.and_then(|v| v.get("build"));
-    RuntimeBuildMetadata {
-        version,
-        git_commit: build
-            .and_then(|v| v.get("git_commit"))
-            .and_then(Value::as_str)
-            .map(str::to_string),
-        git_dirty: build
-            .and_then(|v| v.get("git_dirty"))
-            .and_then(Value::as_bool),
-        built_at: build
-            .and_then(|v| v.get("built_at"))
-            .and_then(Value::as_str)
-            .map(str::to_string),
-    }
-}
-
-fn local_cli_build_metadata() -> RuntimeBuildMetadata {
-    let info = build_info::current();
-    RuntimeBuildMetadata {
-        version: Some(info.version.to_string()),
-        git_commit: info.git_commit.map(str::to_string),
-        git_dirty: info.git_dirty,
-        built_at: info.built_at.map(str::to_string),
-    }
-}
-
-fn render_build_metadata_block(label: &str, build: &RuntimeBuildMetadata) -> String {
-    let mut out = String::new();
-    out.push_str(label);
-    out.push_str(":\n");
-    out.push_str(&format!(
-        "  version:    {}\n",
-        build.version.as_deref().unwrap_or("unknown")
-    ));
-    out.push_str(&format!(
-        "  commit:     {}\n",
-        build.git_commit.as_deref().unwrap_or("unknown")
-    ));
-    out.push_str(&format!(
-        "  dirty:      {}\n",
-        build
-            .git_dirty
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    ));
-    out.push_str(&format!(
-        "  built_at:   {}\n",
-        build.built_at.as_deref().unwrap_or("unknown")
-    ));
-    out
-}
-
-fn server_status_revision_check(comparison: &RevisionComparison) -> String {
-    match comparison {
-        RevisionComparison::Match => {
-            "ok: local CLI and server runtime are built from the same commit".to_string()
-        }
-        RevisionComparison::Mismatch { local, remote } => format!(
-            "warning: local CLI commit {} differs from server runtime commit {}; deploy/update one side before debugging old behavior",
-            local, remote
-        ),
-        RevisionComparison::Unknown { reason } => format!(
-            "unknown: {}; server may be older than build metadata support",
-            reason
-        ),
-    }
-}
-
-fn doctor_revision_check(
-    local: &RuntimeBuildMetadata,
-    remote: Option<&RuntimeBuildMetadata>,
-) -> DoctorCheck {
-    let Some(remote) = remote else {
-        return DoctorCheck::warn(
-            "cli/server revision",
-            "not checked; pass --server-url with --user-token-file or --token-file to read runtime_status",
-        );
-    };
-    match compare_build_commits(local.git_commit.as_deref(), remote.git_commit.as_deref()) {
-        RevisionComparison::Match => DoctorCheck::pass(
-            "cli/server revision",
-            format!(
-                "local CLI and server runtime commit match ({})",
-                local.git_commit.as_deref().unwrap_or("unknown")
-            ),
-        ),
-        RevisionComparison::Mismatch { local, remote } => DoctorCheck::warn(
-            "cli/server revision",
-            format!(
-                "local CLI commit {} differs from server runtime commit {}; deploy/update one side before debugging old behavior",
-                local, remote
-            ),
-        ),
-        RevisionComparison::Unknown { reason } => DoctorCheck::warn(
-            "cli/server revision",
-            format!(
-                "{}; server may be older than build metadata support",
-                reason
-            ),
-        ),
-    }
 }
 
 async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> {

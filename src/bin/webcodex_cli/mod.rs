@@ -4,6 +4,7 @@ pub(crate) mod env;
 pub(crate) mod http;
 pub(crate) mod pairing;
 pub(crate) mod server;
+pub(crate) mod setup;
 pub(crate) mod token_commands;
 pub(crate) mod tokens;
 
@@ -25,6 +26,7 @@ pub(crate) use http::{
 pub(crate) use pairing::{ensure_enroll_outputs_available, resolve_pairing_create_token};
 pub(crate) use pairing::{run_client_enroll, run_pairing_create};
 pub(crate) use server::{run_server_init, run_server_install_service, run_server_up};
+pub(crate) use setup::run_setup_single_user;
 #[cfg(test)]
 pub(crate) use token_commands::resolve_account_credential;
 pub(crate) use token_commands::{run_agent_token_create_local, run_token_create_local};

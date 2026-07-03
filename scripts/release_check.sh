@@ -20,9 +20,9 @@ set -euo pipefail
 #
 # Invariant notes (verified by stages 5/6, not re-checked statically here to
 # keep the script fast and dependency-free):
-#   - /openapi.json operation count == 25
-#   - MCP tools/list count == 25
-# The E2E harness asserts both counts against the live schema.
+#   - /openapi.json operation count == 27
+#   - MCP tools/list returns a non-empty runtime tool list with key tools
+# The E2E harness asserts these against the live server/schema.
 #
 # Usage:
 #   bash scripts/release_check.sh
@@ -173,6 +173,6 @@ fi
 # ----------------------------------------------------------------------------
 printf '\n[release] ===== all stages passed =====\n'
 ok "fmt, check, check --tests, test, E2E ws, E2E polling, no sensitive files"
-log "invariants (verified by E2E): /openapi.json ops == 25, MCP tools/list == 25"
+log "invariants (verified by E2E): /openapi.json ops == 27, MCP tools/list is non-empty with key tools"
 log "release readiness PASSED"
 exit 0

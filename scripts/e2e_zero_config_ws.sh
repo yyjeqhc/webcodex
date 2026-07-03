@@ -2,26 +2,27 @@
 set -euo pipefail
 
 # ============================================================================
-# WebCodex — Zero-Config WebSocket Agent E2E Smoke
+# WebCodex — Zero-Config Agent Transport E2E Smoke
 #
 # Starts a real `webcodex` server and a `webcodex-agent` connected over
-# the WebSocket transport, then exercises the full GPT Actions + MCP surface via
-# curl to prove the runtime is wired end-to-end on a single host.
+# the selected agent transport, defaulting to WebSocket, then exercises the
+# full GPT Actions + MCP surface via curl to prove the runtime is wired
+# end-to-end on a single host.
 #
 # What this proves:
 #   - Server boots with WEBCODEX_TOKEN auth and no server-side projects.toml.
-#   - Agent registers over WebSocket and announces a project.
+#   - Agent registers over the selected transport and announces a project.
 #   - listProjects / getRuntimeStatus see the agent-registered project.
 #   - readProjectFile / getProjectGitStatus route to the agent.
-#   - runCodexTask starts an async job on the agent (using a stub CODEX_BIN,
-#     NOT the real Codex CLI) and job status/log round-trip.
+#   - startProjectShellJob starts an async job on the agent and job status/log
+#     round-trip.
 #   - MCP initialize / tools/list / tools/call(list_projects) work.
 #   - /openapi.json still exposes the expected GPT Actions operation set and
 #     omits legacy/admin paths.
 #
 # What this does NOT do:
 #   - It does not touch the real ChatGPT web UI.
-#   - It does not invoke the real Codex CLI (a stub binary is used).
+#   - It does not invoke Codex delegation or the real Codex CLI.
 #   - It does not implement QUIC.
 #
 # Environment overrides:
@@ -161,6 +162,8 @@ api_get() {
         "http://127.0.0.1:${PORT}${path}" 2>/dev/null
 }
 
+# Python here is used only by dev/e2e scripts for JSON parsing/test
+# orchestration; runtime production paths do not depend on Python helpers.
 # Extract a JSON field with python3 (no jq dependency required).
 json_get() {
     # json_get '<json>' '<dot.path>'
@@ -278,7 +281,6 @@ BASE="http://127.0.0.1:${PORT}"
 TMP_ROOT="$(mktemp -d -t webcodex-e2e-XXXXXX)"
 DATA_DIR="$TMP_ROOT/data"
 PROJECTS_DIR="$TMP_ROOT/projects.d"
-CODEX_STUB="$TMP_ROOT/codex-stub.sh"
 AGENT_TOML="$TMP_ROOT/agent.toml"
 TEST_REPO="$TMP_ROOT/smoke-repo"
 SERVER_LOG="$TMP_ROOT/server.log"
@@ -286,21 +288,6 @@ AGENT_LOG="$TMP_ROOT/agent.log"
 
 mkdir -p "$DATA_DIR" "$PROJECTS_DIR" "$TEST_REPO"
 log "temp root: $TMP_ROOT"
-
-# A stub Codex CLI. The server builds a command like:
-#   <CODEX_BIN> [--approval-mode <mode>] <prompt>
-# `--approval-mode` is only emitted when CODEX_APPROVAL_MODE (or the request
-# approval_mode) is a non-disabled value. The stub just echoes and exits 0 so
-# the job completes successfully without depending on the real Codex CLI.
-cat > "$CODEX_STUB" <<'STUB'
-#!/usr/bin/env bash
-# WebCodex E2E stub for CODEX_BIN. NOT the real Codex CLI.
-echo "codex-stub: invoked with $# arg(s)"
-echo "codex-stub: prompt preview: ${*: -1}"
-echo "codex-stub: completed"
-exit 0
-STUB
-chmod +x "$CODEX_STUB"
 
 # Initialize a tiny git repo as the agent project so git_status works.
 (
@@ -358,7 +345,6 @@ log "starting server (cargo run --bin webcodex)"
 WEBCODEX_ADDR="127.0.0.1:${PORT}" \
 WEBCODEX_DATA="$DATA_DIR" \
 WEBCODEX_TOKEN="$TOKEN" \
-CODEX_BIN="$CODEX_STUB" \
 CODEX_DEFAULT_TIMEOUT_SECS="30" \
 CODEX_APPROVAL_MODE="full-auto" \
 RUST_LOG="info" \
@@ -474,51 +460,59 @@ else
     fail "runProjectShellCommand output mismatch (got: ${shell_stdout:0:120})"
 fi
 
-# runCodexTask — starts an async job on the agent using the stub CODEX_BIN.
-body="$(api_post /api/codex/run "{\"project\":\"$RUNTIME_PROJECT_ID\",\"prompt\":\"Summarize this repo in one line.\",\"timeout_secs\":20}")"
-assert_success "runCodexTask" "$body" || true
+# startProjectShellJob — starts an async job on the agent.
+async_job_body="$(python3 -c '
+import json, sys
+print(json.dumps({
+    "project": sys.argv[1],
+    "command": "printf job-log-ok",
+    "timeout_secs": 20
+}))
+' "$RUNTIME_PROJECT_ID")"
+body="$(api_post /api/projects/run_job "$async_job_body")"
+assert_success "startProjectShellJob" "$body" || true
 JOB_ID="$(json_get "$body" output.job_id)"
-if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "" ]; then
-    fail "runCodexTask did not return a job_id (body: ${body:0:300})"
+if [ -z "$JOB_ID" ] || [ "$JOB_ID" = "" ] || [ "$JOB_ID" = "None" ]; then
+    fail "startProjectShellJob did not return a job_id (body: ${body:0:300})"
 else
-    pass "runCodexTask returned job_id=$JOB_ID"
-fi
+    pass "startProjectShellJob returned job_id=$JOB_ID"
 
-# Poll job status until terminal.
-JOB_TERMINAL=0
-for _ in $(seq 1 40); do
-    check_deadline
-    body="$(api_post /api/jobs/status "{\"job_id\":\"$JOB_ID\"}")"
-    status="$(json_get "$body" output.status)"
-    case "$status" in
-        completed|failed|stopped|lost)
-            JOB_TERMINAL=1
-            break
-            ;;
-        *)
-            sleep 1
-            ;;
-    esac
-done
+    # Poll job status until terminal.
+    JOB_TERMINAL=0
+    for _ in $(seq 1 40); do
+        check_deadline
+        body="$(api_post /api/jobs/status "{\"job_id\":\"$JOB_ID\"}")"
+        status="$(json_get "$body" output.status)"
+        case "$status" in
+            completed|failed|stopped|lost)
+                JOB_TERMINAL=1
+                break
+                ;;
+            *)
+                sleep 1
+                ;;
+        esac
+    done
 
-if [ "$JOB_TERMINAL" -ne 1 ]; then
-    fail "job $JOB_ID did not reach a terminal status in time"
-else
-    if [ "$status" = "completed" ]; then
-        pass "job $JOB_ID reached terminal status: $status"
+    if [ "$JOB_TERMINAL" -ne 1 ]; then
+        fail "job $JOB_ID did not reach a terminal status in time"
     else
-        fail "job $JOB_ID reached terminal status: $status (expected completed)"
+        if [ "$status" = "completed" ]; then
+            pass "job $JOB_ID reached terminal status: $status"
+        else
+            fail "job $JOB_ID reached terminal status: $status (expected completed)"
+        fi
     fi
-fi
 
-# getRuntimeJobLog — read bounded stdout for the job.
-body="$(api_post /api/jobs/log "{\"job_id\":\"$JOB_ID\"}")"
-assert_success "getRuntimeJobLog" "$body" || true
-log_stdout="$(json_get "$body" output.stdout)"
-if echo "$log_stdout" | grep -q "codex-stub"; then
-    pass "getRuntimeJobLog contains stub output"
-else
-    fail "getRuntimeJobLog did not contain stub output (got: ${log_stdout:0:160})"
+    # getRuntimeJobLog — read bounded stdout for the job.
+    body="$(api_post /api/jobs/log "{\"job_id\":\"$JOB_ID\"}")"
+    assert_success "getRuntimeJobLog" "$body" || true
+    log_stdout="$(json_get "$body" output.stdout)"
+    if echo "$log_stdout" | grep -q "job-log-ok"; then
+        pass "getRuntimeJobLog contains async job output"
+    else
+        fail "getRuntimeJobLog did not contain async job output (got: ${log_stdout:0:160})"
+    fi
 fi
 
 # ----------------------------------------------------------------------------
@@ -545,20 +539,20 @@ if [ "${tools_count:-0}" -gt 0 ]; then
 else
     fail "MCP tools/list returned no tools (body: ${body:0:300})"
 fi
-# Phase 4: MCP tools/list must expose replace_in_file / write_project_file and
-# the count must be 25 (23 Phase 3 tools + 2 Phase 4 structured-edit tools).
-if [ "${tools_count:-0}" = "25" ]; then
-    pass "MCP tools/list count is 25 (Phase 4 parity)"
-else
-    fail "MCP tools/list count expected 25, got ${tools_count:-0}"
-fi
-for tname in replace_in_file write_project_file; do
+# MCP tools/list is the runtime tool discovery surface, not the OpenAPI
+# operation surface. Keep this as a non-empty + key-tool smoke check.
+mcp_core_present=1
+for tname in list_tools list_projects validate_patch replace_in_file write_project_file; do
     if echo "$TOOLS_LIST_BODY" | grep -q "\"$tname\""; then
-        pass "MCP tools/list exposes $tname"
+        :
     else
+        mcp_core_present=0
         fail "MCP tools/list missing $tname"
     fi
 done
+if [ "$mcp_core_present" = "1" ]; then
+    pass "MCP tools/list exposes key runtime tools"
+fi
 
 # tools/call list_projects — must return structuredContent with the agent project.
 body="$(api_post /mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}')"
@@ -640,7 +634,7 @@ else
     fail "list_jobs summaries leaked stdout/stderr (got: ${lj_serialized:0:200})"
 fi
 
-# job_tail via REST for the completed codex job — bounded tail.
+# job_tail via REST for the completed async shell job — bounded tail.
 if [ -n "$JOB_ID" ]; then
     body="$(api_post /api/jobs/tail "{\"job_id\":\"$JOB_ID\",\"tail_lines\":50}")"
     if [ "$(json_get "$body" success)" = "True" ]; then
@@ -798,15 +792,15 @@ for path, methods in schema.get("paths", {}).items():
 ops_set = set(ops)
 
 expected_ops = {
-    "listRuntimeTools", "listProjects", "getRuntimeStatus",
-    "runCodexTask", "getRuntimeJobStatus", "getRuntimeJobLog",
+    "listRuntimeTools", "listProjects", "registerProject", "createProject",
+    "getRuntimeStatus", "getRuntimeJobStatus", "getRuntimeJobLog",
     "readProjectFile", "getProjectGitStatus", "getProjectGitDiff",
     "getProjectGitDiffSummary", "listProjectFiles", "searchProjectText",
     "validateProjectPatch", "applyProjectPatch", "applyProjectPatchChecked",
     "runProjectShellCommand", "deleteProjectFiles", "gitRestorePaths",
     "discardUntrackedFiles", "replaceProjectFileText", "writeProjectFile",
-    "startProjectShellJob", "listRuntimeJobs", "getRuntimeJobTail",
-    "callRuntimeTool",
+    "importConversationFilesToProject", "startProjectShellJob",
+    "listRuntimeJobs", "getRuntimeJobTail", "callRuntimeTool",
 }
 missing = expected_ops - ops_set
 extra = ops_set - expected_ops
@@ -815,14 +809,12 @@ if missing:
 if extra:
     errors.append(f"unexpected operationIds: {sorted(extra)}")
 
-# Operation count must stay small (<= 30) and exactly 25 this phase.
-# Phase 5 brought the count to 23; this phase promotes write_project_file
-# (writeProjectFile) and run_job (startProjectShellJob) to dedicated GPT
-# Actions, bringing the count to 25.
-if len(ops_set) > 30:
-    errors.append(f"too many operations: {len(ops_set)} (must be <= 30)")
-if len(ops_set) != 25:
-    errors.append(f"operation count must be 25 this phase, got {len(ops_set)}")
+# Operation count must stay small (<= 30) and match the current dedicated
+# GPT Actions surface in src/openapi.rs.
+if len(ops) > 30:
+    errors.append(f"too many operations: {len(ops)} (must be <= 30)")
+if len(ops) != len(expected_ops):
+    errors.append(f"operation count must be {len(expected_ops)}, got {len(ops)}")
 
 # Phase 2: each operation description must fit the <= 300 char budget.
 for path, methods in schema.get("paths", {}).items():
@@ -849,14 +841,14 @@ for fp in forbidden:
     if fp in paths:
         errors.append(f"forbidden path present in schema: {fp}")
 
-# Legacy /api/codex/* sub-routes (context/edit/git/job/...) must not appear.
-# /api/codex/run is the legitimate runCodexTask GPT Action and is allowed.
+# Legacy /api/codex/* sub-routes must not appear. Codex delegation remains
+# hidden from GPT Actions.
 legacy_codex = ["/api/codex/command_request_op", "/api/codex/command_request",
                 "/api/codex/context", "/api/codex/context_batch",
                 "/api/codex/apply_patch", "/api/codex/edit",
                 "/api/codex/artifact", "/api/codex/git",
                 "/api/codex/job", "/api/codex/report",
-                "/api/codex/projects"]
+                "/api/codex/projects", "/api/codex/run"]
 for p in paths:
     if p in legacy_codex:
         errors.append(f"legacy codex path present in schema: {p}")
@@ -902,7 +894,8 @@ for path, methods in schema.get("paths", {}).items():
 # Mutation/execution actions must mention side effects and Bearer auth (or
 # equivalent) so GPT callers understand they are not read-only.
 mutation_paths = [
-    "/api/codex/run",
+    "/api/projects/register",
+    "/api/projects/create",
     "/api/projects/apply_patch",
     "/api/projects/apply_patch_checked",
     "/api/projects/run_shell",
@@ -951,7 +944,7 @@ if errors:
     for e in errors:
         print("  - " + e, file=sys.stderr)
     sys.exit(1)
-print(f"OK ops={len(ops_set)} paths={len(paths)}")
+print(f"OK ops={len(ops)} paths={len(paths)}")
 PY
 if [ $? -eq 0 ]; then
     pass "/openapi.json operation set + POST-only + no legacy/admin paths + additionalProperties=false + mutation/readonly descriptions"
@@ -1018,35 +1011,52 @@ log "---- Phase 2: callRuntimeTool / tools/list ----"
 
 # /api/tools/list must return names + count alongside the back-compat tools array.
 body="$(api_post /api/tools/list '{}')"
-if [ "$(json_get "$body" success)" = "True" ]; then
-    pass "/api/tools/list returns success"
+if tools_list_check="$(printf '%s' "$body" | python3 -c '
+import json, sys
+
+try:
+    d = json.load(sys.stdin)
+except Exception as exc:
+    print(f"invalid JSON: {exc}")
+    sys.exit(1)
+
+tools = d.get("tools")
+names = d.get("names")
+count = d.get("count")
+categories = d.get("categories")
+flows = d.get("recommended_flows")
+errors = []
+
+if not isinstance(tools, list) or not tools:
+    errors.append("tools must be a non-empty list")
+if not isinstance(names, list) or not names:
+    errors.append("names must be a non-empty list")
+if not isinstance(count, int):
+    errors.append("count must be an integer")
+elif isinstance(tools, list) and count != len(tools):
+    errors.append(f"count {count} does not match tools length {len(tools)}")
+if isinstance(names, list):
+    missing = sorted({"git_diff_summary", "list_tools"} - set(names))
+    if missing:
+        errors.append(f"names missing {missing}")
+if not isinstance(categories, dict) or not categories:
+    errors.append("categories must be a non-empty object")
+if not isinstance(flows, list) or not flows:
+    errors.append("recommended_flows must be a non-empty list")
+
+if errors:
+    print("; ".join(errors))
+    sys.exit(1)
+print(f"count={count} tools={len(tools)}")
+')"; then
+    pass "/api/tools/list names/count/tools/categories/recommended_flows are consistent ($tools_list_check)"
 else
-    fail "/api/tools/list did not return success (body: ${body:0:300})"
-fi
-tl_names="$(json_get "$body" names)"
-tl_count="$(json_get "$body" count)"
-tl_tools_count="$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("output",{}).get("tools",[]) if isinstance(d.get("output"),dict) else d.get("tools",[])))' 2>/dev/null || echo 0)"
-# tools array is top-level in the tools/list response.
-tl_tools_count="$(echo "$body" | python3 -c 'import json,sys; d=json.load(sys.stdin); print(len(d.get("tools",[])))' 2>/dev/null || echo 0)"
-if [ "${tl_count:-0}" -gt 0 ] 2>/dev/null && [ "${tl_count}" = "${tl_tools_count}" ]; then
-    pass "/api/tools/list names/count match tools array (count=$tl_count)"
-else
-    fail "/api/tools/list names/count mismatch (count=$tl_count tools=$tl_tools_count body=${body:0:200})"
-fi
-if echo "$tl_names" | grep -q "git_diff_summary" && echo "$tl_names" | grep -q "list_tools"; then
-    pass "/api/tools/list names include git_diff_summary and list_tools"
-else
-    fail "/api/tools/list names missing expected tools (got: ${tl_names:0:200})"
-fi
-if [ "$(json_get "$body" categories)" != "None" ] && [ "$(json_get "$body" recommended_flows)" != "None" ]; then
-    pass "/api/tools/list includes categories and recommended_flows"
-else
-    fail "/api/tools/list missing categories/recommended_flows (body: ${body:0:200})"
+    fail "/api/tools/list response invalid ($tools_list_check; body: ${body:0:200})"
 fi
 
 # callRuntimeTool: params omitted -> list_tools succeeds.
 body="$(api_post /api/tools/call '{"tool":"list_tools"}')"
-if [ "$(json_get "$body" success)" = "True" ]; then
+if printf '%s' "$body" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("success") is True else 1)'; then
     pass "callRuntimeTool(list_tools) params omitted succeeds"
 else
     fail "callRuntimeTool(list_tools) params omitted failed (body: ${body:0:300})"
@@ -1054,7 +1064,7 @@ fi
 
 # callRuntimeTool: params null -> list_tools succeeds.
 body="$(api_post /api/tools/call '{"tool":"list_tools","params":null}')"
-if [ "$(json_get "$body" success)" = "True" ]; then
+if printf '%s' "$body" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("success") is True else 1)'; then
     pass "callRuntimeTool(list_tools) params null succeeds"
 else
     fail "callRuntimeTool(list_tools) params null failed (body: ${body:0:300})"
@@ -1062,7 +1072,7 @@ fi
 
 # callRuntimeTool: arguments alias -> list_tools succeeds.
 body="$(api_post /api/tools/call '{"tool":"list_tools","arguments":null}')"
-if [ "$(json_get "$body" success)" = "True" ]; then
+if printf '%s' "$body" | python3 -c 'import json,sys; sys.exit(0 if json.load(sys.stdin).get("success") is True else 1)'; then
     pass "callRuntimeTool(list_tools) arguments alias succeeds"
 else
     fail "callRuntimeTool(list_tools) arguments alias failed (body: ${body:0:300})"

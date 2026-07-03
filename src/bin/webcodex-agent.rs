@@ -1,7 +1,7 @@
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{BufRead, BufReader, Read, Write};
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::{Path, PathBuf};
@@ -21,6 +21,8 @@ mod agent_init;
 #[path = "../build_info.rs"]
 mod build_info;
 
+mod webcodex_agent;
+
 use shell_protocol::{
     read_quic_frame, write_quic_frame, AgentEnvelope, AgentPolicySummary, QuicFrameError,
     ShellAgentJobUpdateRequest, ShellAgentJobUpdateResponse, ShellAgentPollRequest,
@@ -34,19 +36,27 @@ use shell_protocol::{
 // Shared agent-config initialization (types, validation, TOML generation,
 // 0600 file writing, HOME-default allowed_roots). Reused by `webcodex-cli`.
 use agent_init::{
-    effective_allowed_roots, parse_bool, required_value, run_agent_init,
-    validate_agent_init_options, AgentInitOptions, DEFAULT_INIT_PROJECTS_DIR,
-    DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_MAX_TIMEOUT_SECS, DEFAULT_POLL_INTERVAL_MS, TRANSPORT_AUTO,
+    parse_bool, required_value, run_agent_init, validate_agent_init_options, AgentInitOptions,
+    DEFAULT_INIT_PROJECTS_DIR, DEFAULT_MAX_OUTPUT_BYTES, DEFAULT_POLL_INTERVAL_MS, TRANSPORT_AUTO,
     TRANSPORT_POLLING, TRANSPORT_QUIC, TRANSPORT_WEBSOCKET,
 };
+#[cfg(test)]
+use std::collections::BTreeMap;
+use webcodex_agent::{
+    client_profile_agent_config, default_config_path, default_true, hostname, load_config,
+    max_concurrent_jobs, projects_dir, validate_client_profile, validate_shell_config,
+    validate_shell_profile_name, AgentConfig, AgentPolicy, QuicClientConfig, ShellConfig,
+    ShellProfileConfig,
+};
+#[cfg(test)]
+use webcodex_agent::{
+    default_quic_alpn, default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs,
+    CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS,
+};
 
-const DEFAULT_CONFIG_PATH: &str = "/etc/webcodex/agent.toml";
-const CLIENT_PROFILE_ERROR: &str =
-    "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 const PROJECT_SCAN_CACHE_MS: u64 = 5000;
 const SHELL_PROFILE_PREPARE_TIMEOUT_SECS: u64 = 30;
-const DEFAULT_MAX_CONCURRENT_JOBS: usize = 2;
 /// WebSocket outgoing envelope channel capacity.
 const WS_OUTGOING_CAPACITY: usize = 64;
 /// WebSocket ping interval.
@@ -81,175 +91,6 @@ async fn shutdown_signal() {
 #[cfg(not(unix))]
 async fn shutdown_signal() {
     let _ = tokio::signal::ctrl_c().await;
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct AgentConfig {
-    server_url: String,
-    token: String,
-    client_id: String,
-    #[serde(default)]
-    display_name: Option<String>,
-    #[serde(default)]
-    owner: Option<String>,
-    #[serde(default)]
-    hostname: Option<String>,
-    #[serde(default)]
-    projects_dir: Option<PathBuf>,
-    #[serde(default = "default_poll_interval_ms")]
-    poll_interval_ms: u64,
-    #[serde(default)]
-    capabilities: Option<ShellClientCapabilities>,
-    #[serde(default)]
-    max_concurrent_jobs: Option<usize>,
-    #[serde(default)]
-    policy: AgentPolicy,
-    /// Transport selection: `"websocket"` (default), `"polling"`, `"quic"`,
-    /// or explicit `"auto"` fallback mode.
-    #[serde(default)]
-    transport: Option<String>,
-    /// Experimental custom QUIC agent transport config. Used by strict
-    /// `transport = "quic"` and by explicit `transport = "auto"`.
-    #[serde(default)]
-    quic: Option<QuicClientConfig>,
-    #[serde(default)]
-    shell: ShellConfig,
-}
-
-/// Agent-side QUIC transport configuration (`[quic]` in `agent.toml`). All
-/// fields are required when `transport = "quic"`; `run_quic_agent` validates
-/// them before connecting. The token is NOT stored here — it stays in the
-/// top-level `token` field and is carried in the `Register` envelope's
-/// `auth_token` field, mirroring the `Authorization: Bearer` header used by
-/// the websocket/polling paths.
-#[derive(Debug, Clone, Deserialize)]
-struct QuicClientConfig {
-    /// `host:port` of the server's QUIC listener (e.g. `host:8443`).
-    server_addr: String,
-    /// TLS SNI / server name to verify the certificate against. Must match the
-    /// cert's SAN (typically the domain name).
-    server_name: String,
-    /// ALPN protocol; must match the server's `WEBCODEX_QUIC_ALPN`.
-    #[serde(default = "default_quic_alpn")]
-    alpn: String,
-    /// Connection timeout in seconds.
-    #[serde(default = "default_quic_connect_timeout_secs")]
-    connect_timeout_secs: u64,
-    /// QUIC keepalive interval in seconds.
-    #[serde(default = "default_quic_keepalive_interval_secs")]
-    keepalive_interval_secs: u64,
-}
-
-fn default_quic_alpn() -> String {
-    "webcodex-agent/1".to_string()
-}
-fn default_quic_connect_timeout_secs() -> u64 {
-    10
-}
-fn default_quic_keepalive_interval_secs() -> u64 {
-    20
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct AgentPolicy {
-    #[serde(default = "default_true")]
-    allow_raw_shell: bool,
-    #[serde(default = "default_true")]
-    allow_cwd_anywhere: bool,
-    #[serde(default)]
-    allowed_roots: Vec<PathBuf>,
-    #[serde(default = "default_max_timeout_secs")]
-    max_timeout_secs: u64,
-    #[serde(default = "default_max_output_bytes")]
-    max_output_bytes: usize,
-}
-
-impl Default for AgentPolicy {
-    fn default() -> Self {
-        Self {
-            allow_raw_shell: true,
-            allow_cwd_anywhere: true,
-            allowed_roots: Vec::new(),
-            max_timeout_secs: DEFAULT_MAX_TIMEOUT_SECS,
-            max_output_bytes: DEFAULT_MAX_OUTPUT_BYTES,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
-struct ShellConfig {
-    #[serde(default)]
-    default_profile: Option<String>,
-    #[serde(default)]
-    profiles: BTreeMap<String, ShellProfileConfig>,
-    #[serde(default = "default_shell_program")]
-    program: String,
-    #[serde(default = "default_shell_args")]
-    args: Vec<String>,
-    #[serde(default)]
-    path_prepend: Vec<PathBuf>,
-    #[serde(default)]
-    env: HashMap<String, String>,
-    #[serde(default)]
-    init_script: Option<PathBuf>,
-}
-
-impl Default for ShellConfig {
-    fn default() -> Self {
-        Self {
-            default_profile: None,
-            profiles: BTreeMap::new(),
-            program: default_shell_program(),
-            args: default_shell_args(),
-            path_prepend: Vec::new(),
-            env: HashMap::new(),
-            init_script: None,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Deserialize, Default, PartialEq, Eq)]
-struct ShellProfileConfig {
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    program: Option<String>,
-    #[serde(default)]
-    args: Option<Vec<String>>,
-    #[serde(default)]
-    env: BTreeMap<String, String>,
-    #[serde(default)]
-    init_script: Option<String>,
-}
-
-fn default_shell_program() -> String {
-    "sh".to_string()
-}
-
-fn default_shell_args() -> Vec<String> {
-    vec!["-c".to_string()]
-}
-
-fn default_true() -> bool {
-    true
-}
-
-fn default_poll_interval_ms() -> u64 {
-    DEFAULT_POLL_INTERVAL_MS
-}
-
-fn default_max_timeout_secs() -> u64 {
-    DEFAULT_MAX_TIMEOUT_SECS
-}
-
-fn default_max_output_bytes() -> usize {
-    DEFAULT_MAX_OUTPUT_BYTES
-}
-
-fn max_concurrent_jobs(cfg: &AgentConfig) -> usize {
-    cfg.max_concurrent_jobs
-        .unwrap_or(DEFAULT_MAX_CONCURRENT_JOBS)
-        .max(1)
 }
 
 #[derive(Debug)]
@@ -595,62 +436,6 @@ fn parse_args() -> Result<AgentCliAction, String> {
     parse_agent_args(std::env::args().skip(1))
 }
 
-fn default_client_base_dir() -> PathBuf {
-    if is_effective_root() {
-        PathBuf::from("/etc/webcodex")
-    } else {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        home.join(".config/webcodex")
-    }
-}
-
-#[cfg(unix)]
-fn is_effective_root() -> bool {
-    if let Ok(status) = std::fs::read_to_string("/proc/self/status") {
-        for line in status.lines() {
-            if let Some(rest) = line.strip_prefix("Uid:") {
-                let mut parts = rest.split_whitespace();
-                let _real = parts.next();
-                if let Some(effective) = parts.next() {
-                    return effective == "0";
-                }
-            }
-        }
-    }
-    std::env::var("USER").is_ok_and(|u| u == "root")
-}
-
-#[cfg(not(unix))]
-fn is_effective_root() -> bool {
-    false
-}
-
-fn validate_client_profile(profile: &str) -> Result<String, String> {
-    let trimmed = profile.trim();
-    if trimmed.is_empty()
-        || trimmed == "."
-        || trimmed == ".."
-        || trimmed.len() > 80
-        || trimmed.contains('/')
-        || trimmed.contains('\\')
-        || !trimmed
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-    {
-        return Err(CLIENT_PROFILE_ERROR.to_string());
-    }
-    Ok(trimmed.to_string())
-}
-
-fn client_profile_agent_config(profile: &str) -> PathBuf {
-    default_client_base_dir()
-        .join("clients")
-        .join(profile)
-        .join("agent.toml")
-}
-
 fn parse_agent_args<I, S>(args: I) -> Result<AgentCliAction, String>
 where
     I: IntoIterator<Item = S>,
@@ -793,143 +578,6 @@ fn parse_agent_init_args(args: &[String]) -> Result<AgentInitOptions, String> {
     Ok(opts)
 }
 
-fn default_config_path() -> PathBuf {
-    let home_path = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".config/webcodex/agent.toml"));
-    let system_path = PathBuf::from(DEFAULT_CONFIG_PATH);
-    for path in [home_path.clone(), Some(system_path.clone())]
-        .into_iter()
-        .flatten()
-    {
-        if path.exists() {
-            return path;
-        }
-    }
-    home_path
-        .or_else(|| Some(system_path))
-        .unwrap_or_else(|| PathBuf::from(DEFAULT_CONFIG_PATH))
-}
-
-fn validate_env_key(key: &str) -> bool {
-    !key.is_empty()
-        && !key.contains('=')
-        && !key.contains('\0')
-        && key
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
-}
-
-fn validate_shell_profile_name(context: &str, name: &str) -> Result<(), String> {
-    if name.is_empty() {
-        return Err(format!("{} cannot be empty", context));
-    }
-    if name.contains("..") {
-        return Err(format!("{} cannot contain '..'", context));
-    }
-    if name.contains('/') || name.contains('\\') {
-        return Err(format!("{} cannot contain slash or backslash", context));
-    }
-    if !name
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-' || ch == '.')
-    {
-        return Err(format!(
-            "{} may only contain ASCII letters, digits, '_', '-', and '.'",
-            context
-        ));
-    }
-    Ok(())
-}
-
-fn validate_shell_profile_config(name: &str, profile: &ShellProfileConfig) -> Result<(), String> {
-    if profile
-        .program
-        .as_ref()
-        .is_some_and(|program| program.trim().is_empty())
-    {
-        return Err(format!("shell.profiles.{}.program cannot be empty", name));
-    }
-    if let Some(args) = &profile.args {
-        if args.is_empty() {
-            return Err(format!(
-                "shell.profiles.{}.args must include the command flag, for example [\"-c\"]",
-                name
-            ));
-        }
-        if args.iter().any(|arg| arg.trim().is_empty()) {
-            return Err(format!(
-                "shell.profiles.{}.args cannot contain empty values",
-                name
-            ));
-        }
-    }
-    for key in profile.env.keys() {
-        if !validate_env_key(key) {
-            return Err(format!(
-                "shell.profiles.{}.env contains invalid key '{}'",
-                name, key
-            ));
-        }
-    }
-    if profile
-        .init_script
-        .as_ref()
-        .is_some_and(|script| script.trim().is_empty())
-    {
-        return Err(format!(
-            "shell.profiles.{}.init_script cannot be empty",
-            name
-        ));
-    }
-    Ok(())
-}
-
-fn validate_shell_config(shell: &ShellConfig) -> Result<(), String> {
-    if let Some(default_profile) = &shell.default_profile {
-        validate_shell_profile_name("shell.default_profile", default_profile)?;
-        if !shell.profiles.contains_key(default_profile) {
-            return Err(format!(
-                "shell.default_profile '{}' does not match any shell.profiles entry",
-                default_profile
-            ));
-        }
-    }
-    for (name, profile) in &shell.profiles {
-        validate_shell_profile_name("shell profile name", name)?;
-        validate_shell_profile_config(name, profile)?;
-    }
-    if shell.program.trim().is_empty() {
-        return Err("shell.program cannot be empty".to_string());
-    }
-    if shell.args.is_empty() {
-        return Err("shell.args must include the command flag, for example [\"-c\"]".to_string());
-    }
-    if shell.args.iter().any(|arg| arg.trim().is_empty()) {
-        return Err("shell.args cannot contain empty values".to_string());
-    }
-    if shell
-        .path_prepend
-        .iter()
-        .any(|path| path.as_os_str().is_empty())
-    {
-        return Err("shell.path_prepend cannot contain empty paths".to_string());
-    }
-    for key in shell.env.keys() {
-        if !validate_env_key(key) {
-            return Err(format!("shell.env contains invalid key '{}'", key));
-        }
-    }
-    if shell
-        .init_script
-        .as_ref()
-        .is_some_and(|path| path.as_os_str().is_empty())
-    {
-        return Err("shell.init_script cannot be empty".to_string());
-    }
-    Ok(())
-}
-
 fn shell_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
@@ -1031,87 +679,6 @@ fn configured_prepared_shell_job_command(
     cmd.arg(command);
     apply_env_snapshot(&mut cmd, &profile.env_snapshot);
     Ok(cmd)
-}
-
-fn validate_optional_toml_string(
-    table: &toml::map::Map<String, toml::Value>,
-    field: &str,
-    path: &str,
-) -> Result<(), String> {
-    if table
-        .get(field)
-        .is_some_and(|value| !matches!(value, toml::Value::String(_)))
-    {
-        return Err(format!("{} must be a string", path));
-    }
-    Ok(())
-}
-
-fn validate_shell_profile_toml_shape(content: &str) -> Result<(), String> {
-    let value: toml::Value = toml::from_str(content)
-        .map_err(|e| format!("failed to parse config TOML syntax: {}", e))?;
-    let Some(shell) = value.get("shell") else {
-        return Ok(());
-    };
-    let Some(shell) = shell.as_table() else {
-        return Err("shell must be a table".to_string());
-    };
-    validate_optional_toml_string(shell, "default_profile", "shell.default_profile")?;
-    let Some(profiles) = shell.get("profiles") else {
-        return Ok(());
-    };
-    let Some(profiles) = profiles.as_table() else {
-        return Err("shell.profiles must be a table".to_string());
-    };
-    for (name, profile) in profiles {
-        let Some(profile) = profile.as_table() else {
-            return Err(format!("shell.profiles.{} must be a table", name));
-        };
-        validate_optional_toml_string(
-            profile,
-            "description",
-            &format!("shell.profiles.{}.description", name),
-        )?;
-        validate_optional_toml_string(
-            profile,
-            "program",
-            &format!("shell.profiles.{}.program", name),
-        )?;
-        validate_optional_toml_string(
-            profile,
-            "init_script",
-            &format!("shell.profiles.{}.init_script", name),
-        )?;
-        if let Some(args) = profile.get("args") {
-            let Some(args) = args.as_array() else {
-                return Err(format!(
-                    "shell.profiles.{}.args must be a string array",
-                    name
-                ));
-            };
-            if args
-                .iter()
-                .any(|arg| !matches!(arg, toml::Value::String(_)))
-            {
-                return Err(format!(
-                    "shell.profiles.{}.args must be a string array",
-                    name
-                ));
-            }
-        }
-        if let Some(env) = profile.get("env") {
-            let Some(env) = env.as_table() else {
-                return Err(format!("shell.profiles.{}.env must be a string map", name));
-            };
-            if env
-                .values()
-                .any(|value| !matches!(value, toml::Value::String(_)))
-            {
-                return Err(format!("shell.profiles.{}.env must be a string map", name));
-            }
-        }
-    }
-    Ok(())
 }
 
 fn base_shell_env(
@@ -1451,69 +1018,6 @@ fn resolve_prepared_shell_profile(
     cache
         .get_or_prepare(shell, profile_name, project_key, &prepare_cwd)
         .map(Some)
-}
-
-fn load_config(path: &Path) -> Result<AgentConfig, String> {
-    let content = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read config {}: {}", path.display(), e))?;
-    validate_shell_profile_toml_shape(&content)
-        .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
-    let mut cfg: AgentConfig = toml::from_str(&content)
-        .map_err(|e| format!("failed to parse config {}: {}", path.display(), e))?;
-    if cfg.server_url.trim().is_empty() {
-        return Err("server_url cannot be empty".to_string());
-    }
-    if cfg.client_id.trim().is_empty() {
-        return Err("client_id cannot be empty".to_string());
-    }
-    if cfg.poll_interval_ms == 0 {
-        return Err("poll_interval_ms must be > 0".to_string());
-    }
-    if let Some(transport) = cfg.transport.as_deref().map(str::trim) {
-        if !transport.is_empty()
-            && !matches!(
-                transport,
-                TRANSPORT_WEBSOCKET | TRANSPORT_POLLING | TRANSPORT_QUIC | TRANSPORT_AUTO
-            )
-        {
-            return Err("transport must be websocket, polling, quic, or auto".to_string());
-        }
-    }
-    // When allowed_roots is missing/empty, default to [$HOME] so a
-    // minimal agent.toml without an explicit policy.allowed_roots still works
-    // predictably. If HOME is unavailable and allow_cwd_anywhere is false,
-    // surface a clear configuration error. Explicit allowed_roots is preserved
-    // as-is and overrides the HOME default.
-    let effective =
-        effective_allowed_roots(&cfg.policy.allowed_roots, cfg.policy.allow_cwd_anywhere)?;
-    cfg.policy.allowed_roots = effective;
-    validate_shell_config(&cfg.shell)?;
-    Ok(cfg)
-}
-
-fn hostname() -> Option<String> {
-    std::env::var("HOSTNAME")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .or_else(|| {
-            std::fs::read_to_string("/etc/hostname")
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-}
-
-fn default_projects_dir() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join(".config/webcodex/projects.d")
-}
-
-fn projects_dir(cfg: &AgentConfig) -> PathBuf {
-    cfg.projects_dir
-        .clone()
-        .unwrap_or_else(default_projects_dir)
 }
 
 fn validate_project_id(id: &str) -> Result<(), String> {

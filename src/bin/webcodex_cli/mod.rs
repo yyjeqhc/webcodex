@@ -1,6 +1,7 @@
 pub(crate) mod agent_service;
 pub(crate) mod connect;
 pub(crate) mod doctor;
+pub(crate) mod doctor_support;
 pub(crate) mod env;
 pub(crate) mod http;
 pub(crate) mod output;
@@ -18,6 +19,11 @@ pub(crate) use agent_service::render_agent_systemd_unit;
 pub(crate) use agent_service::{run_agent_install_service, run_agent_status};
 pub(crate) use connect::run_connect;
 pub(crate) use doctor::run_doctor;
+#[cfg(test)]
+pub(crate) use doctor_support::{doctor_runtime_quic_checks, resolve_doctor_quic_options};
+pub(crate) use doctor_support::{
+    resolve_doctor_general_token, run_local_agent_doctor, run_quic_doctor_checks,
+};
 #[cfg(test)]
 pub(crate) use env::is_effective_root;
 #[cfg(test)]

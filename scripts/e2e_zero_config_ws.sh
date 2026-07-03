@@ -554,6 +554,19 @@ if [ "$mcp_core_present" = "1" ]; then
     pass "MCP tools/list exposes key runtime tools"
 fi
 
+workflow_tools_present=1
+for tname in start_coding_task finish_coding_task; do
+    if echo "$TOOLS_LIST_BODY" | grep -q "\"$tname\""; then
+        :
+    else
+        workflow_tools_present=0
+        fail "MCP tools/list missing $tname"
+    fi
+done
+if [ "$workflow_tools_present" = "1" ]; then
+    pass "MCP tools/list exposes deterministic workflow tools"
+fi
+
 # tools/call list_projects — must return structuredContent with the agent project.
 body="$(api_post /mcp '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"list_projects","arguments":{}}}')"
 sc="$(json_get "$body" result.structuredContent)"
@@ -816,6 +829,22 @@ if len(ops) > 30:
 if len(ops) != len(expected_ops):
     errors.append(f"operation count must be {len(expected_ops)}, got {len(ops)}")
 
+tool_call = (
+    schema
+    .get("components", {})
+    .get("schemas", {})
+    .get("ToolCallRequest", {})
+)
+tool_desc = (
+    tool_call
+    .get("properties", {})
+    .get("tool", {})
+    .get("description", "")
+)
+for runtime_tool in ["start_coding_task", "finish_coding_task"]:
+    if runtime_tool not in tool_desc:
+        errors.append(f"ToolCallRequest.tool description missing {runtime_tool}")
+
 # Phase 2: each operation description must fit the <= 300 char budget.
 for path, methods in schema.get("paths", {}).items():
     for method, op in methods.items():
@@ -1036,7 +1065,12 @@ if not isinstance(count, int):
 elif isinstance(tools, list) and count != len(tools):
     errors.append(f"count {count} does not match tools length {len(tools)}")
 if isinstance(names, list):
-    missing = sorted({"git_diff_summary", "list_tools"} - set(names))
+    missing = sorted({
+        "finish_coding_task",
+        "git_diff_summary",
+        "list_tools",
+        "start_coding_task",
+    } - set(names))
     if missing:
         errors.append(f"names missing {missing}")
 if not isinstance(categories, dict) or not categories:
@@ -1095,6 +1129,168 @@ if [ -n "$unk_err" ] && [ "$unk_err" != "None" ] && \
     pass "callRuntimeTool(unknown tool) returns useful discovery hint"
 else
     fail "callRuntimeTool(unknown tool) error not useful (got: ${unk_err:0:200})"
+fi
+
+# Deterministic workflow tools via generic callRuntimeTool, using flattened
+# GPT Action-style fields.
+log "---- Deterministic workflow tool smoke ----"
+
+workflow_session_id=""
+body="$(api_post /api/tools/call "{\"tool\":\"start_coding_task\",\"project\":\"$RUNTIME_PROJECT_ID\",\"title\":\"e2e deterministic coding task smoke\",\"mode\":\"normal\",\"include_runtime_status\":true,\"include_git\":true,\"include_recent_commits\":true,\"include_rules\":true,\"bind_current\":false}")"
+if workflow_session_id="$(python3 - "$body" <<'PY'
+import json, sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"invalid JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+errors = []
+output = data.get("output") if isinstance(data, dict) else None
+output = output if isinstance(output, dict) else {}
+session = output.get("session") if isinstance(output.get("session"), dict) else {}
+binding = session.get("current_binding") if isinstance(session.get("current_binding"), dict) else {}
+flow = output.get("recommended_flow") if isinstance(output.get("recommended_flow"), dict) else {}
+inspect = flow.get("inspect")
+edit = flow.get("edit")
+session_id = session.get("session_id")
+
+if data.get("success") is not True:
+    errors.append("success must be true")
+if output.get("deterministic") is not True:
+    errors.append("output.deterministic must be true")
+if output.get("llm_summary") is not False:
+    errors.append("output.llm_summary must be false")
+if not isinstance(session_id, str) or not session_id.startswith("wc_sess_"):
+    errors.append("output.session.session_id must start with wc_sess_")
+if session.get("explicit_session_id_recommended") is not True:
+    errors.append("output.session.explicit_session_id_recommended must be true")
+if binding.get("bound") is not False:
+    errors.append("output.session.current_binding.bound must be false")
+if binding.get("process_local_in_memory") is not True:
+    errors.append("output.session.current_binding.process_local_in_memory must be true")
+for name in ["read_file", "search_project_text", "show_changes"]:
+    if not isinstance(inspect, list) or name not in inspect:
+        errors.append(f"output.recommended_flow.inspect missing {name}")
+for name in [
+    "replace_line_range",
+    "insert_at_line",
+    "delete_line_range",
+    "apply_text_edits",
+    "apply_patch_checked",
+]:
+    if not isinstance(edit, list) or name not in edit:
+        errors.append(f"output.recommended_flow.edit missing {name}")
+
+if errors:
+    print("; ".join(errors), file=sys.stderr)
+    sys.exit(1)
+print(session_id)
+PY
+)"; then
+    pass "callRuntimeTool(start_coding_task) returns deterministic workflow startup"
+else
+    workflow_session_id=""
+    fail "callRuntimeTool(start_coding_task) workflow assertions failed (body: ${body:0:300})"
+fi
+
+if [ -n "$workflow_session_id" ]; then
+    body="$(api_post /api/tools/call "{\"tool\":\"show_changes\",\"project\":\"$RUNTIME_PROJECT_ID\",\"session_id\":\"$workflow_session_id\",\"include_diff\":false}")"
+    if python3 - "$body" "$workflow_session_id" <<'PY'
+import json, sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"invalid JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+session_id = sys.argv[2]
+output = data.get("output") if isinstance(data, dict) else None
+output = output if isinstance(output, dict) else {}
+session = output.get("session") if isinstance(output.get("session"), dict) else {}
+errors = []
+
+if data.get("success") is not True:
+    errors.append("success must be true")
+if session.get("found") is not True:
+    errors.append("output.session.found must be true")
+if session.get("session_id") != session_id:
+    errors.append("output.session.session_id must match returned session_id")
+
+if errors:
+    print("; ".join(errors), file=sys.stderr)
+    sys.exit(1)
+PY
+    then
+        pass "callRuntimeTool(show_changes) accepts explicit workflow session_id"
+    else
+        fail "callRuntimeTool(show_changes) explicit session smoke failed (body: ${body:0:300})"
+    fi
+else
+    fail "callRuntimeTool(show_changes) skipped: start_coding_task did not return a session_id"
+fi
+
+if [ -n "$workflow_session_id" ]; then
+    body="$(api_post /api/tools/call "{\"tool\":\"finish_coding_task\",\"project\":\"$RUNTIME_PROJECT_ID\",\"session_id\":\"$workflow_session_id\",\"include_diff\":false,\"include_hygiene\":true,\"include_handoff\":true,\"include_validation_summary\":true}")"
+    if python3 - "$body" "$workflow_session_id" <<'PY'
+import json, sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception as exc:
+    print(f"invalid JSON: {exc}", file=sys.stderr)
+    sys.exit(1)
+
+session_id = sys.argv[2]
+output = data.get("output") if isinstance(data, dict) else None
+output = output if isinstance(output, dict) else {}
+changes = output.get("changes") if isinstance(output.get("changes"), dict) else {}
+validation = output.get("validation") if isinstance(output.get("validation"), dict) else {}
+errors = []
+
+if data.get("success") is not True:
+    errors.append("success must be true")
+if output.get("deterministic") is not True:
+    errors.append("output.deterministic must be true")
+if output.get("llm_summary") is not False:
+    errors.append("output.llm_summary must be false")
+if output.get("session_id") != session_id:
+    errors.append("output.session_id must match returned session_id")
+if not isinstance(output.get("workspace"), dict):
+    errors.append("output.workspace must exist")
+if not isinstance(changes.get("show_changes"), dict):
+    errors.append("output.changes.show_changes must exist")
+if not isinstance(output.get("hygiene"), dict):
+    errors.append("output.hygiene must exist")
+if not isinstance(output.get("handoff"), dict):
+    errors.append("output.handoff must exist")
+if validation.get("available") is not False:
+    errors.append("output.validation.available must be false")
+if not isinstance(output.get("final_warnings"), list):
+    errors.append("output.final_warnings must be an array")
+
+if errors:
+    print("; ".join(errors), file=sys.stderr)
+    sys.exit(1)
+PY
+    then
+        pass "callRuntimeTool(finish_coding_task) returns deterministic finish summary"
+    else
+        fail "callRuntimeTool(finish_coding_task) workflow assertions failed (body: ${body:0:300})"
+    fi
+else
+    fail "callRuntimeTool(finish_coding_task) skipped: start_coding_task did not return a session_id"
+fi
+
+body="$(api_post /api/tools/call "{\"tool\":\"finish_coding_task\",\"project\":\"$RUNTIME_PROJECT_ID\"}")"
+missing_session_status="$(json_get "$body" status)"
+missing_session_error="$(json_get "$body" error)"
+if [ "$missing_session_status" = "400" ] && echo "$missing_session_error" | grep -q "session_id"; then
+    pass "callRuntimeTool(finish_coding_task) rejects missing explicit session_id"
+else
+    fail "callRuntimeTool(finish_coding_task) missing session_id was not rejected clearly (body: ${body:0:300})"
 fi
 
 # ----------------------------------------------------------------------------

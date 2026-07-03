@@ -70,8 +70,7 @@ use webcodex_cli::{
     doctor_runtime_quic_checks, ensure_enroll_outputs_available, format_error_body,
     is_effective_root, read_env_file_value, render_agent_systemd_unit, render_build_metadata_block,
     resolve_account_credential, resolve_doctor_quic_options, resolve_pairing_create_token,
-    runtime_build_metadata, server_status_revision_check, RevisionComparison, RuntimeBuildMetadata,
-    CLIENT_PROFILE_ERROR,
+    runtime_build_metadata, server_status_revision_check, RevisionComparison, CLIENT_PROFILE_ERROR,
 };
 
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
@@ -1801,18 +1800,9 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    fn args(values: &[&str]) -> Vec<String> {
-        values.iter().map(|s| s.to_string()).collect()
-    }
-
-    fn build_metadata(commit: Option<&str>) -> RuntimeBuildMetadata {
-        RuntimeBuildMetadata {
-            version: Some("0.1.0".to_string()),
-            git_commit: commit.map(str::to_string),
-            git_dirty: Some(false),
-            built_at: Some("1782739890".to_string()),
-        }
-    }
+    use crate::webcodex_cli::test_support::{
+        args, build_metadata, cli_exit, write_doctor_agent_config, write_doctor_project,
+    };
 
     #[test]
     fn build_revision_compare_matches_same_commit() {
@@ -3452,59 +3442,6 @@ connect_timeout_secs = 12
         assert!(output.contains("non-JSON response"));
     }
 
-    /// Write a minimal agent.toml (with shell profiles) into `dir` and return
-    /// its path. Used by the local agent-config doctor tests.
-    fn write_doctor_agent_config(
-        dir: &Path,
-        projects_dir: &Path,
-        default_profile: Option<&str>,
-    ) -> PathBuf {
-        let default_line = default_profile
-            .map(|p| format!("default_profile = {:?}\n", p))
-            .unwrap_or_default();
-        let agent_toml = format!(
-            "server_url = \"http://127.0.0.1:8000\"\n\
-             token = \"test-token\"\n\
-             client_id = \"oe\"\n\
-             projects_dir = {:?}\n\
-             [shell]\n\
-             {default_line}\
-             [shell.profiles.rust]\n\
-             program = \"sh\"\n\
-             args = [\"-c\"]\n\
-             init_script = \"export SECRET=DO_NOT_LEAK_THIS_INIT_SCRIPT_BODY\"\n\
-             [shell.profiles.rust.env]\n\
-             CARGO_HOME = \"/root/.cargo\"\n\
-             SECRET_ENV = \"DO_NOT_LEAK_THIS_ENV_VALUE\"\n",
-            projects_dir
-        );
-        let path = dir.join("agent.toml");
-        std::fs::write(&path, agent_toml).unwrap();
-        path
-    }
-
-    fn write_doctor_project(
-        projects_dir: &Path,
-        id: &str,
-        path: &Path,
-        shell_profile: Option<&str>,
-    ) {
-        std::fs::create_dir_all(projects_dir).unwrap();
-        let shell_line = shell_profile
-            .map(|p| format!("shell_profile = {:?}\n", p))
-            .unwrap_or_default();
-        std::fs::write(
-            projects_dir.join(format!("{id}.toml")),
-            format!(
-                "id = {:?}\npath = {:?}\nname = {:?}\n{shell_line}",
-                id,
-                path.to_string_lossy(),
-                id
-            ),
-        )
-        .unwrap();
-    }
-
     #[test]
     fn doctor_local_agent_config_detects_configured_profile() {
         let tmp = tempfile::tempdir().unwrap();
@@ -4322,20 +4259,6 @@ transport = "websocket"
     // ------------------------------------------------------------------
     // connect + server up quick-start CLI tests
     // ------------------------------------------------------------------
-
-    fn cli_exit<I, S>(args: I) -> Result<String, String>
-    where
-        I: IntoIterator<Item = S>,
-        S: AsRef<str>,
-    {
-        match cli_action(args) {
-            CliAction::Exit {
-                code: 0, stdout, ..
-            } => Ok(stdout),
-            CliAction::Exit { stderr, .. } => Err(stderr),
-            other => Err(format!("expected exit, got {other:?}")),
-        }
-    }
 
     #[test]
     fn connect_help_prints_usage() {

@@ -10,6 +10,8 @@ pub(crate) mod profiles;
 pub(crate) mod server;
 pub(crate) mod setup;
 pub(crate) mod system;
+#[cfg(test)]
+pub(crate) mod test_support;
 pub(crate) mod token_commands;
 pub(crate) mod tokens;
 pub(crate) mod usage;
@@ -38,12 +40,12 @@ pub(crate) use http::{
     fetch_runtime_status, http_get_json_status, http_post_json_status, post_json_authed,
     post_json_unauthed, ApiCall,
 };
+#[cfg(test)]
+pub(crate) use output::RevisionComparison;
 pub(crate) use output::{
     compare_build_commits, doctor_revision_check, local_cli_build_metadata,
     render_build_metadata_block, runtime_build_metadata, server_status_revision_check, DoctorCheck,
 };
-#[cfg(test)]
-pub(crate) use output::{RevisionComparison, RuntimeBuildMetadata};
 #[cfg(test)]
 pub(crate) use pairing::{ensure_enroll_outputs_available, resolve_pairing_create_token};
 pub(crate) use pairing::{run_client_enroll, run_pairing_create};

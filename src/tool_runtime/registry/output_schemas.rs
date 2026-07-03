@@ -38,6 +38,51 @@ fn open_object_schema(description: &str) -> Value {
     })
 }
 
+fn search_context_line_schema() -> Value {
+    json!({
+        "type": "object",
+        "description": "A context line adjacent to a search match.",
+        "properties": {
+            "line": {
+                "type": "integer",
+                "description": "1-based line number."
+            },
+            "text": {
+                "type": "string",
+                "description": "Line text."
+            }
+        },
+        "required": ["line", "text"],
+        "additionalProperties": true
+    })
+}
+
+fn search_match_schema() -> Value {
+    let context_lines = array_schema(search_context_line_schema(), "Context lines.");
+    json!({
+        "type": "object",
+        "description": "Search match with path, 1-based line, preview, and bounded context lines.",
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "Project-relative file path."
+            },
+            "line": {
+                "type": "integer",
+                "description": "1-based match line number."
+            },
+            "preview": {
+                "type": "string",
+                "description": "Matched line preview."
+            },
+            "context_before": context_lines.clone(),
+            "context_after": context_lines,
+        },
+        "required": ["path", "line", "preview", "context_before", "context_after"],
+        "additionalProperties": true
+    })
+}
+
 fn session_hint_schema() -> Value {
     json!({
         "type": "object",
@@ -734,11 +779,13 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ("pattern", schema_type("string", "Search pattern.")),
             ("path", schema_type("string", "Project-relative search root.")),
             (
+                "backend",
+                schema_type("string", "Search backend used: rg, grep, or native."),
+            ),
+            (
                 "matches",
                 array_schema(
-                    open_object_schema(
-                        "Search match with path, 1-based line, preview, and optional context lines.",
-                    ),
+                    search_match_schema(),
                     "Bounded search matches.",
                 ),
             ),

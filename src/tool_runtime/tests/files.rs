@@ -9,6 +9,8 @@ use crate::shell_protocol::{
     ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
 };
 use serde_json::json;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[tokio::test]
 async fn write_project_file_with_session_id_records_changed_path_without_content() {
@@ -292,6 +294,8 @@ fn parse_search_matches_is_bounded_and_strips_dot_slash() {
     assert_eq!(matches[0]["path"], "src/main.rs");
     assert_eq!(matches[0]["line"], 10);
     assert_eq!(matches[0]["preview"], "fn main() {}");
+    assert_eq!(matches[0]["context_before"], json!([]));
+    assert_eq!(matches[0]["context_after"], json!([]));
     assert_eq!(matches[1]["path"], "src/lib.rs");
 }
 
@@ -307,6 +311,13 @@ fn parse_search_matches_skips_lines_without_line_number() {
 #[test]
 fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
     let cmd = search_project_text_command("fn main", "src", 25);
+    assert!(cmd.contains("command -v rg"));
+    assert!(cmd.contains("\"backend\":\"rg\""));
+    assert!(cmd.contains("\"backend\":\"grep\""));
+    assert!(cmd.contains("rg --with-filename"));
+    assert!(cmd.contains("--glob '!**/.git/**'"));
+    assert!(cmd.contains("--glob '!**/target/**'"));
+    assert!(cmd.contains("--glob '!**/node_modules/**'"));
     assert!(cmd.contains("--exclude-dir=.git"));
     assert!(cmd.contains("--exclude-dir=target"));
     assert!(cmd.contains("--exclude-dir=node_modules"));
@@ -315,6 +326,196 @@ fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
     assert!(cmd.contains("--exclude=*.key"));
     assert!(cmd.contains("head -n 26"));
     assert!(cmd.contains("grep -rnI"));
+}
+
+#[cfg(unix)]
+fn write_executable_script(path: &std::path::Path, body: &str) {
+    std::fs::write(path, body).unwrap();
+    let mut perms = std::fs::metadata(path).unwrap().permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(path, perms).unwrap();
+}
+
+#[cfg(unix)]
+fn fake_head_script() -> &'static str {
+    "#!/bin/sh\nwhile IFS= read -r line; do\n  printf '%s\\n' \"$line\"\ndone\n"
+}
+
+#[cfg(unix)]
+#[test]
+fn search_project_text_command_prefers_rg_backend_when_available() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    write_executable_script(
+        &bin.join("rg"),
+        "#!/bin/sh\nprintf 'src/lib.rs:2:needle from rg\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command("needle", ".", 5)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr: {stderr}");
+    let (matches, truncated, backend) = parse_search_project_text_output(&stdout, 5, 0, 0, false);
+
+    assert_eq!(backend, "rg");
+    assert!(!truncated);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["path"], "src/lib.rs");
+    assert_eq!(matches[0]["line"], 2);
+    assert_eq!(matches[0]["preview"], "needle from rg");
+}
+
+#[cfg(unix)]
+#[test]
+fn search_project_text_command_falls_back_to_grep_without_rg() {
+    let tmp = tempfile::tempdir().unwrap();
+    let bin = tmp.path().join("bin");
+    let root = tmp.path().join("project");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&root).unwrap();
+    write_executable_script(
+        &bin.join("grep"),
+        "#!/bin/sh\nprintf 'src/lib.rs:3:needle from grep\\n'\n",
+    );
+    write_executable_script(&bin.join("head"), fake_head_script());
+
+    let cmd = format!(
+        "PATH={}; export PATH\n{}",
+        shell_escape_simple(&bin.to_string_lossy()),
+        search_project_text_command("needle", ".", 5)
+    );
+    let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
+    assert_eq!(exit_code, 0, "stderr: {stderr}");
+    let (matches, truncated, backend) = parse_search_project_text_output(&stdout, 5, 0, 0, false);
+
+    assert_eq!(backend, "grep");
+    assert!(!truncated);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["path"], "src/lib.rs");
+    assert_eq!(matches[0]["line"], 3);
+    assert_eq!(matches[0]["preview"], "needle from grep");
+}
+
+#[test]
+fn parse_search_project_text_output_reports_backend_and_limit_truncation() {
+    let stdout = concat!(
+        "{\"backend\":\"rg\"}\n",
+        "src/a.rs:1:needle one\n",
+        "src/b.rs:2:needle two\n",
+        "{\"backend\":\"rg\"}\n",
+    );
+    let (matches, truncated, backend) = parse_search_project_text_output(stdout, 1, 0, 0, false);
+
+    assert_eq!(backend, "rg");
+    assert!(truncated);
+    assert_eq!(matches.len(), 1);
+    assert_eq!(matches[0]["path"], "src/a.rs");
+}
+
+#[tokio::test]
+async fn search_project_text_no_matches_returns_empty_matches() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join("lib.rs"), "pub fn present() {}\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-empty", "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectText {
+                        project,
+                        pattern: "absent_needle".to_string(),
+                        session_id: None,
+                        path: None,
+                        limit: Some(5),
+                        context_before: None,
+                        context_after: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "search-empty")
+        .await
+        .expect("search_project_text should enqueue an agent search request");
+    complete_agent_request_by_running_locally(&runtime, "search-empty", req).await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert!(matches!(
+        result.output["backend"].as_str(),
+        Some("rg" | "grep")
+    ));
+    assert_eq!(result.output["matches"], json!([]));
+    assert_eq!(result.output["count"], 0);
+    assert_eq!(result.output["truncated"], false);
+}
+
+#[tokio::test]
+async fn search_project_text_excludes_sensitive_and_build_dirs() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("target")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("node_modules/pkg")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("secrets")).unwrap();
+    std::fs::create_dir_all(tmp.path().join("tokens")).unwrap();
+    std::fs::write(tmp.path().join("src/lib.rs"), "KEEP_SEARCH_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join(".env"), "KEEP_SEARCH_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("target/out.txt"), "KEEP_SEARCH_NEEDLE\n").unwrap();
+    std::fs::write(
+        tmp.path().join("node_modules/pkg/index.js"),
+        "KEEP_SEARCH_NEEDLE\n",
+    )
+    .unwrap();
+    std::fs::write(tmp.path().join("secrets/key.txt"), "KEEP_SEARCH_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("tokens/api.txt"), "KEEP_SEARCH_NEEDLE\n").unwrap();
+    std::fs::write(tmp.path().join("id.key"), "KEEP_SEARCH_NEEDLE\n").unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "search-excludes", "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectText {
+                        project,
+                        pattern: "KEEP_SEARCH_NEEDLE".to_string(),
+                        session_id: None,
+                        path: None,
+                        limit: Some(10),
+                        context_before: None,
+                        context_after: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "search-excludes")
+        .await
+        .expect("search_project_text should enqueue an agent search request");
+    complete_agent_request_by_running_locally(&runtime, "search-excludes", req).await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["count"], 1);
+    assert_eq!(result.output["matches"][0]["path"], "src/lib.rs");
+    assert_eq!(result.output["truncated"], false);
 }
 
 #[tokio::test]
@@ -410,11 +611,19 @@ async fn search_project_text_context_does_not_enqueue_python_helper() {
         "search context must not enqueue a Python helper: {}",
         req.command
     );
+    assert!(req.command.contains("command -v rg"));
+    assert!(req.command.contains("rg --with-filename --null"));
     assert!(req.command.contains("grep -rnI --null"));
     complete_agent_request_by_running_locally(&runtime, "search-native", req).await;
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
+    assert!(matches!(
+        result.output["backend"].as_str(),
+        Some("rg" | "grep")
+    ));
+    assert_eq!(result.output["context_before"], 1);
+    assert_eq!(result.output["context_after"], 1);
     let first = &result.output["matches"][0];
     assert_eq!(first["path"], "notes.txt");
     assert_eq!(first["line"], 2);

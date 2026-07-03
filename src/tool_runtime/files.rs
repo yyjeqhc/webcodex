@@ -285,22 +285,56 @@ const SEARCH_PROJECT_TEXT_EXCLUDES: &[&str] = &[
     "--exclude=*.key",
 ];
 
+const SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS: &[&str] = &[
+    "!.git/**",
+    "!**/.git/**",
+    "!target/**",
+    "!**/target/**",
+    "!node_modules/**",
+    "!**/node_modules/**",
+    "!secrets/**",
+    "!**/secrets/**",
+    "!tokens/**",
+    "!**/tokens/**",
+    "!.env",
+    "!**/.env",
+    "!.env.*",
+    "!**/.env.*",
+    "!agent.toml",
+    "!**/agent.toml",
+    "!webcodex.env",
+    "!**/webcodex.env",
+    "!*.pem",
+    "!**/*.pem",
+    "!*.key",
+    "!**/*.key",
+];
+
 fn search_project_text_exclude_args() -> String {
     SEARCH_PROJECT_TEXT_EXCLUDES.join(" ")
 }
 
-/// Build a bounded `grep -rnI` command for `search_project_text`. Excludes
-/// sensitive/build directories and secret-like files by default and caps output
-/// with `head -n (max_matches + 1)` so the runtime can detect truncation without
-/// requesting an unbounded stream.
-pub(crate) fn search_project_text_command(
-    pattern: &str,
-    rel_path: &str,
-    max_matches: usize,
-) -> String {
+fn search_project_text_rg_exclude_args() -> String {
+    SEARCH_PROJECT_TEXT_RG_EXCLUDE_GLOBS
+        .iter()
+        .map(|glob| format!("--glob {}", shell_escape_simple(glob)))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn search_project_text_backend_marker_command(backend: &str) -> String {
+    let marker = json!({ "backend": backend }).to_string();
+    format!("printf '%s\\n' {}", shell_escape_simple(&marker))
+}
+
+fn wrap_search_project_text_backend_command(backend: &str, command: String) -> String {
+    let marker = search_project_text_backend_marker_command(backend);
+    format!("{marker}\n{command}\n{marker}")
+}
+
+fn grep_search_project_text_command(pattern: &str, rel_path: &str, max_matches: usize) -> String {
     let escaped_pattern = shell_escape_simple(pattern);
     let escaped_target = shell_escape_simple(rel_path);
-    // head -n N+1: one extra line lets the parser flag truncation.
     let head = max_matches.saturating_add(1);
     format!(
         "grep -rnI {excludes} -e {pattern} {target} 2>/dev/null | head -n {head}",
@@ -309,6 +343,37 @@ pub(crate) fn search_project_text_command(
         target = escaped_target,
         head = head,
     )
+}
+
+fn rg_search_project_text_command(pattern: &str, rel_path: &str, max_matches: usize) -> String {
+    let head = max_matches.saturating_add(1);
+    format!(
+        "rg --with-filename --line-number --no-heading --color never --hidden --no-ignore {excludes} -e {pattern} {target} 2>/dev/null | head -n {head}",
+        excludes = search_project_text_rg_exclude_args(),
+        pattern = shell_escape_simple(pattern),
+        target = shell_escape_simple(rel_path),
+        head = head,
+    )
+}
+
+/// Build a bounded rg-first command for `search_project_text`. The command
+/// emits a small JSON backend marker before and after the bounded search output
+/// so the runtime can report the actual backend even when the match stream is
+/// empty.
+pub(crate) fn search_project_text_command(
+    pattern: &str,
+    rel_path: &str,
+    max_matches: usize,
+) -> String {
+    let rg = wrap_search_project_text_backend_command(
+        "rg",
+        rg_search_project_text_command(pattern, rel_path, max_matches),
+    );
+    let grep = wrap_search_project_text_backend_command(
+        "grep",
+        grep_search_project_text_command(pattern, rel_path, max_matches),
+    );
+    format!("if command -v rg >/dev/null 2>&1; then\n{rg}\nelse\n{grep}\nfi")
 }
 
 pub(crate) const MAX_SEARCH_CONTEXT_LINES: usize = 20;
@@ -324,6 +389,36 @@ pub(crate) fn effective_search_context(
 }
 
 pub(crate) fn search_project_text_context_command(
+    pattern: &str,
+    rel_path: &str,
+    max_matches: usize,
+    context_before: usize,
+    context_after: usize,
+) -> String {
+    let rg = wrap_search_project_text_backend_command(
+        "rg",
+        rg_search_project_text_context_command(
+            pattern,
+            rel_path,
+            max_matches,
+            context_before,
+            context_after,
+        ),
+    );
+    let grep = wrap_search_project_text_backend_command(
+        "grep",
+        grep_search_project_text_context_command(
+            pattern,
+            rel_path,
+            max_matches,
+            context_before,
+            context_after,
+        ),
+    );
+    format!("if command -v rg >/dev/null 2>&1; then\n{rg}\nelse\n{grep}\nfi")
+}
+
+fn grep_search_project_text_context_command(
     pattern: &str,
     rel_path: &str,
     max_matches: usize,
@@ -346,6 +441,52 @@ pub(crate) fn search_project_text_context_command(
         after = context_after,
         head = head,
     )
+}
+
+fn rg_search_project_text_context_command(
+    pattern: &str,
+    rel_path: &str,
+    max_matches: usize,
+    context_before: usize,
+    context_after: usize,
+) -> String {
+    let context_line_budget = context_before
+        .saturating_add(context_after)
+        .saturating_add(1);
+    let match_budget = max_matches.saturating_add(1);
+    let head = match_budget
+        .saturating_mul(context_line_budget.saturating_add(1))
+        .saturating_add(1);
+    format!(
+        "rg --with-filename --null --line-number --no-heading --color never --hidden --no-ignore {excludes} -B {before} -A {after} -e {pattern} {target} 2>/dev/null | head -n {head}",
+        excludes = search_project_text_rg_exclude_args(),
+        pattern = shell_escape_simple(pattern),
+        target = shell_escape_simple(rel_path),
+        before = context_before,
+        after = context_after,
+        head = head,
+    )
+}
+
+fn is_search_project_text_excluded_path(path: &str) -> bool {
+    Path::new(path).components().any(|component| {
+        let Some(component) = component.as_os_str().to_str() else {
+            return false;
+        };
+        matches!(
+            component,
+            ".git"
+                | "target"
+                | "node_modules"
+                | "secrets"
+                | "tokens"
+                | "agent.toml"
+                | "webcodex.env"
+                | ".env"
+        ) || component.starts_with(".env.")
+            || component.ends_with(".pem")
+            || component.ends_with(".key")
+    })
 }
 
 /// Parse `grep -rnI` output lines (`path:lineno:content`) into bounded match
@@ -373,6 +514,8 @@ pub(crate) fn parse_search_matches(stdout: &str, max_matches: usize) -> (Vec<Val
             "path": clean_path,
             "line": line_no,
             "preview": content,
+            "context_before": [],
+            "context_after": [],
         }));
     }
     (matches, truncated)
@@ -531,6 +674,40 @@ fn search_context_matches_from_grep_lines(
     (matches, truncated)
 }
 
+fn parse_search_backend(stdout: &str) -> Option<String> {
+    stdout.lines().find_map(|line| {
+        let value = serde_json::from_str::<Value>(line).ok()?;
+        let backend = value.get("backend").and_then(Value::as_str)?;
+        match backend {
+            "rg" | "grep" | "native" => Some(backend.to_string()),
+            _ => None,
+        }
+    })
+}
+
+fn search_stdout_was_transport_truncated(stdout: &str) -> bool {
+    stdout.starts_with("[output truncated to last ")
+}
+
+pub(crate) fn parse_search_project_text_output(
+    stdout: &str,
+    max_matches: usize,
+    context_before: usize,
+    context_after: usize,
+    include_context: bool,
+) -> (Vec<Value>, bool, String) {
+    let backend = parse_search_backend(stdout).unwrap_or_else(|| "grep".to_string());
+    let (matches, mut truncated) = if include_context {
+        parse_search_context_matches(stdout, max_matches, context_before, context_after)
+    } else {
+        parse_search_matches(stdout, max_matches)
+    };
+    if search_stdout_was_transport_truncated(stdout) {
+        truncated = true;
+    }
+    (matches, truncated, backend)
+}
+
 fn parse_context_lines(value: Option<&Value>) -> Vec<Value> {
     value
         .and_then(|value| value.as_array())
@@ -548,6 +725,59 @@ fn parse_context_lines(value: Option<&Value>) -> Vec<Value> {
                 .collect()
         })
         .unwrap_or_default()
+}
+
+fn search_project_text_output(
+    project: &str,
+    pattern: &str,
+    rel_path: &str,
+    stdout: &str,
+    max_matches: usize,
+    context_before: usize,
+    context_after: usize,
+    include_context: bool,
+    exit_code: Option<i32>,
+) -> Value {
+    let (matches, truncated, backend) = parse_search_project_text_output(
+        stdout,
+        max_matches,
+        context_before,
+        context_after,
+        include_context,
+    );
+    json!({
+        "project": project,
+        "pattern": pattern,
+        "path": rel_path,
+        "backend": backend,
+        "matches": matches,
+        "count": matches.len(),
+        "truncated": truncated,
+        "exit_code": exit_code,
+        "context_before": context_before,
+        "context_after": context_after,
+    })
+}
+
+fn empty_search_project_text_output(
+    project: &str,
+    pattern: &str,
+    rel_path: &str,
+    context_before: usize,
+    context_after: usize,
+) -> Value {
+    json!({
+        "project": project,
+        "pattern": pattern,
+        "path": rel_path,
+        "backend": "native",
+        "matches": [],
+        "count": 0,
+        "truncated": false,
+        "exit_code": null,
+        "context_before": context_before,
+        "context_after": context_after,
+    })
 }
 
 /// Maximum accepted size for a single `replace_in_file` `old`/`new` field.
@@ -2538,10 +2768,10 @@ impl ToolRuntime {
         }))
     }
 
-    /// `search_project_text`: bounded text search routed to the owning agent
-    /// via a bounded `grep -rnI` shell call. Excludes `.git`, `target`, and
-    /// `node_modules` by default. Each match carries a project-relative path,
-    /// 1-based line number, and a preview line.
+    /// `search_project_text`: bounded rg-first text search with grep fallback.
+    /// Excludes sensitive/build paths by default. Each match carries a
+    /// project-relative path, 1-based line number, preview line, and bounded
+    /// context arrays.
     pub(crate) async fn search_project_text(
         &self,
         project: String,
@@ -2572,6 +2802,15 @@ impl ToolRuntime {
         let (context_before, context_after) =
             effective_search_context(context_before, context_after);
         let include_context = context_before > 0 || context_after > 0;
+        if is_search_project_text_excluded_path(&rel_path) {
+            return ToolResult::ok(empty_search_project_text_output(
+                &project,
+                &pattern,
+                &rel_path,
+                context_before,
+                context_after,
+            ));
+        }
         let cmd = if include_context {
             search_project_text_context_command(
                 &pattern,
@@ -2609,30 +2848,17 @@ impl ToolRuntime {
             return match tokio::time::timeout(Duration::from_secs(34), rx).await {
                 Ok(Ok(resp)) => {
                     let stdout = resp.stdout.unwrap_or_default();
-                    let (matches, truncated) = if include_context {
-                        parse_search_context_matches(
-                            &stdout,
-                            max_matches,
-                            context_before,
-                            context_after,
-                        )
-                    } else {
-                        parse_search_matches(&stdout, max_matches)
-                    };
-                    let mut output = json!({
-                        "project": project,
-                        "pattern": pattern,
-                        "path": rel_path,
-                        "matches": matches,
-                        "count": matches.len(),
-                        "truncated": truncated,
-                        "exit_code": resp.exit_code,
-                    });
-                    if include_context {
-                        output["context_before"] = json!(context_before);
-                        output["context_after"] = json!(context_after);
-                    }
-                    ToolResult::ok(output)
+                    ToolResult::ok(search_project_text_output(
+                        &project,
+                        &pattern,
+                        &rel_path,
+                        &stdout,
+                        max_matches,
+                        context_before,
+                        context_after,
+                        include_context,
+                        resp.exit_code,
+                    ))
                 }
                 Ok(Err(_)) => {
                     self.shell_clients.cancel_request(&req_id).await;
@@ -2647,32 +2873,17 @@ impl ToolRuntime {
         let root = proj.root();
         let result = tokio::task::spawn_blocking(move || run_command_sync(&cmd, &root, 30)).await;
         match result {
-            Ok((exit_code, stdout, _stderr, _)) => {
-                let (matches, truncated) = if include_context {
-                    parse_search_context_matches(
-                        &stdout,
-                        max_matches,
-                        context_before,
-                        context_after,
-                    )
-                } else {
-                    parse_search_matches(&stdout, max_matches)
-                };
-                let mut output = json!({
-                    "project": project,
-                    "pattern": pattern,
-                    "path": rel_path,
-                    "matches": matches,
-                    "count": matches.len(),
-                    "truncated": truncated,
-                    "exit_code": exit_code,
-                });
-                if include_context {
-                    output["context_before"] = json!(context_before);
-                    output["context_after"] = json!(context_after);
-                }
-                ToolResult::ok(output)
-            }
+            Ok((exit_code, stdout, _stderr, _)) => ToolResult::ok(search_project_text_output(
+                &project,
+                &pattern,
+                &rel_path,
+                &stdout,
+                max_matches,
+                context_before,
+                context_after,
+                include_context,
+                Some(exit_code),
+            )),
             Err(e) => ToolResult::err(format!("task join error: {}", e)),
         }
     }
@@ -2868,7 +3079,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_search_matches_default_output_has_no_context_fields() {
+    fn parse_search_matches_default_output_has_empty_context_arrays() {
         let (matches, truncated) = parse_search_matches("src/main.rs:42:fn main() {}\n", 10);
 
         assert!(!truncated);
@@ -2876,8 +3087,8 @@ mod tests {
         assert_eq!(matches[0]["path"], "src/main.rs");
         assert_eq!(matches[0]["line"], 42);
         assert_eq!(matches[0]["preview"], "fn main() {}");
-        assert!(matches[0].get("context_before").is_none());
-        assert!(matches[0].get("context_after").is_none());
+        assert_eq!(matches[0]["context_before"], json!([]));
+        assert_eq!(matches[0]["context_after"], json!([]));
     }
 
     #[test]

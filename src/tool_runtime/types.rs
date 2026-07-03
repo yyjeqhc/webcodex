@@ -494,11 +494,10 @@ pub enum ToolCall {
         limit: Option<usize>,
     },
 
-    /// Search text inside an agent-registered project (bounded matches). Each
-    /// match carries a project-relative path, 1-based line number, and a
-    /// preview line. Sensitive/build directories (`.git`, `target`,
-    /// `node_modules`) are excluded by default. Routed to the owning agent via
-    /// a bounded `grep -rnI` shell call.
+    /// Search text inside a project (bounded matches, rg-first with grep
+    /// fallback). Each match carries a project-relative path, 1-based line
+    /// number, preview line, and bounded context arrays. Sensitive/build
+    /// directories are excluded by default.
     SearchProjectText {
         project: String,
         pattern: String,

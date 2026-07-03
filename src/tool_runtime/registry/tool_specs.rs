@@ -392,11 +392,10 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "search_project_text".to_string(),
-                description: "Search text inside an agent-registered project (bounded matches)."
+                description: "Default source-inspection search for a project (rg-first, bounded matches)."
                     .to_string()
                     + " Each match carries a project-relative path, 1-based line number, and a "
-                    + "preview line. Sensitive/build directories (.git, target, node_modules) are "
-                    + "excluded by default.",
+                    + "preview/context lines. Sensitive/build directories are excluded by default.",
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("pattern", "string", "Text pattern to search for.", true),
@@ -952,9 +951,9 @@ impl ToolRuntime {
     pub fn recommended_flows() -> Vec<&'static str> {
         vec![
             "Discovery: call list_projects then runtime_status to see agents and projects.",
-            "Inspect: use show_changes or git_diff_summary, then read_file before proposing changes.",
+            "Inspect: use read_file, search_project_text, and show_changes before proposing changes.",
             "Review: use show_changes first; request include_diff=true or call git_diff_hunks for bounded hunk review, then run focused tests.",
-            "Source code edit: inspect with read_file/search_project_text; prefer replace_line_range/insert_at_line/delete_line_range with guards. apply_patch_checked for broad diffs; run_shell not primary; validate with cargo tools.",
+            "Source code edit: inspect with read_file/search_project_text/show_changes; prefer replace_line_range/insert_at_line/delete_line_range with guards. apply_patch_checked for broad diffs; run_shell not primary.",
             "Rust validation: use cargo_fmt, cargo_check, cargo_test before run_shell for common checks.",
             "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",
             "Checkpoint: after tests pass, call workspace_checkpoint_create before broad edits; use show/list to inspect, restore with confirm=true only when HEAD still matches.",

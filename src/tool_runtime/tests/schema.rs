@@ -355,6 +355,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         );
     }
     for field in [
+        "backend",
         "matches",
         "count",
         "truncated",

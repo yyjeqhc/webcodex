@@ -641,6 +641,30 @@ impl JobManager {
         !self.jobs.lock().unwrap().is_empty() || !self.queued.lock().unwrap().is_empty()
     }
 
+    fn stop_all(&self) {
+        self.queued.lock().unwrap().clear();
+        let running = {
+            let jobs = self.jobs.lock().unwrap();
+            jobs.iter()
+                .map(|(job_id, job)| {
+                    (
+                        job_id.clone(),
+                        job.child.clone(),
+                        job.stop_requested.clone(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        for (job_id, child, stop_requested) in running {
+            stop_requested.store(true, Ordering::SeqCst);
+            if let Some(child) = child {
+                if let Err(e) = kill_child_group(&child) {
+                    eprintln!("webcodex-agent stop_job error: failed to kill job {job_id}: {e}");
+                }
+            }
+        }
+    }
+
     fn active_job_count(&self, client_id: &str) -> usize {
         self.jobs
             .lock()
@@ -4409,6 +4433,67 @@ shell_profile = "../rust"
                 other => panic!("{label}: expected job_update, got {:?}", other.kind()),
             }
         }
+    }
+
+    #[test]
+    fn job_manager_stop_all_clears_queue_and_requests_running_stop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cfg = test_config(tmp.path().join("config/projects.d"));
+        let jobs = JobManager::new(1);
+        let stop_requested = Arc::new(AtomicBool::new(false));
+        jobs.jobs.lock().unwrap().insert(
+            "running-job".to_string(),
+            RunningJob {
+                client_id: "ws-client".to_string(),
+                child: None,
+                stop_requested: stop_requested.clone(),
+            },
+        );
+        let (sink, mut rx) = ws_sink("ws-client");
+        let request = ShellAgentShellRequest {
+            request_id: "req-queued".to_string(),
+            client_id: "ws-client".to_string(),
+            kind: "start_job".to_string(),
+            job_id: Some("queued-job".to_string()),
+            cwd: Some(tmp.path().to_string_lossy().to_string()),
+            path: None,
+            content: None,
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            command: "sleep 60".to_string(),
+            stdin: None,
+            timeout_secs: 60,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        };
+
+        jobs.enqueue(
+            sink,
+            cfg.policy.clone(),
+            cfg.shell.clone(),
+            projects_dir(&cfg),
+            request,
+        );
+        match rx.try_recv().expect("queued status was sent") {
+            AgentEnvelope::JobUpdate { payload } => {
+                assert_eq!(payload.job_id, "queued-job");
+                assert_eq!(payload.status, "agent_queued");
+            }
+            other => panic!("expected job_update, got {:?}", other.kind()),
+        }
+        assert_eq!(jobs.queued.lock().unwrap().len(), 1);
+
+        jobs.stop_all();
+
+        assert!(stop_requested.load(Ordering::SeqCst));
+        assert!(jobs.queued.lock().unwrap().is_empty());
     }
 
     #[test]

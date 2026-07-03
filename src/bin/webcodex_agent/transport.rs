@@ -28,6 +28,23 @@ const WS_RECONNECT_BACKOFF: Duration = Duration::from_secs(2);
 /// guarantees `websocket_session` (and therefore the reconnect loop) always
 /// makes progress instead of stalling forever after a disconnect.
 const WS_WRITER_CLOSE_TIMEOUT: Duration = Duration::from_secs(1);
+/// Bounded wait for local agent jobs to acknowledge a process shutdown.
+const JOB_SHUTDOWN_DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+/// Bounded wait for Tokio blocking tasks when the transport runtime exits.
+const RUNTIME_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(2);
+
+async fn stop_jobs_for_shutdown(jobs: &JobManager, poll_interval_ms: u64) {
+    jobs.stop_all();
+    let start = std::time::Instant::now();
+    let sleep = Duration::from_millis(poll_interval_ms.clamp(50, 250));
+    while jobs.has_work() && start.elapsed() < JOB_SHUTDOWN_DRAIN_TIMEOUT {
+        let remaining = JOB_SHUTDOWN_DRAIN_TIMEOUT.saturating_sub(start.elapsed());
+        tokio::time::sleep(sleep.min(remaining)).await;
+    }
+    if jobs.has_work() {
+        eprintln!("webcodex-agent shutdown: active jobs did not stop within 2s; exiting");
+    }
+}
 
 #[cfg(unix)]
 async fn shutdown_signal() {
@@ -401,7 +418,7 @@ fn run_quic_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
         .enable_all()
         .build()
         .map_err(|e| format!("failed to create tokio runtime: {}", e))?;
-    rt.block_on(async move {
+    let result = rt.block_on(async move {
         let mut project_cache = AgentProjectCache::default();
         loop {
             let projects = project_cache.get(&cfg);
@@ -429,7 +446,9 @@ fn run_quic_agent(cfg: AgentConfig, once: bool, agent_instance_id: &str) -> Resu
                 }
             }
         }
-    })
+    });
+    rt.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    result
 }
 
 fn run_quic_agent_single_session(
@@ -441,11 +460,13 @@ fn run_quic_agent_single_session(
         .enable_all()
         .build()
         .map_err(|e| format!("failed to create tokio runtime: {}", e))?;
-    rt.block_on(async move {
+    let result = rt.block_on(async move {
         let mut project_cache = AgentProjectCache::default();
         let projects = project_cache.get(cfg);
         quic_session(cfg, projects, agent_instance_id, once).await
-    })
+    });
+    rt.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    result
 }
 
 /// Validate the `[quic]` config section. Returns a cloned, resolved config so
@@ -797,6 +818,9 @@ async fn quic_session(
         }
     }
 
+    if shutdown_requested {
+        stop_jobs_for_shutdown(&jobs, cfg.poll_interval_ms).await;
+    }
     let _ = out_tx
         .send(AgentEnvelope::Goodbye {
             reason: Some("session ending".to_string()),
@@ -882,7 +906,7 @@ fn run_websocket_agent(
         .enable_all()
         .build()
         .map_err(|e| format!("failed to create tokio runtime: {}", e))?;
-    rt.block_on(async move {
+    let result = rt.block_on(async move {
         let mut project_cache = AgentProjectCache::default();
         loop {
             let projects = project_cache.get(&cfg);
@@ -910,7 +934,9 @@ fn run_websocket_agent(
                 }
             }
         }
-    })
+    });
+    rt.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    result
 }
 
 fn run_websocket_agent_single_session(
@@ -921,11 +947,13 @@ fn run_websocket_agent_single_session(
         .enable_all()
         .build()
         .map_err(|e| format!("failed to create tokio runtime: {}", e))?;
-    rt.block_on(async move {
+    let result = rt.block_on(async move {
         let mut project_cache = AgentProjectCache::default();
         let projects = project_cache.get(cfg);
         websocket_session(cfg, projects, agent_instance_id).await
-    })
+    });
+    rt.shutdown_timeout(RUNTIME_SHUTDOWN_TIMEOUT);
+    result
 }
 
 /// One WebSocket connection lifecycle: connect, register, then serve requests
@@ -1111,6 +1139,10 @@ pub(crate) async fn websocket_session(
         }
     }
 
+    if quit_after_session {
+        stop_jobs_for_shutdown(&jobs, cfg.poll_interval_ms).await;
+    }
+
     // Shutdown: drop the sender so the writer stops sending, drop the read
     // half so the underlying socket can be torn down, then give the writer a
     // brief grace window to flush any in-flight frame before aborting it. We
@@ -1133,7 +1165,7 @@ pub(crate) async fn websocket_session(
     }
     // Give in-flight job threads a moment to flush final updates through the
     // (now closed) sink; they will log send errors and exit on their own.
-    while jobs.has_work() {
+    while !quit_after_session && jobs.has_work() {
         std::thread::sleep(Duration::from_millis(cfg.poll_interval_ms.min(1000)));
     }
     Ok(if quit_after_session {

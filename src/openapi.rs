@@ -1226,7 +1226,7 @@ fn schemas() -> Value {
                 },
                 "include_validation_summary": {
                     "type": "boolean",
-                    "description": "Flattened finish_coding_task flag. Defaults to true; no stdout/stderr parsing is performed. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened finish_coding_task flag. Defaults to true; minimal diagnostics may be derived from safe bounded validation metadata, but raw stdout/stderr is never exposed. Used only when `params` and `arguments` are absent."
                 },
                 "include_validation": {
                     "type": "boolean",

@@ -67,7 +67,7 @@ Run:
 
 ```bash
 grep -R "python3 -c" -n src/tool_runtime src/bin src/shell_client || true
-grep -R "run_agent_helper" -n . || true
+grep -R "run_agent_helper" -n src/tool_runtime src/bin src/shell_client || true
 ```
 
 Confirm:
@@ -108,13 +108,22 @@ Confirm:
 
 After deploying a new server, agent, or runtime build:
 
-1. Refresh the GPT Action or MCP schema when tool schemas changed.
+1. Refresh the GPT Action or MCP schema if runtime tool schemas changed.
 2. Run `tool_manifest` or `list_tools` through the target integration.
 3. Run `runtime_status`.
-4. Verify `start_coding_task` and `finish_coding_task` are available through the
-   generic runtime tool path.
-5. Run read-only `show_changes` against a safe test project.
-6. Run the E2E smoke and eval harness locally or in staging.
+4. Confirm `start_coding_task` and `finish_coding_task` are available through
+   the generic runtime tool path.
+5. Confirm `session_handoff_summary` exposes `validation` when
+   `include_validation` defaults to true.
+6. On a safe test project only, run `start_coding_task`, `read_file` or
+   `search_project_text`, `show_changes`, and `finish_coding_task`.
+7. Run the local or staging smoke/eval commands:
+
+```bash
+bash scripts/e2e_zero_config_ws.sh
+E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
+EVAL_MODE=compare bash scripts/eval_coding_loop.sh
+```
 
 Do not run production mutations as acceptance smoke. Any write-path smoke must
 use a safe test project or temporary project under an allowed root.

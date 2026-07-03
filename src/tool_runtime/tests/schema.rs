@@ -949,7 +949,10 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         "ledger-based",
         "validation-like tool-call summary",
         "does not include stdout/stderr",
-        "does not parse",
+        "minimal diagnostics",
+        "bounded tails",
+        "safe result metadata",
+        "never infer root cause",
     ] {
         assert!(
             description.contains(phrase),
@@ -985,8 +988,11 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         "ledger-derived",
         "validation-like tool-call summary",
         "does not include stdout/stderr",
-        "does not parse",
-        "parser.available remains false",
+        "minimal diagnostics",
+        "bounded tails",
+        "safe result metadata",
+        "never infer root cause",
+        "parser.available remains false when session ledger events lack those fields",
     ] {
         assert!(
             description.contains(phrase),
@@ -1031,7 +1037,8 @@ fn session_tool_specs_describe_ledger_vs_current_binding() {
         "session ledger",
         "explicit session_id",
         "ledger-derived validation",
-        "stdout/stderr parser",
+        "bounded tails",
+        "safe result metadata",
         "validation.parser.available",
         "does not depend on current-session binding",
     ] {

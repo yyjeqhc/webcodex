@@ -1,17 +1,20 @@
 //! Ledger-derived validation event summaries.
 //!
 //! This module deliberately records facts already present in the session
-//! ledger. It does not parse stdout/stderr, infer root causes, or change tool
-//! execution behavior.
+//! ledger. It does not persist stdout/stderr, infer root causes, or change tool
+//! execution behavior. The minimal bounded-tail parser lives separately and is
+//! only safe to wire here once session events retain bounded tail metadata.
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::sessions::{SessionEvent, SessionSummary};
+use super::validation_parser::{
+    PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION, SESSION_LEDGER_UNWIRED_REASON,
+};
 
 const DEFAULT_VALIDATION_EVENT_LIMIT: usize = 10;
 const VALIDATION_SOURCE: &str = "session_ledger";
-const PARSER_UNAVAILABLE_REASON: &str = "stdout/stderr parser not implemented";
 
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct ValidationEvent {
@@ -39,6 +42,9 @@ pub(crate) struct ValidationEvent {
 #[derive(Debug, Clone, Serialize)]
 struct ValidationParserSummary {
     available: bool,
+    kind: &'static str,
+    version: u8,
+    limitations: [&'static str; 3],
     reason: &'static str,
 }
 
@@ -226,7 +232,10 @@ fn matching_start(
 fn parser_unavailable() -> ValidationParserSummary {
     ValidationParserSummary {
         available: false,
-        reason: PARSER_UNAVAILABLE_REASON,
+        kind: PARSER_KIND,
+        version: PARSER_VERSION,
+        limitations: PARSER_LIMITATIONS,
+        reason: SESSION_LEDGER_UNWIRED_REASON,
     }
 }
 
@@ -239,7 +248,10 @@ fn to_value(summary: ValidationSummary) -> Value {
             "events": [],
             "parser": {
                 "available": false,
-                "reason": PARSER_UNAVAILABLE_REASON,
+                "kind": PARSER_KIND,
+                "version": PARSER_VERSION,
+                "limitations": PARSER_LIMITATIONS,
+                "reason": SESSION_LEDGER_UNWIRED_REASON,
             }
         })
     })

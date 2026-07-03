@@ -280,7 +280,7 @@ pub(super) fn session_handoff_summary_input_schema() -> Value {
             },
             "include_validation": {
                 "type": "boolean",
-                "description": "Include ledger-derived validation summary. Defaults to true. Does not parse stdout/stderr; parser.available remains false until parser exists."
+                "description": "Include ledger-derived validation summary. Defaults to true. Minimal diagnostics require bounded tails or safe result metadata; parser.available remains false when session ledger events lack those fields."
             },
             "limit": {
                 "type": "integer",
@@ -422,7 +422,7 @@ pub(super) fn finish_coding_task_input_schema() -> Value {
             },
             "include_validation_summary": {
                 "type": "boolean",
-                "description": "Include deterministic validation-like session ledger event summary when available. Defaults to true; no stdout/stderr parsing is performed."
+                "description": "Include deterministic validation-like session ledger event summary when available. Defaults to true; minimal diagnostics require bounded tails or safe result metadata."
             }
         },
         "required": ["project", "session_id"],

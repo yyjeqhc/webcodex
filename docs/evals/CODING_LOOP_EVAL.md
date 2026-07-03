@@ -116,9 +116,15 @@ session-ledger summary for validation-like tool-call outcomes such as
 The summary is observability data only. It records factual tool metadata such as
 tool name, validation kind, success, exit code when available, timestamps when
 available, and safe bounded input summaries. It does not include stdout/stderr
-bodies, parse compiler or test output, extract root causes, or provide semantic
-diagnosis. There is no stdout/stderr parser yet, and there is no test failure
-root-cause extraction yet.
+bodies, extract root causes, or provide semantic diagnosis.
+
+Stage 4.2 includes a minimal bounded-tail parser skeleton for synthetic/parser
+unit coverage. When wired to bounded tails or safe result metadata, it extracts
+only stable cargo facts: rustc severity/code/span for `cargo_check`, and test
+summary counts plus the first stable failed test name for `cargo_test`. Current
+session-ledger validation summaries still report `parser.available=false` when
+ledger events do not retain bounded stdout/stderr tails or equivalent safe
+metadata.
 
 Inspect-only cases may still report `validation.available=false` when no
 validation-like tool calls exist in the session ledger.
@@ -245,8 +251,10 @@ summary.
 
 - Eval remains scripted tool-call metrics, not full model behavior.
 - Guided may use more tool calls because it includes start/finish aggregators.
-- No stdout/stderr parser.
-- No test failure root-cause extraction.
+- Minimal parser only extracts stable cargo check/test facts from bounded tails
+  or safe metadata when available.
+- Parser output is not semantic diagnosis.
+- No root-cause extraction.
 - There is no semantic code understanding signal yet.
 - No LSP/tree-sitter signal.
 - The harness does not exercise the Codex CLI or any LLM delegation.

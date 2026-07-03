@@ -3,6 +3,9 @@ use crate::tool_runtime::sessions::{SessionStore, SessionTransport};
 use crate::tool_runtime::validation_events::{
     validation_kind_for_tool, validation_summary_for_session,
 };
+use crate::tool_runtime::validation_parser::{
+    PARSER_KIND, PARSER_VERSION, SESSION_LEDGER_UNWIRED_REASON,
+};
 use crate::tool_runtime::{SessionMode, ToolCall};
 use serde_json::{json, Value};
 
@@ -43,9 +46,19 @@ fn validation_summary_is_unavailable_without_validation_events() {
     assert_eq!(validation["events_total"], 0);
     assert!(validation["events"].as_array().unwrap().is_empty());
     assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(validation["parser"]["kind"], PARSER_KIND);
+    assert_eq!(validation["parser"]["version"], PARSER_VERSION);
+    assert_eq!(
+        validation["parser"]["limitations"],
+        json!([
+            "bounded tails only",
+            "no root-cause inference",
+            "no full stdout/stderr bodies"
+        ])
+    );
     assert_eq!(
         validation["parser"]["reason"],
-        "stdout/stderr parser not implemented"
+        SESSION_LEDGER_UNWIRED_REASON
     );
     assert!(validation.get("latest_success").is_none());
     assert!(validation.get("latest_failure").is_none());
@@ -84,6 +97,11 @@ fn cargo_check_success_produces_validation_event() {
     assert_eq!(event["summary"], "cargo_check succeeded");
     assert_eq!(event["input_summary"]["project"], "agent:eval:demo");
     assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(
+        validation["parser"]["reason"],
+        SESSION_LEDGER_UNWIRED_REASON
+    );
+    assert!(event.get("diagnostics").is_none());
 }
 
 #[test]
@@ -167,6 +185,12 @@ fn latest_success_and_failure_follow_session_ledger_order() {
     assert_eq!(validation["latest_success"]["exit_code"], 0);
     assert_eq!(validation["latest_failure"]["tool_name"], "cargo_test");
     assert_eq!(validation["latest_failure"]["exit_code"], 101);
+    assert!(validation["latest_failure"].get("diagnostics").is_none());
+    assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(
+        validation["parser"]["reason"],
+        SESSION_LEDGER_UNWIRED_REASON
+    );
     for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
         assert!(
             !json_contains_key(&validation, key),
@@ -344,6 +368,11 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     assert_eq!(validation["latest_failure"]["exit_code"], 101);
     assert_eq!(validation["latest_failure"]["summary"], "cargo_test failed");
     assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(
+        validation["parser"]["reason"],
+        SESSION_LEDGER_UNWIRED_REASON
+    );
+    assert!(validation["latest_failure"].get("diagnostics").is_none());
     for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
         assert!(
             !json_contains_key(validation, key),

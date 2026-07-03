@@ -445,7 +445,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "validation",
-                open_object_schema("Ledger-based validation-like tool-call summary. Does not include stdout/stderr bodies and does not parse compiler or test output."),
+                open_object_schema("Ledger-based validation-like tool-call summary. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause."),
             ),
             (
                 "hygiene",
@@ -644,7 +644,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "validation",
-                open_object_schema("Ledger-derived validation-like tool-call summary. Does not include stdout/stderr bodies and does not parse compiler or test output. parser.available remains false until a parser exists."),
+                open_object_schema("Ledger-derived validation-like tool-call summary. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause; parser.available remains false when session ledger events lack those fields."),
             ),
             (
                 "suggested_next_actions",

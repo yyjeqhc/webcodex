@@ -39,7 +39,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "finish_coding_task".to_string(),
-                description: "Deterministic coding-task finish aggregate for an explicit session_id. Returns show_changes, optional hygiene and handoff, validation-like ledger events, workspace warnings, and dirty-state signals. Never calls an LLM or parses test output.".to_string(),
+                description: "Deterministic coding-task finish aggregate for an explicit session_id. Returns show_changes, optional hygiene and handoff, validation-like ledger events, workspace warnings, and dirty-state signals. Never calls an LLM, emits raw stdout/stderr, or infers validation root causes.".to_string(),
                 input_schema: finish_coding_task_input_schema(),
                 output_schema: output_schema_for_tool("finish_coding_task"),
                 annotations: tool_annotations("finish_coding_task"),
@@ -84,7 +84,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "session_handoff_summary".to_string(),
-                description: "Read-only handoff for multi-step tasks. Returns session ledger data for explicit session_id: messages, failed tools, workspace/checkpoints, ledger-derived validation. No stdout/stderr parser; validation.parser.available remains false until parser exists. Does not depend on current-session binding.".to_string(),
+                description: "Read-only handoff for multi-step tasks, explicit session_id. Returns session ledger msgs, failed tools, ledger-derived validation, workspace/checkpoints. Diagnostics need bounded tails or safe result metadata; validation.parser.available false if missing. Does not depend on current-session binding.".to_string(),
                 input_schema: session_handoff_summary_input_schema(),
                 output_schema: output_schema_for_tool("session_handoff_summary"),
                 annotations: tool_annotations("session_handoff_summary"),

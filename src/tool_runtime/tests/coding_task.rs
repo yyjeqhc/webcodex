@@ -1,5 +1,6 @@
 use super::support::*;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
+use crate::tool_runtime::validation_parser::SESSION_LEDGER_UNWIRED_REASON;
 use crate::tool_runtime::{SessionMode, ToolCall, KNOWN_TOOL_NAMES};
 use serde_json::{json, Value};
 use std::fs;
@@ -297,7 +298,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     assert_eq!(validation["parser"]["available"], false);
     assert_eq!(
         validation["parser"]["reason"],
-        "stdout/stderr parser not implemented"
+        SESSION_LEDGER_UNWIRED_REASON
     );
     assert!(validation.get("observed_commands").is_none());
     assert!(result.output["hygiene"].is_null());

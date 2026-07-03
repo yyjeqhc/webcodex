@@ -94,9 +94,10 @@ They create and read bounded task-recorder metadata only; they do not modify a
 workspace. When session persistence is configured, session records, events, and
 messages may be persisted and restored through the `sessions.json` ledger. The
 ledger is for task continuity and handoff metadata, not a complete audit log.
-Current-session bindings remain process-local in-memory state, so pass the
-session id explicitly for deterministic MCP handoff. To group MCP tool calls,
-pass the session id as reserved metadata in `tools/call` arguments:
+Current-session bindings remain process-local in-memory state and may be lost
+on restart, so pass the session id explicitly for deterministic MCP handoff. To
+group MCP tool calls, pass the session id as reserved metadata in `tools/call`
+arguments:
 
 ```json
 {

@@ -162,12 +162,13 @@ Start a session through the generic Action:
 }
 ```
 
-Pass the returned id as top-level metadata on later generic calls:
+Pass the returned id as `recording_session_id` metadata on later generic calls
+when using `params` or `arguments`:
 
 ```json
 {
   "tool": "read_file",
-  "session_id": "wc_sess_example",
+  "recording_session_id": "wc_sess_example",
   "params": {
     "project": "agent:workstation:my-repo",
     "path": "src/mcp.rs",
@@ -192,18 +193,22 @@ state and session activity are returned together:
 }
 ```
 
-For `/api/tools/call`, top-level `session_id` is recorder metadata for the
-current tool call. `params.session_id` is the `show_changes` business argument
-that selects which session to summarize; the two ids may be the same or
-different.
+For `/api/tools/call`, top-level `recording_session_id` is recorder metadata
+for the current generic wrapper call and is stripped before concrete tool
+dispatch. Top-level `session_id` is ordinary flattened tool input when
+`params`/`arguments` are absent. `params.session_id` is the `show_changes`
+business argument that selects which session to summarize; those ids may be the
+same or different.
 
 The recorder is bounded. Session records, events, and messages may be persisted
 and restored through the configured `sessions.json` ledger, but the ledger is
 task continuity and handoff metadata rather than a complete audit log. The
 recorder does not automatically modify a workspace and does not scan diffs.
 Inputs and errors are redacted and bounded before storage. Current-session
-bindings remain process-local in-memory state; pass an explicit `session_id`
-for deterministic handoff across process restart.
+bindings remain process-local in-memory state, not durable ledger state, and
+may be lost on restart. For reliable long-running or cross-client workflows,
+keep the explicit `session_id` and pass it as tool input or
+`recording_session_id` metadata instead of relying only on current binding.
 
 ## Observability
 

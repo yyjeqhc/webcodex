@@ -106,9 +106,10 @@ pub enum ToolCall {
     /// List registered tool runtime tools.
     ListTools,
 
-    /// Start an in-memory task tracking session. The session id is opaque and
-    /// may be passed as REST `session_id` or MCP `_session_id` metadata on
-    /// later tool calls.
+    /// Create a bounded task tracking session and return an explicit opaque
+    /// session id. Later callers should pass that id explicitly (for example as
+    /// REST `recording_session_id` wrapper metadata, tool-specific
+    /// `session_id`, or MCP `_session_id`) or bind it as current separately.
     StartSession {
         #[serde(default)]
         project: Option<String>,
@@ -122,14 +123,15 @@ pub enum ToolCall {
         deny_shell_tools: bool,
     },
 
-    /// Return a bounded structured summary of recorded session events.
+    /// Return a bounded structured summary of recorded session ledger data for
+    /// an explicit session id.
     SessionSummary {
         session_id: String,
         #[serde(default)]
         limit: Option<usize>,
     },
 
-    /// Post a bounded session-local message for collaboration, progress,
+    /// Post a bounded session-local ledger message for collaboration, progress,
     /// guidance, or design discussion. This is session metadata only.
     PostSessionMessage {
         session_id: String,
@@ -143,7 +145,7 @@ pub enum ToolCall {
         priority: SessionMessagePriority,
     },
 
-    /// List session-local messages in stable newest-first order.
+    /// List session-local ledger messages in stable newest-first order.
     ListSessionMessages {
         session_id: String,
         #[serde(default)]
@@ -163,18 +165,18 @@ pub enum ToolCall {
         resolution: Option<String>,
     },
 
-    /// Return a bounded structured aggregate of session-local discussion.
+    /// Return a bounded structured aggregate of session-local ledger discussion.
     SessionDiscussionSummary {
         session_id: String,
         #[serde(default)]
         limit: Option<usize>,
     },
 
-    /// Return a bounded structured handoff summary for an explicit session:
-    /// session info, message-board state, recent progress/decisions, open
-    /// todos/risks/questions/guidance, recent failed tool calls, and optional
-    /// workspace + checkpoint metadata. Read-only; never calls an LLM or
-    /// generates natural-language summaries. Exposed only through runtime
+    /// Return a bounded structured handoff summary for an explicit session id:
+    /// session ledger info, message-board state, recent progress/decisions,
+    /// open todos/risks/questions/guidance, recent failed tool calls, and
+    /// optional workspace + checkpoint metadata. Read-only; never calls an LLM
+    /// or generates natural-language summaries. Exposed only through runtime
     /// tools / MCP / `callRuntimeTool` (no dedicated OpenAPI op).
     SessionHandoffSummary {
         session_id: String,
@@ -189,13 +191,16 @@ pub enum ToolCall {
     },
 
     /// Explicitly bind an existing project-scoped session as the caller's
-    /// current session for later project tool calls on this transport.
+    /// process-local in-memory current session for later project tool calls on
+    /// this transport.
     BindCurrentSession { project: String, session_id: String },
 
-    /// Return the caller's current session binding for a project, if any.
+    /// Return the caller's process-local current session binding for a project,
+    /// if any.
     CurrentSession { project: String },
 
-    /// Remove the caller's current session binding for a project. Idempotent.
+    /// Remove the caller's process-local current session binding for a project.
+    /// Idempotent.
     UnbindCurrentSession { project: String },
 
     /// Create a bounded last-known-good workspace checkpoint outside the

@@ -404,7 +404,7 @@ Use `run_shell` only when structured Cargo helpers are insufficient.
 ```json
 {
   "tool": "show_changes",
-  "session_id": "wc_sess_example",
+  "recording_session_id": "wc_sess_example",
   "params": {
     "project": "agent:workstation:my-repo",
     "session_id": "wc_sess_example",
@@ -427,7 +427,8 @@ Use `run_shell` only when structured Cargo helpers are insufficient.
 
 **REST / GPT Action:**
 
-- Top-level `session_id` = recorder metadata for the current tool call.
+- Top-level `recording_session_id` = recorder metadata for the current generic wrapper call; it is stripped before concrete tool dispatch.
+- Top-level `session_id` = ordinary flattened tool input when `params`/`arguments` are absent.
 - `params.session_id` = business parameter used by `show_changes` or `session_summary` to select which session to summarize.
 - The two may be the same or different.
 

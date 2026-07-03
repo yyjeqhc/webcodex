@@ -2,6 +2,8 @@ use serde_json::{json, Value};
 
 use super::super::types::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
 
+const OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session ledger and wins over any current-session binding.";
+
 pub(crate) fn object_schema(fields: Vec<(&str, &str, &str, bool)>) -> Value {
     let mut properties = serde_json::Map::new();
     let mut required = Vec::new();
@@ -37,7 +39,7 @@ pub(super) fn with_optional_session_id(
     fields.push((
         "session_id",
         "string",
-        "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session.",
+        OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION,
         false,
     ));
     fields
@@ -100,7 +102,7 @@ pub(super) fn apply_text_edits_input_schema() -> Value {
             },
             "session_id": {
                 "type": "string",
-                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+                "description": OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION
             }
         },
         "required": ["project", "path", "edits"],
@@ -308,7 +310,7 @@ pub(super) fn workspace_hygiene_check_input_schema() -> Value {
             },
             "session_id": {
                 "type": "string",
-                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+                "description": OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION
             }
         },
         "required": ["project"],
@@ -322,7 +324,7 @@ pub(super) fn start_session_input_schema() -> Value {
         "properties": {
             "project": {
                 "type": "string",
-                "description": "Optional runtime project id associated with this task."
+                "description": "Optional runtime project id associated with this task. This association does not bind the session as current by itself."
             },
             "title": {
                 "type": "string",
@@ -345,16 +347,16 @@ pub(super) fn start_session_input_schema() -> Value {
 
 pub(super) fn current_session_input_schema(require_session_id: bool) -> Value {
     let mut fields = vec![(
-        "project",
-        "string",
-        "Runtime project id whose current session binding should be inspected or updated.",
-        true,
-    )];
+            "project",
+            "string",
+            "Runtime project id whose process-local in-memory current-session binding should be inspected or updated.",
+            true,
+        )];
     if require_session_id {
         fields.push((
             "session_id",
             "string",
-            "Existing wc_sess_* id returned by start_session for this project.",
+            "Existing project-scoped wc_sess_* id returned by start_session. Binding it is in-memory control metadata, not durable ledger persistence.",
             true,
         ));
     }
@@ -439,7 +441,7 @@ pub(super) fn checkpoint_create_input_schema() -> Value {
             "validation": checkpoint_validation_schema("Optional bounded validation metadata supplied by the caller."),
             "session_id": {
                 "type": "string",
-                "description": "Optional wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session."
+                "description": OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION
             }
         },
         "required": ["project"],

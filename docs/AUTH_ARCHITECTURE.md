@@ -260,11 +260,15 @@ tokens need `runtime:read` to call them through `/api/tools/call` or MCP
 records, events, and messages may be persisted and restored through the
 configured `sessions.json` ledger, but the ledger is for task continuity and
 handoff metadata, not a complete audit log. Current-session bindings are
-separate process-local in-memory state; pass an explicit `session_id` when a
-caller needs deterministic handoff across process restart.
-REST callers pass top-level `session_id` metadata on `/api/tools/call`. MCP
-callers pass reserved `_session_id` inside `tools/call` arguments; WebCodex
-strips it before concrete tool dispatch.
+separate process-local in-memory state, not durable ledger state; pass an
+explicit `session_id` or `recording_session_id` when a caller needs
+deterministic handoff across process restart.
+Generic `/api/tools/call` callers pass top-level `recording_session_id`
+metadata to record the wrapper call. Top-level `session_id` is ordinary
+flattened tool input when `params`/`arguments` are absent, and
+`params.session_id` remains business input for tools such as `session_summary`
+and `show_changes`. MCP callers pass reserved `_session_id` inside `tools/call`
+arguments; WebCodex strips it before concrete tool dispatch.
 
 OAuth2 scope failures return HTTP 403:
 

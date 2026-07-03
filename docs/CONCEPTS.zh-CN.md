@@ -95,11 +95,11 @@ shared-key OAuth bridge 适合 OAuth-only Host，但 operator 仍希望保持低
 
 ## Sessions、handoff 和 hints
 
-`start_session` 创建有界的任务跟踪 session，并返回 `wc_sess_*` id。后续 REST 调用可以把它作为 tool metadata 传入，MCP 调用可以通过保留字段 `_session_id` 传入。session records、events 和 messages 是有界、redacted 的 task-recorder metadata；配置 session persistence 时，WebCodex 可以通过 `sessions.json` ledger 持久化并恢复它们。这个 ledger 用于 task continuity 和 handoff metadata，不是完整 audit log。
+`start_session` 创建有界的任务跟踪 session，并返回 `wc_sess_*` id。后续 generic `/api/tools/call` 调用可以把它作为 `recording_session_id` recorder metadata 传入，tool-specific 调用可以传显式 `session_id` input，MCP 调用可以通过保留字段 `_session_id` 传入。session records、events 和 messages 是有界、redacted 的 task-recorder metadata；配置 session persistence 时，WebCodex 可以通过 `sessions.json` ledger 持久化并恢复它们。这个 ledger 用于 task continuity 和 handoff metadata，不是完整 audit log。
 
 显式 `session_id` 总是优先于 current-session binding。未知的显式 session id 必须返回 `unknown_session_id`，不应静默 fallback 到另一个 session。
 
-`bind_current_session`、`current_session` 和 `unbind_current_session` 可以把一个 project-scoped session 绑定到同一 principal、transport 和 project 后续的 project tool calls。这是 process-local in-memory 便利状态，不是持久身份。不要假设它会在 process restart 后保留；需要确定性 handoff 时传显式 `session_id`。
+`bind_current_session`、`current_session` 和 `unbind_current_session` 可以把一个 project-scoped session 绑定到同一 principal、transport 和 project 后续的 project tool calls。这是 process-local in-memory 便利状态，不是 durable session ledger。不要假设它会在 process restart 后保留；需要确定性 handoff 时传显式 `session_id` 或 `recording_session_id`。
 
 `session_handoff_summary` 是只读的结构化 handoff 工具。它汇总 session 信息、message-board state、recent progress/decisions、open todos/risks/questions/guidance、recent failed tools，以及可选的有界 workspace/checkpoint context。它不会调用 LLM。
 

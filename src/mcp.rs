@@ -492,6 +492,31 @@ mod tests {
                 .get("guards")
                 .is_some()
         );
+        let tool_description = |name: &str| {
+            tools
+                .iter()
+                .find(|tool| tool["name"] == name)
+                .unwrap_or_else(|| panic!("missing MCP tool {name}"))["description"]
+                .as_str()
+                .unwrap()
+                .to_lowercase()
+        };
+        assert!(tool_description("start_session").contains("explicit wc_sess_* session_id"));
+        assert!(tool_description("session_summary").contains("session ledger"));
+        assert!(tool_description("session_handoff_summary")
+            .contains("does not depend on current-session binding"));
+        for name in [
+            "bind_current_session",
+            "current_session",
+            "unbind_current_session",
+        ] {
+            let description = tool_description(name);
+            assert!(
+                description.contains("process-local in-memory")
+                    && description.contains("not the durable session ledger"),
+                "MCP {name} description should distinguish current binding from ledger: {description}"
+            );
+        }
         let bind_current = tools
             .iter()
             .find(|tool| tool["name"] == "bind_current_session")

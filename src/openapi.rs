@@ -2,7 +2,7 @@ use salvo::prelude::*;
 use serde_json::{json, Value};
 
 const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";
-const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional wc_sess_* id returned by start_session. When provided, records this action in session_summary.";
+const SESSION_ID_FIELD_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, records this dedicated action in the session ledger and wins over any current-session binding.";
 
 fn public_url() -> String {
     std::env::var("WEBCODEX_PUBLIC_URL")
@@ -698,7 +698,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced generic escape hatch for runtime tools. Prefer dedicated actions when available. Use listRuntimeTools for names. GPT Actions should use flattened top-level fields; params/arguments remain for non-Action clients. Use recording_session_id to record this generic wrapper call.",
+                    "Advanced generic escape hatch for runtime tools. Prefer dedicated actions. Use listRuntimeTools for names. GPT Actions should use flattened top-level fields; params/arguments remain for non-Action clients. Use recording_session_id for ledger recording; keep explicit ids for continuity.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
@@ -750,7 +750,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                             }
                         },
                         "bindCurrentSession": {
-                            "summary": "Bind an existing session as current for a project",
+                            "summary": "Bind an existing session as current in memory for a project",
                             "value": {
                                 "tool": "bind_current_session",
                                 "project": "webcodex",
@@ -992,7 +992,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. Omit all arguments for argument-less tools like list_tools.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. Omit all arguments for argument-less tools like list_tools.",
             "properties": {
                 "tool": {
                     "type": "string",
@@ -1000,11 +1000,11 @@ fn schemas() -> Value {
                 },
                 "recording_session_id": {
                     "type": "string",
-                    "description": "Optional recorder metadata for the generic wrapper call. Pass a wc_sess_* id from start_session to record this call and enforce that recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id or post_session_message.session_id."
+                    "description": "Optional recorder metadata for the generic wrapper call. Pass an explicit wc_sess_* id from start_session to record this call in the session ledger and enforce that recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id or post_session_message.session_id."
                 },
                 "session_id": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. For session_summary and message-board tools this is the required business session id to read or update; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
+                    "description": "Flattened tool-specific argument. For session_summary and message-board tools this is the required business session id to read or update in the session ledger; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
                 },
                 "kind": {
                     "type": "string",
@@ -2831,6 +2831,33 @@ mod tests {
             description.contains("recording_session_id")
                 && description.contains("flattened top-level fields"),
             "ToolCallRequest should document GPT Action flattened fields and recorder metadata: {description}"
+        );
+        for phrase in [
+            "record this wrapper call in the session ledger",
+            "current-session binding is process-local in-memory",
+            "not the durable session ledger",
+            "explicit session_id or recording_session_id",
+        ] {
+            assert!(
+                description.contains(phrase),
+                "ToolCallRequest should document {phrase}: {description}"
+            );
+        }
+        let properties = tool_call["properties"].as_object().unwrap();
+        let recording_desc = properties["recording_session_id"]["description"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            recording_desc.contains("session ledger"),
+            "recording_session_id should mention session ledger: {recording_desc}"
+        );
+        let session_desc = properties["session_id"]["description"]
+            .as_str()
+            .unwrap_or("");
+        assert!(
+            session_desc.contains("explicit tool session")
+                && session_desc.contains("wins over current-session binding"),
+            "session_id should describe explicit session priority: {session_desc}"
         );
         let start_example = &spec["paths"]["/api/tools/call"]["post"]["requestBody"]["content"]
             ["application/json"]["examples"]["trackedSession"]["value"];

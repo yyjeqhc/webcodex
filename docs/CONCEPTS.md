@@ -133,12 +133,13 @@ tokens are capped to runtime/project/job scopes and do not receive `admin`,
 ## Sessions, handoff, and hints
 
 `start_session` creates a bounded task tracking session and returns a
-`wc_sess_*` id. Later REST calls can pass it as tool metadata, and MCP calls can
-pass it as reserved `_session_id` metadata. Session records, events, and
-messages are bounded, redacted task-recorder metadata. When session persistence
-is configured, WebCodex can persist and restore them through the `sessions.json`
-ledger. The ledger is for task continuity and handoff metadata, not a complete
-audit log.
+`wc_sess_*` id. Later generic `/api/tools/call` calls can pass it as
+`recording_session_id` recorder metadata, tool-specific calls can pass explicit
+`session_id` input, and MCP calls can pass it as reserved `_session_id`
+metadata. Session records, events, and messages are bounded, redacted
+task-recorder metadata. When session persistence is configured, WebCodex can
+persist and restore them through the `sessions.json` ledger. The ledger is for
+task continuity and handoff metadata, not a complete audit log.
 
 Explicit `session_id` always wins over a current-session binding. An unknown
 explicit session id must fail as `unknown_session_id`; it should not silently
@@ -147,8 +148,9 @@ fall back to another session.
 `bind_current_session`, `current_session`, and `unbind_current_session` let a
 caller bind a project-scoped session to later project tool calls for the same
 principal, transport, and project. This is process-local in-memory convenience
-state, not persistent identity. Do not assume it survives process restart; pass
-an explicit `session_id` for deterministic handoff.
+state, not the durable session ledger. Do not assume it survives process
+restart; pass an explicit `session_id` or `recording_session_id` for
+deterministic handoff.
 
 `session_handoff_summary` is a read-only structured handoff tool. It summarizes
 session info, message-board state, recent progress/decisions, open

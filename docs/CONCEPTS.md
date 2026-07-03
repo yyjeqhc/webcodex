@@ -58,14 +58,28 @@ The `<project_id>` comes from the top-level `id` field in an agent
 ### Runtime tool
 
 Runtime tools are the typed operations exposed through `/api/tools/call`, GPT
-Actions, and MCP. Examples include `list_projects`, `read_file`, `git_status`,
-`replace_line_range`, `insert_at_line`, `delete_line_range`,
-`apply_text_edits`, `validate_patch`, `apply_patch_checked`, `run_shell`,
-`run_job`, `show_changes`, `start_session`, and `session_handoff_summary`.
+Actions, and MCP. Examples include `list_projects`, `read_file`,
+`search_project_text`, `git_status`, `replace_line_range`, `insert_at_line`,
+`delete_line_range`, `apply_text_edits`, `validate_patch`,
+`apply_patch_checked`, `cargo_fmt`, `cargo_check`, `cargo_test`, `run_shell`,
+`run_job`, `show_changes`, `start_session`, `start_coding_task`,
+`finish_coding_task`, and `session_handoff_summary`.
 
-The recommended model workflow is to inspect first, use structured edit tools
-when line ranges are known, validate patches before applying them, run bounded
-shell/job checks, then use `show_changes` and session tools before summarizing.
+The recommended coding workflow is:
+
+1. Start with `start_coding_task` and keep the explicit `session_id`.
+2. Inspect with `read_file`, `search_project_text`, and `show_changes`.
+3. Edit with `replace_line_range`, `insert_at_line`, `delete_line_range`,
+   `apply_text_edits`, or `apply_patch_checked`.
+4. Validate with `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, or
+   `apply_patch_checked`.
+5. Review with `show_changes`, `git_diff_hunks`, and
+   `workspace_hygiene_check`.
+6. Finish with `finish_coding_task` and, for multi-step handoff,
+   `session_handoff_summary`.
+
+`run_shell` and `run_job` remain bounded command/job escape hatches. They are not
+the default validation source and are not the primary source-editing path.
 
 For developer architecture details on migrating runtime tool declarations toward
 a `ToolDefinition` registry, see
@@ -154,14 +168,15 @@ tokens are capped to runtime/project/job scopes and do not receive `admin`,
 
 ## Sessions, handoff, and hints
 
-`start_session` creates a bounded task tracking session and returns a
-`wc_sess_*` id. Later generic `/api/tools/call` calls can pass it as
+`start_session` creates a bounded task tracking session record and returns a
+`wc_sess_*` id. It does not automatically bind that session as current for
+future calls. Later generic `/api/tools/call` calls can pass the id as
 `recording_session_id` recorder metadata, tool-specific calls can pass explicit
 `session_id` input, and MCP calls can pass it as reserved `_session_id`
 metadata. Session records, events, and messages are bounded, redacted
 task-recorder metadata. When session persistence is configured, WebCodex can
-persist and restore them through the `sessions.json` ledger. The ledger is for
-task continuity and handoff metadata, not a complete audit log.
+persist and restore them through the `sessions.json` ledger. The ledger is a
+durable task-continuity and handoff record, not a complete audit log.
 
 Explicit `session_id` always wins over a current-session binding. An unknown
 explicit session id must fail as `unknown_session_id`; it should not silently
@@ -177,11 +192,34 @@ deterministic handoff.
 `session_handoff_summary` is a read-only structured handoff tool. It summarizes
 session info, message-board state, recent progress/decisions, open
 todos/risks/questions/guidance, recent failed tools, and optional bounded
-workspace/checkpoint context. It does not call an LLM.
+workspace/checkpoint context. It requires an explicit `session_id`, does not
+fall back to current-session binding, and does not call an LLM.
+
+`start_coding_task` is the recommended coding-loop entry point. It creates a
+session, returns the explicit `session_id`, gathers deterministic project/runtime
+context, and defaults `bind_current=false`. `finish_coding_task` is the matching
+closeout aggregate for an explicit `session_id`; it can include `show_changes`,
+workspace hygiene, handoff, and validation summary sections.
 
 `session_hint` is an optional lightweight hint added to recorded tool outputs
 when the session has open guidance, question, todo, or risk messages. It
 contains counts and priority only; it does not include message text.
+
+## Validation summaries
+
+Validation summaries come from session ledger events. Validation-like tools are
+`cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
+`apply_patch_checked`. `run_shell` is not classified as validation by default.
+
+The session ledger may store a small, sanitized, bounded
+`validation_output_summary` for Cargo validation helpers, derived from already
+bounded output tails and filtered before persistence. `finish_coding_task` and
+`session_handoff_summary` validation outputs do not expose raw stdout/stderr,
+excerpt fields, or `validation_output_summary`.
+
+The minimal parser extracts only stable facts from safe bounded metadata, such
+as Cargo severity/code/span and test summary counts. It does not infer root
+causes, suggest fixes, call an LLM, use LSP, or use tree-sitter.
 
 ## Operating modes
 

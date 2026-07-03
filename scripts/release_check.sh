@@ -4,25 +4,27 @@ set -euo pipefail
 # ============================================================================
 # WebCodex — Release Readiness Check
 #
-# Lightweight pre-release gate. Runs the most important local checks that must
-# pass before tagging/importing GPT Actions. It does NOT boot a public server,
-# does NOT touch the network, and NEVER reads or prints real tokens, secrets,
-# agent.toml, webcodex.env, or .env files.
+# Lightweight release-readiness gate. Runs focused local checks that must pass
+# before final acceptance. It does NOT run the full suite, E2E smoke, eval
+# harness, boot a public server, touch the network, or read/print real tokens,
+# secrets, agent.toml, webcodex.env, or .env files.
 #
 # Stages:
 #   1. cargo fmt --check
-#   2. cargo check
-#   3. cargo check --tests
-#   4. cargo test
-#   5. bash scripts/e2e_zero_config_ws.sh               (websocket transport)
-#   6. E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh (polling fallback)
-#   7. static: no sensitive files tracked or staged by git
+#   2. cargo check --all-targets
+#   3. cargo test --bin webcodex metadata -- --nocapture
+#   4. cargo test --bin webcodex schema -- --nocapture
+#   5. cargo test --bin webcodex openapi -- --nocapture
+#   6. cargo test --bin webcodex mcp -- --nocapture
+#   7. bash syntax checks for scripts/*.sh
+#   8. static: no python runtime helper regressions
+#   9. static: no sensitive files tracked or staged by git
 #
-# Invariant notes (verified by stages 5/6, not re-checked statically here to
-# keep the script fast and dependency-free):
-#   - /openapi.json operation count == 27
-#   - MCP tools/list returns a non-empty runtime tool list with key tools
-# The E2E harness asserts these against the live server/schema.
+# Manual final acceptance steps live in docs/RELEASE_CHECKLIST.md:
+#   - cargo test --bin webcodex -- --nocapture
+#   - bash scripts/e2e_zero_config_ws.sh
+#   - E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
+#   - EVAL_MODE=compare bash scripts/eval_coding_loop.sh
 #
 # Usage:
 #   bash scripts/release_check.sh
@@ -77,57 +79,84 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 2: cargo check
+# Stage 2: cargo check --all-targets
 # ----------------------------------------------------------------------------
-stage_start "cargo check"
-if cargo check; then
-    ok "cargo check"
+stage_start "cargo check --all-targets"
+if cargo check --all-targets; then
+    ok "cargo check --all-targets"
 else
-    die "cargo check"
+    die "cargo check --all-targets"
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 3: cargo check --tests
+# Stage 3: focused metadata tests
 # ----------------------------------------------------------------------------
-stage_start "cargo check --tests"
-if cargo check --tests; then
-    ok "cargo check --tests"
+stage_start "cargo test --bin webcodex metadata -- --nocapture"
+if cargo test --bin webcodex metadata -- --nocapture; then
+    ok "metadata tests"
 else
-    die "cargo check --tests"
+    die "metadata tests"
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 4: cargo test
+# Stage 4: focused schema tests
 # ----------------------------------------------------------------------------
-stage_start "cargo test"
-if cargo test; then
-    ok "cargo test"
+stage_start "cargo test --bin webcodex schema -- --nocapture"
+if cargo test --bin webcodex schema -- --nocapture; then
+    ok "schema tests"
 else
-    die "cargo test"
+    die "schema tests"
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 5: E2E smoke (WebSocket transport)
+# Stage 5: focused OpenAPI tests
 # ----------------------------------------------------------------------------
-stage_start "E2E smoke (websocket transport)"
-if bash scripts/e2e_zero_config_ws.sh; then
-    ok "E2E smoke (websocket) passed"
+stage_start "cargo test --bin webcodex openapi -- --nocapture"
+if cargo test --bin webcodex openapi -- --nocapture; then
+    ok "openapi tests"
 else
-    die "E2E smoke (websocket)"
+    die "openapi tests"
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 6: E2E smoke (polling transport)
+# Stage 6: focused MCP tests
 # ----------------------------------------------------------------------------
-stage_start "E2E smoke (polling transport)"
-if E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh; then
-    ok "E2E smoke (polling) passed"
+stage_start "cargo test --bin webcodex mcp -- --nocapture"
+if cargo test --bin webcodex mcp -- --nocapture; then
+    ok "mcp tests"
 else
-    die "E2E smoke (polling)"
+    die "mcp tests"
 fi
 
 # ----------------------------------------------------------------------------
-# Stage 7: static — no sensitive files tracked or staged by git
+# Stage 7: bash syntax checks
+# ----------------------------------------------------------------------------
+stage_start "bash syntax checks"
+for script in scripts/*.sh; do
+    if bash -n "$script"; then
+        ok "bash -n $script"
+    else
+        die "bash syntax: $script"
+    fi
+done
+
+# ----------------------------------------------------------------------------
+# Stage 8: static — no python runtime helper regressions
+# ----------------------------------------------------------------------------
+stage_start "static: no python runtime helper regressions"
+if grep -R "python3 -c" -n src/tool_runtime src/bin src/shell_client; then
+    die "python3 -c in runtime paths"
+else
+    ok "no python3 -c in runtime paths"
+fi
+if grep -R "run_agent_helper" -n src/tool_runtime src/bin src/shell_client; then
+    die "run_agent_helper in runtime paths"
+else
+    ok "no run_agent_helper in runtime paths"
+fi
+
+# ----------------------------------------------------------------------------
+# Stage 9: static — no sensitive files tracked or staged by git
 # ----------------------------------------------------------------------------
 stage_start "static: no sensitive files tracked/staged"
 # These are git-ignored deployment files that must NEVER be committed. We check
@@ -172,7 +201,7 @@ fi
 # Summary
 # ----------------------------------------------------------------------------
 printf '\n[release] ===== all stages passed =====\n'
-ok "fmt, check, check --tests, test, E2E ws, E2E polling, no sensitive files"
-log "invariants (verified by E2E): /openapi.json ops == 27, MCP tools/list is non-empty with key tools"
-log "release readiness PASSED"
+ok "fmt, check --all-targets, focused metadata/schema/openapi/mcp tests, bash syntax, static checks"
+log "manual final acceptance: full suite, E2E websocket/polling, and eval compare (see docs/RELEASE_CHECKLIST.md)"
+log "release readiness gate PASSED"
 exit 0

@@ -77,7 +77,9 @@ called.
 
 Typical MCP tools include:
 
-- Discovery, health, and task tracking: `list_tools`, `start_session`, `session_summary`, `runtime_status`, `list_projects`, `list_agents`.
+- Discovery, health, and task tracking: `list_tools`, `start_session`,
+  `start_coding_task`, `finish_coding_task`, `session_summary`,
+  `session_handoff_summary`, `runtime_status`, `list_projects`, `list_agents`.
 - Read-only project inspection: `show_changes`, `list_project_files`, `read_file`, `search_project_text`, `git_status`, `git_diff`, `git_diff_summary`, `git_diff_hunks`.
 - Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`.
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
@@ -87,10 +89,16 @@ Typical MCP tools include:
 
 Codex delegation (`run_codex`) is currently hidden from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex, or wait for a future explicit opt-in feature flag.
 
-Use the structured line edit tools when you already know the target line range,
-and `apply_text_edits` for coordinated exact edits in one UTF-8 file. Use patch
-tools for broader multi-file changes. Treat `run_shell` and `run_job` as
-diagnostics/build/test fallbacks, not as the first source-editing path.
+Use `start_coding_task` for the recommended coding-loop entry point, then
+inspect with `read_file`, `search_project_text`, and `show_changes`. Use the
+structured line edit tools when you already know the target line range, and
+`apply_text_edits` for coordinated exact edits in one UTF-8 file. Use
+`validate_patch` and `apply_patch_checked` for broader multi-file changes.
+Validate with `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
+`apply_patch_checked` before falling back to bounded command/job tools. Treat
+`run_shell` and `run_job` as diagnostics/build/test fallbacks, not as the first
+source-editing path or the default validation source. Finish with
+`finish_coding_task`, or use `session_handoff_summary` for multi-step handoff.
 
 Artifact transfer is a bounded project artifact transfer primitive for binary
 or external files associated with a project. It is not the source-editing path,
@@ -121,15 +129,19 @@ optional bounded hunks with `include_diff=true`, and optionally include session
 activity with `session_id`. It is read-only, requires `project:read`, and never
 cleans, stages, commits, or restores files.
 
-`start_session` and `session_summary` are the current task tracking foundation.
-They create and read bounded task-recorder metadata only; they do not modify a
-workspace. When session persistence is configured, session records, events, and
-messages may be persisted and restored through the `sessions.json` ledger. The
-ledger is for task continuity and handoff metadata, not a complete audit log.
-Current-session bindings remain process-local in-memory state and may be lost
-on restart, so pass the session id explicitly for deterministic MCP handoff. To
-group MCP tool calls, pass the session id as reserved metadata in `tools/call`
-arguments:
+`start_session`, `start_coding_task`, `finish_coding_task`, `session_summary`,
+and `session_handoff_summary` are the current task tracking foundation. They
+create, close out, and read bounded task-recorder metadata only; they do not
+modify a workspace. `start_session` creates a session record but does not
+automatically bind future calls. `start_coding_task` defaults
+`bind_current=false`; subsequent MCP calls should pass the returned explicit
+`session_id`. When session persistence is configured, session records, events,
+and messages may be persisted and restored through the `sessions.json` ledger.
+The ledger is for task continuity and handoff metadata, not a complete audit
+log. Current-session bindings remain process-local in-memory state and may be
+lost on restart, so pass the session id explicitly for deterministic MCP
+handoff. To group MCP tool calls, pass the session id as reserved metadata in
+`tools/call` arguments:
 
 ```json
 {
@@ -158,6 +170,14 @@ For `show_changes`, distinguish two session fields:
   to include a session activity summary.
 
 They can be the same id or different ids.
+
+`session_handoff_summary` requires explicit `arguments.session_id`; it does not
+implicitly use the current-session binding. Its `validation` section is
+ledger-derived from validation-like tools (`cargo_fmt`, `cargo_check`,
+`cargo_test`, `validate_patch`, and `apply_patch_checked`). It does not expose
+raw stdout/stderr, excerpt fields, or `validation_output_summary`, and the
+minimal parser extracts only stable facts from safe bounded metadata without
+root-cause inference, fix suggestions, LSP/tree-sitter, or LLM summarization.
 
 Use agent-backed project ids such as:
 

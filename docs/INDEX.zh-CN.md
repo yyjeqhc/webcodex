@@ -49,12 +49,13 @@
 25. [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) / [BUILD_INSTALL.md](BUILD_INSTALL.md) — build/install 命令参考，以及 npm wrapper / artifact 细节。
 26. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) — GPT Actions 和 MCP 设置截图说明。
 27. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) — v0.2.0 release notes、亮点、已知问题和验证清单。
-28. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness、artifact、发布和发布后 smoke checklist。
+28. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) — release readiness、docs consistency、final acceptance 和部署后 smoke procedure。
+29. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness、artifact、发布和发布后 smoke checklist。
 
 ## Strategy 和 future work
 
-29. [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) / [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) — WebCodex 长期 runtime 架构和 provider 方向。
-30. [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) / [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) — 未来 Desktop Session strategy：面向工程工作流的可控、可审计、可回放 computer-use sessions。
+30. [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) / [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) — WebCodex 长期 runtime 架构和 provider 方向。
+31. [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) / [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) — 未来 Desktop Session strategy：面向工程工作流的可控、可审计、可回放 computer-use sessions。
 
 ## 已从公开文档集中移除
 

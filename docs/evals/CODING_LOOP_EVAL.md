@@ -227,6 +227,10 @@ least as stable as baseline.
 
 ## Running
 
+Set `EVAL_MODE=baseline|guided|compare`; `compare` runs both flows and is the
+default. The final JSON includes validation, parser, and diagnostics metrics for
+the scripted tool calls, not full model behavior.
+
 Syntax-only / dry-run mode:
 
 ```bash

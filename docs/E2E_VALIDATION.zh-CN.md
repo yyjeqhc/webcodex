@@ -28,7 +28,7 @@ Authorization: Bearer <token>
 
 ## Codex CLI
 
-Codex delegation 当前已从模型可见 runtime surface 隐藏。内部 local validation 仍可为保留的 runner 使用 stub Codex binary，但 GPT Actions 和 MCP clients 应使用 structured edit tools 加 `run_job` / `run_shell` 验证流程。
+Codex delegation 当前已从模型可见 runtime surface 隐藏。内部 local validation 仍可为保留的 runner 使用 stub Codex binary，但 GPT Actions 和 MCP clients 应先使用 structured edit tools 加 `cargo_fmt`、`cargo_check`、`cargo_test`、`validate_patch` 和 `apply_patch_checked`。`run_job` 和 `run_shell` 只是受限 fallback diagnostics/build/test 工具，不是默认 validation source。
 
 ## Management setup
 

@@ -46,10 +46,17 @@ The server exposes GPT Actions, MCP, and runtime APIs. The agent connects back t
 - Expose the same runtime through an MCP endpoint.
 - Route tool calls to connected agents instead of reading private project paths directly from the server.
 - Read files, list files, search text, inspect Git status/diffs, validate/apply patches, and run bounded project commands.
-- Prefer structured source edits with `replace_line_range`, `insert_at_line`, and `delete_line_range` when line numbers are known.
-- Run Rust-oriented checks through structured Cargo helpers when configured.
+- Drive coding tasks with `start_coding_task`, explicit inspection, structured
+  edits, validation, review, and `finish_coding_task` / handoff closeout.
+- Prefer structured source edits with `replace_line_range`, `insert_at_line`,
+  `delete_line_range`, `apply_text_edits`, and `apply_patch_checked` when line
+  numbers or patch context are known.
+- Run Rust-oriented checks through structured Cargo helpers when configured;
+  `run_shell` remains a bounded escape hatch, not the default validation source.
 - Codex CLI delegation is currently hidden from model-facing runtime surfaces; run Codex outside WebCodex until a future explicit opt-in is available.
-- Track task sessions with `start_session`, `session_summary`, and session-aware `show_changes`.
+- Track task sessions with `start_session`, `start_coding_task`,
+  `finish_coding_task`, `session_summary`, `session_handoff_summary`, and
+  session-aware `show_changes`.
 - Use `ToolMetadata` and `ToolKernel` foundation for consistent OAuth scope checks and session recording across REST and MCP.
 - Separate credentials for admins, account onboarding, GPT/MCP tokens, and agents.
 
@@ -243,6 +250,7 @@ The server stores only hashes for user-created PATs and agent tokens. See [docs/
 - Shell profiles: [docs/SHELL_PROFILES.md](docs/SHELL_PROFILES.md) / [简体中文](docs/SHELL_PROFILES.zh-CN.md)
 - Troubleshooting: [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) / [简体中文](docs/TROUBLESHOOTING.zh-CN.md)
 - Release notes: [docs/RELEASE_NOTES_v0.2.0.md](docs/RELEASE_NOTES_v0.2.0.md)
+- Release readiness checklist: [docs/RELEASE_CHECKLIST.md](docs/RELEASE_CHECKLIST.md)
 - Full documentation index: [docs/INDEX.md](docs/INDEX.md) / [简体中文](docs/INDEX.zh-CN.md)
 
 ## Security notes

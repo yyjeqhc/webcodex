@@ -353,23 +353,26 @@ For static-token MCP clients:
 - Use a `wc_pat_*` in the `Authorization: Bearer` header.
 - Do not use `wc_agent_*` or `WEBCODEX_TOKEN`.
 
-## Session workflow
+## Coding And Session Workflow
 
-The recommended workflow for structured task tracking:
+For coding tasks, prefer the deterministic coding-task aggregate tools. They
+create and close out a session while keeping all continuity explicit.
 
-### 1. Start a session
+### 1. Start a coding task
 
 ```json
 {
-  "tool": "start_session",
+  "tool": "start_coding_task",
   "params": {
     "project": "agent:workstation:my-repo",
-    "title": "fix authentication bug"
+    "title": "fix authentication bug",
+    "bind_current": false
   }
 }
 ```
 
-Returns a `wc_sess_*` session id.
+Returns a `wc_sess_*` session id in `output.session.session_id`. Keep that id
+and pass it explicitly to subsequent project tools.
 
 ### 2. Discover and inspect
 
@@ -377,6 +380,8 @@ Returns a `wc_sess_*` session id.
 {"tool": "runtime_status", "params": {}}
 {"tool": "list_projects", "params": {}}
 {"tool": "read_file", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs"}}
+{"tool": "search_project_text", "params": {"project": "agent:workstation:my-repo", "pattern": "authenticate", "path": "src"}}
+{"tool": "show_changes", "params": {"project": "agent:workstation:my-repo", "session_id": "wc_sess_example", "include_diff": false}}
 ```
 
 ### 3. Edit with structured tools
@@ -384,10 +389,14 @@ Returns a `wc_sess_*` session id.
 Prefer structured line edits when line numbers are known:
 
 ```json
-{"tool": "replace_line_range", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "start_line": 42, "end_line": 45, "content": "new content"}}
-{"tool": "insert_at_line", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "line": 50, "content": "inserted line"}}
+{"tool": "replace_line_range", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "start_line": 42, "end_line": 45, "new_text": "new content"}}
+{"tool": "insert_at_line", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "line": 50, "text": "inserted line"}}
 {"tool": "delete_line_range", "params": {"project": "agent:workstation:my-repo", "path": "src/auth.rs", "start_line": 60, "end_line": 65}}
 ```
+
+Use `apply_text_edits` for coordinated exact edits in one UTF-8 file. Use
+`apply_patch_checked` for broader multi-file diffs after `validate_patch`. Use
+whole-file writes only for new files or deliberate small overwrites.
 
 ### 4. Validate
 
@@ -395,9 +404,12 @@ Prefer structured line edits when line numbers are known:
 {"tool": "cargo_fmt", "params": {"project": "agent:workstation:my-repo"}}
 {"tool": "cargo_check", "params": {"project": "agent:workstation:my-repo"}}
 {"tool": "cargo_test", "params": {"project": "agent:workstation:my-repo"}}
+{"tool": "validate_patch", "params": {"project": "agent:workstation:my-repo", "patch": "diff --git ..."}}
 ```
 
-Use `run_shell` only when structured Cargo helpers are insufficient.
+Use `run_shell` only when structured Cargo helpers, `validate_patch`, and
+`apply_patch_checked` are insufficient. `run_shell` is not classified as
+validation by default.
 
 ### 5. Review and summarize
 
@@ -416,12 +428,45 @@ Use `run_shell` only when structured Cargo helpers are insufficient.
 
 ```json
 {
-  "tool": "session_summary",
+  "tool": "workspace_hygiene_check",
   "params": {
+    "project": "agent:workstation:my-repo",
     "session_id": "wc_sess_example"
   }
 }
 ```
+
+### 6. Finish or hand off
+
+```json
+{
+  "tool": "finish_coding_task",
+  "params": {
+    "project": "agent:workstation:my-repo",
+    "session_id": "wc_sess_example",
+    "include_handoff": true,
+    "include_validation_summary": true
+  }
+}
+```
+
+For a read-only handoff without finish aggregation:
+
+```json
+{
+  "tool": "session_handoff_summary",
+  "params": {
+    "session_id": "wc_sess_example",
+    "project": "agent:workstation:my-repo",
+    "include_validation": true
+  }
+}
+```
+
+`finish_coding_task.validation` and `session_handoff_summary.validation` are
+ledger-derived summaries. They do not expose raw stdout/stderr, excerpt fields,
+or `validation_output_summary`; the parser extracts only stable facts from safe
+bounded metadata and does not infer root causes or suggest fixes.
 
 ### Session id semantics
 
@@ -431,13 +476,19 @@ Use `run_shell` only when structured Cargo helpers are insufficient.
 - Top-level `session_id` = ordinary flattened tool input when `params`/`arguments` are absent.
 - `params.session_id` = business parameter used by `show_changes` or `session_summary` to select which session to summarize.
 - The two may be the same or different.
+- `start_session` creates a session record but does not automatically bind
+  future calls.
+- `session_handoff_summary` requires explicit `session_id`; it never implicitly
+  uses current-session binding.
 
 **MCP:**
 
 - `_session_id` in arguments = reserved recorder metadata. Stripped before tool dispatch.
 - `session_id` in arguments = business parameter for `show_changes` or `session_summary`.
+- Current-session bindings are process-local in-memory convenience state, not
+  the durable session ledger.
 
-## Smoke test (read-only)
+## Smoke Test (read-only)
 
 Use this sequence to verify a deployment without modifying any project.
 
@@ -470,6 +521,27 @@ Assumes a registered project `agent:workstation:my-repo`.
 ```json
 {"tool": "session_summary", "params": {"session_id": "wc_sess_example"}}
 ```
+
+## Post-Deployment Acceptance Smoke
+
+After deploying a new server, agent, or runtime build:
+
+1. Refresh the GPT Action or MCP schema when tool schemas changed.
+2. Run `tool_manifest` or `list_tools`.
+3. Run `runtime_status`.
+4. Verify `start_coding_task` and `finish_coding_task` are available through the
+   generic runtime tool path.
+5. Run read-only `show_changes` on a safe test project.
+6. Run local or staging E2E and eval checks:
+
+```bash
+bash scripts/e2e_zero_config_ws.sh
+E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
+EVAL_MODE=compare bash scripts/eval_coding_loop.sh
+```
+
+Do not use production mutation as smoke coverage. Any write-path smoke must stay
+inside a disposable test project or temporary project under an allowed root.
 
 ### register_project example
 

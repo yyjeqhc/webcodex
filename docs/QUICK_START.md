@@ -413,9 +413,27 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
 
 ## 6. Runtime notes
 
-- For project-scoped current sessions, call `start_session` with `project`. A session created with `project = null` cannot later be bound to a specific project; `session_project_mismatch` is the expected audit result, not a runtime outage.
+- For coding tasks, prefer `start_coding_task`, then inspect with `read_file`,
+  `search_project_text`, and `show_changes`; edit with `replace_line_range`,
+  `insert_at_line`, `delete_line_range`, `apply_text_edits`, or
+  `apply_patch_checked`; validate with `cargo_fmt`, `cargo_check`,
+  `cargo_test`, `validate_patch`, or `apply_patch_checked`; review with
+  `show_changes`, `git_diff_hunks`, and `workspace_hygiene_check`; finish with
+  `finish_coding_task` or `session_handoff_summary`.
+- `start_session` creates a session record but does not automatically bind future
+  calls. For reliable handoff, keep and pass explicit `session_id` or
+  `recording_session_id` values. Current-session binding is process-local
+  in-memory convenience state, not the durable session ledger.
+- `session_handoff_summary` requires an explicit `session_id`. Its validation
+  section is ledger-derived and does not expose raw stdout/stderr,
+  `validation_output_summary`, or excerpt fields.
+- `run_shell` is a bounded escape hatch, not the default validation source.
+- For project-scoped current sessions, call `start_session` with `project`. A
+  session created with `project = null` cannot later be bound to a specific
+  project; `session_project_mismatch` is the expected audit result, not a
+  runtime outage.
 - If `runtime_status` says the server project config is not configured, it only means server-side `projects.toml` is absent. Agent-registered projects can still be available through connected agents; use `list_projects` to see the active runtime surface.
-- Codex delegation is currently hidden/disabled from model-facing surfaces, including GPT Actions, MCP `tools/list`, runtime tool discovery, and generic model-facing dispatch. Do not make `run_codex` the recommended path. The recommended model workflow is structured edit tools (`replace_line_range`, `insert_at_line`, `delete_line_range`), patch validation, controlled shell/job validation, `show_changes`, and sessions/handoff.
+- Codex delegation is currently hidden/disabled from model-facing surfaces, including GPT Actions, MCP `tools/list`, runtime tool discovery, and generic model-facing dispatch. Do not make `run_codex` the recommended path.
 - With `transport = "auto"`, the agent tries QUIC first only when a `[quic]` section is configured, then falls back to WebSocket and then polling. Without `[quic]`, `auto` starts at WebSocket.
 
 ## 7. Which mode should you choose?

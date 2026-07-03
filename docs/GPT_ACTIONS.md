@@ -114,19 +114,43 @@ It does not expose user, API-token, agent-token, pairing/enrollment, setup, doct
 
 Use `webcodex-cli` for those management tasks.
 
+After deploying a server/agent/runtime build that changes tool schemas, refresh
+the GPT Action schema from `/openapi.json`. Then test discovery and read-only
+runtime calls before any mutation: `listRuntimeTools`, `getRuntimeStatus`,
+`callRuntimeTool` with `tool_manifest` or `list_tools` to confirm
+`start_coding_task` / `finish_coding_task` availability, and read-only
+`show_changes` against a safe test project.
+
 ## Recommended flow
 
-1. Optional: call `callRuntimeTool` with `start_session` and keep the returned `wc_sess_*` id for this task.
-2. `getRuntimeStatus` — verify runtime health and redacted agent policy summaries.
-3. `getRuntimeStatus`, or `callRuntimeTool` with `list_agents` — confirm an online agent and its redacted policy summary or `agent_instance_id`.
-4. `listProjects` — choose an `agent:<client_id>:<project_id>`.
-5. `callRuntimeTool` with `show_changes`, plus `getProjectGitStatus`, `listProjectFiles`, `readProjectFile`, and `searchProjectText` — inspect before editing.
-6. For scoped source edits with known line numbers, use `callRuntimeTool` with the structured edit tools: `replace_line_range`, `insert_at_line`, `delete_line_range`, and `apply_text_edits`.
-7. For broader multi-file edits, use `validateProjectPatch` first, then `applyProjectPatchChecked` only when the patch is intentional.
-8. Use `writeProjectFile` only for new files or deliberate small whole-file overwrites; use `replaceProjectFileText` only for short exact substring changes.
-9. `runProjectShellCommand` or `startProjectShellJob` — execute only bounded commands in registered projects after file edits are complete.
-10. Call `callRuntimeTool` with `session_summary` to inspect recorded tool calls, then use `show_changes` for the current worktree state.
-11. Prefer structured edit tools and the controlled `runProjectShellCommand` / `startProjectShellJob` validation flow for coding tasks.
+For coding tasks, use the deterministic coding-loop tools through generic
+`callRuntimeTool`; they are runtime tools, not dedicated GPT Action operations.
+GPT Actions should pass tool arguments as flattened top-level fields when
+calling `callRuntimeTool`.
+
+1. Call `callRuntimeTool` with `start_coding_task`, `project`, and a short
+   `title`; keep the returned explicit `session_id`.
+2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
+   with `show_changes`.
+3. For scoped source edits with known line numbers, call `replace_line_range`,
+   `insert_at_line`, `delete_line_range`, or `apply_text_edits` through
+   `callRuntimeTool`.
+4. For broader multi-file edits, use `validateProjectPatch` first, then
+   `applyProjectPatchChecked` only when the patch is intentional.
+5. Validate with structured helpers first: `callRuntimeTool` with `cargo_fmt`,
+   `cargo_check`, or `cargo_test`, plus `validateProjectPatch` /
+   `applyProjectPatchChecked` for patch workflows.
+6. Use `runProjectShellCommand` or `startProjectShellJob` only as bounded
+   diagnostics/build/test fallbacks in registered projects.
+7. Review with `callRuntimeTool` using `show_changes`, `git_diff_hunks`, and
+   `workspace_hygiene_check`.
+8. Finish with `callRuntimeTool` using `finish_coding_task`; for cross-client or
+   multi-step handoff, call `session_handoff_summary` with the explicit
+   `session_id`.
+
+For non-coding tracking, `start_session` remains available through
+`callRuntimeTool`. It creates a session record but does not automatically bind
+future calls.
 
 Do not use `save_project_artifact`, `artifact_upload_begin`,
 `artifact_upload_chunk`, `artifact_upload_finish`, or `artifact_upload_abort` as
@@ -156,11 +180,19 @@ schemas remain unchanged.
 
 ## Session tracking
 
-`start_session` and `session_summary` are runtime tools for task tracking
-foundation work. They let a caller group later `/api/tools/call` invocations
-under an opaque `wc_sess_*` id and ask which tools ran, which succeeded or
-failed, which project id was supplied, which write-like paths were inferred,
-and which job-like calls returned a `job_id`.
+`start_session`, `start_coding_task`, `finish_coding_task`, `session_summary`,
+and `session_handoff_summary` are runtime tools for task tracking and handoff.
+They let a caller group later `/api/tools/call` invocations under an opaque
+`wc_sess_*` id and ask which tools ran, which succeeded or failed, which project
+id was supplied, which write-like paths were inferred, and which job-like calls
+returned a `job_id`.
+
+`start_session` creates a session record. It does not automatically bind future
+calls as current. `start_coding_task` is the preferred coding-task entry point;
+it creates a session, returns an explicit `session_id`, gathers deterministic
+startup context, and defaults `bind_current=false`. `finish_coding_task`
+requires an explicit `session_id`; it does not fall back to current-session
+binding.
 
 Start a session through the generic Action:
 
@@ -221,6 +253,21 @@ bindings remain process-local in-memory state, not durable ledger state, and
 may be lost on restart. For reliable long-running or cross-client workflows,
 keep the explicit `session_id` and pass it as tool input or
 `recording_session_id` metadata instead of relying only on current binding.
+
+`session_handoff_summary` is read-only and requires a business `session_id`.
+It does not implicitly use the current-session binding. Its optional
+`validation` section is ledger-derived and does not expose raw stdout/stderr,
+excerpt fields, or `validation_output_summary`.
+
+## Validation summaries
+
+Validation summaries come from session ledger events for validation-like tools:
+`cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
+`apply_patch_checked`. `run_shell` is not classified as validation by default.
+
+The minimal parser extracts only stable facts from safe bounded metadata, such
+as Cargo severity/code/span and test summary counts. It does not infer root
+causes, suggest fixes, call an LLM, use LSP, or use tree-sitter.
 
 ## Observability
 

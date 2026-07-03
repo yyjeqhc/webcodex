@@ -50,12 +50,13 @@ is the map for setup, architecture, auth, operations, and validation docs.
 25. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — build/install command reference and npm wrapper / artifact details.
 26. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
 27. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) — v0.2.0 release notes, highlights, known issues, and validation checklist.
-28. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness, artifact, publishing, and post-release smoke checklist.
+28. [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md) — release readiness, docs consistency, final acceptance, and post-deployment smoke procedure.
+29. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness, artifact, publishing, and post-release smoke checklist.
 
 ## Strategy and future work
 
-29. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — long-term WebCodex runtime architecture and provider direction.
-30. [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) / [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) — future Desktop Session strategy for controlled, auditable, replayable computer-use sessions.
+30. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — long-term WebCodex runtime architecture and provider direction.
+31. [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) / [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) — future Desktop Session strategy for controlled, auditable, replayable computer-use sessions.
 
 ## Removed from the public docs set
 

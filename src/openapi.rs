@@ -1230,7 +1230,7 @@ fn schemas() -> Value {
                 },
                 "include_validation": {
                     "type": "boolean",
-                    "description": "Flattened session_handoff_summary flag. Defaults to true; validation is ledger-derived and parser.available remains false until parser exists. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened session_handoff_summary flag. Defaults to true; validation is ledger-derived and parser.available is true only when safe bounded metadata is present. Used only when `params` and `arguments` are absent."
                 },
                 "max_hunks": {
                     "type": "integer",

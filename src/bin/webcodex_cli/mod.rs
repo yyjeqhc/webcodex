@@ -1,3 +1,4 @@
+pub(crate) mod connect;
 pub(crate) mod env;
 pub(crate) mod http;
 pub(crate) mod pairing;
@@ -5,6 +6,7 @@ pub(crate) mod server;
 pub(crate) mod token_commands;
 pub(crate) mod tokens;
 
+pub(crate) use connect::run_connect;
 #[cfg(test)]
 pub(crate) use env::parse_env_content_value;
 pub(crate) use env::{

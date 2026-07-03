@@ -1,4 +1,5 @@
 pub(crate) mod config;
+pub(crate) mod output;
 pub(crate) mod projects;
 pub(crate) mod transport;
 
@@ -12,6 +13,7 @@ pub(crate) use config::{
     default_quic_alpn, default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs,
     max_concurrent_jobs, QuicClientConfig, CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS,
 };
+pub(crate) use output::{err_cmd, line_edit_stdout, ok_cmd, CommandResult};
 #[cfg(test)]
 pub(crate) use projects::{
     agent_project_summary, load_agent_project_summaries_from_dir, parse_agent_project_toml,

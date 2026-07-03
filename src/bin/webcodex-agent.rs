@@ -58,23 +58,14 @@ use webcodex_agent::{
     CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
 };
 use webcodex_agent::{
-    client_profile_agent_config, default_config_path, find_project_shell_context,
-    handle_project_op, hostname, load_config, projects_dir, run_agent, validate_client_profile,
-    validate_shell_config, AgentConfig, AgentPolicy, AgentProjectCache, AgentSink, HttpSendConfig,
-    ShellConfig, ShellProfileConfig,
+    client_profile_agent_config, default_config_path, err_cmd, find_project_shell_context,
+    handle_project_op, hostname, line_edit_stdout, load_config, ok_cmd, projects_dir, run_agent,
+    validate_client_profile, validate_shell_config, AgentConfig, AgentPolicy, AgentProjectCache,
+    AgentSink, CommandResult, HttpSendConfig, ShellConfig, ShellProfileConfig,
 };
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
 const SHELL_PROFILE_PREPARE_TIMEOUT_SECS: u64 = 30;
-
-#[derive(Debug)]
-struct CommandResult {
-    exit_code: Option<i32>,
-    stdout: Option<String>,
-    stderr: Option<String>,
-    duration_ms: Option<u64>,
-    error: Option<String>,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct PreparedShellProfileKey {
@@ -1393,16 +1384,6 @@ fn line_edit_text_line_count(text: &str) -> usize {
     }
 }
 
-fn line_edit_stdout(value: serde_json::Value, start: Instant) -> CommandResult {
-    CommandResult {
-        exit_code: Some(0),
-        stdout: Some(serde_json::to_string(&value).unwrap_or_else(|_| "{}".to_string())),
-        stderr: Some(String::new()),
-        duration_ms: Some(start.elapsed().as_millis() as u64),
-        error: None,
-    }
-}
-
 fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
     let parent = path
         .parent()
@@ -2570,28 +2551,6 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
             duration_ms: Some(start.elapsed().as_millis() as u64),
             error: Some(format!("unknown file request kind: {}", request.kind)),
         },
-    }
-}
-
-/// Build a success `CommandResult` with JSON output in stdout.
-fn ok_cmd(start: Instant, result: serde_json::Value) -> CommandResult {
-    CommandResult {
-        exit_code: Some(0),
-        stdout: Some(serde_json::to_string(&result).unwrap_or_else(|_| "{}".to_string())),
-        stderr: Some(String::new()),
-        duration_ms: Some(start.elapsed().as_millis() as u64),
-        error: None,
-    }
-}
-
-/// Build an error `CommandResult`.
-fn err_cmd(start: Instant, msg: String) -> CommandResult {
-    CommandResult {
-        exit_code: None,
-        stdout: None,
-        stderr: None,
-        duration_ms: Some(start.elapsed().as_millis() as u64),
-        error: Some(msg),
     }
 }
 

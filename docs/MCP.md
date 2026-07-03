@@ -101,7 +101,7 @@ Typical MCP tools include:
 - Project commands and jobs: `run_shell`, `run_job`, `job_status`, `job_log`, `job_tail`.
 - Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
 
-Codex delegation (`run_codex`) is currently hidden from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex, or wait for a future explicit opt-in feature flag.
+Codex delegation (`run_codex`) is currently hidden/disabled from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex. The legacy `/api/codex/run` endpoint is not mounted unless `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1`, and that opt-in preserves only the old endpoint shape; it does not re-enable `run_codex`.
 
 Use `start_coding_task` for the recommended coding-loop entry point, then
 inspect with `read_file`, `search_project_text`, and `show_changes`. Use the

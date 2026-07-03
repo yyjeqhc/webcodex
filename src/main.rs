@@ -227,7 +227,7 @@ only for local/trusted-network demos."
         }
     }
 
-    let authed_api_router = Router::new()
+    let mut authed_api_router = Router::new()
         .hoop(AuthMiddleware)
         .push(Router::with_path("tools/list").post(runtime_http::tools_list))
         .push(Router::with_path("tools/call").post(runtime_http::tools_call))
@@ -235,7 +235,6 @@ only for local/trusted-network demos."
             Router::with_path("artifacts/import")
                 .post(runtime_http::import_conversation_files_to_project),
         )
-        .push(Router::with_path("codex/run").post(runtime_http::codex_run))
         .push(Router::with_path("jobs/status").post(runtime_http::job_status))
         .push(Router::with_path("jobs/log").post(runtime_http::job_log))
         .push(Router::with_path("jobs/stop").post(runtime_http::job_stop))
@@ -324,6 +323,14 @@ only for local/trusted-network demos."
         // Polling endpoints above remain as fallback. Bearer auth is
         // enforced by the shared AuthMiddleware hoop.
         .push(Router::with_path("agents/ws").get(agent_ws::agent_ws));
+
+    if config::legacy_codex_run_enabled() {
+        tracing::warn!(
+            "legacy /api/codex/run endpoint mounted by WEBCODEX_ENABLE_LEGACY_CODEX_RUN; run_codex remains disabled"
+        );
+        authed_api_router =
+            authed_api_router.push(Router::with_path("codex/run").post(runtime_http::codex_run));
+    }
 
     let api_router = Router::with_path("api")
         .push(Router::with_path("pairing/enroll").post(pairing_http::pairing_enroll))

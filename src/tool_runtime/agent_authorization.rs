@@ -83,8 +83,8 @@ impl ToolRuntime {
 
     /// Enforce the owner boundary and capability requirements for agent-backed
     /// runtime tools before dispatching. This is the single place where the
-    /// runtime paths (`/api/tools/call`, `/api/codex/run`, `/api/projects/*`,
-    /// `/mcp`) check that the caller is allowed to drive an agent. Legacy
+    /// runtime paths (`/api/tools/call`, `/api/projects/*`, `/mcp`, and the
+    /// gated legacy `/api/codex/run`) check that the caller is allowed to drive an agent. Legacy
     /// `/api/shell/*` handlers keep their own `assert_shell_client_owner`
     /// checks; this method closes the gap for the runtime paths.
     ///

@@ -7,6 +7,7 @@
 use std::collections::HashSet;
 
 use super::principal::AuthContext;
+use crate::config::legacy_codex_run_enabled;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 
 // ---------------------------------------------------------------------------
@@ -203,7 +204,9 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
         ("POST", "/api/tools/call") => {
             OAuthRouteScopePolicy::BodyAware(OAuthBodyAwarePolicy::RuntimeToolCall)
         }
-        ("POST", "/api/codex/run") => OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN),
+        ("POST", "/api/codex/run") if legacy_codex_run_enabled() => {
+            OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN)
+        }
         ("POST", "/api/artifacts/import") => OAuthRouteScopePolicy::Require(SCOPE_PROJECT_WRITE),
 
         ("POST", "/api/jobs/status")
@@ -523,12 +526,28 @@ mod tests {
     }
 
     #[test]
+    fn oauth_route_policy_legacy_codex_run_is_flag_gated() {
+        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        std::env::remove_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN");
+        assert_eq!(
+            oauth_route_scope_policy_for_path_method("POST", "/api/codex/run"),
+            OAuthRouteScopePolicy::Unknown
+        );
+
+        std::env::set_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN", "1");
+        assert_eq!(
+            oauth_route_scope_policy_for_path_method("POST", "/api/codex/run"),
+            OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN)
+        );
+        std::env::remove_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN");
+    }
+
+    #[test]
     fn oauth_route_policy_authenticated_route_audit() {
         for (method, path) in [
             ("POST", "/api/tools/list"),
             ("POST", "/api/tools/call"),
             ("POST", "/api/artifacts/import"),
-            ("POST", "/api/codex/run"),
             ("POST", "/api/jobs/status"),
             ("POST", "/api/jobs/log"),
             ("POST", "/api/jobs/stop"),

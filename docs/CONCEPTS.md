@@ -87,7 +87,9 @@ a `ToolDefinition` registry, see
 
 Codex delegation (`run_codex`) is currently hidden/disabled from model-facing
 surfaces: GPT Actions, MCP `tools/list`, runtime tool discovery, and generic
-model-facing dispatch. Do not treat it as the recommended path.
+model-facing dispatch. The legacy `/api/codex/run` endpoint is default-off and
+only mounted with `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1`; that opt-in does not
+re-enable `run_codex`. Do not treat it as the recommended path.
 
 ### Artifact transfer
 

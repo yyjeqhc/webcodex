@@ -433,7 +433,7 @@ Then test through GPT Actions or MCP using the same `wc_pat_xxx` token.
   project; `session_project_mismatch` is the expected audit result, not a
   runtime outage.
 - If `runtime_status` says the server project config is not configured, it only means server-side `projects.toml` is absent. Agent-registered projects can still be available through connected agents; use `list_projects` to see the active runtime surface.
-- Codex delegation is currently hidden/disabled from model-facing surfaces, including GPT Actions, MCP `tools/list`, runtime tool discovery, and generic model-facing dispatch. Do not make `run_codex` the recommended path.
+- Codex delegation is currently hidden/disabled from model-facing surfaces, including GPT Actions, MCP `tools/list`, runtime tool discovery, and generic model-facing dispatch. The legacy `/api/codex/run` endpoint is default-off and only mounted with `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1`; that opt-in does not re-enable `run_codex`. Do not make `run_codex` the recommended path.
 - With `transport = "auto"`, the agent tries QUIC first only when a `[quic]` section is configured, then falls back to WebSocket and then polling. Without `[quic]`, `auto` starts at WebSocket.
 
 ## 7. Which mode should you choose?

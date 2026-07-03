@@ -1,4 +1,5 @@
 pub(crate) mod config;
+pub(super) mod dispatch;
 pub(crate) mod files;
 pub(crate) mod output;
 pub(crate) mod patches;
@@ -16,6 +17,7 @@ pub(crate) use config::{
     max_concurrent_jobs, QuicClientConfig, ShellProfileConfig, CLIENT_PROFILE_ERROR,
     DEFAULT_MAX_CONCURRENT_JOBS,
 };
+pub(super) use dispatch::{dispatch_request, is_project_op};
 #[cfg(test)]
 pub(crate) use files::sha256_hex_bytes;
 pub(crate) use files::{

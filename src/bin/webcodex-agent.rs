@@ -49,21 +49,21 @@ use webcodex_agent::QuicClientConfig;
 use webcodex_agent::{
     agent_project_summary, auto_transport_plan, build_ws_request, default_quic_alpn,
     default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs, effective_transport,
-    load_agent_project_summaries_from_dir, max_concurrent_jobs, non_empty_token,
+    handle_project_op, load_agent_project_summaries_from_dir, max_concurrent_jobs, non_empty_token,
     parse_agent_project_toml, quic_client_bind_addr_for, resolve_quic_config,
-    resolve_quic_server_addrs, run_shell, server_url_to_ws, sha256_hex_bytes,
-    validate_project_path_policy, websocket_session, ShellProfileConfig, CLIENT_PROFILE_ERROR,
-    DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
+    resolve_quic_server_addrs, run_shell, run_shell_with_profiles, server_url_to_ws,
+    sha256_hex_bytes, validate_project_path_policy, websocket_session, ShellProfileConfig,
+    CLIENT_PROFILE_ERROR, DEFAULT_MAX_CONCURRENT_JOBS, WS_OUTGOING_CAPACITY,
 };
 use webcodex_agent::{
     client_profile_agent_config, configured_prepared_shell_job_command,
-    configured_shell_job_command, cwd_allowed, default_config_path, err_cmd,
+    configured_shell_job_command, cwd_allowed, default_config_path, dispatch_request, err_cmd,
     handle_apply_text_edits_file_request, handle_basic_file_request, handle_line_edit_file_request,
-    handle_project_op, hostname, is_basic_file_request_kind, is_line_edit_request_kind,
-    load_config, ok_cmd, projects_dir, resolve_prepared_shell_profile, resolve_requested_path,
-    run_agent, run_shell_with_profiles, validate_client_profile, validate_line_edit_agent_path,
-    AgentConfig, AgentPolicy, AgentProjectCache, AgentSink, CommandResult, HttpSendConfig,
-    PreparedShellProfileCache, ShellConfig,
+    hostname, is_basic_file_request_kind, is_line_edit_request_kind, is_project_op, load_config,
+    ok_cmd, projects_dir, resolve_prepared_shell_profile, resolve_requested_path, run_agent,
+    validate_client_profile, validate_line_edit_agent_path, AgentConfig, AgentPolicy,
+    AgentProjectCache, AgentSink, CommandResult, HttpSendConfig, PreparedShellProfileCache,
+    ShellConfig,
 };
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
@@ -993,69 +993,6 @@ impl JobManager {
         }
     }
 }
-/// Execute a single agent request (shell/file/job) and send the result over
-/// the active transport. This is the shared dispatch path used by both the
-/// polling loop (`handle_one_poll`) and the WebSocket loop. It contains no
-/// transport-specific code: all outgoing traffic goes through `sink`.
-fn dispatch_request(
-    sink: &AgentSink,
-    policy: &AgentPolicy,
-    shell: &ShellConfig,
-    jobs: &JobManager,
-    projects_dir: &Path,
-    request: ShellAgentShellRequest,
-) -> Result<bool, String> {
-    match request.kind.as_str() {
-        "start_job" => {
-            jobs.enqueue(
-                sink.clone(),
-                policy.clone(),
-                shell.clone(),
-                projects_dir.to_path_buf(),
-                request,
-            );
-            Ok(true)
-        }
-        "stop_job" => {
-            if let Some(job_id) = request.job_id.as_deref() {
-                if let Err(e) = jobs.stop(job_id) {
-                    eprintln!("webcodex-agent stop_job error: {}", e);
-                }
-            }
-            Ok(true)
-        }
-        kind if is_file_request_kind(kind) => {
-            let request_id = request.request_id.clone();
-            let result = handle_file_request(policy, &request);
-            sink.submit_result(request_id, result)
-        }
-        "register_project" | "create_project" => {
-            let request_id = request.request_id.clone();
-            let result = handle_project_op(policy, projects_dir, &request);
-            sink.submit_result(request_id, result)
-        }
-        _ => {
-            let request_id = request.request_id.clone();
-            let result = run_shell_with_profiles(
-                policy,
-                shell,
-                projects_dir,
-                &jobs.prepared_profiles,
-                request.cwd.as_deref(),
-                &request.command,
-                request.stdin.as_deref(),
-                request.timeout_secs,
-                None,
-            );
-            sink.submit_result(request_id, result)
-        }
-    }
-}
-
-fn is_project_op(kind: &str) -> bool {
-    kind == "register_project" || kind == "create_project"
-}
-
 fn handle_one_poll(
     client: &Client,
     cfg: &AgentConfig,

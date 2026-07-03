@@ -1,3 +1,4 @@
+pub(crate) mod agent_service;
 pub(crate) mod connect;
 pub(crate) mod doctor;
 pub(crate) mod env;
@@ -8,6 +9,9 @@ pub(crate) mod setup;
 pub(crate) mod token_commands;
 pub(crate) mod tokens;
 
+#[cfg(test)]
+pub(crate) use agent_service::render_agent_systemd_unit;
+pub(crate) use agent_service::{run_agent_install_service, run_agent_status};
 pub(crate) use connect::run_connect;
 pub(crate) use doctor::run_doctor;
 #[cfg(test)]
@@ -20,7 +24,7 @@ pub(crate) use env::{
 pub(crate) use http::format_error_body;
 pub(crate) use http::{
     fetch_runtime_status, http_get_json_status, http_post_json_status, post_json_authed,
-    post_json_unauthed, ApiCall, HttpStatusSummary,
+    post_json_unauthed, ApiCall,
 };
 #[cfg(test)]
 pub(crate) use pairing::{ensure_enroll_outputs_available, resolve_pairing_create_token};

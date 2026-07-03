@@ -685,6 +685,36 @@ PY
     fi
 }
 
+assert_finish_validation_available() {
+    local body="$1"
+
+    if python3 - "$body" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+out = data.get("output") or {}
+validation = out.get("validation") or {}
+parser = validation.get("parser") or {}
+events = validation.get("events") or []
+ok = (
+    data.get("success") is True
+    and validation.get("available") is True
+    and validation.get("source") == "session_ledger"
+    and validation.get("events_total", 0) >= 1
+    and isinstance(events, list)
+    and len(events) >= 1
+    and parser.get("available") is False
+)
+sys.exit(0 if ok else 1)
+PY
+    then
+        case_ok "finish_coding_task validation summary is available"
+    else
+        case_fail "finish_coding_task validation summary unavailable after cargo_check"
+    fi
+}
+
 complete_case_session() {
     local flow_kind="$1"
     local session_id="$2"
@@ -699,6 +729,7 @@ complete_case_session() {
 
         if [ "$case_name" = "small_structured_line_edit" ]; then
             assert_finish_reports_changed_file "$LAST_BODY"
+            assert_finish_validation_available "$LAST_BODY"
         elif [ "$case_name" = "failed_call_recovery" ]; then
             assert_handoff_failed_tool_metadata \
                 "finish_coding_task handoff includes failed tool metadata" \

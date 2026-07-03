@@ -445,7 +445,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "validation",
-                open_object_schema("Deterministic validation-like session ledger summary; no output parsing."),
+                open_object_schema("Ledger-based validation-like tool-call summary. Does not include stdout/stderr bodies and does not parse compiler or test output."),
             ),
             (
                 "hygiene",

@@ -26,6 +26,7 @@ mod session_context;
 pub(crate) mod sessions;
 mod shell;
 mod types;
+mod validation_events;
 
 // Re-export the public API so `crate::tool_runtime::ToolCall` etc. still work.
 #[allow(unused_imports)]

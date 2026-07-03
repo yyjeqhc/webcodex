@@ -22,3 +22,4 @@ mod sessions_guards;
 mod sessions_instructions;
 mod sessions_resolver;
 mod tool_call;
+mod validation_events;

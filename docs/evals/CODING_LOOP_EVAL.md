@@ -92,14 +92,31 @@ Exercises a small source edit using line-number metadata. Assertions include
 structured line-edit usage, no raw shell runtime editing, `show_changes`
 reporting `src/lib.rs`, successful `cargo_check`, successful closeout handoff,
 and clean worktree cleanup. Guided additionally asserts that
-`finish_coding_task` reports the changed file.
+`finish_coding_task` reports the changed file and returns a ledger-based
+validation summary with at least one validation-like event after `cargo_check`.
 
 ### `failed_call_recovery`
 
 Exercises recovery after a controlled failed tool call. Assertions include a
 controlled failed `replace_line_range`, unmodified workspace after the failed
 edit, successful recovery edit, failed tool metadata in the closeout handoff,
-and clean worktree cleanup.
+and clean worktree cleanup. This case does not require validation summary
+availability because it does not run `cargo_check`.
+
+## Validation Summary
+
+`finish_coding_task.validation` is a conservative session-ledger summary. It
+records validation-like tool-call outcomes such as `cargo_fmt`, `cargo_check`,
+`cargo_test`, `validate_patch`, and `apply_patch_checked`.
+
+The summary is observability data only. It records factual tool metadata such as
+tool name, validation kind, success, exit code when available, timestamps when
+available, and safe bounded input summaries. It does not include stdout/stderr
+bodies, parse compiler or test output, extract root causes, or provide semantic
+diagnosis.
+
+Inspect-only cases may still report `validation.available=false` when no
+validation-like tool calls exist in the session ledger.
 
 ## Metrics
 
@@ -213,7 +230,8 @@ summary.
 
 - Metrics are scripted tool-call metrics, not full model behavior.
 - Guided may use more tool calls because it includes start/finish aggregators.
-- Validation stderr is not parsed yet.
+- Validation stdout/stderr is not parsed yet.
+- Test failure root-cause extraction is not implemented yet.
 - There is no semantic code understanding signal yet.
 - There is no LSP or tree-sitter signal yet.
 - The harness does not exercise the Codex CLI or any LLM delegation.

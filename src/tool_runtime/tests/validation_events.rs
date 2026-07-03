@@ -1,0 +1,385 @@
+use super::support::*;
+use crate::tool_runtime::sessions::{SessionStore, SessionTransport};
+use crate::tool_runtime::validation_events::{
+    validation_kind_for_tool, validation_summary_for_session,
+};
+use crate::tool_runtime::{SessionMode, ToolCall};
+use serde_json::{json, Value};
+
+#[test]
+fn validation_like_tool_calls_are_classified_correctly() {
+    for (tool_name, validation_kind) in [
+        ("cargo_fmt", "format"),
+        ("cargo_check", "check"),
+        ("cargo_test", "test"),
+        ("validate_patch", "patch_preflight"),
+        ("apply_patch_checked", "patch_apply_checked"),
+    ] {
+        assert_eq!(validation_kind_for_tool(tool_name), Some(validation_kind));
+    }
+
+    assert_eq!(validation_kind_for_tool("run_shell"), None);
+    assert_eq!(validation_kind_for_tool("read_file"), None);
+}
+
+#[test]
+fn validation_summary_is_unavailable_without_validation_events() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "read_file",
+        json!({"project": "agent:eval:demo", "path": "src/lib.rs"}),
+        true,
+        json!({}),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["available"], false);
+    assert_eq!(validation["source"], "session_ledger");
+    assert_eq!(validation["events_total"], 0);
+    assert!(validation["events"].as_array().unwrap().is_empty());
+    assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(
+        validation["parser"]["reason"],
+        "stdout/stderr parser not implemented"
+    );
+    assert!(validation.get("latest_success").is_none());
+    assert!(validation.get("latest_failure").is_none());
+}
+
+#[test]
+fn cargo_check_success_produces_validation_event() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({
+            "project": "agent:eval:demo",
+            "cwd": null,
+            "all_targets": true,
+            "timeout_secs": 60,
+        }),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let event = &validation["latest_success"];
+
+    assert_eq!(validation["available"], true);
+    assert_eq!(validation["events_total"], 1);
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["failures"], 0);
+    assert_eq!(event["tool_name"], "cargo_check");
+    assert_eq!(event["validation_kind"], "check");
+    assert_eq!(event["success"], true);
+    assert_eq!(event["exit_code"], 0);
+    assert_eq!(event["summary"], "cargo_check succeeded");
+    assert_eq!(event["input_summary"]["project"], "agent:eval:demo");
+    assert_eq!(validation["parser"]["available"], false);
+}
+
+#[test]
+fn patch_validation_tools_are_classified_as_patch_validation() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "validate_patch",
+        json!({
+            "project": "agent:eval:demo",
+            "patch_present": true,
+            "deny_sensitive_paths": true,
+        }),
+        true,
+        json!({"can_apply": true}),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "apply_patch_checked",
+        json!({
+            "project": "agent:eval:demo",
+            "patch_present": true,
+            "deny_sensitive_paths": true,
+        }),
+        true,
+        json!({}),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let events = validation["events"].as_array().unwrap();
+
+    assert_eq!(validation["available"], true);
+    assert_eq!(validation["events_total"], 2);
+    assert_eq!(events[0]["tool_name"], "validate_patch");
+    assert_eq!(events[0]["validation_kind"], "patch_preflight");
+    assert_eq!(events[1]["tool_name"], "apply_patch_checked");
+    assert_eq!(events[1]["validation_kind"], "patch_apply_checked");
+}
+
+#[test]
+fn latest_success_and_failure_follow_session_ledger_order() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({"exit_code": 101, "stdout_tail": "omitted", "stderr_tail": "omitted"}),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({"exit_code": 0, "stdout": "omitted", "stderr": "omitted"}),
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({"exit_code": 101}),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+
+    assert_eq!(validation["available"], true);
+    assert_eq!(validation["events_total"], 3);
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["failures"], 2);
+    assert_eq!(validation["latest_success"]["tool_name"], "cargo_check");
+    assert_eq!(validation["latest_success"]["exit_code"], 0);
+    assert_eq!(validation["latest_failure"]["tool_name"], "cargo_test");
+    assert_eq!(validation["latest_failure"]["exit_code"], 101);
+    for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
+        assert!(
+            !json_contains_key(&validation, key),
+            "validation summary must not include {key}: {validation}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn finish_coding_task_validation_available_when_ledger_has_validation_events() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    std::fs::create_dir_all(tmp.path().join("src")).unwrap();
+    commit_file(tmp.path(), "Cargo.toml", cargo_toml(), "add cargo manifest");
+    commit_file(
+        tmp.path(),
+        "src/lib.rs",
+        "pub fn value() -> i32 { 1 }\n",
+        "add lib",
+    );
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "validation-finish", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let start = runtime
+        .dispatch_with_auth(
+            ToolCall::StartCodingTask {
+                project: project.clone(),
+                title: Some("validation finish".to_string()),
+                mode: SessionMode::Normal,
+                deny_write_tools: false,
+                deny_shell_tools: false,
+                include_runtime_status: Some(false),
+                include_git: Some(false),
+                include_recent_commits: Some(false),
+                include_rules: Some(false),
+                bind_current: false,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(start.success, "{:?}", start.error);
+    let session_id = start.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let check_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CargoCheck {
+                        project,
+                        session_id: Some(session_id),
+                        cwd: None,
+                        all_targets: Some(true),
+                        all_features: None,
+                        no_default_features: None,
+                        features: None,
+                        package: None,
+                        timeout_secs: Some(60),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "validation-finish")
+        .await
+        .expect("cargo_check should enqueue an agent shell request");
+    assert!(req.command.contains("cargo check --all-targets"));
+    complete_patch_agent_request(&runtime, "validation-finish", &req.request_id, 0, "", "").await;
+    let check = check_task.await.unwrap();
+    assert!(check.success, "{:?}", check.error);
+
+    let test_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::CargoTest {
+                        project,
+                        session_id: Some(session_id),
+                        cwd: None,
+                        filter: None,
+                        all_targets: None,
+                        all_features: None,
+                        no_default_features: None,
+                        features: None,
+                        package: None,
+                        no_run: None,
+                        timeout_secs: Some(60),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "validation-finish")
+        .await
+        .expect("cargo_test should enqueue an agent shell request");
+    assert!(req.command.contains("cargo test"));
+    complete_patch_agent_request(
+        &runtime,
+        "validation-finish",
+        &req.request_id,
+        101,
+        "running 1 test\n",
+        "test failure details stay out of validation summary\n",
+    )
+    .await;
+    let test = test_task.await.unwrap();
+    assert!(!test.success);
+
+    let finish_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let auth = auth.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        include_diff: Some(false),
+                        include_hygiene: Some(false),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(true),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "validation-finish")
+        .await
+        .expect("finish_coding_task should inspect changes through the agent");
+    assert!(req.command.contains("git status --porcelain=v1 -b"));
+    complete_patch_agent_request(
+        &runtime,
+        "validation-finish",
+        &req.request_id,
+        0,
+        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add lib\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        "",
+    )
+    .await;
+    let finish = finish_task.await.unwrap();
+    assert!(finish.success, "{:?}", finish.error);
+
+    let validation = &finish.output["validation"];
+    assert_eq!(validation["available"], true);
+    assert_eq!(validation["source"], "session_ledger");
+    assert_eq!(validation["events_total"], 2);
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["failures"], 1);
+    assert_eq!(validation["latest_success"]["tool_name"], "cargo_check");
+    assert_eq!(validation["latest_success"]["validation_kind"], "check");
+    assert_eq!(validation["latest_success"]["exit_code"], 0);
+    assert_eq!(
+        validation["latest_success"]["summary"],
+        "cargo_check succeeded"
+    );
+    assert_eq!(validation["latest_failure"]["tool_name"], "cargo_test");
+    assert_eq!(validation["latest_failure"]["validation_kind"], "test");
+    assert_eq!(validation["latest_failure"]["exit_code"], 101);
+    assert_eq!(validation["latest_failure"]["summary"], "cargo_test failed");
+    assert_eq!(validation["parser"]["available"], false);
+    for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
+        assert!(
+            !json_contains_key(validation, key),
+            "finish validation summary must not include {key}: {validation}"
+        );
+    }
+}
+
+fn record_finished_tool(
+    store: &SessionStore,
+    session_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    success: bool,
+    output: Value,
+) {
+    let start = store.record_tool_call_started(
+        Some(session_id),
+        SessionTransport::Api,
+        tool_name,
+        &arguments,
+    );
+    let error = (!success).then_some("tool failed");
+    store.record_tool_call_finished(start, success, &output, error, None);
+}
+
+fn json_contains_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.contains_key(key) || map.values().any(|value| json_contains_key(value, key))
+        }
+        Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
+        _ => false,
+    }
+}
+
+fn cargo_toml() -> &'static str {
+    "[package]\nname = \"validation-finish\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\npath = \"src/lib.rs\"\n"
+}

@@ -919,7 +919,8 @@ impl ToolRuntime {
                 "workspace_checkpoint_show", "workspace_checkpoint_list"
             ]),
             "validation": pick(&[
-                "cargo_fmt", "cargo_check", "cargo_test", "validate_patch"
+                "cargo_fmt", "cargo_check", "cargo_test", "validate_patch",
+                "apply_patch_checked"
             ]),
             "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
             "edit": pick(&[

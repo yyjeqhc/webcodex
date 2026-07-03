@@ -9,16 +9,17 @@ use serde_json::{json, Value};
 
 use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSnapshot};
 use super::project_resolution::ResolvedProject;
-use super::sessions::{self, SessionSummary, SessionTransport};
+use super::sessions::{self, SessionTransport};
 use super::types::{SessionMode, ToolResult};
+use super::validation_events::{skipped_validation_summary, validation_summary_for_session};
 use super::ToolRuntime;
 use super::{current_session_key, unknown_session_result};
 use crate::auth::AuthContext;
 
-const VALIDATION_EVENT_LIMIT: usize = 10;
 const RULES_MAX_HEADINGS: usize = 8;
 const RULES_MAX_FIRST_LINES: usize = 5;
 const RULES_MAX_LINE_CHARS: usize = 180;
+const FINISH_SESSION_EVENT_LIMIT: usize = 200;
 
 impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
@@ -183,7 +184,10 @@ impl ToolRuntime {
             Ok(resolved) => resolved,
             Err(err) => return err.into_tool_result(),
         };
-        let session_summary = match self.sessions.summary(&session_id, Some(50)) {
+        let session_summary = match self
+            .sessions
+            .summary(&session_id, Some(FINISH_SESSION_EVENT_LIMIT))
+        {
             Some(summary) => summary,
             None => return unknown_session_result(&session_id),
         };
@@ -230,15 +234,9 @@ impl ToolRuntime {
         append_workspace_warnings(&workspace, &mut final_warnings);
 
         let validation = if include_validation_summary {
-            validation_summary(&session_summary)
+            validation_summary_for_session(&session_summary)
         } else {
-            json!({
-                "available": false,
-                "skipped": true,
-                "observed_commands": [],
-                "latest_failures": [],
-                "latest_successes": [],
-            })
+            skipped_validation_summary()
         };
 
         let hygiene = if include_hygiene {
@@ -556,53 +554,4 @@ fn append_hygiene_warnings(hygiene: &Value, warnings: &mut Vec<Value>) {
             "message": "workspace hygiene findings should be reviewed",
         }));
     }
-}
-
-fn validation_summary(summary: &SessionSummary) -> Value {
-    let mut latest_failures = Vec::new();
-    let mut latest_successes = Vec::new();
-    for event in summary.events.iter().rev() {
-        if event.kind != "tool_call_finished" || !is_validation_like_event(event.tool_name.as_str())
-        {
-            continue;
-        }
-        let payload = json!({
-            "event_id": event.event_id,
-            "tool_name": event.tool_name,
-            "status": event.status,
-            "exit_code": event.exit_code,
-            "finished_at": event.finished_at,
-            "duration_ms": event.duration_ms,
-            "failure_kind": event.failure_kind,
-            "error_kind": event.error_kind,
-        });
-        if event.status.as_deref() == Some("failed") {
-            if latest_failures.len() < VALIDATION_EVENT_LIMIT {
-                latest_failures.push(payload);
-            }
-        } else if event.status.as_deref() == Some("succeeded")
-            && latest_successes.len() < VALIDATION_EVENT_LIMIT
-        {
-            latest_successes.push(payload);
-        }
-        if latest_failures.len() >= VALIDATION_EVENT_LIMIT
-            && latest_successes.len() >= VALIDATION_EVENT_LIMIT
-        {
-            break;
-        }
-    }
-    json!({
-        "available": false,
-        "reason": "no structured validation command/result model is available; recent validation-like session events are listed without stdout/stderr parsing",
-        "observed_commands": [],
-        "latest_failures": latest_failures,
-        "latest_successes": latest_successes,
-    })
-}
-
-fn is_validation_like_event(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "cargo_fmt" | "cargo_check" | "cargo_test" | "validate_patch" | "run_shell"
-    )
 }

@@ -288,11 +288,17 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     assert_eq!(result.output["workspace"]["clean"], false);
     assert_eq!(result.output["changes"]["hunks_truncated"], false);
     assert!(result.output["changes"]["show_changes"].is_object());
-    assert_eq!(result.output["validation"]["available"], false);
-    assert!(result.output["validation"]["observed_commands"]
-        .as_array()
-        .unwrap()
-        .is_empty());
+    let validation = &result.output["validation"];
+    assert_eq!(validation["available"], false);
+    assert_eq!(validation["source"], "session_ledger");
+    assert_eq!(validation["events_total"], 0);
+    assert!(validation["events"].as_array().unwrap().is_empty());
+    assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(
+        validation["parser"]["reason"],
+        "stdout/stderr parser not implemented"
+    );
+    assert!(validation.get("observed_commands").is_none());
     assert!(result.output["hygiene"].is_null());
     assert!(result.output["handoff"].is_null());
     assert!(result.output["final_warnings"]

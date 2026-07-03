@@ -876,7 +876,13 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         );
     }
     let validation = categories["validation"].as_array().unwrap();
-    for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
+    for name in [
+        "cargo_fmt",
+        "cargo_check",
+        "cargo_test",
+        "validate_patch",
+        "apply_patch_checked",
+    ] {
         assert!(validation.iter().any(|v| v == name));
     }
     let review = categories["review"].as_array().unwrap();
@@ -928,6 +934,26 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         assert!(
             joined_flows.contains(phrase),
             "recommended flows should mention {phrase}: {joined_flows}"
+        );
+    }
+}
+
+#[test]
+fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("finish_coding_task");
+    let description = schema["properties"]["output"]["properties"]["validation"]["description"]
+        .as_str()
+        .unwrap();
+    let description = description.to_lowercase();
+    for phrase in [
+        "ledger-based",
+        "validation-like tool-call summary",
+        "does not include stdout/stderr",
+        "does not parse",
+    ] {
+        assert!(
+            description.contains(phrase),
+            "validation output schema should mention {phrase}: {description}"
         );
     }
 }

@@ -1,16 +1,17 @@
 //! Ledger-derived validation event summaries.
 //!
 //! This module deliberately records facts already present in the session
-//! ledger. It does not persist stdout/stderr, infer root causes, or change tool
-//! execution behavior. The minimal bounded-tail parser lives separately and is
-//! only safe to wire here once session events retain bounded tail metadata.
+//! ledger. It does not expose stdout/stderr, infer root causes, or change tool
+//! execution behavior. Diagnostics are parsed only from safe bounded validation
+//! output metadata captured by session events.
 
 use serde::Serialize;
 use serde_json::{json, Value};
 
 use super::sessions::{SessionEvent, SessionSummary};
 use super::validation_parser::{
-    PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION, SESSION_LEDGER_UNWIRED_REASON,
+    parse_cargo_check_diagnostics, parse_cargo_test_diagnostics, ValidationDiagnostics,
+    PARSER_KIND, PARSER_LIMITATIONS, PARSER_VERSION, VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
 };
 
 const DEFAULT_VALIDATION_EVENT_LIMIT: usize = 10;
@@ -37,6 +38,8 @@ pub(crate) struct ValidationEvent {
     pub(crate) affected_paths: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) input_summary: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) diagnostics: Option<ValidationDiagnostics>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -45,7 +48,8 @@ struct ValidationParserSummary {
     kind: &'static str,
     version: u8,
     limitations: [&'static str; 3],
-    reason: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    reason: Option<&'static str>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -109,6 +113,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
         .filter(|event| event.success)
         .count();
     let failures = events_total.saturating_sub(successes);
+    let parser = parser_summary_for_events(&validation_events);
     let latest_success = validation_events
         .iter()
         .rev()
@@ -131,7 +136,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
         latest_success,
         latest_failure,
         events,
-        parser: parser_unavailable(),
+        parser,
         skipped: false,
     })
 }
@@ -199,6 +204,7 @@ fn validation_event_from_finished(
         finished.changed_paths.clone()
     };
     let input_summary = started.and_then(|event| event.input_summary.clone());
+    let diagnostics = validation_diagnostics_from_summary(finished);
     let outcome = if success { "succeeded" } else { "failed" };
 
     Some(ValidationEvent {
@@ -214,6 +220,7 @@ fn validation_event_from_finished(
         duration_ms: finished.duration_ms,
         affected_paths,
         input_summary,
+        diagnostics,
     })
 }
 
@@ -235,7 +242,59 @@ fn parser_unavailable() -> ValidationParserSummary {
         kind: PARSER_KIND,
         version: PARSER_VERSION,
         limitations: PARSER_LIMITATIONS,
-        reason: SESSION_LEDGER_UNWIRED_REASON,
+        reason: Some(VALIDATION_OUTPUT_METADATA_ABSENT_REASON),
+    }
+}
+
+fn parser_available() -> ValidationParserSummary {
+    ValidationParserSummary {
+        available: true,
+        kind: PARSER_KIND,
+        version: PARSER_VERSION,
+        limitations: PARSER_LIMITATIONS,
+        reason: None,
+    }
+}
+
+fn parser_summary_for_events(events: &[ValidationEvent]) -> ValidationParserSummary {
+    if events.iter().any(|event| event.diagnostics.is_some()) {
+        parser_available()
+    } else {
+        parser_unavailable()
+    }
+}
+
+fn validation_diagnostics_from_summary(finished: &SessionEvent) -> Option<ValidationDiagnostics> {
+    let summary = finished.validation_output_summary.as_ref()?.as_object()?;
+    let stdout_tail = summary
+        .get("stdout_tail_excerpt")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let stderr_tail = summary
+        .get("stderr_tail_excerpt")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let truncated = summary
+        .get("stdout_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || summary
+            .get("stderr_truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+
+    match finished.tool_name.as_str() {
+        "cargo_fmt" | "cargo_check" => Some(parse_cargo_check_diagnostics(
+            stdout_tail,
+            stderr_tail,
+            truncated,
+        )),
+        "cargo_test" => Some(parse_cargo_test_diagnostics(
+            stdout_tail,
+            stderr_tail,
+            truncated,
+        )),
+        _ => None,
     }
 }
 
@@ -251,7 +310,7 @@ fn to_value(summary: ValidationSummary) -> Value {
                 "kind": PARSER_KIND,
                 "version": PARSER_VERSION,
                 "limitations": PARSER_LIMITATIONS,
-                "reason": SESSION_LEDGER_UNWIRED_REASON,
+                "reason": VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
             }
         })
     })

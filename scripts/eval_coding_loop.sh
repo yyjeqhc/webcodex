@@ -803,6 +803,11 @@ validation = cur if isinstance(cur, dict) else {}
 parser = validation.get("parser") or {}
 events = validation.get("events") or []
 latest_success = validation.get("latest_success") or {}
+parser_available = parser.get("available")
+parser_ok = (
+    parser.get("kind") == "minimal_bounded_tail_parser"
+    and isinstance(parser_available, bool)
+)
 ok = (
     data.get("success") is True
     and validation.get("available") is True
@@ -811,7 +816,7 @@ ok = (
     and latest_success.get("tool_name") == "cargo_check"
     and isinstance(events, list)
     and len(events) >= 1
-    and parser.get("available") is False
+    and parser_ok
 )
 sys.exit(0 if ok else 1)
 PY

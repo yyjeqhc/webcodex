@@ -1,10 +1,11 @@
 use super::support::*;
-use crate::tool_runtime::sessions::{SessionStore, SessionTransport};
+use crate::tool_runtime::sessions::{SessionStore, SessionTransport, MAX_VALIDATION_EXCERPT_CHARS};
 use crate::tool_runtime::validation_events::{
     validation_kind_for_tool, validation_summary_for_session,
 };
 use crate::tool_runtime::validation_parser::{
-    PARSER_KIND, PARSER_VERSION, SESSION_LEDGER_UNWIRED_REASON,
+    NO_STABLE_DIAGNOSTICS_REASON, PARSER_KIND, PARSER_VERSION,
+    VALIDATION_OUTPUT_METADATA_ABSENT_REASON,
 };
 use crate::tool_runtime::{SessionMode, ToolCall};
 use serde_json::{json, Value};
@@ -58,7 +59,7 @@ fn validation_summary_is_unavailable_without_validation_events() {
     );
     assert_eq!(
         validation["parser"]["reason"],
-        SESSION_LEDGER_UNWIRED_REASON
+        VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
     assert!(validation.get("latest_success").is_none());
     assert!(validation.get("latest_failure").is_none());
@@ -99,9 +100,197 @@ fn cargo_check_success_produces_validation_event() {
     assert_eq!(validation["parser"]["available"], false);
     assert_eq!(
         validation["parser"]["reason"],
-        SESSION_LEDGER_UNWIRED_REASON
+        VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
     assert!(event.get("diagnostics").is_none());
+}
+
+#[test]
+fn cargo_check_finished_event_records_safe_validation_output_summary() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    let stderr_tail = format!(
+        "{}\nAuthorization: Bearer supersecret\nerror[E0308]: mismatched types\n --> src/lib.rs:12:5\n",
+        "x".repeat(MAX_VALIDATION_EXCERPT_CHARS + 200)
+    );
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({
+            "exit_code": 101,
+            "stdout": "full stdout body must not be ledgered",
+            "stderr": "full stderr body must not be ledgered",
+            "stdout_tail": "api_key=supersecret\nsafe stdout line\n",
+            "stderr_tail": stderr_tail,
+            "stdout_truncated": false,
+            "stderr_truncated": true,
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let finished = session
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished")
+        .unwrap();
+    let output_summary = finished.validation_output_summary.as_ref().unwrap();
+    let stdout_excerpt = output_summary["stdout_tail_excerpt"].as_str().unwrap();
+    let stderr_excerpt = output_summary["stderr_tail_excerpt"].as_str().unwrap();
+
+    assert_eq!(output_summary["tool_name"], "cargo_check");
+    assert_eq!(
+        output_summary["max_excerpt_chars"],
+        MAX_VALIDATION_EXCERPT_CHARS
+    );
+    assert!(stdout_excerpt.contains("safe stdout line"));
+    assert!(!stdout_excerpt.contains("supersecret"));
+    assert!(stderr_excerpt.contains("error[E0308]"));
+    assert!(stderr_excerpt.contains("--> src/lib.rs:12:5"));
+    assert!(!stderr_excerpt.contains("Authorization"));
+    assert!(!stderr_excerpt.contains("supersecret"));
+    assert!(stdout_excerpt.chars().count() <= MAX_VALIDATION_EXCERPT_CHARS);
+    assert!(stderr_excerpt.chars().count() <= MAX_VALIDATION_EXCERPT_CHARS);
+    assert_eq!(output_summary["stdout_truncated"], true);
+    assert_eq!(output_summary["stderr_truncated"], true);
+
+    let serialized = serde_json::to_string(finished).unwrap();
+    for leaked in [
+        "full stdout body must not be ledgered",
+        "full stderr body must not be ledgered",
+        "api_key=supersecret",
+        "Authorization: Bearer supersecret",
+    ] {
+        assert!(
+            !serialized.contains(leaked),
+            "session event leaked unsafe validation output {leaked}: {serialized}"
+        );
+    }
+    for raw_key in [
+        "\"stdout\":",
+        "\"stderr\":",
+        "\"stdout_tail\":",
+        "\"stderr_tail\":",
+    ] {
+        assert!(
+            !serialized.contains(raw_key),
+            "session event stored raw output key {raw_key}: {serialized}"
+        );
+    }
+}
+
+#[test]
+fn validation_summary_wires_cargo_check_diagnostics_from_captured_excerpt() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({
+            "exit_code": 101,
+            "stdout_tail": "",
+            "stderr_tail": "error[E0308]: mismatched types\n --> src/lib.rs:12:5\n",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let diagnostics = &validation["latest_failure"]["diagnostics"];
+
+    assert_eq!(validation["parser"]["available"], true);
+    assert_eq!(validation["parser"]["kind"], PARSER_KIND);
+    assert!(validation["parser"].get("reason").is_none());
+    assert_eq!(diagnostics["available"], true);
+    assert_eq!(diagnostics["parser"], PARSER_KIND);
+    assert_eq!(diagnostics["diagnostic_count"], 1);
+    assert_eq!(diagnostics["first_diagnostic"]["severity"], "error");
+    assert_eq!(diagnostics["first_diagnostic"]["code"], "E0308");
+    assert_eq!(diagnostics["first_diagnostic"]["file"], "src/lib.rs");
+    assert_eq!(diagnostics["first_diagnostic"]["line"], 12);
+    assert_eq!(diagnostics["first_diagnostic"]["column"], 5);
+    assert_eq!(diagnostics["truncated"], false);
+    for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
+        assert!(
+            !json_contains_key(&validation, key),
+            "validation summary must not include {key}: {validation}"
+        );
+    }
+}
+
+#[test]
+fn validation_summary_wires_cargo_test_summary_from_captured_excerpt() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_test",
+        json!({"project": "agent:eval:demo"}),
+        false,
+        json!({
+            "exit_code": 101,
+            "stdout_tail": "running 1 test\ntest tests::fails ... FAILED\n\ntest result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let diagnostics = &validation["latest_failure"]["diagnostics"];
+
+    assert_eq!(validation["parser"]["available"], true);
+    assert_eq!(diagnostics["available"], true);
+    assert_eq!(diagnostics["diagnostic_count"], 1);
+    assert_eq!(diagnostics["test_summary"]["passed"], 0);
+    assert_eq!(diagnostics["test_summary"]["failed"], 1);
+    assert_eq!(diagnostics["test_summary"]["ignored"], 0);
+    assert_eq!(diagnostics["first_failed_test"], "tests::fails");
+    assert_eq!(diagnostics["truncated"], false);
+}
+
+#[test]
+fn run_shell_output_tail_does_not_create_validation_metadata_or_events() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "run_shell",
+        json!({"project": "agent:eval:demo", "command": "cargo check"}),
+        false,
+        json!({
+            "exit_code": 101,
+            "stdout_tail": "error[E0308]: must not classify shell output\n",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let finished = session
+        .events
+        .iter()
+        .find(|event| event.kind == "tool_call_finished")
+        .unwrap();
+    assert!(finished.validation_output_summary.is_none());
+    let validation = validation_summary_for_session(&session);
+    assert_eq!(validation["available"], false);
+    assert_eq!(validation["events_total"], 0);
+    assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(
+        validation["parser"]["reason"],
+        VALIDATION_OUTPUT_METADATA_ABSENT_REASON
+    );
 }
 
 #[test]
@@ -155,7 +344,7 @@ fn latest_success_and_failure_follow_session_ledger_order() {
         "cargo_test",
         json!({"project": "agent:eval:demo"}),
         false,
-        json!({"exit_code": 101, "stdout_tail": "omitted", "stderr_tail": "omitted"}),
+        json!({"exit_code": 101, "stdout": "omitted", "stderr": "omitted"}),
     );
     record_finished_tool(
         &store,
@@ -189,7 +378,7 @@ fn latest_success_and_failure_follow_session_ledger_order() {
     assert_eq!(validation["parser"]["available"], false);
     assert_eq!(
         validation["parser"]["reason"],
-        SESSION_LEDGER_UNWIRED_REASON
+        VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
     for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
         assert!(
@@ -367,12 +556,17 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     assert_eq!(validation["latest_failure"]["validation_kind"], "test");
     assert_eq!(validation["latest_failure"]["exit_code"], 101);
     assert_eq!(validation["latest_failure"]["summary"], "cargo_test failed");
-    assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(validation["parser"]["available"], true);
+    assert_eq!(validation["parser"]["kind"], PARSER_KIND);
+    assert!(validation["parser"].get("reason").is_none());
     assert_eq!(
-        validation["parser"]["reason"],
-        SESSION_LEDGER_UNWIRED_REASON
+        validation["latest_failure"]["diagnostics"]["available"],
+        false
     );
-    assert!(validation["latest_failure"].get("diagnostics").is_none());
+    assert_eq!(
+        validation["latest_failure"]["diagnostics"]["reason"],
+        NO_STABLE_DIAGNOSTICS_REASON
+    );
     for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
         assert!(
             !json_contains_key(validation, key),

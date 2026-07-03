@@ -16,8 +16,8 @@ pub(crate) const PARSER_LIMITATIONS: [&str; 3] = [
     "no full stdout/stderr bodies",
 ];
 pub(crate) const NO_STABLE_DIAGNOSTICS_REASON: &str = "no stable diagnostics found";
-pub(crate) const SESSION_LEDGER_UNWIRED_REASON: &str =
-    "minimal bounded tail parser is not wired because session ledger events do not retain bounded stdout/stderr tails";
+pub(crate) const VALIDATION_OUTPUT_METADATA_ABSENT_REASON: &str =
+    "no validation event contains safe bounded output metadata";
 
 const MAX_SAFE_TEXT_CHARS: usize = 240;
 

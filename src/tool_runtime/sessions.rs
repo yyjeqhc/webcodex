@@ -22,6 +22,7 @@ const MAX_SUMMARY_STRING_CHARS: usize = 240;
 const MAX_INPUT_STRING_CHARS: usize = 120;
 const MAX_INPUT_OBJECT_KEYS: usize = 16;
 const MAX_INPUT_ARRAY_ITEMS: usize = 8;
+pub(crate) const MAX_VALIDATION_EXCERPT_CHARS: usize = 800;
 const SESSION_LEDGER_VERSION: u32 = 1;
 pub(crate) const MESSAGE_ID_PREFIX: &str = "wc_msg_";
 pub(crate) const DEFAULT_MAX_MESSAGES_PER_SESSION: usize = 200;
@@ -204,6 +205,8 @@ pub(crate) struct SessionEvent {
     pub(crate) changed_paths: Vec<String>,
     pub(crate) job_id: Option<String>,
     pub(crate) input_summary: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) validation_output_summary: Option<Value>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -652,6 +655,7 @@ impl SessionStore {
             changed_paths,
             job_id: None,
             input_summary,
+            validation_output_summary: None,
         });
         Some(start)
     }
@@ -683,6 +687,8 @@ impl SessionStore {
             .or_else(|| error.map(|_| "runtime_error"));
         let error_message_summary =
             error.map(|message| bound_event_error_summary(message, start.shell_like));
+        let validation_output_summary =
+            validation_output_summary_for_tool_result(&start.tool_name, output);
         self.push_event(SessionEvent {
             event_id: event_id.clone(),
             session_id: start.session_id,
@@ -709,6 +715,7 @@ impl SessionStore {
             changed_paths: start.changed_paths,
             job_id: extract_job_id(output),
             input_summary: None,
+            validation_output_summary,
         });
         Some(event_id)
     }
@@ -1173,6 +1180,9 @@ fn sanitize_persisted_event(mut event: SessionEvent, session_id: &str) -> Option
     event.input_summary = event
         .input_summary
         .map(|value| redact_and_bound_value(&value));
+    event.validation_output_summary = event
+        .validation_output_summary
+        .and_then(|value| sanitize_persisted_validation_output_summary(&event.tool_name, &value));
     Some(event)
 }
 
@@ -1605,6 +1615,150 @@ fn bound_event_error_summary(value: &str, shell_like: bool) -> String {
     } else {
         bound_summary_string(summary)
     }
+}
+
+fn validation_output_summary_for_tool_result(tool_name: &str, output: &Value) -> Option<Value> {
+    if !is_cargo_validation_tool(tool_name) {
+        return None;
+    }
+    let stdout_value = output.get("stdout_tail")?;
+    let stderr_value = output.get("stderr_tail")?;
+    let stdout = stdout_value.as_str()?;
+    let stderr = stderr_value.as_str()?;
+    let stdout_excerpt = validation_excerpt(stdout);
+    let stderr_excerpt = validation_excerpt(stderr);
+    let stdout_truncated = output
+        .get("stdout_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || stdout_excerpt.filtered;
+    let stderr_truncated = output
+        .get("stderr_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || stderr_excerpt.filtered;
+
+    Some(json!({
+        "tool_name": tool_name,
+        "stdout_tail_excerpt": stdout_excerpt.text,
+        "stderr_tail_excerpt": stderr_excerpt.text,
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
+        "max_excerpt_chars": MAX_VALIDATION_EXCERPT_CHARS,
+    }))
+}
+
+fn sanitize_persisted_validation_output_summary(tool_name: &str, value: &Value) -> Option<Value> {
+    if !is_cargo_validation_tool(tool_name) {
+        return None;
+    }
+    let object = value.as_object()?;
+    let stdout = object
+        .get("stdout_tail_excerpt")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let stderr = object
+        .get("stderr_tail_excerpt")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let stdout_excerpt = validation_excerpt(stdout);
+    let stderr_excerpt = validation_excerpt(stderr);
+    let stdout_truncated = object
+        .get("stdout_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || stdout_excerpt.filtered;
+    let stderr_truncated = object
+        .get("stderr_truncated")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || stderr_excerpt.filtered;
+
+    Some(json!({
+        "tool_name": tool_name,
+        "stdout_tail_excerpt": stdout_excerpt.text,
+        "stderr_tail_excerpt": stderr_excerpt.text,
+        "stdout_truncated": stdout_truncated,
+        "stderr_truncated": stderr_truncated,
+        "max_excerpt_chars": MAX_VALIDATION_EXCERPT_CHARS,
+    }))
+}
+
+fn is_cargo_validation_tool(tool_name: &str) -> bool {
+    matches!(tool_name, "cargo_fmt" | "cargo_check" | "cargo_test")
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ValidationExcerpt {
+    text: String,
+    filtered: bool,
+}
+
+fn validation_excerpt(value: &str) -> ValidationExcerpt {
+    let mut filtered = false;
+    let mut lines = Vec::new();
+    for line in value.lines() {
+        let sanitized = sanitize_validation_line(line.trim_end_matches('\r'));
+        if sanitized != line {
+            filtered = true;
+        }
+        if validation_line_is_suspicious(&sanitized) {
+            filtered = true;
+            continue;
+        }
+        lines.push(sanitized);
+    }
+    let mut text = lines.join("\n");
+    if value.ends_with('\n') && !text.is_empty() {
+        text.push('\n');
+    }
+    let bounded = bound_validation_excerpt(&text);
+    if bounded != text {
+        filtered = true;
+    }
+    ValidationExcerpt {
+        text: bounded,
+        filtered,
+    }
+}
+
+fn sanitize_validation_line(line: &str) -> String {
+    line.chars()
+        .filter(|ch| !ch.is_control() || *ch == '\t')
+        .collect()
+}
+
+fn validation_line_is_suspicious(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    let compact = lower.replace('_', "").replace('-', "");
+    lower.contains("token")
+        || lower.contains("secret")
+        || lower.contains("password")
+        || lower.contains("authorization")
+        || lower.contains("bearer")
+        || compact.contains("apikey")
+        || compact.contains("accesskey")
+        || compact.contains("privatekey")
+}
+
+fn bound_validation_excerpt(value: &str) -> String {
+    let count = value.chars().count();
+    if count <= MAX_VALIDATION_EXCERPT_CHARS {
+        return value.to_string();
+    }
+    if MAX_VALIDATION_EXCERPT_CHARS <= 3 {
+        return ".".repeat(MAX_VALIDATION_EXCERPT_CHARS);
+    }
+    let keep = MAX_VALIDATION_EXCERPT_CHARS - 3;
+    let suffix: String = value
+        .chars()
+        .rev()
+        .take(keep)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("...{suffix}")
 }
 
 fn bound_chars(value: &str, max_chars: usize) -> String {

@@ -118,13 +118,22 @@ tool name, validation kind, success, exit code when available, timestamps when
 available, and safe bounded input summaries. It does not include stdout/stderr
 bodies, extract root causes, or provide semantic diagnosis.
 
-Stage 4.2 includes a minimal bounded-tail parser skeleton for synthetic/parser
-unit coverage. When wired to bounded tails or safe result metadata, it extracts
-only stable cargo facts: rustc severity/code/span for `cargo_check`, and test
-summary counts plus the first stable failed test name for `cargo_test`. Current
-session-ledger validation summaries still report `parser.available=false` when
-ledger events do not retain bounded stdout/stderr tails or equivalent safe
-metadata.
+Stage 4.3 captures a small `validation_output_summary` on validation-like cargo
+session events. The field is derived only from already-bounded
+`stdout_tail`/`stderr_tail` tool output, caps each excerpt at 800 characters,
+and filters suspicious token, secret, password, API key, authorization, and
+bearer lines before persistence. Finish and handoff validation summaries do not
+include these excerpts or raw stdout/stderr fields.
+
+The minimal bounded-tail parser reads that safe metadata when present. It
+extracts only stable cargo facts: rustc severity/code/span for `cargo_fmt` and
+`cargo_check`, and test summary counts plus the first stable failed test name
+for `cargo_test`. It does not infer root causes, summarize compiler output,
+offer fixes, use LSP, or use tree-sitter. Successful `cargo_check` runs may set
+`parser.available=true` while `diagnostics.available=false` because no stable
+diagnostic facts are present. Session-ledger validation summaries report
+`parser.available=false` only when no validation event contains safe bounded
+output metadata.
 
 Inspect-only cases may still report `validation.available=false` when no
 validation-like tool calls exist in the session ledger.
@@ -251,10 +260,10 @@ summary.
 
 - Eval remains scripted tool-call metrics, not full model behavior.
 - Guided may use more tool calls because it includes start/finish aggregators.
-- Minimal parser only extracts stable cargo check/test facts from bounded tails
-  or safe metadata when available.
+- Minimal parser only extracts stable cargo fmt/check/test facts from bounded
+  tails or safe metadata when available.
 - Parser output is not semantic diagnosis.
 - No root-cause extraction.
+- No LSP or tree-sitter analysis.
 - There is no semantic code understanding signal yet.
-- No LSP/tree-sitter signal.
 - The harness does not exercise the Codex CLI or any LLM delegation.

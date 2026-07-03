@@ -6,7 +6,7 @@ use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;
 use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::validation_events::validation_summary_for_session;
-use crate::tool_runtime::validation_parser::SESSION_LEDGER_UNWIRED_REASON;
+use crate::tool_runtime::validation_parser::VALIDATION_OUTPUT_METADATA_ABSENT_REASON;
 use serde_json::{json, Value};
 
 // =========================================================================
@@ -326,7 +326,7 @@ async fn session_handoff_summary_includes_validation_by_default_from_session_led
     assert_eq!(validation["parser"]["available"], false);
     assert_eq!(
         validation["parser"]["reason"],
-        SESSION_LEDGER_UNWIRED_REASON
+        VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
     assert!(validation["latest_success"].get("diagnostics").is_none());
     for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
@@ -404,7 +404,7 @@ async fn session_handoff_summary_validation_unavailable_without_validation_event
     assert_eq!(validation["parser"]["available"], false);
     assert_eq!(
         validation["parser"]["reason"],
-        SESSION_LEDGER_UNWIRED_REASON
+        VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
     assert!(validation.get("latest_success").is_none());
     assert!(validation.get("latest_failure").is_none());

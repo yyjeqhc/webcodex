@@ -8,12 +8,11 @@
 //!
 //! ## Relationship to `AuthContext`
 //!
-//! The existing [`AuthContext`] is the low-level Salvo depot-injected struct
-//! that carries the raw database fields. `Principal` is a higher-level
-//! abstraction derived from `AuthContext`. During this first refactoring phase
-//! both types coexist — `AuthContext` remains the depot-injected type so
-//! existing handlers are unaffected. A future phase can migrate handlers to
-//! read `Principal` directly from the depot.
+//! [`AuthContext`] is the low-level Salvo depot-injected struct that carries the
+//! raw database fields. `Principal` is a higher-level abstraction derived from
+//! `AuthContext`. Both types coexist — `AuthContext` remains the depot-injected
+//! type so existing handlers are unaffected. A future phase can migrate handlers
+//! to read `Principal` directly from the depot.
 
 use crate::auth::scopes::SCOPE_ADMIN;
 
@@ -128,6 +127,192 @@ impl AuthError {
 }
 
 // ---------------------------------------------------------------------------
+// AuthKind — the low-level credential kind (preserved from Phase 2/3)
+// ---------------------------------------------------------------------------
+
+/// The kind of credential that produced an [`AuthContext`].
+///
+/// - `Bootstrap`: the server-wide `WEBCODEX_TOKEN` (admin/bootstrap auth).
+/// - `ApiToken`: a Phase 2 personal API token (kind=`user`) backed by the
+///   `api_keys` table.
+/// - `AgentToken`: a Phase 3 agent token (kind=`agent`) bound to an owner
+///   username and an `allowed_client_id`, usable only on agent transport
+///   endpoints.
+/// - `AccountCredential`: a high-entropy account credential backed by the
+///   `account_credentials` table, usable only on account control endpoints.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(dead_code)]
+pub enum AuthKind {
+    Bootstrap,
+    ApiToken,
+    AgentToken,
+    AccountCredential,
+    /// An OAuth2 opaque access token (`wc_oat_*`) validated by the auth token
+    /// verifier. Accepted on all regular HTTP paths; rejected on
+    /// agent-transport and QUIC surfaces.
+    OAuth2Token,
+    /// A lightweight shared-key bearer token (quick-start mode). Any bearer
+    /// token that is not a recognized managed credential (`wc_boot_*`,
+    /// `wc_pat_*`, `wc_agent_*`, `wc_oat_*`) is treated as a shared key and
+    /// grouped by its SHA-256 hash. Shared keys are non-admin and scoped to
+    /// runtime/project/agent surfaces only.
+    SharedKey,
+    /// Anonymous access granted only when the server is started with explicit
+    /// `--open` (`WEBCODEX_ALLOW_ANONYMOUS=true`). Non-admin, grouped under a
+    /// single open group. Intended for local/trusted-network demos only.
+    OpenAnonymous,
+}
+
+// ---------------------------------------------------------------------------
+// AuthContext — the depot-injected auth state
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct AuthContext {
+    pub kind: AuthKind,
+    pub user_id: Option<String>,
+    pub username: Option<String>,
+    pub api_key_id: Option<String>,
+    pub api_key_name: Option<String>,
+    pub role: Option<String>,
+    pub scopes: Vec<String>,
+    pub is_bootstrap: bool,
+    /// Phase 3: the token kind string (`"user"` or `"agent"`) from the
+    /// underlying `api_keys` row. `None` for bootstrap auth.
+    pub token_kind: Option<String>,
+    /// Phase 3: the `allowed_client_id` bound to an agent token. `None` for
+    /// bootstrap auth and user tokens.
+    pub allowed_client_id: Option<String>,
+    /// Quick-start shared-key mode, or an internally issued OAuth bridge token:
+    /// the SHA-256 hex of the shared key used for lightweight group isolation.
+    /// Plaintext shared keys are never stored.
+    pub shared_key_hash: Option<String>,
+}
+
+impl AuthContext {
+    /// True when the caller holds the `admin` scope or authenticated as the
+    /// bootstrap token. Bootstrap is always treated as admin.
+    #[allow(dead_code)]
+    pub fn is_admin(&self) -> bool {
+        self.is_bootstrap || self.scopes.iter().any(|s| s == SCOPE_ADMIN)
+    }
+
+    /// True when the caller holds the given scope (or is bootstrap/admin).
+    #[allow(dead_code)]
+    pub fn has_scope(&self, scope: &str) -> bool {
+        self.is_bootstrap || self.scopes.iter().any(|s| s == scope || s == SCOPE_ADMIN)
+    }
+
+    /// True when the caller authenticated as the bootstrap token (or auth is
+    /// disabled in development).
+    #[allow(dead_code)]
+    pub fn is_bootstrap(&self) -> bool {
+        self.is_bootstrap
+    }
+
+    /// True when the caller authenticated with a Phase 2 personal API token
+    /// (kind=`user`).
+    #[allow(dead_code)]
+    pub fn is_user_token(&self) -> bool {
+        matches!(self.kind, AuthKind::ApiToken)
+    }
+
+    /// True when the caller authenticated with a Phase 3 agent token
+    /// (kind=`agent`).
+    #[allow(dead_code)]
+    pub fn is_agent_token(&self) -> bool {
+        matches!(self.kind, AuthKind::AgentToken)
+    }
+
+    #[allow(dead_code)]
+    pub fn is_account_credential(&self) -> bool {
+        matches!(self.kind, AuthKind::AccountCredential)
+    }
+
+    #[allow(dead_code)]
+    pub fn is_oauth_token(&self) -> bool {
+        matches!(self.kind, AuthKind::OAuth2Token)
+    }
+
+    /// True when the caller is a non-managed shared-key OAuth subject. This is
+    /// still an OAuth2 token for scope and transport purposes, but it must not
+    /// reach first-party account-control surfaces.
+    #[allow(dead_code)]
+    pub fn is_oauth_shared_key_subject(&self) -> bool {
+        matches!(self.kind, AuthKind::OAuth2Token)
+            && self.token_kind.as_deref() == Some("oauth2_shared_key")
+    }
+
+    /// True when the caller authenticated with a lightweight shared key
+    /// (quick-start mode).
+    #[allow(dead_code)]
+    pub fn is_shared_key(&self) -> bool {
+        matches!(self.kind, AuthKind::SharedKey)
+    }
+
+    /// True when the caller was granted anonymous access under explicit
+    /// `--open` server mode.
+    #[allow(dead_code)]
+    pub fn is_open_anonymous(&self) -> bool {
+        matches!(self.kind, AuthKind::OpenAnonymous)
+    }
+
+    /// True when the caller is a lightweight principal (shared key or open
+    /// anonymous). These are non-admin and must not reach account-control or
+    /// server-global management surfaces.
+    #[allow(dead_code)]
+    pub fn is_lightweight(&self) -> bool {
+        self.is_shared_key() || self.is_open_anonymous()
+    }
+
+    /// True when the caller may use an agent transport endpoint for the given
+    /// `client_id`. Bootstrap may use any client_id. Agent tokens may only use
+    /// the `allowed_client_id` they are bound to. User tokens may not use
+    /// agent transport endpoints.
+    #[allow(dead_code)]
+    pub fn can_use_agent_endpoint(&self, client_id: &str) -> bool {
+        if self.is_bootstrap {
+            return true;
+        }
+        // Shared-key and open-anonymous callers may use agent transport
+        // endpoints — grouping is by key/open group, not by client_id.
+        if self.is_lightweight() {
+            return true;
+        }
+        if matches!(self.kind, AuthKind::AgentToken) {
+            return self
+                .allowed_client_id
+                .as_deref()
+                .map(|allowed| allowed == client_id)
+                .unwrap_or(false);
+        }
+        false
+    }
+
+    /// Require the caller to hold `scope`. Returns `Err(message)` when the
+    /// scope is missing. Bootstrap is always treated as holding every scope.
+    #[allow(dead_code)]
+    pub fn require_scope(&self, scope: &str) -> Result<(), String> {
+        if self.has_scope(scope) {
+            Ok(())
+        } else {
+            Err(format!("missing required scope: {}", scope))
+        }
+    }
+
+    /// Derive a [`Principal`] from this `AuthContext`.
+    ///
+    /// This is the bridge between the low-level depot-injected type and the
+    /// higher-level identity abstraction. Handlers that want to use
+    /// `Principal`-based authorization can call this once.
+    #[allow(dead_code)]
+    pub fn to_principal(&self) -> Principal {
+        Principal::from_auth_context(self)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Principal
 // ---------------------------------------------------------------------------
 
@@ -215,14 +400,12 @@ impl Principal {
         }
     }
 
-    /// Derive a `Principal` from an existing [`AuthContext`](crate::auth::AuthContext).
+    /// Derive a `Principal` from an existing [`AuthContext`].
     ///
     /// This is the primary construction path during Phase 1. It maps the
     /// existing `AuthKind` values to `AuthMethod` and carries over all
     /// relevant fields.
-    pub fn from_auth_context(ctx: &crate::auth::AuthContext) -> Self {
-        use crate::auth::AuthKind;
-
+    pub fn from_auth_context(ctx: &AuthContext) -> Self {
         let method = match ctx.kind {
             AuthKind::Bootstrap => AuthMethod::Bootstrap,
             AuthKind::ApiToken => AuthMethod::Pat,

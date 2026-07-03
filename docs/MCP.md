@@ -90,10 +90,13 @@ activity with `session_id`. It is read-only, requires `project:read`, and never
 cleans, stages, commits, or restores files.
 
 `start_session` and `session_summary` are the current task tracking foundation.
-They create and read bounded in-memory recorder state only; they do not modify a
-workspace and are not a complete audit log. Sessions are lost when the server
-restarts. To group MCP tool calls, pass the session id as reserved metadata in
-`tools/call` arguments:
+They create and read bounded task-recorder metadata only; they do not modify a
+workspace. When session persistence is configured, session records, events, and
+messages may be persisted and restored through the `sessions.json` ledger. The
+ledger is for task continuity and handoff metadata, not a complete audit log.
+Current-session bindings remain process-local in-memory state, so pass the
+session id explicitly for deterministic MCP handoff. To group MCP tool calls,
+pass the session id as reserved metadata in `tools/call` arguments:
 
 ```json
 {

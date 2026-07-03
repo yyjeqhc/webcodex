@@ -197,9 +197,13 @@ current tool call. `params.session_id` is the `show_changes` business argument
 that selects which session to summarize; the two ids may be the same or
 different.
 
-The recorder is in-memory and bounded; server restart loses sessions. It does
-not automatically modify a workspace, does not scan diffs, and is not a
-complete audit log. Inputs and errors are redacted and bounded before storage.
+The recorder is bounded. Session records, events, and messages may be persisted
+and restored through the configured `sessions.json` ledger, but the ledger is
+task continuity and handoff metadata rather than a complete audit log. The
+recorder does not automatically modify a workspace and does not scan diffs.
+Inputs and errors are redacted and bounded before storage. Current-session
+bindings remain process-local in-memory state; pass an explicit `session_id`
+for deterministic handoff across process restart.
 
 ## Observability
 

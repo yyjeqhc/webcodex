@@ -188,7 +188,7 @@ Bootstrap auth is treated as holding every scope (`admin` is a wildcard).
 
 | Scope | Purpose |
 | --- | --- |
-| `runtime:read` | Read runtime status, list tools, start/read in-memory session summaries |
+| `runtime:read` | Read runtime status, list tools, start/read bounded session recorder metadata |
 | `project:read` | List and read projects |
 | `project:write` | Create projects, write files, apply patches |
 | `job:run` | Run jobs and shell commands |
@@ -256,8 +256,12 @@ session activity in the output, but the tool remains governed by `project:read`.
 
 `start_session` and `session_summary` are in the runtime bucket. OAuth2 access
 tokens need `runtime:read` to call them through `/api/tools/call` or MCP
-`tools/call`. They create/read bounded in-memory task tracking metadata only;
-sessions are lost on restart and the recorder is not a complete audit log.
+`tools/call`. They create/read bounded task-recorder metadata only. Session
+records, events, and messages may be persisted and restored through the
+configured `sessions.json` ledger, but the ledger is for task continuity and
+handoff metadata, not a complete audit log. Current-session bindings are
+separate process-local in-memory state; pass an explicit `session_id` when a
+caller needs deterministic handoff across process restart.
 REST callers pass top-level `session_id` metadata on `/api/tools/call`. MCP
 callers pass reserved `_session_id` inside `tools/call` arguments; WebCodex
 strips it before concrete tool dispatch.

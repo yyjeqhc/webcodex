@@ -5,6 +5,7 @@ pub(crate) mod env;
 pub(crate) mod http;
 pub(crate) mod output;
 pub(crate) mod pairing;
+pub(crate) mod profiles;
 pub(crate) mod server;
 pub(crate) mod setup;
 pub(crate) mod token_commands;
@@ -17,10 +18,12 @@ pub(crate) use agent_service::{run_agent_install_service, run_agent_status};
 pub(crate) use connect::run_connect;
 pub(crate) use doctor::run_doctor;
 #[cfg(test)]
+pub(crate) use env::is_effective_root;
+#[cfg(test)]
 pub(crate) use env::parse_env_content_value;
 pub(crate) use env::{
-    default_server_paths, is_effective_root, read_env_file_value,
-    read_pairing_server_env_file_value, render_server_env,
+    default_server_paths, read_env_file_value, read_pairing_server_env_file_value,
+    render_server_env,
 };
 #[cfg(test)]
 pub(crate) use http::format_error_body;
@@ -37,6 +40,13 @@ pub(crate) use output::{RevisionComparison, RuntimeBuildMetadata};
 #[cfg(test)]
 pub(crate) use pairing::{ensure_enroll_outputs_available, resolve_pairing_create_token};
 pub(crate) use pairing::{run_client_enroll, run_pairing_create};
+#[cfg(test)]
+pub(crate) use profiles::{client_output_dir_for_profile, CLIENT_PROFILE_ERROR};
+pub(crate) use profiles::{
+    client_profile_agent_config, client_profile_agent_token_file, client_profile_projects_dir,
+    client_profile_service_file, client_profile_user_token_file,
+    default_client_output_dir_for_profile, validate_client_profile,
+};
 pub(crate) use server::{run_server_init, run_server_install_service, run_server_up};
 pub(crate) use setup::run_setup_single_user;
 #[cfg(test)]

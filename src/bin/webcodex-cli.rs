@@ -53,21 +53,23 @@ use webcodex_cli::parse_env_content_value;
 use webcodex_cli::token_prefix;
 use webcodex_cli::{
     agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
-    client_enroll_usage, client_usage, compare_build_commits, connect_usage, default_server_paths,
-    doctor_usage, fetch_runtime_status, http_post_json_status, is_effective_root,
+    client_enroll_usage, client_profile_agent_config, client_profile_agent_token_file,
+    client_profile_projects_dir, client_profile_service_file, client_profile_user_token_file,
+    client_usage, compare_build_commits, connect_usage, default_client_output_dir_for_profile,
+    default_server_paths, doctor_usage, fetch_runtime_status, http_post_json_status,
     local_cli_build_metadata, pairing_create_usage, pairing_usage, read_env_file_value,
     render_build_metadata_block, render_token_generate, run_agent_install_service,
     run_agent_status, run_agent_token_create_local, run_client_enroll, run_connect, run_doctor,
     run_pairing_create, run_server_init, run_server_install_service, run_server_up,
     run_setup_single_user, run_token_create_local, runtime_build_metadata, server_init_usage,
     server_install_service_usage, server_status_revision_check, server_status_usage,
-    server_up_usage, server_usage, usage, DoctorCheck,
+    server_up_usage, server_usage, usage, validate_client_profile, DoctorCheck,
 };
 #[cfg(test)]
 use webcodex_cli::{
-    doctor_revision_check, ensure_enroll_outputs_available, format_error_body,
-    render_agent_systemd_unit, resolve_account_credential, resolve_pairing_create_token,
-    RevisionComparison, RuntimeBuildMetadata,
+    client_output_dir_for_profile, doctor_revision_check, ensure_enroll_outputs_available,
+    format_error_body, is_effective_root, render_agent_systemd_unit, resolve_account_credential,
+    resolve_pairing_create_token, RevisionComparison, RuntimeBuildMetadata, CLIENT_PROFILE_ERROR,
 };
 
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
@@ -1232,72 +1234,6 @@ fn parse_pairing_create(args: &[String]) -> Result<PairingCreateOptions, String>
         return Err("use only one of --token, --token-file, or --env-file".to_string());
     }
     Ok(opts)
-}
-
-const CLIENT_PROFILE_ERROR: &str =
-    "--profile must be a safe path component using only ASCII letters, digits, '.', '_' or '-'";
-
-fn default_client_base_dir() -> PathBuf {
-    if is_effective_root() {
-        PathBuf::from("/etc/webcodex")
-    } else {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        home.join(".config/webcodex")
-    }
-}
-
-fn validate_client_profile(profile: &str) -> Result<String, String> {
-    let trimmed = profile.trim();
-    if trimmed.is_empty()
-        || trimmed == "."
-        || trimmed == ".."
-        || trimmed.len() > 80
-        || trimmed.contains('/')
-        || trimmed.contains('\\')
-        || !trimmed
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
-    {
-        return Err(CLIENT_PROFILE_ERROR.to_string());
-    }
-    Ok(trimmed.to_string())
-}
-
-fn client_output_dir_for_profile(base_dir: &Path, profile: &str) -> PathBuf {
-    base_dir.join("clients").join(profile)
-}
-
-fn client_profile_dir(profile: &str) -> PathBuf {
-    client_output_dir_for_profile(&default_client_base_dir(), profile)
-}
-
-fn default_client_output_dir_for_profile(profile: &str) -> PathBuf {
-    client_profile_dir(profile)
-}
-
-fn client_profile_agent_config(profile: &str) -> PathBuf {
-    client_profile_dir(profile).join("agent.toml")
-}
-
-fn client_profile_projects_dir(profile: &str) -> PathBuf {
-    client_profile_dir(profile).join("projects.d")
-}
-
-fn client_profile_user_token_file(profile: &str) -> PathBuf {
-    client_profile_dir(profile).join("webcodex-user-token")
-}
-
-fn client_profile_agent_token_file(profile: &str) -> PathBuf {
-    client_profile_dir(profile).join("webcodex-agent-token")
-}
-
-fn client_profile_service_file(profile: &str) -> PathBuf {
-    PathBuf::from(format!(
-        "/etc/systemd/system/webcodex-agent-{}.service",
-        profile
-    ))
 }
 
 fn parse_client_enroll(args: &[String]) -> Result<ClientEnrollOptions, String> {

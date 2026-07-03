@@ -9,6 +9,7 @@ pub(crate) mod server;
 pub(crate) mod setup;
 pub(crate) mod token_commands;
 pub(crate) mod tokens;
+pub(crate) mod usage;
 
 #[cfg(test)]
 pub(crate) use agent_service::render_agent_systemd_unit;
@@ -44,4 +45,10 @@ pub(crate) use token_commands::{run_agent_token_create_local, run_token_create_l
 pub(crate) use tokens::{
     generate_bootstrap_token, generate_local_agent_token, generate_local_api_token,
     hash_local_token, local_token_prefix, render_token_generate, resolve_token, token_prefix,
+};
+pub(crate) use usage::{
+    agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
+    client_enroll_usage, client_usage, connect_usage, doctor_usage, pairing_create_usage,
+    pairing_usage, server_init_usage, server_install_service_usage, server_status_usage,
+    server_up_usage, server_usage, usage,
 };

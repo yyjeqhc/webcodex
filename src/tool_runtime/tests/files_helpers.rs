@@ -91,7 +91,7 @@ async fn read_project_artifact_metadata_routes_to_agent_file_op() {
         let project = project.clone();
         async move {
             runtime
-                .read_project_artifact_metadata(project, "sample.zip".to_string())
+                .read_project_artifact_metadata(project, "sample.zip".to_string(), None)
                 .await
         }
     });
@@ -106,7 +106,7 @@ async fn read_project_artifact_metadata_routes_to_agent_file_op() {
         serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
     assert_eq!(
         payload,
-        json!({"path":"sample.zip","max_bytes":MAX_PROJECT_ARTIFACT_BYTES})
+        json!({"path":"sample.zip","max_bytes":MAX_PROJECT_ARTIFACT_BYTES,"allow_missing":false})
     );
 
     complete_patch_agent_request(
@@ -122,6 +122,57 @@ async fn read_project_artifact_metadata_routes_to_agent_file_op() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["mime_type"], "application/zip");
     assert_eq!(result.output["archive_entries_count"], 2);
+}
+
+#[tokio::test]
+async fn read_project_artifact_metadata_allow_missing_routes_to_agent_file_op() {
+    let runtime = runtime_with_agent_project("artifact-meta-missing");
+    register_agent(
+        &runtime,
+        "artifact-meta-missing",
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("artifact-meta-missing");
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            runtime
+                .read_project_artifact_metadata(
+                    project,
+                    "artifacts/smoke/missing.artifact".to_string(),
+                    Some(true),
+                )
+                .await
+        }
+    });
+
+    let req = next_patch_agent_request(&runtime, "artifact-meta-missing")
+        .await
+        .expect("read_project_artifact_metadata should enqueue an artifact file-op");
+    let payload: serde_json::Value =
+        serde_json::from_str(req.content.as_deref().expect("artifact payload")).unwrap();
+    assert_eq!(payload["allow_missing"], true);
+
+    complete_patch_agent_request(
+        &runtime,
+        "artifact-meta-missing",
+        &req.request_id,
+        0,
+        r#"{"path":"artifacts/smoke/missing.artifact","exists":false,"missing":true}"#,
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["exists"], false);
+    assert_eq!(result.output["missing"], true);
 }
 
 #[tokio::test]

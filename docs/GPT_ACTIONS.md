@@ -125,6 +125,11 @@ Actions; use it mainly for schema debugging. For focused discovery, call
 scale is roughly 65 tools; the size issue is full schema/metadata expansion,
 not tool system sprawl.
 
+For smoke project selection, call `listProjects` and prefer projects whose
+`capabilities.recommended_for_smoke` is `true`. For git smoke, require
+`capabilities.git_available=true`; `agent:special:test-mcp` may be safe for
+basic smoke but is not necessarily git-backed.
+
 ## Recommended flow
 
 For coding tasks, use the deterministic coding-loop tools through generic
@@ -257,6 +262,10 @@ bindings remain process-local in-memory state, not durable ledger state, and
 may be lost on restart. For reliable long-running or cross-client workflows,
 keep the explicit `session_id` and pass it as tool input or
 `recording_session_id` metadata instead of relying only on current binding.
+In session summaries, `policy_rejected` means a safety or policy check blocked
+the request before a write. A `read_project_artifact_metadata` call with
+`allow_missing=true` and `exists=false` is a successful negative assertion, not a
+failed tool call.
 
 `session_handoff_summary` is read-only and requires a business `session_id`.
 It does not implicitly use the current-session binding. Its optional
@@ -326,15 +335,15 @@ Artifact runtime tools form the project-local read/write loop:
 - `artifact_upload_begin` starts a bounded upload with optional `expected_bytes` and `expected_sha256` guards.
 - `artifact_upload_chunk` appends one base64 chunk at the next contiguous `offset`.
 - `artifact_upload_finish` verifies guards and atomically commits the temporary upload to the target path.
-- `artifact_upload_abort` cleans temporary upload state when the upload fails, is cancelled, or is no longer needed.
-- `read_project_artifact_metadata` inspects artifact metadata such as bytes, MIME type, sha256, image dimensions, and zip entry count without returning file content.
+- `artifact_upload_abort` cleans temporary upload state when the upload fails, is cancelled, or is no longer needed, and reports `final_file_exists` without touching the final path.
+- `read_project_artifact_metadata` inspects artifact metadata such as bytes, MIME type, sha256, image dimensions, and zip entry count without returning file content. Set `allow_missing=true` when verifying an expected absence.
 - `read_project_artifact` is a bounded chunked read from a non-sensitive project path and returns one base64 segment plus full-file metadata.
 
 Do not use `read_project_artifact` for large files. Prefer metadata-only inspection, targeted source reads, or external artifact transfer flows instead of returning large base64 payloads through `callRuntimeTool`.
 
 This flow does not call the OpenAI Images API from WebCodex and therefore does not consume `gpt-image-2` API image-generation charges. The image generation happens in ChatGPT; WebCodex only imports the resulting conversation file through the GPT Actions file-passing mechanism.
 
-Security constraints: imports are limited to at most 10 files per request and 10 MiB per file. Paths must stay inside the project root; `..`, absolute paths, `.git`, `.env*`, `*.pem`, `secrets`, `tokens`, `node_modules`, and `target` paths are rejected. `overwrite` defaults to `false`. Zip files are saved as zip files and are not automatically extracted.
+Security constraints: imports are limited to at most 10 files per request and 10 MiB per file. Paths must stay inside the project root; `..`, absolute paths, `.git`, `.env*`, `*.pem`, `secrets`, `tokens`, `node_modules`, and `target` paths are rejected. `overwrite` defaults to `false`. Zip files are saved as zip files and are not automatically extracted. For smoke artifacts, use `artifacts/smoke/<name>.artifact` or `artifacts/smoke/<name>.txt`; do not use `.bin` with `application/octet-stream`.
 
 
 ## Chunked artifact uploads
@@ -358,12 +367,15 @@ the requested target artifact path. `expected_bytes` and
 checked before finish commits the upload. `artifact_upload_finish` succeeds only
 after the guard checks pass, then atomically commits the temporary upload to the
 target project-relative path. `artifact_upload_abort` removes the temporary
-upload state. Session logs do not record raw base64; they keep bounded summary
-fields such as path, upload id, offsets, byte counts, and sha256 guard metadata.
+upload state and returns `temp_file_removed`, `sidecar_removed`,
+`final_file_touched=false`, and `final_file_exists`. Prefer this abort output
+for cleanup verification; do not prove absence by intentionally causing a read
+failure. Session logs do not record raw base64; they keep bounded summary fields
+such as path, upload id, offsets, byte counts, and sha256 guard metadata.
 
 ## Artifact metadata and chunked content reads
 
-For existing project artifacts, prefer `read_project_artifact_metadata` first. It returns size, sha256, MIME type, and image dimensions where available without embedding file content in the GPT Action response.
+For existing project artifacts, prefer `read_project_artifact_metadata` first. It returns size, sha256, MIME type, and image dimensions where available without embedding file content in the GPT Action response. For abort verification or other expected absence checks, pass `allow_missing=true`; a missing file then returns `exists=false` and `missing=true` as a successful result.
 
 Do not read large files as one base64 response. If content is needed, call
 `read_project_artifact` as a bounded chunked read: use `offset` and `length`

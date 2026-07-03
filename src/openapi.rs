@@ -174,7 +174,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation(
                     "listProjects",
                     "List agent-registered projects",
-                    "Read-only. Returns projects registered by connected agents with runtime id (`agent:<client_id>:<project_id>`), path, executor, client_id, and patch flag. Call this first to learn the project ids required by other actions.",
+                    "Read-only. Returns projects registered by connected agents with runtime id (`agent:<client_id>:<project_id>`), path, executor, client_id, patch flag, and smoke-selection capabilities such as git_available and recommended_for_smoke. Call this first to learn the project ids required by other actions.",
                     "EmptyRequest",
                     "ToolResult"
                 )
@@ -1420,6 +1420,10 @@ fn schemas() -> Value {
                 "allow_multiple": {
                     "type": "boolean",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "allow_missing": {
+                    "type": "boolean",
+                    "description": "Flattened read_project_artifact_metadata flag. When true, a missing artifact returns exists=false instead of a failed tool call. Used only when `params` and `arguments` are absent."
                 },
                 "paths": {
                     "type": "array",
@@ -3356,6 +3360,7 @@ mod tests {
             "expected_sha256",
             "mime_type",
             "overwrite",
+            "allow_missing",
         ] {
             assert!(
                 properties.contains_key(field),

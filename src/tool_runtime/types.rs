@@ -718,6 +718,8 @@ pub enum ToolCall {
         path: String,
         #[serde(default)]
         session_id: Option<String>,
+        #[serde(default)]
+        allow_missing: Option<bool>,
     },
 
     /// Read one bounded binary content segment for a project artifact. Returns
@@ -1592,9 +1594,15 @@ impl ToolCall {
                 "mime_type": mime_type,
                 "overwrite": overwrite,
             }),
-            Self::ReadProjectArtifactMetadata { project, path, .. } => serde_json::json!({
+            Self::ReadProjectArtifactMetadata {
+                project,
+                path,
+                allow_missing,
+                ..
+            } => serde_json::json!({
                 "project": project,
                 "path": path,
+                "allow_missing": allow_missing,
             }),
             Self::ReadProjectArtifact {
                 project,

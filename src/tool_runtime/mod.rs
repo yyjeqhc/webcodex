@@ -1006,7 +1006,11 @@ impl ToolRuntime {
                 project,
                 path,
                 session_id: _,
-            } => self.read_project_artifact_metadata(project, path).await,
+                allow_missing,
+            } => {
+                self.read_project_artifact_metadata(project, path, allow_missing)
+                    .await
+            }
 
             ToolCall::ReadProjectArtifact {
                 project,
@@ -1157,6 +1161,7 @@ impl ToolRuntime {
             for project in client.projects.iter().filter(|p| !p.disabled) {
                 let (resolved_shell_profile, shell_profile_status) =
                     resolve_project_shell_profile(project.shell_profile.as_deref(), shell_profiles);
+                let capabilities = smoke_project_capabilities(&client, project);
                 list.push(json!({
                     "id": Self::agent_project_runtime_id(&client.client_id, &project.id),
                     "agent_project_id": project.id,
@@ -1172,6 +1177,7 @@ impl ToolRuntime {
                     "shell_profile": project.shell_profile,
                     "resolved_shell_profile": resolved_shell_profile,
                     "shell_profile_status": shell_profile_status,
+                    "capabilities": capabilities,
                 }));
             }
         }
@@ -1702,6 +1708,59 @@ fn build_risk_summary(tools: &[Value]) -> Value {
         .map(|(k, v)| (k.to_string(), Value::from(v)))
         .collect();
     Value::Object(result)
+}
+
+fn agent_protocol_reports_project_git(protocol: &str) -> bool {
+    matches!(
+        protocol,
+        crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V1
+            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_WEBSOCKET_V1
+            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V1
+    )
+}
+
+fn project_git_available(
+    client: &crate::shell_protocol::ShellClientView,
+    project: &crate::shell_protocol::ShellAgentProjectSummary,
+) -> Option<bool> {
+    if project.git_branch.is_some() || project.git_head.is_some() || project.git_dirty.is_some() {
+        Some(true)
+    } else if agent_protocol_reports_project_git(&client.agent_protocol_version) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn smoke_marker_present(project: &crate::shell_protocol::ShellAgentProjectSummary) -> bool {
+    let name = project.name.as_deref().unwrap_or_default();
+    [project.id.as_str(), name, project.path.as_str()]
+        .iter()
+        .map(|value| value.to_ascii_lowercase())
+        .any(|value| value.contains("smoke") || value.contains("test") || value.contains("sandbox"))
+}
+
+fn smoke_project_capabilities(
+    client: &crate::shell_protocol::ShellClientView,
+    project: &crate::shell_protocol::ShellAgentProjectSummary,
+) -> Value {
+    let git_available = project_git_available(client, project);
+    let safe_smoke_project =
+        project.allow_patch && client.connected && smoke_marker_present(project);
+    let supports_artifact_smoke = client.capabilities.file_read && client.capabilities.file_write;
+    let supports_cleanup_verification =
+        supports_artifact_smoke || git_available.is_some_and(|available| available);
+    let recommended_for_smoke = safe_smoke_project
+        && git_available.is_some_and(|available| available)
+        && supports_cleanup_verification;
+
+    json!({
+        "git_available": git_available,
+        "safe_smoke_project": safe_smoke_project,
+        "supports_artifact_smoke": supports_artifact_smoke,
+        "supports_cleanup_verification": supports_cleanup_verification,
+        "recommended_for_smoke": recommended_for_smoke,
+    })
 }
 
 /// Short, bounded list of recommended tool flows for common tasks. Each

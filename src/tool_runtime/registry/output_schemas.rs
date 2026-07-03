@@ -323,7 +323,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
         "list_projects" => wrapped_output_schema(vec![
             (
                 "projects",
-                array_schema(open_object_schema("Project summary."), "Runtime projects."),
+                array_schema(open_object_schema("Project summary including capabilities.git_available, supports_cleanup_verification, and recommended_for_smoke."), "Runtime projects."),
             ),
             ("count", schema_type("integer", "Project count.")),
         ]),
@@ -856,6 +856,11 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 "path",
                 schema_type("string", "Project-relative artifact path."),
             ),
+            ("exists", schema_type("boolean", "True when the artifact exists.")),
+            (
+                "missing",
+                schema_type("boolean", "True when allow_missing=true and the artifact was absent."),
+            ),
             ("bytes", schema_type("integer", "Artifact size in bytes.")),
             (
                 "sha256",
@@ -967,6 +972,26 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             ("committed", schema_type("boolean", "False for aborted uploads.")),
             ("aborted", schema_type("boolean", "True when temporary upload files were removed.")),
+            (
+                "temp_file_removed",
+                schema_type("boolean", "True when the temporary upload part file was removed."),
+            ),
+            (
+                "sidecar_removed",
+                schema_type("boolean", "True when the temporary upload sidecar was removed."),
+            ),
+            (
+                "final_file_touched",
+                schema_type("boolean", "Always false; abort does not touch the final target path."),
+            ),
+            (
+                "final_file_exists",
+                schema_type("boolean", "Read-only final target existence after abort."),
+            ),
+            (
+                "changed_path_details",
+                array_schema(open_object_schema("Path cleanup status detail."), "Abort cleanup path status details."),
+            ),
         ]),
         "read_project_artifact" => wrapped_output_schema(vec![
             (

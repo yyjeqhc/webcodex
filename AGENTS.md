@@ -180,6 +180,10 @@ If adding or renaming a runtime tool, update **all** of:
   should pass `summary_only=true` with `category`, `features`, or `limit`.
   Current tool count is around 65; the response-size issue is schema/metadata
   expansion, not runtime tool system sprawl.
+- `list_projects` project entries expose `capabilities`; smoke selection should
+  prefer `capabilities.recommended_for_smoke=true`, and git smoke must require
+  `capabilities.git_available=true`. `agent:special:test-mcp` may be safe but
+  not git-backed.
 - Chunked artifact upload tools (`artifact_upload_begin`,
   `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`)
   remain runtime-only through `callRuntimeTool`; do not promote them to
@@ -188,6 +192,11 @@ If adding or renaming a runtime tool, update **all** of:
   `artifact_upload_abort` must repeat the exact `path` used by
   `artifact_upload_begin`. This is intentional: it binds `upload_id` to the
   requested target artifact path.
+- Artifact smoke paths should use `artifacts/smoke/<name>.artifact` or
+  `artifacts/smoke/<name>.txt`. Verify abort cleanup with
+  `artifact_upload_abort.final_file_exists` or
+  `read_project_artifact_metadata(allow_missing=true)`, not with expected read
+  failures. `policy_rejected` means policy blocked the request before a write.
 - When adding future runtime tools, default to `callRuntimeTool` exposure unless
   there is an explicit product reason and operation-count budget for a dedicated
   Action.

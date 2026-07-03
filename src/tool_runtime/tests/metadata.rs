@@ -130,6 +130,58 @@ async fn list_projects_returns_agent_registered_projects_without_server_config()
     assert_eq!(projects[0]["agent_project_id"], "webcodex");
     assert_eq!(projects[0]["executor"], "agent");
     assert_eq!(projects[0]["source"], "agent_registered");
+    assert!(projects[0]["capabilities"].is_object());
+    assert_eq!(projects[0]["capabilities"]["git_available"], false);
+    assert_eq!(projects[0]["capabilities"]["recommended_for_smoke"], false);
+}
+
+#[tokio::test]
+async fn list_projects_reports_smoke_selection_capabilities() {
+    let runtime = test_runtime();
+    let mut test_mcp = registered_project("test-mcp", "/tmp/test-mcp");
+    test_mcp.name = Some("Test MCP".to_string());
+    let mut smoke = registered_project("webcodex-smoke", "/tmp/webcodex-smoke");
+    smoke.name = Some("WebCodex Smoke Workspace".to_string());
+    smoke.git_branch = Some("main".to_string());
+    smoke.git_head = Some("abc1234".to_string());
+    smoke.git_dirty = Some(false);
+    register_agent_with_projects(
+        &runtime,
+        "special",
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            file_write: true,
+            git: true,
+            ..Default::default()
+        },
+        vec![test_mcp, smoke],
+    )
+    .await;
+
+    let result = runtime.dispatch(ToolCall::ListProjects).await;
+    assert!(result.success, "{:?}", result.error);
+    let projects = result.output.as_array().unwrap();
+    let test_mcp = projects
+        .iter()
+        .find(|project| project["id"] == "agent:special:test-mcp")
+        .expect("test-mcp project");
+    let smoke = projects
+        .iter()
+        .find(|project| project["id"] == "agent:special:webcodex-smoke")
+        .expect("webcodex-smoke project");
+
+    assert_eq!(test_mcp["capabilities"]["safe_smoke_project"], true);
+    assert_eq!(test_mcp["capabilities"]["git_available"], false);
+    assert_eq!(
+        test_mcp["capabilities"]["supports_cleanup_verification"],
+        true
+    );
+    assert_eq!(test_mcp["capabilities"]["recommended_for_smoke"], false);
+    assert_eq!(smoke["capabilities"]["safe_smoke_project"], true);
+    assert_eq!(smoke["capabilities"]["git_available"], true);
+    assert_eq!(smoke["capabilities"]["supports_artifact_smoke"], true);
+    assert_eq!(smoke["capabilities"]["recommended_for_smoke"], true);
 }
 
 #[tokio::test]

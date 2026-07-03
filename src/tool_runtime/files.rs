@@ -11,6 +11,9 @@ use super::helpers::{
 };
 use super::types::ToolResult;
 use super::ToolRuntime;
+use crate::artifact_policy::{
+    has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error,
+};
 use crate::projects::ProjectConfig;
 use crate::shell_protocol::{ShellFileOpRequest, ShellRunRequest};
 
@@ -923,15 +926,23 @@ fn validate_artifact_mime_for_path(
 ) -> Result<Option<String>, String> {
     let mime_type = validate_artifact_mime(mime_type)?;
     if matches!(mime_type.as_deref(), Some("application/octet-stream")) {
-        let lower = path.to_lowercase();
-        let allowed = [
-            ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".zip", ".txt", ".csv", ".json",
-        ];
-        if !allowed.iter().any(|suffix| lower.ends_with(suffix)) {
-            return Err("application/octet-stream requires a safe artifact extension".to_string());
+        if !has_safe_octet_stream_artifact_extension(path) {
+            return Err(octet_stream_safe_extension_error());
         }
     }
     Ok(mime_type)
+}
+
+fn artifact_policy_rejected_result(path: &str, message: String) -> ToolResult {
+    ToolResult::err_with_output(
+        message.clone(),
+        json!({
+            "path": path,
+            "error": message,
+            "failure_kind": "policy_rejected",
+            "error_kind": "policy_rejected",
+        }),
+    )
 }
 
 fn validate_artifact_upload_id(upload_id: &str) -> Result<(), String> {
@@ -1605,7 +1616,7 @@ impl ToolRuntime {
         }
         let mime_type = match validate_artifact_mime_for_path(&path, mime_type.as_deref()) {
             Ok(v) => v,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => return artifact_policy_rejected_result(&path, e),
         };
         let decoded = match general_purpose::STANDARD.decode(content_base64.as_bytes()) {
             Ok(bytes) => bytes,
@@ -1668,6 +1679,7 @@ impl ToolRuntime {
         &self,
         project: String,
         path: String,
+        allow_missing: Option<bool>,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
             return ToolResult::err(e);
@@ -1688,6 +1700,7 @@ impl ToolRuntime {
         let payload = json!({
             "path": path.clone(),
             "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
+            "allow_missing": allow_missing.unwrap_or(false),
         });
         let obj = match self
             .run_agent_json_file_op(
@@ -1865,7 +1878,7 @@ impl ToolRuntime {
         }
         let mime_type = match validate_artifact_mime_for_path(&path, mime_type.as_deref()) {
             Ok(v) => v,
-            Err(e) => return ToolResult::err(e),
+            Err(e) => return artifact_policy_rejected_result(&path, e),
         };
         let payload = json!({
             "path": path.clone(),

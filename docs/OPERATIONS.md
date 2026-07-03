@@ -384,6 +384,11 @@ and pass it explicitly to subsequent project tools.
 {"tool": "show_changes", "params": {"project": "agent:workstation:my-repo", "session_id": "wc_sess_example", "include_diff": false}}
 ```
 
+When choosing a smoke target from `list_projects`, prefer
+`capabilities.recommended_for_smoke=true`. For git smoke, also require
+`capabilities.git_available=true`; a project such as `agent:special:test-mcp`
+may be safe but not git-backed.
+
 ### 3. Edit with structured tools
 
 Prefer structured line edits when line numbers are known:
@@ -527,14 +532,17 @@ Assumes a registered project `agent:workstation:my-repo`.
 After deploying a new server, agent, or runtime build:
 
 1. Refresh the GPT Action or MCP schema if runtime tool schemas changed.
-2. Run `tool_manifest` or `list_tools`.
+2. Run `tool_manifest` or focused `list_tools` with `summary_only=true` plus
+   `category`, `features`, or `limit`; avoid full `listRuntimeTools` in GPT
+   Actions unless debugging schemas.
 3. Run `runtime_status`.
 4. Confirm `start_coding_task` and `finish_coding_task` are available through
    the generic runtime tool path.
 5. Confirm `session_handoff_summary` exposes `validation` when
    `include_validation` defaults to true.
-6. On a safe test project only, run `start_coding_task`, `read_file` or
-   `search_project_text`, `show_changes`, and `finish_coding_task`.
+6. On a `list_projects` entry with `capabilities.recommended_for_smoke=true`,
+   run `start_coding_task`, `read_file` or `search_project_text`,
+   `show_changes`, and `finish_coding_task`.
 7. Run local or staging E2E and eval checks:
 
 ```bash
@@ -545,6 +553,12 @@ EVAL_MODE=compare bash scripts/eval_coding_loop.sh
 
 Do not use production mutation as smoke coverage. Any write-path smoke must stay
 inside a disposable test project or temporary project under an allowed root.
+Use artifact paths such as `artifacts/smoke/<name>.artifact` or
+`artifacts/smoke/<name>.txt`. For abort cleanup verification, prefer
+`artifact_upload_abort.final_file_exists` or
+`read_project_artifact_metadata` with `allow_missing=true`; do not use an
+expected read failure to prove absence. In session summaries,
+`policy_rejected` means policy blocked the request before a write.
 
 ### register_project example
 

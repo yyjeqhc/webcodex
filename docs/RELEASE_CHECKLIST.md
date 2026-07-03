@@ -109,14 +109,18 @@ Confirm:
 After deploying a new server, agent, or runtime build:
 
 1. Refresh the GPT Action or MCP schema if runtime tool schemas changed.
-2. Run `tool_manifest` or `list_tools` through the target integration.
+2. Run `tool_manifest` or focused `list_tools` through the target integration;
+   use `summary_only=true` with `category`, `features`, or `limit` for GPT
+   Actions, and reserve full `listRuntimeTools` for schema debugging.
 3. Run `runtime_status`.
 4. Confirm `start_coding_task` and `finish_coding_task` are available through
    the generic runtime tool path.
 5. Confirm `session_handoff_summary` exposes `validation` when
    `include_validation` defaults to true.
-6. On a safe test project only, run `start_coding_task`, `read_file` or
-   `search_project_text`, `show_changes`, and `finish_coding_task`.
+6. On a `list_projects` entry with `capabilities.recommended_for_smoke=true`
+   and, for git smoke, `capabilities.git_available=true`, run
+   `start_coding_task`, `read_file` or `search_project_text`, `show_changes`,
+   and `finish_coding_task`.
 7. Run the local or staging smoke/eval commands:
 
 ```bash
@@ -127,3 +131,8 @@ EVAL_MODE=compare bash scripts/eval_coding_loop.sh
 
 Do not run production mutations as acceptance smoke. Any write-path smoke must
 use a safe test project or temporary project under an allowed root.
+Use `artifacts/smoke/<name>.artifact` or `.txt` for artifact smoke. Verify abort
+cleanup with `artifact_upload_abort.final_file_exists` or
+`read_project_artifact_metadata` plus `allow_missing=true`, not with expected
+read failures. Treat `policy_rejected` session entries as pre-write policy
+denials.

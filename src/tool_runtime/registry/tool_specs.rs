@@ -191,8 +191,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "list_projects".to_string(),
-                description: "List agent-registered runtime projects and their execution mode."
-                    .to_string(),
+                description: "List agent-registered runtime projects, execution mode, and smoke-selection capabilities such as git_available and recommended_for_smoke.".to_string(),
                 input_schema: object_schema(vec![]),
                 output_schema: output_schema_for_tool("list_projects"),
                 annotations: tool_annotations("list_projects"),
@@ -804,10 +803,11 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "read_project_artifact_metadata".to_string(),
-                description: "Read bounded metadata for a binary artifact; images include dimensions and zip archives are counted but never extracted.".to_string(),
+                description: "Read bounded metadata for a binary artifact; images include dimensions and zip archives are counted but never extracted. Set allow_missing=true to make a missing artifact a successful exists=false negative assertion.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative artifact path.", true),
+                    ("allow_missing", "boolean", "When true, a missing artifact returns exists=false instead of an error.", false),
                 ])),
                 output_schema: output_schema_for_tool("read_project_artifact_metadata"),
                 annotations: tool_annotations("read_project_artifact_metadata"),
@@ -848,7 +848,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "artifact_upload_begin".to_string(),
-                description: "Begin a bounded chunked binary artifact upload. Creates a project-local temporary upload session; finish commits atomically to the target path.".to_string(),
+                description: "Begin a bounded chunked binary artifact upload. Creates a project-local temporary upload session; finish commits atomically to the target path. For smoke octet-stream uploads, use artifacts/smoke/<name>.artifact or omit mime_type when appropriate.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative output path.", true),
@@ -886,7 +886,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "artifact_upload_abort".to_string(),
-                description: "Abort an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before cleanup.".to_string(),
+                description: "Abort an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before cleanup and reports final_file_exists without touching the final target.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Required project-relative path; must exactly match the path used in artifact_upload_begin to bind upload_id to the target.", true),

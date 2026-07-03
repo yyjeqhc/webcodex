@@ -84,6 +84,11 @@ and descriptions expand the response; this is not a sign that the roughly
 `listRuntimeTools` for focused discovery. Use full `listRuntimeTools` only when
 debugging runtime schemas.
 
+For smoke project selection, call `list_projects` and prefer
+`capabilities.recommended_for_smoke=true`. For git smoke, require
+`capabilities.git_available=true`; `agent:special:test-mcp` can be safe for
+basic smoke without being git-backed.
+
 Typical MCP tools include:
 
 - Discovery, health, and task tracking: `list_tools`, `start_session`,
@@ -128,13 +133,18 @@ contiguous, and `artifact_upload_chunk`, `artifact_upload_finish`, and
 `upload_id` to the requested target artifact path. `expected_bytes` /
 `expected_sha256` are integrity guards checked before finish atomically commits
 the target path. Session metadata records summary fields rather than raw
-base64.
+base64. For smoke artifacts, use `artifacts/smoke/<name>.artifact` or
+`artifacts/smoke/<name>.txt`; do not use `.bin` with
+`application/octet-stream`. `artifact_upload_abort` reports
+`final_file_exists` after removing temporary upload state.
 
 For download/readback, use `read_project_artifact_metadata` before
 `read_project_artifact`. `read_project_artifact` returns a bounded base64
 segment with `sha256`, `mime_type`, `offset`, `next_offset`, `truncated`, and
 `eof`; continue from `next_offset` while needed. It is not an unlimited file
-download tool.
+download tool. To verify an expected absence, call
+`read_project_artifact_metadata` with `allow_missing=true`; missing then returns
+`exists=false` and `missing=true` as a successful result.
 
 Use `show_changes` near the end of a task to summarize the current worktree,
 check for untracked smoke/tmp/test files, review `git diff --stat`, request
@@ -174,6 +184,10 @@ not forwarded to the tool parser, agent, or workspace files. The summary records
 bounded/redacted start and finish events, including tool name, transport,
 project id when supplied, risk class, status, duration, inferred write-like
 paths, and returned `job_id` when available.
+In session summaries, `policy_rejected` means a safety or policy check blocked
+the request before a write. A missing artifact result from
+`read_project_artifact_metadata` with `allow_missing=true` is a successful
+negative assertion, not a failed tool call.
 
 For `show_changes`, distinguish two session fields:
 

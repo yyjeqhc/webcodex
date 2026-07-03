@@ -15,6 +15,9 @@ mod shell_protocol;
 #[path = "../agent_init.rs"]
 mod agent_init;
 
+#[path = "../artifact_policy.rs"]
+mod artifact_policy;
+
 #[path = "../build_info.rs"]
 mod build_info;
 
@@ -3267,10 +3270,11 @@ shell_profile = "../rust"
                 }),
             ),
         ));
-        assert_eq!(
-            unsafe_octet["error"],
-            "application/octet-stream requires a safe artifact extension"
-        );
+        let unsafe_octet_error = unsafe_octet["error"].as_str().unwrap();
+        assert!(unsafe_octet_error.contains(".artifact"));
+        assert!(unsafe_octet_error.contains(".txt"));
+        assert!(unsafe_octet_error.contains("artifacts/smoke/<name>.artifact"));
+        assert_eq!(unsafe_octet["failure_kind"], "policy_rejected");
 
         let existing_path = "artifacts/imports/existing.txt";
         std::fs::create_dir_all(tmp.path().join("artifacts/imports")).unwrap();

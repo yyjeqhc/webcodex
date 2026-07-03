@@ -80,6 +80,33 @@ fn artifact_upload_followup_tools_missing_path_error_is_actionable() {
 }
 
 #[test]
+fn from_tool_name_parses_read_project_artifact_metadata_allow_missing() {
+    let call = ToolCall::from_tool_name(
+        "read_project_artifact_metadata",
+        json!({
+            "project": "agent:demo:smoke",
+            "path": "artifacts/smoke/missing.artifact",
+            "allow_missing": true
+        }),
+    )
+    .unwrap();
+
+    match call {
+        ToolCall::ReadProjectArtifactMetadata {
+            project,
+            path,
+            allow_missing,
+            ..
+        } => {
+            assert_eq!(project, "agent:demo:smoke");
+            assert_eq!(path, "artifacts/smoke/missing.artifact");
+            assert_eq!(allow_missing, Some(true));
+        }
+        other => panic!("expected ReadProjectArtifactMetadata, got {:?}", other),
+    }
+}
+
+#[test]
 fn from_tool_name_parses_run_shell_with_required_fields() {
     let call = ToolCall::from_tool_name(
         "run_shell",

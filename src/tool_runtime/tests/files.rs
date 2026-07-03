@@ -168,6 +168,122 @@ async fn artifact_upload_chunk_session_log_arguments_do_not_store_base64() {
 }
 
 #[tokio::test]
+async fn read_project_artifact_metadata_allow_missing_does_not_count_as_failed() {
+    let runtime = runtime_with_agent_project("artifact-missing-session");
+    register_agent(
+        &runtime,
+        "artifact-missing-session",
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("artifact-missing-session");
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session.session_id.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadProjectArtifactMetadata {
+                        project,
+                        path: "artifacts/smoke/missing.artifact".to_string(),
+                        session_id: Some(session_id),
+                        allow_missing: Some(true),
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+
+    let req = next_patch_agent_request(&runtime, "artifact-missing-session")
+        .await
+        .expect("read_project_artifact_metadata should enqueue file-op");
+    complete_patch_agent_request(
+        &runtime,
+        "artifact-missing-session",
+        &req.request_id,
+        0,
+        r#"{"path":"artifacts/smoke/missing.artifact","exists":false,"missing":true}"#,
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["exists"], false);
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    assert_eq!(summary.counts.failed, 0);
+    let event = finished_event(&summary, "read_project_artifact_metadata");
+    assert_eq!(event.status.as_deref(), Some("succeeded"));
+}
+
+#[tokio::test]
+async fn artifact_upload_begin_policy_rejection_is_classified() {
+    let runtime = runtime_with_agent_project("artifact-policy-session");
+    register_agent(
+        &runtime,
+        "artifact-policy-session",
+        None,
+        ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("artifact-policy-session");
+    let session = runtime.sessions.start_session(Some(project.clone()), None);
+    let bootstrap = auth_context(None, true);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::ArtifactUploadBegin {
+                project,
+                path: "artifacts/smoke/raw.bin".to_string(),
+                session_id: Some(session.session_id.clone()),
+                expected_bytes: Some(1),
+                expected_sha256: None,
+                mime_type: Some("application/octet-stream".to_string()),
+                overwrite: Some(false),
+            },
+            Some(&bootstrap),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "policy_rejected");
+    assert_eq!(result.output["error_kind"], "policy_rejected");
+    let error = result.error.as_deref().unwrap();
+    assert!(error.contains(".artifact"), "{error}");
+    assert!(error.contains("artifacts/smoke/<name>.artifact"), "{error}");
+    assert!(
+        next_patch_agent_request(&runtime, "artifact-policy-session")
+            .await
+            .is_none(),
+        "policy rejection must happen before enqueue"
+    );
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    assert_eq!(summary.counts.failed, 1);
+    let event = finished_event(&summary, "artifact_upload_begin");
+    assert_eq!(event.failure_kind.as_deref(), Some("policy_rejected"));
+    assert_eq!(event.error_kind.as_deref(), Some("policy_rejected"));
+}
+
+#[tokio::test]
 async fn validate_patch_never_enqueues_mutating_apply_command() {
     let runtime = runtime_with_agent_project("patcher");
     let mut caps = ShellClientCapabilities::default();
@@ -1157,7 +1273,7 @@ async fn artifact_upload_begin_rejects_invalid_inputs_before_resolving_project()
             Some(1),
             None,
             Some("application/octet-stream"),
-            "application/octet-stream requires a safe artifact extension",
+            "artifacts/smoke/<name>.artifact",
         ),
     ];
 

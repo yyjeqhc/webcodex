@@ -1,5 +1,8 @@
 use super::files::sha256_hex_bytes;
 use super::output::{line_edit_stdout, CommandResult};
+use crate::artifact_policy::{
+    has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error,
+};
 use crate::shell_protocol::ShellAgentShellRequest;
 use base64::{engine::general_purpose, Engine as _};
 use serde::{Deserialize, Serialize};
@@ -312,6 +315,17 @@ fn upload_error(path: Option<&str>, upload_id: Option<&str>, msg: impl Into<Stri
     })
 }
 
+fn upload_policy_rejected_error(
+    path: Option<&str>,
+    upload_id: Option<&str>,
+    msg: impl Into<String>,
+) -> Value {
+    let mut out = upload_error(path, upload_id, msg);
+    out["failure_kind"] = json!("policy_rejected");
+    out["error_kind"] = json!("policy_rejected");
+    out
+}
+
 fn metadata_error(path: Option<&str>, msg: impl Into<String>) -> Value {
     json!({
         "path": path,
@@ -375,10 +389,6 @@ fn extension_mime(path: &str) -> Option<&'static str> {
     } else {
         None
     }
-}
-
-fn has_safe_artifact_extension(path: &str) -> bool {
-    extension_mime(path).is_some()
 }
 
 fn artifact_mime(path: &str, data: &[u8], sniff_json: bool) -> Option<String> {
@@ -678,14 +688,10 @@ fn handle_artifact_upload_begin(
         Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
     };
     if matches!(mime_type.as_deref(), Some("application/octet-stream"))
-        && !has_safe_artifact_extension(path)
+        && !has_safe_octet_stream_artifact_extension(path)
     {
         return line_edit_stdout(
-            upload_error(
-                Some(path),
-                None,
-                "application/octet-stream requires a safe artifact extension",
-            ),
+            upload_policy_rejected_error(Some(path), None, octet_stream_safe_extension_error()),
             start,
         );
     }
@@ -1211,11 +1217,17 @@ fn handle_artifact_upload_abort(
     let received_bytes = std::fs::metadata(&part)
         .map(|metadata| metadata.len() as usize)
         .unwrap_or(0);
-    let _ = std::fs::remove_file(&part);
-    let _ = std::fs::remove_file(&sidecar);
+    let temp_file_removed = std::fs::remove_file(&part).is_ok();
+    let sidecar_removed = std::fs::remove_file(&sidecar).is_ok();
     if let Ok(dir) = std::fs::File::open(parent) {
         let _ = dir.sync_all();
     }
+    let final_file_exists = std::fs::symlink_metadata(resolved).is_ok();
+    let changed_status = if final_file_exists {
+        "upload_aborted_final_file_preexisting"
+    } else {
+        "upload_aborted_no_final_file"
+    };
     line_edit_stdout(
         json!({
             "path": path,
@@ -1226,6 +1238,14 @@ fn handle_artifact_upload_abort(
             "mime_type": state.mime_type,
             "committed": false,
             "aborted": true,
+            "temp_file_removed": temp_file_removed,
+            "sidecar_removed": sidecar_removed,
+            "final_file_touched": false,
+            "final_file_exists": final_file_exists,
+            "changed_path_details": [{
+                "path": path,
+                "status": changed_status,
+            }],
         }),
         start,
     )
@@ -1248,7 +1268,25 @@ fn handle_read_project_artifact_metadata(
         Ok(root) => root,
         Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
     };
+    let allow_missing = match parse_bool_field(&payload, "allow_missing") {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(metadata_error(Some(path), e), start),
+    };
     if let Err(e) = ensure_existing_target_in_project_root(resolved, &root) {
+        let target_missing = matches!(
+            std::fs::symlink_metadata(resolved),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound
+        );
+        if allow_missing && target_missing {
+            return line_edit_stdout(
+                json!({
+                    "path": path,
+                    "exists": false,
+                    "missing": true,
+                }),
+                start,
+            );
+        }
         return line_edit_stdout(metadata_error(Some(path), e), start);
     }
     let max_bytes = match parse_usize_field(&payload, "max_bytes", DEFAULT_MAX_ARTIFACT_BYTES) {
@@ -1262,6 +1300,8 @@ fn handle_read_project_artifact_metadata(
     let mime_type = artifact_mime(path, &data, false);
     let mut out = json!({
         "path": path,
+        "exists": true,
+        "missing": false,
         "bytes": data.len(),
         "sha256": sha256_hex_bytes(&data),
         "mime_type": mime_type,
@@ -1379,6 +1419,57 @@ fn handle_read_project_artifact(
 mod tests {
     use super::*;
 
+    fn artifact_request(
+        root: &Path,
+        kind: &str,
+        path: &str,
+        payload: Value,
+    ) -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: format!("req-{kind}"),
+            client_id: "agent-1".to_string(),
+            kind: kind.to_string(),
+            job_id: None,
+            cwd: Some(root.to_string_lossy().to_string()),
+            path: Some(path.to_string()),
+            content: Some(payload.to_string()),
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            command: String::new(),
+            stdin: None,
+            timeout_secs: 30,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        }
+    }
+
+    fn artifact_output(result: CommandResult) -> Value {
+        assert_eq!(result.exit_code, Some(0), "unexpected result: {result:?}");
+        assert!(
+            result.error.is_none(),
+            "unexpected error: {:?}",
+            result.error
+        );
+        serde_json::from_str(result.stdout.as_deref().expect("json stdout")).unwrap()
+    }
+
+    fn run_artifact_request(root: &Path, kind: &str, path: &str, payload: Value) -> Value {
+        let request = artifact_request(root, kind, path, payload);
+        let resolved = root.join(path);
+        artifact_output(handle_artifact_file_request(
+            &request,
+            &resolved,
+            Instant::now(),
+        ))
+    }
+
     #[test]
     fn read_upload_state_rejects_requested_path_mismatch() {
         let tmp = tempfile::tempdir().unwrap();
@@ -1398,5 +1489,193 @@ mod tests {
 
         let err = read_upload_state(&sidecar, "artifacts/imports/b.bin").unwrap_err();
         assert_eq!(err, "upload_id does not belong to requested path");
+    }
+
+    #[test]
+    fn read_project_artifact_metadata_allow_missing_returns_successful_absence() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = "artifacts/smoke/missing.artifact";
+
+        let missing = run_artifact_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            path,
+            json!({"path": path, "allow_missing": true}),
+        );
+
+        assert_eq!(missing["path"], path);
+        assert_eq!(missing["exists"], false);
+        assert_eq!(missing["missing"], true);
+        assert!(missing.get("error").is_none());
+    }
+
+    #[test]
+    fn read_project_artifact_metadata_missing_without_allow_missing_keeps_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = "artifacts/smoke/missing.artifact";
+
+        let missing = run_artifact_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            path,
+            json!({"path": path}),
+        );
+
+        assert_eq!(missing["path"], path);
+        assert!(missing["error"].as_str().unwrap().contains("read failed"));
+        assert!(missing.get("exists").is_none());
+    }
+
+    #[test]
+    fn read_project_artifact_metadata_existing_reports_exists_with_allow_missing() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = "artifacts/smoke/existing.artifact";
+        let resolved = tmp.path().join(path);
+        std::fs::create_dir_all(resolved.parent().unwrap()).unwrap();
+        std::fs::write(&resolved, b"hello").unwrap();
+
+        let metadata = run_artifact_request(
+            tmp.path(),
+            "file_read_project_artifact_metadata",
+            path,
+            json!({"path": path, "allow_missing": true}),
+        );
+
+        assert_eq!(metadata["exists"], true);
+        assert_eq!(metadata["missing"], false);
+        assert_eq!(metadata["bytes"], 5);
+        assert_eq!(metadata["sha256"], sha256_hex_bytes(b"hello"));
+    }
+
+    #[test]
+    fn artifact_upload_abort_reports_cleanup_and_no_final_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = "artifacts/smoke/abort.artifact";
+        let upload_id = "wc_upload_test_abort";
+        let resolved = tmp.path().join(path);
+        let parent = resolved.parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        let (part, sidecar) = upload_paths(parent, upload_id);
+        std::fs::write(&part, b"partial").unwrap();
+        write_upload_state(
+            &sidecar,
+            &ArtifactUploadState {
+                path: path.to_string(),
+                expected_bytes: None,
+                expected_sha256: None,
+                mime_type: Some("application/octet-stream".to_string()),
+                overwrite: false,
+                max_bytes: DEFAULT_MAX_ARTIFACT_BYTES,
+            },
+        )
+        .unwrap();
+
+        let output = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_abort",
+            path,
+            json!({"path": path, "upload_id": upload_id}),
+        );
+
+        assert_eq!(output["aborted"], true);
+        assert_eq!(output["temp_file_removed"], true);
+        assert_eq!(output["sidecar_removed"], true);
+        assert_eq!(output["final_file_touched"], false);
+        assert_eq!(output["final_file_exists"], false);
+        assert_eq!(
+            output["changed_path_details"][0]["status"],
+            "upload_aborted_no_final_file"
+        );
+        assert!(!part.exists());
+        assert!(!sidecar.exists());
+        assert!(!resolved.exists());
+    }
+
+    #[test]
+    fn artifact_upload_abort_preserves_preexisting_final_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = "artifacts/smoke/preexisting.artifact";
+        let upload_id = "wc_upload_test_preexisting";
+        let resolved = tmp.path().join(path);
+        let parent = resolved.parent().unwrap();
+        std::fs::create_dir_all(parent).unwrap();
+        std::fs::write(&resolved, b"keep").unwrap();
+        let (part, sidecar) = upload_paths(parent, upload_id);
+        std::fs::write(&part, b"partial").unwrap();
+        write_upload_state(
+            &sidecar,
+            &ArtifactUploadState {
+                path: path.to_string(),
+                expected_bytes: None,
+                expected_sha256: None,
+                mime_type: None,
+                overwrite: true,
+                max_bytes: DEFAULT_MAX_ARTIFACT_BYTES,
+            },
+        )
+        .unwrap();
+
+        let output = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_abort",
+            path,
+            json!({"path": path, "upload_id": upload_id}),
+        );
+
+        assert_eq!(output["final_file_touched"], false);
+        assert_eq!(output["final_file_exists"], true);
+        assert_eq!(
+            output["changed_path_details"][0]["status"],
+            "upload_aborted_final_file_preexisting"
+        );
+        assert_eq!(std::fs::read(&resolved).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn artifact_upload_begin_octet_stream_error_is_actionable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = "artifacts/smoke/raw.bin";
+
+        let output = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_begin",
+            path,
+            json!({
+                "path": path,
+                "mime_type": "application/octet-stream",
+                "max_bytes": DEFAULT_MAX_ARTIFACT_BYTES,
+            }),
+        );
+
+        let error = output["error"].as_str().unwrap();
+        assert_eq!(output["failure_kind"], "policy_rejected");
+        assert!(error.contains(".artifact"), "{error}");
+        assert!(error.contains(".txt"), "{error}");
+        assert!(error.contains("artifacts/smoke/<name>.artifact"), "{error}");
+    }
+
+    #[test]
+    fn artifact_upload_begin_octet_stream_safe_extension_succeeds() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = "artifacts/smoke/raw.artifact";
+
+        let output = run_artifact_request(
+            tmp.path(),
+            "file_artifact_upload_begin",
+            path,
+            json!({
+                "path": path,
+                "mime_type": "application/octet-stream",
+                "max_bytes": DEFAULT_MAX_ARTIFACT_BYTES,
+            }),
+        );
+
+        assert!(output["error"].is_null() || output.get("error").is_none());
+        assert_eq!(output["path"], path);
+        assert_eq!(output["committed"], false);
+        assert!(output["upload_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("wc_upload_"));
     }
 }

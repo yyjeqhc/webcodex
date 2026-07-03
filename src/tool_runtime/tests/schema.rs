@@ -324,6 +324,24 @@ fn list_tools_schema_exposes_bounded_discovery_fields() {
 }
 
 #[test]
+fn read_project_artifact_metadata_schema_exposes_allow_missing() {
+    let runtime = test_runtime();
+    let specs = runtime.tool_specs();
+    let spec = spec_named(&specs, "read_project_artifact_metadata");
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert!(
+        props.contains_key("allow_missing"),
+        "read_project_artifact_metadata input schema must expose allow_missing"
+    );
+    assert!(
+        spec.description.contains("allow_missing=true")
+            && spec.description.contains("exists=false"),
+        "description should explain successful missing assertions: {}",
+        spec.description
+    );
+}
+
+#[test]
 fn artifact_upload_followup_descriptions_explain_required_path_binding() {
     let runtime = test_runtime();
     let specs = runtime.tool_specs();
@@ -463,7 +481,15 @@ fn key_tool_output_schemas_include_expected_fields() {
             "job_log missing {field}"
         );
     }
-    for field in ["path", "bytes", "sha256", "mime_type", "modified_at"] {
+    for field in [
+        "path",
+        "exists",
+        "missing",
+        "bytes",
+        "sha256",
+        "mime_type",
+        "modified_at",
+    ] {
         assert!(
             has_output_field("read_project_artifact_metadata", field),
             "read_project_artifact_metadata missing {field}"
@@ -518,7 +544,17 @@ fn key_tool_output_schemas_include_expected_fields() {
             "artifact_upload_finish missing {field}"
         );
     }
-    for field in ["path", "upload_id", "received_bytes", "aborted"] {
+    for field in [
+        "path",
+        "upload_id",
+        "received_bytes",
+        "aborted",
+        "temp_file_removed",
+        "sidecar_removed",
+        "final_file_touched",
+        "final_file_exists",
+        "changed_path_details",
+    ] {
         assert!(
             has_output_field("artifact_upload_abort", field),
             "artifact_upload_abort missing {field}"

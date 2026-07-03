@@ -15,6 +15,31 @@ E2E validation script 用于在不依赖 ChatGPT UI 的情况下，本地验证 
 - 只读 project tools 可用。
 - Mutation tools 只对 disposable projects 生效。
 - MCP tools/list 与预期 runtime tool surface 匹配。
+- 部署后的 artifact transfer smoke 覆盖 bounded runtime discovery、chunked
+  artifact upload/readback、cleanup，以及安全 smoke project 的 git clean 状态。
+
+## 部署 artifact transfer smoke
+
+部署后需要集中验证 artifact transfer 和 runtime discovery 时，使用
+`scripts/smoke_artifact_transfer.sh`。默认模式只打印 checklist，不读取 token
+变量，也不会访问 server：
+
+```bash
+bash scripts/smoke_artifact_transfer.sh
+```
+
+显式 active mode 需要 public URL 和可用于 GPT/MCP 的 token：
+
+```bash
+WEBCODEX_SMOKE_RUN=1 \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
+WEBCODEX_TOKEN="<wc_pat_or_allowed_shared_key>" \
+bash scripts/smoke_artifact_transfer.sh
+```
+
+Smoke project 应是 disposable、agent-backed 的 git repository，例如
+`agent:special:webcodex-smoke`。不要把 `wc_agent_*` 用于 GPT Actions、MCP
+或这个 smoke script；该 token type 只给 `webcodex-agent` 使用。
 
 ## Authentication
 

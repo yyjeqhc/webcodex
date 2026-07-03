@@ -14,7 +14,7 @@ while keeping local integration, security, and smoke coverage visible.
 | local integration | Path-filtered PRs and scheduled runs. | `cargo test --bin webcodex runtime_http -- --nocapture`; `cargo test --bin webcodex session -- --nocapture` | In-process HTTP and loopback fixtures are allowed when isolated. Fixed ports and real internet are not. |
 | security auth matrix | Auth, OAuth, scope, session guard, principal, or token changes. | `cargo test --bin webcodex oauth -- --nocapture`; `cargo test --bin webcodex scope -- --nocapture`; `cargo test --bin webcodex metadata -- --nocapture` | Denial paths and exact error contracts should keep explicit assertions. |
 | slow/manual ignored | Manual or scheduled only until fixtures are serial and deterministic. | `cargo test --bin webcodex import_http -- --ignored --nocapture --test-threads=1` | Current home for the ignored `import_http` local mock server tests. |
-| e2e/deployment smoke | Manual release validation and scheduled local smoke. | `bash scripts/e2e_zero_config_ws.sh`; `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`; `bash scripts/smoke_deployment.sh` | These may start temporary local services. Do not point them at real deployment targets unless the operator explicitly requests that. |
+| e2e/deployment smoke | Manual release validation and scheduled local smoke. | `bash scripts/e2e_zero_config_ws.sh`; `E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh`; `bash scripts/smoke_deployment.sh`; `bash scripts/smoke_artifact_transfer.sh` | These may start temporary local services or require an explicit deployed target. Do not point them at real deployment targets unless the operator explicitly requests that. |
 
 ## Default CI Rules
 

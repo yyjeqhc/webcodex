@@ -78,3 +78,64 @@ journalctl -u webcodex-agent
 ```
 
 同时确认 server URL、本地 token files 和 agent `allowed_roots`。缺失或为空的 `allowed_roots` 默认使用 `$HOME`；显式 `allowed_roots` 会覆盖该默认值。
+
+### `listRuntimeTools` full response 过大
+
+完整 `listRuntimeTools` 会包含展开后的 schemas 和 metadata。GPT Actions 的日常
+discovery 应优先使用 `callRuntimeTool` 且 `tool="tool_manifest"`。需要聚焦
+schema/debug 时，再调用 `listRuntimeTools`，并传
+`summary_only=true` 加 `category`、`features` 或 `limit`。
+
+### GPT Action 仍在使用旧 schema
+
+从已部署的 `/openapi.json` 重新导入 OpenAPI schema，然后检查 operation count。
+当前推荐值是 27，GPT Actions 上限是 30。如果 count 超过 30，不要直接部署该
+schema；artifact upload tools 应继续作为 runtime-only tools 通过
+`callRuntimeTool` 使用，不要新增 dedicated Actions。
+
+### MCP tool list 看起来是旧的
+
+重连或重启 MCP client，让它重新执行 `initialize` 和 `tools/list`。如果 server
+刚升级，确认 public HTTPS 已指向新 service，并检查 `journalctl -u webcodex`
+中是否有 startup 或 auth errors。
+
+### Agent offline
+
+先运行 `runtime_status` 或 `listAgents`，再在 agent host 上检查：
+
+```bash
+systemctl status webcodex-agent
+journalctl -u webcodex-agent
+```
+
+确认 agent server URL、token file、service user 和 `allowed_roots`。
+
+### Token type 错误
+
+GPT Actions 和 MCP 应使用 managed `wc_pat_*` token，或部署允许的 shared key。
+`wc_agent_*` 只给 `webcodex-agent` 使用。`WEBCODEX_TOKEN` 面向 bootstrap/admin，
+不应复制到 GPT Actions、MCP 或 agent config。
+
+### 非 git smoke workspace 不能运行 `git_status`
+
+`git_status` 需要 git repository，部署 smoke 才能得到 clean 结果。为 disposable
+smoke project 初始化 git 并创建初始 commit，或把 smoke 指向另一个安全的
+agent-backed git project。
+
+### `operation_count` 超过 30
+
+GPT Actions surface 必须保持在 30 operations 以内。runtime-only tools，包括
+chunked artifact upload tools，应继续放在 `callRuntimeTool` 后面，除非有明确的
+产品决策和 operation budget 来新增 dedicated Action。
+
+### `artifact_upload_chunk` 报 `path` 缺失
+
+`artifact_upload_chunk`、`artifact_upload_finish` 和 `artifact_upload_abort`
+必须重复 `artifact_upload_begin` 使用的完全相同 `path`。这是为了把 opaque
+`upload_id` 绑定到请求的目标 artifact path。
+
+### `application/octet-stream` 因 unsafe extension 被拒绝
+
+使用安全的 project-relative artifact path，并让 MIME type 与文件扩展名匹配。
+Smoke tests 建议使用简单 `.txt` 路径和 `text/plain`。避免 secret-like paths、
+绝对路径、`.env*`、`.git`、token/credential paths，以及不安全的二进制扩展名。

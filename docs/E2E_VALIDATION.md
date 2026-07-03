@@ -15,6 +15,32 @@ A typical validation should confirm:
 - Read-only project tools work.
 - Mutation tools work only against disposable projects.
 - MCP tools/list matches the expected runtime tool surface.
+- Deployment artifact transfer smoke covers bounded runtime discovery, chunked
+  artifact upload/readback, cleanup, and git cleanliness on a safe smoke
+  project.
+
+## Deployment artifact transfer smoke
+
+Use `scripts/smoke_artifact_transfer.sh` after a deployment when you need a
+focused artifact transfer and runtime discovery check. The default mode prints
+the checklist only and does not read token variables or contact a server:
+
+```bash
+bash scripts/smoke_artifact_transfer.sh
+```
+
+Active mode requires an explicit public URL and a GPT/MCP-capable token:
+
+```bash
+WEBCODEX_SMOKE_RUN=1 \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
+WEBCODEX_TOKEN="<wc_pat_or_allowed_shared_key>" \
+bash scripts/smoke_artifact_transfer.sh
+```
+
+The smoke project should be a disposable, agent-backed git repository such as
+`agent:special:webcodex-smoke`. Do not use `wc_agent_*` for GPT Actions, MCP, or
+this smoke script; that token type is only for `webcodex-agent`.
 
 ## Authentication
 

@@ -551,6 +551,102 @@ E2E_TRANSPORT=polling bash scripts/e2e_zero_config_ws.sh
 EVAL_MODE=compare bash scripts/eval_coding_loop.sh
 ```
 
+## Binary Deployment and Rollback Checklist
+
+Use this short runbook for a conservative binary deployment. Adjust service
+names and install paths to match the host, and keep token values in the
+operator's shell or secret manager rather than in commands, logs, or docs.
+
+1. Build the release binaries:
+
+```bash
+cargo build --release --bins
+```
+
+2. Back up the current install directory:
+
+```bash
+backup_dir="/opt/webcodex/bin.backups/$(date -u +%Y%m%dT%H%M%SZ)"
+sudo install -d -m 0755 "$backup_dir"
+sudo cp -a /opt/webcodex/bin/. "$backup_dir/"
+```
+
+3. Install the new binaries:
+
+```bash
+sudo install -m 0755 target/release/webcodex /opt/webcodex/bin/webcodex
+sudo install -m 0755 target/release/webcodex-agent /opt/webcodex/bin/webcodex-agent
+sudo install -m 0755 target/release/webcodex-cli /opt/webcodex/bin/webcodex-cli
+```
+
+4. Restart services on the appropriate hosts:
+
+```bash
+sudo systemctl restart webcodex
+sudo systemctl restart webcodex-agent
+```
+
+5. Verify the public schema and operation budget:
+
+```bash
+curl -fsS https://webcodex.example.com/openapi.json > /tmp/webcodex-openapi.json
+python3 - /tmp/webcodex-openapi.json <<'PY'
+import json
+import sys
+
+schema = json.load(open(sys.argv[1], encoding="utf-8"))
+ops = [
+    op.get("operationId")
+    for methods in schema.get("paths", {}).values()
+    for op in methods.values()
+    if isinstance(op, dict)
+]
+print(f"operation_count={len(ops)}")
+if len(ops) > 30:
+    raise SystemExit("operation_count exceeds GPT Actions limit")
+PY
+```
+
+The current recommended GPT Action operation count is 27, and it must remain at
+or below 30.
+
+6. Run deployment smoke checks:
+
+```bash
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
+WEBCODEX_TOKEN="<wc_pat_or_allowed_shared_key>" \
+bash scripts/smoke_deployment.sh
+
+WEBCODEX_SMOKE_RUN=1 \
+WEBCODEX_PUBLIC_URL="https://webcodex.example.com" \
+WEBCODEX_TOKEN="<wc_pat_or_allowed_shared_key>" \
+bash scripts/smoke_artifact_transfer.sh
+```
+
+For GPT Actions, re-import the schema from `/openapi.json` when needed, then run
+a read-only discovery/status smoke before mutation. For MCP, reconnect the
+client and run `initialize`, `tools/list`, and a read-only `tools/call` such as
+`runtime_status` or `list_projects`.
+
+GPT Actions and MCP should use a managed `wc_pat_*` token or a
+deployment-allowed shared key. `wc_agent_*` is only for `webcodex-agent`; do not
+copy it into GPT Actions or MCP configuration.
+
+7. Check service logs:
+
+```bash
+journalctl -u webcodex --since "15 minutes ago"
+journalctl -u webcodex-agent --since "15 minutes ago"
+```
+
+8. Roll back from the backup if smoke or logs show a deployment regression:
+
+```bash
+sudo cp -a "$backup_dir"/. /opt/webcodex/bin/
+sudo systemctl restart webcodex
+sudo systemctl restart webcodex-agent
+```
+
 Do not use production mutation as smoke coverage. Any write-path smoke must stay
 inside a disposable test project or temporary project under an allowed root.
 Use artifact paths such as `artifacts/smoke/<name>.artifact` or

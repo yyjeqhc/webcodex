@@ -40,9 +40,10 @@ async fn http_projects_list_ignores_server_configured_projects() {
     assert_eq!(super::effective_status(&resp), StatusCode::OK);
     let body: Value = resp.take_json().await.unwrap();
     assert_eq!(body["success"], true);
-    let list = body["output"]
+    let list = body["output"]["projects"]
         .as_array()
-        .expect("output is a project array");
+        .expect("output.projects is a project array");
+    assert_eq!(body["output"]["count"], 0);
     assert!(
         list.is_empty(),
         "runtime project discovery is agent-registered only"

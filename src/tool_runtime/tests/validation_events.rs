@@ -43,6 +43,8 @@ fn validation_summary_is_unavailable_without_validation_events() {
     let validation = validation_summary_for_session(&session);
 
     assert_eq!(validation["available"], false);
+    assert_eq!(validation["status"], "not_run");
+    assert_eq!(validation["reason"], "no_validation_tool_invoked");
     assert_eq!(validation["source"], "session_ledger");
     assert_eq!(validation["events_total"], 0);
     assert!(validation["events"].as_array().unwrap().is_empty());
@@ -88,6 +90,8 @@ fn cargo_check_success_produces_validation_event() {
     let event = &validation["latest_success"];
 
     assert_eq!(validation["available"], true);
+    assert_eq!(validation["status"], "passed");
+    assert!(validation["reason"].is_null());
     assert_eq!(validation["events_total"], 1);
     assert_eq!(validation["successes"], 1);
     assert_eq!(validation["failures"], 0);
@@ -132,6 +136,8 @@ fn validation_output_metadata_without_stable_diagnostics_makes_parser_available(
     assert_eq!(validation["events_total"], 1);
     assert_eq!(validation["latest_success"]["tool_name"], "cargo_check");
     assert_eq!(validation["parser"]["available"], true);
+    assert_eq!(validation["status"], "passed");
+    assert!(validation["reason"].is_null());
     assert_eq!(validation["parser"]["kind"], PARSER_KIND);
     assert!(validation["parser"].get("reason").is_none());
     assert_eq!(diagnostics["available"], false);
@@ -315,6 +321,8 @@ fn run_shell_output_tail_does_not_create_validation_metadata_or_events() {
     assert!(finished.validation_output_summary.is_none());
     let validation = validation_summary_for_session(&session);
     assert_eq!(validation["available"], false);
+    assert_eq!(validation["status"], "not_run");
+    assert_eq!(validation["reason"], "no_validation_tool_invoked");
     assert_eq!(validation["events_total"], 0);
     assert_eq!(validation["parser"]["available"], false);
     assert_eq!(
@@ -397,6 +405,8 @@ fn latest_success_and_failure_follow_session_ledger_order() {
     let validation = validation_summary_for_session(&session);
 
     assert_eq!(validation["available"], true);
+    assert_eq!(validation["status"], "mixed");
+    assert!(validation["reason"].is_null());
     assert_eq!(validation["events_total"], 3);
     assert_eq!(validation["successes"], 1);
     assert_eq!(validation["failures"], 2);
@@ -442,6 +452,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 include_git: Some(false),
                 include_recent_commits: Some(false),
                 include_rules: Some(false),
+                include_tool_manifest: Some(false),
                 bind_current: false,
             },
             Some(&auth),
@@ -566,6 +577,8 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
 
     let validation = &finish.output["validation"];
     assert_eq!(validation["available"], true);
+    assert_eq!(validation["status"], "mixed");
+    assert!(validation["reason"].is_null());
     assert_eq!(validation["source"], "session_ledger");
     assert_eq!(validation["events_total"], 2);
     assert_eq!(validation["successes"], 1);

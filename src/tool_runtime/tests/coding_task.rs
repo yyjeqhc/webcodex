@@ -35,6 +35,10 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
 
     let start = spec_named(&specs, "start_coding_task");
     assert_eq!(required_fields(start), vec!["project"]);
+    assert!(start.input_schema["properties"]
+        .as_object()
+        .unwrap()
+        .contains_key("include_tool_manifest"));
     let finish = spec_named(&specs, "finish_coding_task");
     assert_eq!(required_fields(finish), vec!["project", "session_id"]);
 
@@ -51,6 +55,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "include_git",
         "include_recent_commits",
         "include_rules",
+        "include_tool_manifest",
         "bind_current",
         "include_hygiene",
         "include_handoff",
@@ -104,6 +109,7 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
                         include_git: Some(true),
                         include_recent_commits: Some(true),
                         include_rules: Some(true),
+                        include_tool_manifest: Some(true),
                         bind_current: false,
                     },
                     Some(&auth),
@@ -199,6 +205,22 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
 
     assert_eq!(result.output["rules"]["present"], true);
     assert_eq!(result.output["rules"]["sources"][0]["path"], "AGENTS.md");
+    let manifest = &result.output["tool_manifest"];
+    assert_eq!(manifest["schema_version"], 1);
+    assert!(manifest["count"].as_u64().unwrap() > 0);
+    let start_tool = manifest["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|tool| tool["name"] == "start_coding_task")
+        .expect("start_coding_task manifest entry");
+    assert!(start_tool["accepted_flattened_args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "include_tool_manifest"));
+    assert!(start_tool.get("inputSchema").is_none());
+    assert!(start_tool.get("outputSchema").is_none());
     assert_eq!(result.output["git"]["clean"], true);
     assert!(
         result.output["git"]["recent_commits"]
@@ -206,6 +228,41 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
             .unwrap()
             .len()
             >= 1
+    );
+}
+
+#[tokio::test]
+async fn start_coding_task_can_omit_compact_tool_manifest() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-no-manifest", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::StartCodingTask {
+                project,
+                title: Some("small startup payload".to_string()),
+                mode: SessionMode::Normal,
+                deny_write_tools: false,
+                deny_shell_tools: false,
+                include_runtime_status: Some(false),
+                include_git: Some(false),
+                include_recent_commits: Some(false),
+                include_rules: Some(false),
+                include_tool_manifest: Some(false),
+                bind_current: false,
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert!(
+        result.output.get("tool_manifest").is_none(),
+        "include_tool_manifest=false should omit compact manifest"
     );
 }
 
@@ -234,6 +291,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
                 include_git: Some(false),
                 include_recent_commits: Some(false),
                 include_rules: Some(false),
+                include_tool_manifest: Some(false),
                 bind_current: false,
             },
             Some(&auth),
@@ -292,6 +350,8 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     assert!(result.output["changes"]["show_changes"].is_object());
     let validation = &result.output["validation"];
     assert_eq!(validation["available"], false);
+    assert_eq!(validation["status"], "not_run");
+    assert_eq!(validation["reason"], "no_validation_tool_invoked");
     assert_eq!(validation["source"], "session_ledger");
     assert_eq!(validation["events_total"], 0);
     assert!(validation["events"].as_array().unwrap().is_empty());

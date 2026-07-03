@@ -308,6 +308,7 @@ impl ToolRuntime {
                 include_git,
                 include_recent_commits,
                 include_rules,
+                include_tool_manifest,
                 bind_current,
             } => {
                 self.start_coding_task(
@@ -320,6 +321,7 @@ impl ToolRuntime {
                     include_git,
                     include_recent_commits,
                     include_rules,
+                    include_tool_manifest,
                     bind_current,
                     auth,
                     transport,
@@ -1187,7 +1189,20 @@ impl ToolRuntime {
                 .unwrap_or_default()
                 .cmp(b["id"].as_str().unwrap_or_default())
         });
-        ToolResult::ok(Value::Array(list))
+        let recommended_for_smoke: Vec<Value> = list
+            .iter()
+            .filter(|project| {
+                project["capabilities"]["recommended_for_smoke"]
+                    .as_bool()
+                    .unwrap_or(false)
+            })
+            .filter_map(|project| project["id"].as_str().map(|id| json!(id)))
+            .collect();
+        ToolResult::ok(json!({
+            "count": list.len(),
+            "projects": list,
+            "recommended_for_smoke": recommended_for_smoke,
+        }))
     }
 
     async fn list_agents(&self, auth: Option<&AuthContext>) -> ToolResult {
@@ -1224,6 +1239,8 @@ impl ToolRuntime {
     /// stdout/stderr. Returns a structured JSON object with service metadata,
     /// project config status, agent client summaries, and job counts.
     async fn runtime_status(&self, auth: Option<&AuthContext>) -> ToolResult {
+        let clients = self.shell_clients.list_clients_for_auth(auth).await;
+
         // -- projects summary -------------------------------------------------
         let (projects_configured, projects_count, projects_load_error) =
             match self.projects.config.as_ref() {
@@ -1237,9 +1254,56 @@ impl ToolRuntime {
                         .or_else(|| Some("Projects not configured".to_string())),
                 ),
             };
+        let agent_registered_count: usize = clients
+            .iter()
+            .map(|client| {
+                client
+                    .projects
+                    .iter()
+                    .filter(|project| !project.disabled)
+                    .count()
+            })
+            .sum();
+        let agent_registered_online_count: usize = clients
+            .iter()
+            .filter(|client| client.connected)
+            .map(|client| {
+                client
+                    .projects
+                    .iter()
+                    .filter(|project| !project.disabled)
+                    .count()
+            })
+            .sum();
+        let effective_count = if agent_registered_count > 0 {
+            agent_registered_count
+        } else {
+            projects_count
+        };
+        let effective_status = if effective_count > 0 {
+            "ok"
+        } else {
+            "no_projects"
+        };
+        let server_warning = (!projects_configured).then_some("projects.toml not configured");
         let projects = json!({
+            "server_static": {
+                "configured": projects_configured,
+                "count": projects_count,
+                "config_path": self.projects.config_path,
+                "load_error": projects_load_error.clone(),
+                "warning": server_warning,
+            },
+            "agent_registered": {
+                "count": agent_registered_count,
+                "online_count": agent_registered_online_count,
+            },
+            "effective": {
+                "count": effective_count,
+                "status": effective_status,
+            },
             "configured": projects_configured,
-            "count": projects_count,
+            "count": effective_count,
             "config_path": self.projects.config_path,
             "load_error": projects_load_error,
         });
@@ -1250,7 +1314,6 @@ impl ToolRuntime {
         // unix timestamp (seconds) of the most recent heartbeat/result; the
         // console uses it to render how stale an agent is and to make a
         // websocket agent flipping `online` -> `stale` visually obvious.
-        let clients = self.shell_clients.list_clients_for_auth(auth).await;
         let agent_count = clients.len();
         let online_count = clients.iter().filter(|c| c.connected).count();
         // `stale_count` = registered agents whose `last_seen` is older than the
@@ -1456,6 +1519,23 @@ impl ToolRuntime {
         include_recommended_flows: bool,
         include_risk_summary: bool,
     ) -> ToolResult {
+        ToolResult::ok(self.tool_manifest_payload(
+            category,
+            include_recommended_flows,
+            include_risk_summary,
+        ))
+    }
+
+    pub(crate) fn compact_tool_manifest_payload(&self) -> Value {
+        self.tool_manifest_payload(None, true, true)
+    }
+
+    fn tool_manifest_payload(
+        &self,
+        category: Option<String>,
+        include_recommended_flows: bool,
+        include_risk_summary: bool,
+    ) -> Value {
         let specs = self.tool_specs();
         let tool_count = specs.len();
 
@@ -1469,6 +1549,8 @@ impl ToolRuntime {
                 json!({
                     "name": name,
                     "category": tool_manifest_category(name),
+                    "accepted_flattened_args": accepted_flattened_args_for_spec(spec),
+                    "deprecated_or_unsupported_args": [],
                     "provider": m.provider_id,
                     "risk": m.risk.session_risk_class(),
                     "read_only": m.read_only,
@@ -1499,6 +1581,7 @@ impl ToolRuntime {
         let mut output = json!({
             "schema_version": 1,
             "tool_count": tool_count,
+            "count": filtered_count,
             "filtered_count": filtered_count,
             "category": category,
             "categories": categories,
@@ -1514,7 +1597,7 @@ impl ToolRuntime {
             output["recommended_flows"] = Value::Array(tool_manifest_recommended_flows());
         }
 
-        ToolResult::ok(output)
+        output
     }
 }
 
@@ -1556,6 +1639,62 @@ fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value> {
             })
         })
         .collect()
+}
+
+fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
+    const PREFERRED_ORDER: &[&str] = &[
+        "project",
+        "path",
+        "title",
+        "session_id",
+        "bind_current",
+        "include_runtime_status",
+        "include_git",
+        "include_recent_commits",
+        "include_rules",
+        "include_tool_manifest",
+        "include_diff",
+        "include_hygiene",
+        "include_handoff",
+        "include_validation_summary",
+        "include_validation",
+        "include_workspace",
+        "include_checkpoints",
+        "category",
+        "features",
+        "summary_only",
+        "limit",
+        "allow_missing",
+        "upload_id",
+        "offset",
+        "content_base64",
+        "expected_bytes",
+        "expected_sha256",
+        "mime_type",
+        "overwrite",
+    ];
+
+    let Some(properties) = spec.input_schema["properties"].as_object() else {
+        return vec!["recording_session_id".to_string()];
+    };
+    let mut names = Vec::new();
+    for field in PREFERRED_ORDER {
+        if properties.contains_key(*field) {
+            names.push((*field).to_string());
+        }
+    }
+    let mut remaining: Vec<&str> = properties
+        .keys()
+        .map(String::as_str)
+        .filter(|field| !PREFERRED_ORDER.contains(field))
+        .collect();
+    remaining.sort_unstable();
+    names.extend(remaining.into_iter().map(str::to_string));
+    if spec.name == "start_coding_task" && !names.iter().any(|field| field == "session_id") {
+        names.push("session_id".to_string());
+    }
+    names.push("recording_session_id".to_string());
+    names
 }
 
 fn list_tool_matches_features(name: &str, features: &str) -> bool {

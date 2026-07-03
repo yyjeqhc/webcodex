@@ -324,6 +324,40 @@ fn list_tools_schema_exposes_bounded_discovery_fields() {
 }
 
 #[test]
+fn tool_manifest_schema_exposes_compact_discovery_fields() {
+    let runtime = test_runtime();
+    let specs = runtime.tool_specs();
+    let spec = spec_named(&specs, "tool_manifest");
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    for field in [
+        "category",
+        "include_recommended_flows",
+        "include_risk_summary",
+    ] {
+        assert!(
+            props.contains_key(field),
+            "tool_manifest input schema must expose {field}"
+        );
+    }
+    let output = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    for field in [
+        "schema_version",
+        "count",
+        "tool_count",
+        "filtered_count",
+        "categories",
+        "tools",
+    ] {
+        assert!(
+            output.contains_key(field),
+            "tool_manifest output schema must expose {field}"
+        );
+    }
+}
+
+#[test]
 fn read_project_artifact_metadata_schema_exposes_allow_missing() {
     let runtime = test_runtime();
     let specs = runtime.tool_specs();
@@ -575,6 +609,12 @@ fn key_tool_output_schemas_include_expected_fields() {
         assert!(
             has_output_field("runtime_status", field),
             "runtime_status missing {field}"
+        );
+    }
+    for field in ["projects", "count", "recommended_for_smoke"] {
+        assert!(
+            has_output_field("list_projects", field),
+            "list_projects missing {field}"
         );
     }
 }
@@ -1116,6 +1156,7 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
     for phrase in [
         "ledger-based",
         "validation-like tool-call summary",
+        "status/reason",
         "does not include stdout/stderr",
         "minimal diagnostics",
         "bounded tails",
@@ -1155,6 +1196,7 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     for phrase in [
         "ledger-derived",
         "validation-like tool-call summary",
+        "status/reason",
         "does not include stdout/stderr",
         "minimal diagnostics",
         "bounded tails",

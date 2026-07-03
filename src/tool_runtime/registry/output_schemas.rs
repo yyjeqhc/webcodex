@@ -304,7 +304,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "projects",
-                open_object_schema("Projects configuration status."),
+                open_object_schema("Project counts split into server_static, agent_registered, and effective. Legacy configured/count/load_error fields are retained; prefer projects.effective for model-facing status."),
             ),
             (
                 "agents",
@@ -326,6 +326,13 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 array_schema(open_object_schema("Project summary including capabilities.git_available, supports_cleanup_verification, and recommended_for_smoke."), "Runtime projects."),
             ),
             ("count", schema_type("integer", "Project count.")),
+            (
+                "recommended_for_smoke",
+                array_schema(
+                    schema_type("string", "Runtime project id recommended for smoke tests."),
+                    "Runtime project ids whose capabilities.recommended_for_smoke is true.",
+                ),
+            ),
         ]),
         "list_agents" => wrapped_output_schema(vec![
             (
@@ -382,6 +389,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 schema_type("integer", "Total number of tools in the runtime."),
             ),
             (
+                "count",
+                schema_type("integer", "Returned compact tool count after filtering."),
+            ),
+            (
                 "filtered_count",
                 schema_type(
                     "integer",
@@ -405,7 +416,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 "tools",
                 array_schema(
                     open_object_schema(
-                        "Compact tool entry: name, category, provider, risk, read_only, requires_project, path_hint, destructive, shell_like, oauth_scope.",
+                        "Compact tool entry: name, category, accepted_flattened_args, deprecated_or_unsupported_args, provider, risk, read_only, requires_project, path_hint, destructive, shell_like, oauth_scope.",
                     ),
                     "Compact tool entries without input/output schemas.",
                 ),
@@ -447,6 +458,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 nullable_schema("object", "Structured worktree/git summary when requested; null otherwise."),
             ),
             (
+                "tool_manifest",
+                open_object_schema("Compact tool_manifest output when requested; absent otherwise. Never includes full input/output schemas."),
+            ),
+            (
                 "recommended_flow",
                 open_object_schema("Deterministic recommended inspect/edit/validate/review/handoff tool groups."),
             ),
@@ -472,7 +487,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "validation",
-                open_object_schema("Ledger-based validation-like tool-call summary. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause."),
+                open_object_schema("Ledger-based validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause."),
             ),
             (
                 "hygiene",
@@ -671,7 +686,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "validation",
-                open_object_schema("Ledger-derived validation-like tool-call summary. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause; parser.available remains false when session ledger events lack those fields."),
+                open_object_schema("Ledger-derived validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause; parser.available remains false when session ledger events lack those fields."),
             ),
             (
                 "suggested_next_actions",
@@ -705,6 +720,29 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             (
                 "suggested_next_actions",
                 array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions."),
+            ),
+        ]),
+        "delete_project_files" => wrapped_output_schema(vec![
+            ("ok", schema_type("boolean", "True when the delete command completed successfully.")),
+            (
+                "deleted_paths",
+                array_schema(schema_type("string", "Deleted project-relative path."), "Requested paths removed with rm -f."),
+            ),
+            (
+                "missing_paths",
+                array_schema(schema_type("string", "Missing project-relative path."), "Reserved for future missing-path detail; currently empty for rm -f success."),
+            ),
+            (
+                "refused_paths",
+                array_schema(schema_type("string", "Refused project-relative path."), "Reserved for future refused-path detail; cleanup path validation failures still return a failed tool result."),
+            ),
+            (
+                "stdout_present",
+                schema_type("boolean", "Whether the underlying command produced stdout. Raw stdout is not exposed by default."),
+            ),
+            (
+                "stderr_present",
+                schema_type("boolean", "Whether the underlying command produced stderr. Raw stderr is not exposed by default."),
             ),
         ]),
         "bind_current_session" => wrapped_output_schema(vec![

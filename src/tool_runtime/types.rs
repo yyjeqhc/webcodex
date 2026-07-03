@@ -166,6 +166,8 @@ pub enum ToolCall {
         #[serde(default)]
         include_rules: Option<bool>,
         #[serde(default)]
+        include_tool_manifest: Option<bool>,
+        #[serde(default)]
         bind_current: bool,
     },
 
@@ -1875,6 +1877,7 @@ impl ToolCall {
                 include_git,
                 include_recent_commits,
                 include_rules,
+                include_tool_manifest,
                 bind_current,
             } => serde_json::json!({
                 "project": project,
@@ -1886,6 +1889,7 @@ impl ToolCall {
                 "include_git": include_git,
                 "include_recent_commits": include_recent_commits,
                 "include_rules": include_rules,
+                "include_tool_manifest": include_tool_manifest,
                 "bind_current": bind_current,
             }),
             Self::FinishCodingTask {

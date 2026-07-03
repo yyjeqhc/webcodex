@@ -366,13 +366,16 @@ create and close out a session while keeping all continuity explicit.
   "params": {
     "project": "agent:workstation:my-repo",
     "title": "fix authentication bug",
+    "include_tool_manifest": true,
     "bind_current": false
   }
 }
 ```
 
 Returns a `wc_sess_*` session id in `output.session.session_id`. Keep that id
-and pass it explicitly to subsequent project tools.
+and pass it explicitly to subsequent project tools. By default,
+`start_coding_task` also returns compact `output.tool_manifest` without full
+input/output schemas; set `include_tool_manifest=false` to omit it.
 
 ### 2. Discover and inspect
 
@@ -385,9 +388,10 @@ and pass it explicitly to subsequent project tools.
 ```
 
 When choosing a smoke target from `list_projects`, prefer
-`capabilities.recommended_for_smoke=true`. For git smoke, also require
-`capabilities.git_available=true`; a project such as `agent:special:test-mcp`
-may be safe but not git-backed.
+entries in `projects` whose `capabilities.recommended_for_smoke=true`. The
+output shape is `{count, projects, recommended_for_smoke}`. For git smoke, also
+require `capabilities.git_available=true`; a project such as
+`agent:special:test-mcp` may be safe but not git-backed.
 
 ### 3. Edit with structured tools
 
@@ -471,7 +475,10 @@ For a read-only handoff without finish aggregation:
 `finish_coding_task.validation` and `session_handoff_summary.validation` are
 ledger-derived summaries. They do not expose raw stdout/stderr, excerpt fields,
 or `validation_output_summary`; the parser extracts only stable facts from safe
-bounded metadata and does not infer root causes or suggest fixes.
+bounded metadata and does not infer root causes or suggest fixes. Summaries
+include `status` and `reason`: `events_total=0` yields `status=not_run` and
+`reason=no_validation_tool_invoked`; all-success, all-failure, and mixed ledgers
+yield `passed`, `failed`, and `mixed`.
 
 ### Session id semantics
 
@@ -481,6 +488,9 @@ bounded metadata and does not infer root causes or suggest fixes.
 - Top-level `session_id` = ordinary flattened tool input when `params`/`arguments` are absent.
 - `params.session_id` = business parameter used by `show_changes` or `session_summary` to select which session to summarize.
 - The two may be the same or different.
+- `tool_manifest` is the recommended way to discover accepted flattened args.
+  It returns `accepted_flattened_args` and `deprecated_or_unsupported_args` per
+  tool without full schemas.
 - `start_session` creates a session record but does not automatically bind
   future calls.
 - `session_handoff_summary` requires explicit `session_id`; it never implicitly
@@ -535,13 +545,16 @@ After deploying a new server, agent, or runtime build:
 2. Run `tool_manifest` or focused `list_tools` with `summary_only=true` plus
    `category`, `features`, or `limit`; avoid full `listRuntimeTools` in GPT
    Actions unless debugging schemas.
-3. Run `runtime_status`.
+3. Run `runtime_status`; prefer `projects.effective.status/count` over legacy
+   `projects.count` when `projects.toml` is not configured but agent projects
+   are registered.
 4. Confirm `start_coding_task` and `finish_coding_task` are available through
    the generic runtime tool path.
 5. Confirm `session_handoff_summary` exposes `validation` when
    `include_validation` defaults to true.
-6. On a `list_projects` entry with `capabilities.recommended_for_smoke=true`,
-   run `start_coding_task`, `read_file` or `search_project_text`,
+6. On a `list_projects.projects[]` entry with
+   `capabilities.recommended_for_smoke=true`, run `start_coding_task`,
+   `read_file` or `search_project_text`,
    `show_changes`, and `finish_coding_task`.
 7. Run local or staging E2E and eval checks:
 

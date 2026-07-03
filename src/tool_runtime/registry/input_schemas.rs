@@ -386,6 +386,10 @@ pub(super) fn start_coding_task_input_schema() -> Value {
                 "type": "boolean",
                 "description": "Include a deterministic project instruction source summary. Defaults to true."
             },
+            "include_tool_manifest": {
+                "type": "boolean",
+                "description": "Include compact tool_manifest output without full input/output schemas. Defaults to true."
+            },
             "bind_current": {
                 "type": "boolean",
                 "description": "If true, bind the new session as the caller/transport/project current session. Defaults to false. Binding is process-local in-memory control metadata."

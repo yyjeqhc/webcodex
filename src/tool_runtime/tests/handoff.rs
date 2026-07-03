@@ -311,6 +311,8 @@ async fn session_handoff_summary_includes_validation_by_default_from_session_led
     let validation = &result.output["validation"];
     assert_eq!(validation, &expected_validation);
     assert_eq!(validation["available"], true);
+    assert_eq!(validation["status"], "passed");
+    assert!(validation["reason"].is_null());
     assert_eq!(validation["source"], "session_ledger");
     assert_eq!(validation["events_total"], 1);
     assert_eq!(validation["successes"], 1);
@@ -393,6 +395,8 @@ async fn session_handoff_summary_validation_unavailable_without_validation_event
     assert!(result.success, "{:?}", result.error);
     let validation = &result.output["validation"];
     assert_eq!(validation["available"], false);
+    assert_eq!(validation["status"], "not_run");
+    assert_eq!(validation["reason"], "no_validation_tool_invoked");
     assert_eq!(validation["source"], "session_ledger");
     assert_eq!(validation["events_total"], 0);
     assert!(validation["events"].as_array().unwrap().is_empty());

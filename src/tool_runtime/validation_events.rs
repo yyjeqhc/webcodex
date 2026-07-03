@@ -55,6 +55,8 @@ struct ValidationParserSummary {
 #[derive(Debug, Clone, Serialize)]
 struct ValidationSummary {
     available: bool,
+    status: &'static str,
+    reason: Option<&'static str>,
     source: &'static str,
     events_total: usize,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -78,6 +80,8 @@ pub(crate) fn validation_summary_for_session(summary: &SessionSummary) -> Value 
 pub(crate) fn skipped_validation_summary() -> Value {
     to_value(ValidationSummary {
         available: false,
+        status: "unknown",
+        reason: Some("validation_summary_not_requested"),
         source: VALIDATION_SOURCE,
         events_total: 0,
         successes: None,
@@ -96,6 +100,8 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
     if events_total == 0 {
         return to_value(ValidationSummary {
             available: false,
+            status: "not_run",
+            reason: Some("no_validation_tool_invoked"),
             source: VALIDATION_SOURCE,
             events_total,
             successes: None,
@@ -113,6 +119,7 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
         .filter(|event| event.success)
         .count();
     let failures = events_total.saturating_sub(successes);
+    let status = validation_status(successes, failures);
     let parser = parser_summary_for_events(&validation_events);
     let latest_success = validation_events
         .iter()
@@ -129,6 +136,8 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
 
     to_value(ValidationSummary {
         available: true,
+        status,
+        reason: None,
         source: VALIDATION_SOURCE,
         events_total,
         successes: Some(successes),
@@ -139,6 +148,15 @@ pub(crate) fn validation_summary_from_events(events: &[SessionEvent], limit: usi
         parser,
         skipped: false,
     })
+}
+
+fn validation_status(successes: usize, failures: usize) -> &'static str {
+    match (successes > 0, failures > 0) {
+        (true, true) => "mixed",
+        (true, false) => "passed",
+        (false, true) => "failed",
+        (false, false) => "unknown",
+    }
 }
 
 pub(crate) fn extract_validation_events(events: &[SessionEvent]) -> Vec<ValidationEvent> {

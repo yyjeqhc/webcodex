@@ -133,10 +133,19 @@ Actions; use it mainly for schema debugging. For focused discovery, call
 scale is roughly 65 tools; the size issue is full schema/metadata expansion,
 not tool system sprawl.
 
+`tool_manifest` is the recommended GPT Action discovery call for accepted
+flattened arguments. Each compact tool entry includes
+`accepted_flattened_args` and `deprecated_or_unsupported_args` without returning
+full input/output schemas. `tool_manifest` itself accepts flattened top-level
+`category`, `include_recommended_flows`, and `include_risk_summary`. Focused
+`list_tools` accepts flattened `summary_only`, `category`, `features`, and
+`limit`.
+
 For smoke project selection, call `listProjects` and prefer projects whose
-`capabilities.recommended_for_smoke` is `true`. For git smoke, require
-`capabilities.git_available=true`; `agent:special:test-mcp` may be safe for
-basic smoke but is not necessarily git-backed.
+`capabilities.recommended_for_smoke` is `true` inside `output.projects`. The
+response shape is `{count, projects, recommended_for_smoke}`. For git smoke,
+require `capabilities.git_available=true`; `agent:special:test-mcp` may be safe
+for basic smoke but is not necessarily git-backed.
 
 ## Recommended flow
 
@@ -146,7 +155,9 @@ GPT Actions should pass tool arguments as flattened top-level fields when
 calling `callRuntimeTool`.
 
 1. Call `callRuntimeTool` with `start_coding_task`, `project`, and a short
-   `title`; keep the returned explicit `session_id`.
+   `title`; keep the returned explicit `session_id`. It accepts flattened
+   `include_tool_manifest`, `include_runtime_status`, `include_git`,
+   `include_recent_commits`, `include_rules`, and `bind_current`.
 2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
    with `show_changes`.
 3. For scoped source edits with known line numbers, call `replace_line_range`,
@@ -207,9 +218,10 @@ returned a `job_id`.
 `start_session` creates a session record. It does not automatically bind future
 calls as current. `start_coding_task` is the preferred coding-task entry point;
 it creates a session, returns an explicit `session_id`, gathers deterministic
-startup context, and defaults `bind_current=false`. `finish_coding_task`
-requires an explicit `session_id`; it does not fall back to current-session
-binding.
+startup context, includes a compact `tool_manifest` by default, and defaults
+`bind_current=false`. Set flattened `include_tool_manifest=false` to omit that
+manifest. `finish_coding_task` requires an explicit `session_id`; it does not
+fall back to current-session binding.
 
 Start a session through the generic Action:
 
@@ -278,19 +290,28 @@ failed tool call.
 `session_handoff_summary` is read-only and requires a business `session_id`.
 It does not implicitly use the current-session binding. Its optional
 `validation` section is ledger-derived and does not expose raw stdout/stderr,
-excerpt fields, or `validation_output_summary`.
+excerpt fields, or `validation_output_summary`. It accepts flattened
+`include_validation`, `include_workspace`, `include_checkpoints`, and `limit`.
 
 ## Validation summaries
 
 Validation summaries come from session ledger events for validation-like tools:
 `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
 `apply_patch_checked`. `run_shell` is not classified as validation by default.
+The summary includes `status` and `reason`: no validation events yields
+`status="not_run"` and `reason="no_validation_tool_invoked"`; all successes are
+`passed`, all failures are `failed`, and mixed outcomes are `mixed`.
 
 The minimal parser extracts only stable facts from safe bounded metadata, such
 as Cargo severity/code/span and test summary counts. It does not infer root
 causes, suggest fixes, call an LLM, use LSP, or use tree-sitter.
 
 ## Observability
+
+`runtime_status.projects` separates `server_static`, `agent_registered`, and
+`effective` counts. A missing `projects.toml` is not a runtime failure when
+agent-registered projects are available; prefer `projects.effective.status` and
+`projects.effective.count` for model-facing health checks.
 
 `getRuntimeStatus` and `callRuntimeTool` with `list_agents` may show a redacted policy summary:
 

@@ -1347,9 +1347,23 @@ impl ToolRuntime {
         let command = format!("rm -f -- {}", shell_join_paths(&paths));
         let result = self.run_shell(project, command, Some(30), None).await;
         if result.success {
+            let stdout_present = result
+                .output
+                .get("stdout")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty());
+            let stderr_present = result
+                .output
+                .get("stderr")
+                .and_then(Value::as_str)
+                .is_some_and(|value| !value.is_empty());
             ToolResult::ok(json!({
+                "ok": true,
                 "deleted_paths": paths,
-                "command_result": result.output,
+                "missing_paths": [],
+                "refused_paths": [],
+                "stdout_present": stdout_present,
+                "stderr_present": stderr_present,
             }))
         } else {
             result

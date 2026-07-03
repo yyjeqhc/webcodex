@@ -960,7 +960,7 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. For daily discovery prefer tool_manifest; use list_tools with summary_only/category/features/limit only for focused discovery.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. For daily discovery prefer tool_manifest; it exposes accepted_flattened_args for GPT Action top-level calls. Use list_tools with summary_only/category/features/limit only for focused discovery.",
             "properties": {
                 "tool": {
                     "type": "string",
@@ -1142,6 +1142,10 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
                 },
+                "include_tool_manifest": {
+                    "type": "boolean",
+                    "description": "Flattened start_coding_task flag. Defaults to true and returns compact tool_manifest output without full schemas. Used only when `params` and `arguments` are absent."
+                },
                 "bind_current": {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to false. Binding is process-local in-memory control metadata. Used only when `params` and `arguments` are absent."
@@ -1183,6 +1187,14 @@ fn schemas() -> Value {
                 "category": {
                     "type": "string",
                     "description": "Flattened list_tools/tool_manifest category filter. Used only when `params` and `arguments` are absent."
+                },
+                "include_recommended_flows": {
+                    "type": "boolean",
+                    "description": "Flattened tool_manifest flag. Defaults to true and controls recommended_flows in compact discovery output. Used only when `params` and `arguments` are absent."
+                },
+                "include_risk_summary": {
+                    "type": "boolean",
+                    "description": "Flattened tool_manifest flag. Defaults to true and controls risk_summary in compact discovery output. Used only when `params` and `arguments` are absent."
                 },
                 "include_diff": {
                     "type": "boolean",
@@ -2975,6 +2987,7 @@ mod tests {
             "include_git",
             "include_recent_commits",
             "include_rules",
+            "include_tool_manifest",
             "bind_current",
             "path",
             "start_line",
@@ -2988,6 +3001,8 @@ mod tests {
             "include_handoff",
             "include_validation_summary",
             "include_validation",
+            "include_recommended_flows",
+            "include_risk_summary",
             "context_before",
             "context_after",
             "with_line_numbers",
@@ -3300,10 +3315,17 @@ mod tests {
             upload_id_desc.contains("same path from artifact_upload_begin is also required"),
             "upload_id flattened description must mention repeated path: {upload_id_desc}"
         );
-        for field in ["category", "features", "summary_only", "limit"] {
+        for field in [
+            "category",
+            "features",
+            "summary_only",
+            "limit",
+            "include_recommended_flows",
+            "include_risk_summary",
+        ] {
             assert!(
                 properties.contains_key(field),
-                "ToolCallRequest.properties.{field} must exist for flattened list_tools calls"
+                "ToolCallRequest.properties.{field} must exist for flattened list_tools/tool_manifest calls"
             );
         }
     }

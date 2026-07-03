@@ -80,6 +80,58 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
 }
 
 #[tokio::test]
+async fn delete_project_files_success_omits_raw_command_output() {
+    let runtime = runtime_with_agent_project("cleanup-delete");
+    register_agent(
+        &runtime,
+        "cleanup-delete",
+        None,
+        ShellClientCapabilities::default(),
+    )
+    .await;
+    let project = agent_test_project_id("cleanup-delete");
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            runtime
+                .delete_project_files(project, vec!["tmp.txt".to_string()])
+                .await
+        }
+    });
+
+    let req = next_patch_agent_request(&runtime, "cleanup-delete")
+        .await
+        .expect("delete_project_files should enqueue a shell request");
+    assert_eq!(req.kind, "run_shell");
+    assert!(req.command.contains("rm -f --"));
+    complete_patch_agent_request(
+        &runtime,
+        "cleanup-delete",
+        &req.request_id,
+        0,
+        "raw stdout should not leak\n",
+        "raw stderr should not leak\n",
+    )
+    .await;
+
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["ok"], true);
+    assert_eq!(result.output["deleted_paths"], json!(["tmp.txt"]));
+    assert_eq!(result.output["missing_paths"], json!([]));
+    assert_eq!(result.output["refused_paths"], json!([]));
+    assert_eq!(result.output["stdout_present"], true);
+    assert_eq!(result.output["stderr_present"], true);
+    assert!(result.output.get("command_result").is_none());
+    assert!(result.output.get("stdout").is_none());
+    assert!(result.output.get("stderr").is_none());
+    let serialized = serde_json::to_string(&result.output).unwrap();
+    assert!(!serialized.contains("raw stdout should not leak"));
+    assert!(!serialized.contains("raw stderr should not leak"));
+}
+
+#[tokio::test]
 async fn artifact_upload_chunk_session_log_arguments_do_not_store_base64() {
     let runtime = runtime_with_agent_project("telemetry-artifact-chunk");
     register_agent(

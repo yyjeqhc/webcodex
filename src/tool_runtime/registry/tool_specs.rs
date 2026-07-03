@@ -256,7 +256,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "tool_manifest".to_string(),
-                description: "Return a compact, bounded tool manifest with categories, risk "
+                description: "Return a compact, bounded tool manifest with categories, accepted flattened args, risk "
                     .to_string()
                     + "summary, and recommended flows. Lightweight alternative to list_tools for "
                     + "long tasks. Read-only; never exposes schemas, tokens, or internal paths.",

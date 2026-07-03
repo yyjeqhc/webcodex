@@ -124,7 +124,8 @@ async fn list_projects_returns_agent_registered_projects_without_server_config()
 
     let result = runtime.dispatch(ToolCall::ListProjects).await;
     assert!(result.success, "{:?}", result.error);
-    let projects = result.output.as_array().unwrap();
+    assert_eq!(result.output["count"], 1);
+    let projects = result.output["projects"].as_array().unwrap();
     assert_eq!(projects.len(), 1);
     assert_eq!(projects[0]["id"], "agent:workstation-1:webcodex");
     assert_eq!(projects[0]["agent_project_id"], "webcodex");
@@ -161,7 +162,8 @@ async fn list_projects_reports_smoke_selection_capabilities() {
 
     let result = runtime.dispatch(ToolCall::ListProjects).await;
     assert!(result.success, "{:?}", result.error);
-    let projects = result.output.as_array().unwrap();
+    assert_eq!(result.output["count"], 2);
+    let projects = result.output["projects"].as_array().unwrap();
     let test_mcp = projects
         .iter()
         .find(|project| project["id"] == "agent:special:test-mcp")
@@ -182,6 +184,10 @@ async fn list_projects_reports_smoke_selection_capabilities() {
     assert_eq!(smoke["capabilities"]["git_available"], true);
     assert_eq!(smoke["capabilities"]["supports_artifact_smoke"], true);
     assert_eq!(smoke["capabilities"]["recommended_for_smoke"], true);
+    assert_eq!(
+        result.output["recommended_for_smoke"],
+        json!(["agent:special:webcodex-smoke"])
+    );
 }
 
 #[tokio::test]
@@ -204,7 +210,8 @@ async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
     assert!(result.success, "{:?}", result.error);
     let ids: Vec<&str> = result
         .output
-        .as_array()
+        .get("projects")
+        .and_then(Value::as_array)
         .unwrap()
         .iter()
         .map(|project| project["id"].as_str().unwrap())
@@ -217,7 +224,8 @@ async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
     assert!(result.success, "{:?}", result.error);
     let ids: Vec<&str> = result
         .output
-        .as_array()
+        .get("projects")
+        .and_then(Value::as_array)
         .unwrap()
         .iter()
         .map(|project| project["id"].as_str().unwrap())
@@ -281,7 +289,8 @@ async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
     assert!(result.success, "{:?}", result.error);
     let ids: Vec<&str> = result
         .output
-        .as_array()
+        .get("projects")
+        .and_then(Value::as_array)
         .unwrap()
         .iter()
         .map(|project| project["id"].as_str().unwrap())
@@ -309,7 +318,8 @@ async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
         .await;
     let ids: Vec<&str> = result
         .output
-        .as_array()
+        .get("projects")
+        .and_then(Value::as_array)
         .unwrap()
         .iter()
         .map(|project| project["id"].as_str().unwrap())
@@ -405,7 +415,8 @@ async fn list_projects_and_dispatch_are_filtered_by_lightweight_auth_group() {
         .await;
     let ids: Vec<&str> = result
         .output
-        .as_array()
+        .get("projects")
+        .and_then(Value::as_array)
         .unwrap()
         .iter()
         .map(|project| project["id"].as_str().unwrap())
@@ -487,7 +498,7 @@ async fn list_projects_shows_shell_profile_resolution() {
 
     let result = runtime.dispatch(ToolCall::ListProjects).await;
     assert!(result.success, "{:?}", result.error);
-    let projects = result.output.as_array().unwrap();
+    let projects = result.output["projects"].as_array().unwrap();
     let by_id: std::collections::HashMap<&str, &Value> = projects
         .iter()
         .map(|p| (p["agent_project_id"].as_str().unwrap(), p))
@@ -524,7 +535,7 @@ async fn list_projects_shell_profile_status_unknown_without_summary() {
 
     let result = runtime.dispatch(ToolCall::ListProjects).await;
     assert!(result.success);
-    let projects = result.output.as_array().unwrap();
+    let projects = result.output["projects"].as_array().unwrap();
     assert_eq!(projects[0]["resolved_shell_profile"], "rust");
     assert_eq!(projects[0]["shell_profile_status"], "unknown");
 }
@@ -948,6 +959,125 @@ async fn tool_manifest_hides_run_codex_from_model_facing_surface() {
 }
 
 #[tokio::test]
+async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["schema_version"], 1);
+    assert!(result.output["count"].as_u64().unwrap() > 0);
+
+    let tools = result.output["tools"].as_array().unwrap();
+    for tool in tools {
+        assert!(
+            tool.get("inputSchema").is_none() && tool.get("outputSchema").is_none(),
+            "tool_manifest must stay compact: {tool:?}"
+        );
+        assert!(
+            tool["accepted_flattened_args"].is_array(),
+            "tool_manifest entry must expose accepted_flattened_args: {tool:?}"
+        );
+        assert_eq!(tool["deprecated_or_unsupported_args"], json!([]));
+    }
+
+    let accepted = |name: &str| -> Vec<String> {
+        tools
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .unwrap_or_else(|| panic!("missing manifest tool {name}"))["accepted_flattened_args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|value| value.as_str().unwrap().to_string())
+            .collect()
+    };
+
+    for field in [
+        "category",
+        "include_recommended_flows",
+        "include_risk_summary",
+        "recording_session_id",
+    ] {
+        assert!(accepted("tool_manifest").contains(&field.to_string()));
+    }
+    for field in ["summary_only", "category", "features", "limit"] {
+        assert!(accepted("list_tools").contains(&field.to_string()));
+    }
+    for field in [
+        "project",
+        "title",
+        "bind_current",
+        "include_runtime_status",
+        "include_git",
+        "include_recent_commits",
+        "include_rules",
+        "include_tool_manifest",
+        "session_id",
+        "recording_session_id",
+    ] {
+        assert!(accepted("start_coding_task").contains(&field.to_string()));
+    }
+    for field in [
+        "session_id",
+        "include_validation",
+        "include_workspace",
+        "include_checkpoints",
+        "limit",
+    ] {
+        assert!(accepted("session_handoff_summary").contains(&field.to_string()));
+    }
+    for field in ["project", "path", "allow_missing", "session_id"] {
+        assert!(accepted("read_project_artifact_metadata").contains(&field.to_string()));
+    }
+    for (tool, fields) in [
+        (
+            "artifact_upload_begin",
+            vec![
+                "project",
+                "path",
+                "expected_bytes",
+                "expected_sha256",
+                "mime_type",
+                "overwrite",
+                "session_id",
+            ],
+        ),
+        (
+            "artifact_upload_chunk",
+            vec![
+                "project",
+                "path",
+                "upload_id",
+                "offset",
+                "content_base64",
+                "session_id",
+            ],
+        ),
+        (
+            "artifact_upload_finish",
+            vec!["project", "path", "upload_id", "session_id"],
+        ),
+        (
+            "artifact_upload_abort",
+            vec!["project", "path", "upload_id", "session_id"],
+        ),
+    ] {
+        let accepted = accepted(tool);
+        for field in fields {
+            assert!(
+                accepted.contains(&field.to_string()),
+                "{tool} missing accepted flattened arg {field}: {accepted:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
 async fn bounded_list_tools_hides_schemas_and_finds_artifact_upload_tools() {
     let runtime = test_runtime();
     let full = runtime
@@ -1099,6 +1229,49 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
     assert_eq!(out["projects"]["configured"], false);
     assert_eq!(out["projects"]["count"], 0);
     assert!(out["projects"]["load_error"].is_string());
+    assert_eq!(out["projects"]["server_static"]["configured"], false);
+    assert_eq!(out["projects"]["server_static"]["count"], 0);
+    assert_eq!(
+        out["projects"]["server_static"]["warning"],
+        "projects.toml not configured"
+    );
+    assert_eq!(out["projects"]["agent_registered"]["count"], 0);
+    assert_eq!(out["projects"]["agent_registered"]["online_count"], 0);
+    assert_eq!(out["projects"]["effective"]["count"], 0);
+    assert_eq!(out["projects"]["effective"]["status"], "no_projects");
+}
+
+#[tokio::test]
+async fn runtime_status_uses_agent_projects_as_effective_when_server_config_missing() {
+    let runtime = test_runtime();
+    let mut smoke = registered_project("webcodex-smoke", "/tmp/webcodex-smoke");
+    smoke.git_branch = Some("main".to_string());
+    smoke.git_head = Some("abc1234".to_string());
+    smoke.git_dirty = Some(false);
+    register_agent_with_projects(
+        &runtime,
+        "special",
+        None,
+        ShellClientCapabilities {
+            file_read: true,
+            file_write: true,
+            git: true,
+            ..Default::default()
+        },
+        vec![smoke],
+    )
+    .await;
+
+    let result = runtime.dispatch(ToolCall::RuntimeStatus).await;
+    assert!(result.success, "{:?}", result.error);
+    let projects = &result.output["projects"];
+    assert_eq!(projects["server_static"]["configured"], false);
+    assert_eq!(projects["server_static"]["count"], 0);
+    assert_eq!(projects["agent_registered"]["count"], 1);
+    assert_eq!(projects["agent_registered"]["online_count"], 1);
+    assert_eq!(projects["effective"]["count"], 1);
+    assert_eq!(projects["effective"]["status"], "ok");
+    assert_eq!(projects["count"], 1);
 }
 
 #[tokio::test]
@@ -1123,6 +1296,10 @@ async fn runtime_status_with_loaded_project_returns_configured_true() {
     assert_eq!(out["projects"]["configured"], true);
     assert_eq!(out["projects"]["count"], 1);
     assert!(out["projects"]["load_error"].is_null());
+    assert_eq!(out["projects"]["server_static"]["configured"], true);
+    assert_eq!(out["projects"]["server_static"]["count"], 1);
+    assert_eq!(out["projects"]["effective"]["count"], 1);
+    assert_eq!(out["projects"]["effective"]["status"], "ok");
 }
 
 #[tokio::test]

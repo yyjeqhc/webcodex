@@ -84,10 +84,16 @@ and descriptions expand the response; this is not a sign that the roughly
 `listRuntimeTools` for focused discovery. Use full `listRuntimeTools` only when
 debugging runtime schemas.
 
+`tool_manifest` is the lightweight discovery surface for flattened GPT Action
+args as well: each compact entry includes `accepted_flattened_args` and
+`deprecated_or_unsupported_args` without full input/output schemas. The manifest
+accepts `category`, `include_recommended_flows`, and `include_risk_summary`.
+
 For smoke project selection, call `list_projects` and prefer
-`capabilities.recommended_for_smoke=true`. For git smoke, require
-`capabilities.git_available=true`; `agent:special:test-mcp` can be safe for
-basic smoke without being git-backed.
+entries in `projects` whose `capabilities.recommended_for_smoke=true`. The
+runtime output shape is `{count, projects, recommended_for_smoke}`. For git
+smoke, require `capabilities.git_available=true`; `agent:special:test-mcp` can
+be safe for basic smoke without being git-backed.
 
 Typical MCP tools include:
 
@@ -157,9 +163,11 @@ and `session_handoff_summary` are the current task tracking foundation. They
 create, close out, and read bounded task-recorder metadata only; they do not
 modify a workspace. `start_session` creates a session record but does not
 automatically bind future calls. `start_coding_task` defaults
-`bind_current=false`; subsequent MCP calls should pass the returned explicit
-`session_id`. When session persistence is configured, session records, events,
-and messages may be persisted and restored through the `sessions.json` ledger.
+`bind_current=false` and includes a compact `tool_manifest` unless
+`include_tool_manifest=false`; subsequent MCP calls should pass the returned
+explicit `session_id`. When session persistence is configured, session records,
+events, and messages may be persisted and restored through the `sessions.json`
+ledger.
 The ledger is for task continuity and handoff metadata, not a complete audit
 log. Current-session bindings remain process-local in-memory state and may be
 lost on restart, so pass the session id explicitly for deterministic MCP
@@ -205,6 +213,14 @@ ledger-derived from validation-like tools (`cargo_fmt`, `cargo_check`,
 raw stdout/stderr, excerpt fields, or `validation_output_summary`, and the
 minimal parser extracts only stable facts from safe bounded metadata without
 root-cause inference, fix suggestions, LSP/tree-sitter, or LLM summarization.
+Validation includes `status` and `reason`: no validation events yields
+`not_run` with `no_validation_tool_invoked`; all-success/all-failure/mixed
+ledgers yield `passed`, `failed`, or `mixed`.
+
+`runtime_status.projects` separates `server_static`, `agent_registered`, and
+`effective`. A missing `projects.toml` should not be treated as an overall
+runtime failure when agent-registered projects are available; prefer
+`projects.effective.status` and `projects.effective.count`.
 
 Use agent-backed project ids such as:
 

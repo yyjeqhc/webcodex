@@ -34,6 +34,7 @@ impl ToolRuntime {
         include_git: Option<bool>,
         include_recent_commits: Option<bool>,
         include_rules: Option<bool>,
+        include_tool_manifest: Option<bool>,
         bind_current: bool,
         auth: Option<&AuthContext>,
         transport: SessionTransport,
@@ -42,6 +43,7 @@ impl ToolRuntime {
         let include_git = include_git.unwrap_or(true);
         let include_recent_commits = include_recent_commits.unwrap_or(true);
         let include_rules = include_rules.unwrap_or(true);
+        let include_tool_manifest = include_tool_manifest.unwrap_or(true);
 
         let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
             Ok(resolved) => resolved,
@@ -139,8 +141,7 @@ impl ToolRuntime {
         } else {
             Value::Null
         };
-
-        ToolResult::ok(json!({
+        let mut output = json!({
             "project": project,
             "resolved_project": resolved_project_payload(&resolved),
             "session": {
@@ -161,7 +162,11 @@ impl ToolRuntime {
             "deterministic": true,
             "llm_summary": false,
             "warnings": warnings,
-        }))
+        });
+        if include_tool_manifest {
+            output["tool_manifest"] = self.compact_tool_manifest_payload();
+        }
+        ToolResult::ok(output)
     }
 
     #[allow(clippy::too_many_arguments)]

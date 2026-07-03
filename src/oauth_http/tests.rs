@@ -10,6 +10,7 @@ use crate::models::{
 };
 use crate::OAuth2Config;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use salvo::prelude::*;
 use salvo::test::{ResponseExt, TestClient};
 use salvo::Service;
 use sha2::{Digest, Sha256};

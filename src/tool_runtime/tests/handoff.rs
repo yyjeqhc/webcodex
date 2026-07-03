@@ -329,12 +329,7 @@ async fn session_handoff_summary_includes_validation_by_default_from_session_led
         VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
     assert!(validation["latest_success"].get("diagnostics").is_none());
-    for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
-        assert!(
-            !json_contains_key(validation, key),
-            "handoff validation summary must not include {key}: {validation}"
-        );
-    }
+    assert_no_raw_validation_output_fields(validation, "handoff validation summary");
 }
 
 #[tokio::test]
@@ -835,6 +830,23 @@ fn json_contains_key(value: &Value, key: &str) -> bool {
         }
         Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
         _ => false,
+    }
+}
+
+fn assert_no_raw_validation_output_fields(value: &Value, context: &str) {
+    for key in [
+        "stdout",
+        "stderr",
+        "stdout_tail",
+        "stderr_tail",
+        "stdout_tail_excerpt",
+        "stderr_tail_excerpt",
+        "validation_output_summary",
+    ] {
+        assert!(
+            !json_contains_key(value, key),
+            "{context} must not include {key}: {value}"
+        );
     }
 }
 

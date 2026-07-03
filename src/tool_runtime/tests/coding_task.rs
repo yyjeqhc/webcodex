@@ -300,6 +300,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
         validation["parser"]["reason"],
         VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
+    assert_no_raw_validation_output_fields(validation, "finish validation summary");
     assert!(validation.get("observed_commands").is_none());
     assert!(result.output["hygiene"].is_null());
     assert!(result.output["handoff"].is_null());
@@ -312,4 +313,31 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
 
 fn contains_string(values: &[Value], needle: &str) -> bool {
     values.iter().any(|value| value.as_str() == Some(needle))
+}
+
+fn json_contains_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.contains_key(key) || map.values().any(|value| json_contains_key(value, key))
+        }
+        Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
+        _ => false,
+    }
+}
+
+fn assert_no_raw_validation_output_fields(value: &Value, context: &str) {
+    for key in [
+        "stdout",
+        "stderr",
+        "stdout_tail",
+        "stderr_tail",
+        "stdout_tail_excerpt",
+        "stderr_tail_excerpt",
+        "validation_output_summary",
+    ] {
+        assert!(
+            !json_contains_key(value, key),
+            "{context} must not include {key}: {value}"
+        );
+    }
 }

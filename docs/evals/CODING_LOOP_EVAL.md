@@ -118,18 +118,22 @@ tool name, validation kind, success, exit code when available, timestamps when
 available, and safe bounded input summaries. It does not include stdout/stderr
 bodies, extract root causes, or provide semantic diagnosis.
 
-Stage 4.3 captures a small `validation_output_summary` on validation-like cargo
-session events. The field is derived only from already-bounded
-`stdout_tail`/`stderr_tail` tool output, caps each excerpt at 800 characters,
-and filters suspicious token, secret, password, API key, authorization, and
-bearer lines before persistence. Finish and handoff validation summaries do not
-include these excerpts or raw stdout/stderr fields.
+The session ledger stores only a small, sanitized, bounded
+`validation_output_summary` for cargo validation tools (`cargo_fmt`,
+`cargo_check`, and `cargo_test`). The field is derived only from already-bounded
+`stdout_tail`/`stderr_tail` tool output, caps each excerpt at 800 characters, and
+filters suspicious token, secret, password, API key, authorization, bearer,
+private key, and access key lines before persistence. Reloaded persisted ledgers
+are sanitized again. Finish and handoff validation summaries never expose these
+excerpts, `validation_output_summary`, or raw stdout/stderr fields.
 
 The minimal bounded-tail parser reads that safe metadata when present. It
 extracts only stable cargo facts: rustc severity/code/span for `cargo_fmt` and
 `cargo_check`, and test summary counts plus the first stable failed test name
 for `cargo_test`. It does not infer root causes, summarize compiler output,
-offer fixes, use LSP, or use tree-sitter. Successful `cargo_check` runs may set
+offer fixes, use LSP, or use tree-sitter. `parser.available=true` means the
+parser had safe bounded metadata to inspect. `diagnostics.available=true` means
+stable facts were actually extracted. Successful `cargo_check` runs may set
 `parser.available=true` while `diagnostics.available=false` because no stable
 diagnostic facts are present. Session-ledger validation summaries report
 `parser.available=false` only when no validation event contains safe bounded
@@ -175,9 +179,12 @@ The final stdout line is a JSON object with this top-level shape:
   "workspace_clean_after_each_case": true,
   "handoff_available_rate": 1.0,
   "validation_available_rate": 0.3333333333,
+  "validation_parser_available_rate": 0.3333333333,
+  "validation_diagnostics_available_rate": 0.0,
   "validation_events_total": 1,
   "validation_successes": 1,
   "validation_failures": 0,
+  "validation_diagnostics_total": 0,
   "finish_coding_task_success_rate": null,
   "cases": []
 }
@@ -192,7 +199,9 @@ Each case summary includes `mode`, `case`, `passed`, `tool_calls`,
 `recovered_failed_tool_calls`, `handoff_available`, `workspace_clean`,
 `finish_coding_task_calls`, `finish_coding_task_successes`,
 `validation_available`, `validation_events_total`, `validation_successes`,
-`validation_failures`, and `warnings`.
+`validation_failures`, `validation_parser_available`,
+`validation_diagnostics_available`, `validation_diagnostics_total`, and
+`warnings`.
 
 `comparison` is present only in `EVAL_MODE=compare`:
 
@@ -203,6 +212,8 @@ Each case summary includes `mode`, `case`, `passed`, `tool_calls`,
   "guided_minus_baseline_structured_edit_calls": 0,
   "guided_handoff_available_delta": 0.0,
   "guided_minus_baseline_validation_available_rate": 0.0,
+  "guided_minus_baseline_validation_parser_available_rate": 0.0,
+  "guided_minus_baseline_validation_diagnostics_available_rate": 0.0,
   "guided_minus_baseline_validation_events_total": 0,
   "guided_cleanup_delta": 0.0
 }
@@ -264,6 +275,7 @@ summary.
   tails or safe metadata when available.
 - Parser output is not semantic diagnosis.
 - No root-cause extraction.
+- No fix suggestions.
 - No LSP or tree-sitter analysis.
 - There is no semantic code understanding signal yet.
 - The harness does not exercise the Codex CLI or any LLM delegation.

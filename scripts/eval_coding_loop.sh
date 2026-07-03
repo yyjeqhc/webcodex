@@ -60,6 +60,9 @@ CASE_VALIDATION_AVAILABLE=0
 CASE_VALIDATION_EVENTS_TOTAL=0
 CASE_VALIDATION_SUCCESSES=0
 CASE_VALIDATION_FAILURES=0
+CASE_VALIDATION_PARSER_AVAILABLE=0
+CASE_VALIDATION_DIAGNOSTICS_AVAILABLE=0
+CASE_VALIDATION_DIAGNOSTICS_TOTAL=0
 CASE_FINISH_CALLED=0
 CASE_FINISH_SUCCEEDED=0
 CASE_ASSERT_FAILURES=0
@@ -133,6 +136,9 @@ cases = [
         "validation_events_total": 0,
         "validation_successes": 0,
         "validation_failures": 0,
+        "validation_parser_available": None,
+        "validation_diagnostics_available": None,
+        "validation_diagnostics_total": 0,
     },
     {
         "case": "small_structured_line_edit",
@@ -141,6 +147,9 @@ cases = [
         "validation_events_total": 0,
         "validation_successes": 0,
         "validation_failures": 0,
+        "validation_parser_available": None,
+        "validation_diagnostics_available": None,
+        "validation_diagnostics_total": 0,
     },
     {
         "case": "failed_call_recovery",
@@ -149,6 +158,9 @@ cases = [
         "validation_events_total": 0,
         "validation_successes": 0,
         "validation_failures": 0,
+        "validation_parser_available": None,
+        "validation_diagnostics_available": None,
+        "validation_diagnostics_total": 0,
     },
 ]
 mode = sys.argv[1]
@@ -172,6 +184,9 @@ def flow(name):
         "validation_events_total": 0,
         "validation_successes": 0,
         "validation_failures": 0,
+        "validation_parser_available_rate": None,
+        "validation_diagnostics_available_rate": None,
+        "validation_diagnostics_total": 0,
         "finish_coding_task_success_rate": None,
         "cases": cases,
     }
@@ -182,6 +197,8 @@ comparison = {
     "guided_minus_baseline_structured_edit_calls": None,
     "guided_handoff_available_delta": None,
     "guided_minus_baseline_validation_available_rate": None,
+    "guided_minus_baseline_validation_parser_available_rate": None,
+    "guided_minus_baseline_validation_diagnostics_available_rate": None,
     "guided_minus_baseline_validation_events_total": None,
     "guided_cleanup_delta": None,
 }
@@ -503,6 +520,9 @@ begin_case() {
     CASE_VALIDATION_EVENTS_TOTAL=0
     CASE_VALIDATION_SUCCESSES=0
     CASE_VALIDATION_FAILURES=0
+    CASE_VALIDATION_PARSER_AVAILABLE=0
+    CASE_VALIDATION_DIAGNOSTICS_AVAILABLE=0
+    CASE_VALIDATION_DIAGNOSTICS_TOTAL=0
     CASE_FINISH_CALLED=0
     CASE_FINISH_SUCCEEDED=0
     CASE_ASSERT_FAILURES=0
@@ -538,13 +558,16 @@ record_case_summary() {
         "$CASE_VALIDATION_EVENTS_TOTAL" \
         "$CASE_VALIDATION_SUCCESSES" \
         "$CASE_VALIDATION_FAILURES" \
+        "$CASE_VALIDATION_PARSER_AVAILABLE" \
+        "$CASE_VALIDATION_DIAGNOSTICS_AVAILABLE" \
+        "$CASE_VALIDATION_DIAGNOSTICS_TOTAL" \
         "$CASE_WARNINGS_FILE" <<'PY' >>"$CASE_SUMMARIES_FILE"
 import json
 import sys
 
 warnings = []
 try:
-    with open(sys.argv[17], "r", encoding="utf-8") as handle:
+    with open(sys.argv[20], "r", encoding="utf-8") as handle:
         warnings = [json.loads(line) for line in handle if line.strip()]
 except FileNotFoundError:
     warnings = []
@@ -566,6 +589,9 @@ summary = {
     "validation_events_total": int(sys.argv[14]),
     "validation_successes": int(sys.argv[15]),
     "validation_failures": int(sys.argv[16]),
+    "validation_parser_available": int(sys.argv[17]) > 0,
+    "validation_diagnostics_available": int(sys.argv[18]) > 0,
+    "validation_diagnostics_total": int(sys.argv[19]),
     "warnings": warnings,
 }
 print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
@@ -741,7 +767,7 @@ import sys
 try:
     data = json.loads(sys.argv[1])
 except Exception:
-    print("0 0 0 0")
+    print("0 0 0 0 0 0 0")
     sys.exit(0)
 
 cur = data
@@ -768,7 +794,27 @@ available = 1 if validation.get("available") is True else 0
 events_total = as_int(validation.get("events_total"))
 successes = as_int(validation.get("successes"))
 failures = as_int(validation.get("failures"))
-print(f"{available} {events_total} {successes} {failures}")
+parser = validation.get("parser") or {}
+parser_available = 1 if parser.get("available") is True else 0
+diagnostics_available = 0
+diagnostics_total = 0
+events = validation.get("events")
+if not isinstance(events, list):
+    events = []
+for event in events:
+    if not isinstance(event, dict):
+        continue
+    diagnostics = event.get("diagnostics")
+    if not isinstance(diagnostics, dict):
+        continue
+    if diagnostics.get("available") is True:
+        diagnostics_available = 1
+        count = diagnostics.get("diagnostic_count")
+        diagnostics_total += as_int(count) if count is not None else 1
+print(
+    f"{available} {events_total} {successes} {failures} "
+    f"{parser_available} {diagnostics_available} {diagnostics_total}"
+)
 PY
 )"
     set -- $metrics
@@ -776,6 +822,9 @@ PY
     CASE_VALIDATION_EVENTS_TOTAL="${2:-0}"
     CASE_VALIDATION_SUCCESSES="${3:-0}"
     CASE_VALIDATION_FAILURES="${4:-0}"
+    CASE_VALIDATION_PARSER_AVAILABLE="${5:-0}"
+    CASE_VALIDATION_DIAGNOSTICS_AVAILABLE="${6:-0}"
+    CASE_VALIDATION_DIAGNOSTICS_TOTAL="${7:-0}"
 }
 
 assert_validation_available() {
@@ -1422,7 +1471,12 @@ def summarize(flow_mode):
     finish_calls = sum(c["finish_coding_task_calls"] for c in flow_cases)
     finish_successes = sum(c["finish_coding_task_successes"] for c in flow_cases)
     validation_available = sum(1 for c in flow_cases if c["validation_available"])
+    validation_parser_available = sum(1 for c in flow_cases if c["validation_parser_available"])
+    validation_diagnostics_available = sum(
+        1 for c in flow_cases if c["validation_diagnostics_available"]
+    )
     validation_events_total = sum(c["validation_events_total"] for c in flow_cases)
+    validation_diagnostics_total = sum(c["validation_diagnostics_total"] for c in flow_cases)
     finish_rate = None
     if flow_mode == "guided":
         finish_rate = (finish_successes / finish_calls) if finish_calls else 0.0
@@ -1446,9 +1500,16 @@ def summarize(flow_mode):
         "validation_available_rate": (
             validation_available / len(flow_cases)
         ) if flow_cases else 0.0,
+        "validation_parser_available_rate": (
+            validation_parser_available / len(flow_cases)
+        ) if flow_cases else 0.0,
+        "validation_diagnostics_available_rate": (
+            validation_diagnostics_available / len(flow_cases)
+        ) if flow_cases else 0.0,
         "validation_events_total": validation_events_total,
         "validation_successes": sum(c["validation_successes"] for c in flow_cases),
         "validation_failures": sum(c["validation_failures"] for c in flow_cases),
+        "validation_diagnostics_total": validation_diagnostics_total,
         "finish_coding_task_success_rate": finish_rate,
         "cases": flow_cases,
     }
@@ -1467,6 +1528,8 @@ if mode == "compare":
         "guided_minus_baseline_structured_edit_calls": guided["structured_edit_calls"] - baseline["structured_edit_calls"],
         "guided_handoff_available_delta": guided["handoff_available_rate"] - baseline["handoff_available_rate"],
         "guided_minus_baseline_validation_available_rate": guided["validation_available_rate"] - baseline["validation_available_rate"],
+        "guided_minus_baseline_validation_parser_available_rate": guided["validation_parser_available_rate"] - baseline["validation_parser_available_rate"],
+        "guided_minus_baseline_validation_diagnostics_available_rate": guided["validation_diagnostics_available_rate"] - baseline["validation_diagnostics_available_rate"],
         "guided_minus_baseline_validation_events_total": guided["validation_events_total"] - baseline["validation_events_total"],
         "guided_cleanup_delta": (
             bool_score(guided["workspace_clean_after_each_case"])

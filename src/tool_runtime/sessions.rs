@@ -1730,7 +1730,10 @@ fn sanitize_validation_line(line: &str) -> String {
 
 fn validation_line_is_suspicious(line: &str) -> bool {
     let lower = line.to_ascii_lowercase();
-    let compact = lower.replace('_', "").replace('-', "");
+    let compact: String = lower
+        .chars()
+        .filter(|ch| !matches!(*ch, '_' | '-') && !ch.is_whitespace())
+        .collect();
     lower.contains("token")
         || lower.contains("secret")
         || lower.contains("password")
@@ -1955,6 +1958,197 @@ mod tests {
         assert_eq!(summary.counts.succeeded, 1);
         assert_eq!(summary.counts.git_like, 1);
         assert_eq!(summary.events[1].tool_name, "git_log");
+    }
+
+    #[test]
+    fn validation_output_summary_survives_restore_sanitized() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session(None, Some("validation output".to_string()));
+        let start = store.record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Api,
+            "cargo_check",
+            &json!({"project": "agent:eval:demo"}),
+        );
+        store.record_tool_call_finished(
+            start,
+            false,
+            &json!({
+                "exit_code": 101,
+                "stdout": "full stdout body must not persist",
+                "stderr": "full stderr body must not persist",
+                "stdout_tail": "token=supersecret\nsafe stdout line\n",
+                "stderr_tail": "Authorization: Bearer supersecret\nerror[E0308]: mismatched types\n --> src/lib.rs:12:5\n",
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+            }),
+            Some("tool failed"),
+            None,
+        );
+
+        let restored = persistent_store(ledger);
+        let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+        let finished = summary
+            .events
+            .iter()
+            .find(|event| event.kind == "tool_call_finished")
+            .unwrap();
+        let output_summary = finished.validation_output_summary.as_ref().unwrap();
+        let stdout_excerpt = output_summary["stdout_tail_excerpt"].as_str().unwrap();
+        let stderr_excerpt = output_summary["stderr_tail_excerpt"].as_str().unwrap();
+
+        assert_eq!(output_summary["tool_name"], "cargo_check");
+        assert!(stdout_excerpt.contains("safe stdout line"));
+        assert!(stderr_excerpt.contains("error[E0308]"));
+        assert!(stderr_excerpt.contains("--> src/lib.rs:12:5"));
+        for leaked in [
+            "full stdout body must not persist",
+            "full stderr body must not persist",
+            "token=supersecret",
+            "Authorization: Bearer supersecret",
+        ] {
+            assert!(
+                !serde_json::to_string(output_summary)
+                    .unwrap()
+                    .contains(leaked),
+                "restored validation_output_summary leaked {leaked}: {output_summary}"
+            );
+        }
+        assert!(stdout_excerpt.chars().count() <= MAX_VALIDATION_EXCERPT_CHARS);
+        assert!(stderr_excerpt.chars().count() <= MAX_VALIDATION_EXCERPT_CHARS);
+        assert_eq!(output_summary["stdout_truncated"], true);
+        assert_eq!(output_summary["stderr_truncated"], true);
+    }
+
+    #[test]
+    fn malicious_persisted_validation_output_summary_is_resanitized_on_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session(None, Some("malicious validation".to_string()));
+        for tool_name in ["cargo_check", "run_shell"] {
+            let start = store.record_tool_call_started(
+                Some(&session.session_id),
+                SessionTransport::Api,
+                tool_name,
+                &json!({"project": "agent:eval:demo"}),
+            );
+            store.record_tool_call_finished(
+                start,
+                false,
+                &json!({"exit_code": 101}),
+                Some("tool failed"),
+                None,
+            );
+        }
+
+        let mut ledger_value: Value =
+            serde_json::from_str(&std::fs::read_to_string(&ledger).unwrap()).unwrap();
+        let events = ledger_value["sessions"][0]["events"]
+            .as_array_mut()
+            .unwrap();
+        for event in events {
+            if event["kind"] != "tool_call_finished" {
+                continue;
+            }
+            let tool_name = event["tool_name"].clone();
+            event["validation_output_summary"] = json!({
+                "tool_name": tool_name,
+                "stdout_tail_excerpt": format!(
+                    "token=abc\nsecret=abc\npassword=abc\napi_key=abc\n{}STDOUT_SAFE_END",
+                    "x".repeat(MAX_VALIDATION_EXCERPT_CHARS + 64)
+                ),
+                "stderr_tail_excerpt": format!(
+                    "authorization: basic abc\nbearer abc\nprivate key abc\naccess key abc\n{}STDERR_SAFE_END",
+                    "y".repeat(MAX_VALIDATION_EXCERPT_CHARS + 64)
+                ),
+                "stdout_truncated": false,
+                "stderr_truncated": false,
+                "max_excerpt_chars": 999999,
+            });
+        }
+        std::fs::write(&ledger, serde_json::to_vec_pretty(&ledger_value).unwrap()).unwrap();
+
+        let restored = persistent_store(ledger);
+        let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+        let cargo_finished = summary
+            .events
+            .iter()
+            .find(|event| event.kind == "tool_call_finished" && event.tool_name == "cargo_check")
+            .unwrap();
+        let run_shell_finished = summary
+            .events
+            .iter()
+            .find(|event| event.kind == "tool_call_finished" && event.tool_name == "run_shell")
+            .unwrap();
+        let output_summary = cargo_finished.validation_output_summary.as_ref().unwrap();
+        let stdout_excerpt = output_summary["stdout_tail_excerpt"].as_str().unwrap();
+        let stderr_excerpt = output_summary["stderr_tail_excerpt"].as_str().unwrap();
+        let serialized = serde_json::to_string(output_summary).unwrap();
+
+        assert!(stdout_excerpt.contains("STDOUT_SAFE_END"));
+        assert!(stderr_excerpt.contains("STDERR_SAFE_END"));
+        assert!(stdout_excerpt.chars().count() <= MAX_VALIDATION_EXCERPT_CHARS);
+        assert!(stderr_excerpt.chars().count() <= MAX_VALIDATION_EXCERPT_CHARS);
+        assert_eq!(
+            output_summary["max_excerpt_chars"],
+            MAX_VALIDATION_EXCERPT_CHARS
+        );
+        assert_eq!(output_summary["stdout_truncated"], true);
+        assert_eq!(output_summary["stderr_truncated"], true);
+        for leaked in [
+            "token=abc",
+            "secret=abc",
+            "password=abc",
+            "api_key=abc",
+            "authorization: basic abc",
+            "bearer abc",
+            "private key abc",
+            "access key abc",
+        ] {
+            assert!(
+                !serialized.contains(leaked),
+                "restored validation_output_summary leaked {leaked}: {serialized}"
+            );
+        }
+        assert!(
+            run_shell_finished.validation_output_summary.is_none(),
+            "non-cargo tool validation_output_summary must be discarded"
+        );
+    }
+
+    #[test]
+    fn legacy_session_events_without_validation_output_summary_restore() {
+        let tmp = tempfile::tempdir().unwrap();
+        let ledger = tmp.path().join("sessions.json");
+        let store = persistent_store(ledger.clone());
+        let session = store.start_session(None, Some("legacy validation".to_string()));
+        let start = store.record_tool_call_started(
+            Some(&session.session_id),
+            SessionTransport::Api,
+            "cargo_check",
+            &json!({"project": "agent:eval:demo"}),
+        );
+        store.record_tool_call_finished(start, true, &json!({"exit_code": 0}), None, None);
+
+        let ledger_text = std::fs::read_to_string(&ledger).unwrap();
+        assert!(
+            !ledger_text.contains("validation_output_summary"),
+            "legacy fixture should omit validation_output_summary: {ledger_text}"
+        );
+        let restored = persistent_store(ledger);
+        let summary = restored.summary(&session.session_id, Some(10)).unwrap();
+        let finished = summary
+            .events
+            .iter()
+            .find(|event| event.kind == "tool_call_finished")
+            .unwrap();
+
+        assert_eq!(summary.counts.tool_calls, 1);
+        assert_eq!(finished.tool_name, "cargo_check");
+        assert!(finished.validation_output_summary.is_none());
     }
 
     #[test]

@@ -106,6 +106,41 @@ fn cargo_check_success_produces_validation_event() {
 }
 
 #[test]
+fn validation_output_metadata_without_stable_diagnostics_makes_parser_available() {
+    let store = SessionStore::default();
+    let session = store.start_session(Some("agent:eval:demo".to_string()), None);
+    record_finished_tool(
+        &store,
+        &session.session_id,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout_tail": "",
+            "stderr_tail": "",
+            "stdout_truncated": false,
+            "stderr_truncated": false,
+        }),
+    );
+
+    let session = store.summary(&session.session_id, Some(50)).unwrap();
+    let validation = validation_summary_for_session(&session);
+    let diagnostics = &validation["latest_success"]["diagnostics"];
+
+    assert_eq!(validation["available"], true);
+    assert_eq!(validation["events_total"], 1);
+    assert_eq!(validation["latest_success"]["tool_name"], "cargo_check");
+    assert_eq!(validation["parser"]["available"], true);
+    assert_eq!(validation["parser"]["kind"], PARSER_KIND);
+    assert!(validation["parser"].get("reason").is_none());
+    assert_eq!(diagnostics["available"], false);
+    assert_eq!(diagnostics["parser"], PARSER_KIND);
+    assert_eq!(diagnostics["reason"], NO_STABLE_DIAGNOSTICS_REASON);
+    assert_no_raw_validation_output_fields(&validation, "validation summary");
+}
+
+#[test]
 fn cargo_check_finished_event_records_safe_validation_output_summary() {
     let store = SessionStore::default();
     let session = store.start_session(Some("agent:eval:demo".to_string()), None);
@@ -216,12 +251,7 @@ fn validation_summary_wires_cargo_check_diagnostics_from_captured_excerpt() {
     assert_eq!(diagnostics["first_diagnostic"]["line"], 12);
     assert_eq!(diagnostics["first_diagnostic"]["column"], 5);
     assert_eq!(diagnostics["truncated"], false);
-    for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
-        assert!(
-            !json_contains_key(&validation, key),
-            "validation summary must not include {key}: {validation}"
-        );
-    }
+    assert_no_raw_validation_output_fields(&validation, "validation summary");
 }
 
 #[test]
@@ -380,12 +410,7 @@ fn latest_success_and_failure_follow_session_ledger_order() {
         validation["parser"]["reason"],
         VALIDATION_OUTPUT_METADATA_ABSENT_REASON
     );
-    for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
-        assert!(
-            !json_contains_key(&validation, key),
-            "validation summary must not include {key}: {validation}"
-        );
-    }
+    assert_no_raw_validation_output_fields(&validation, "validation summary");
 }
 
 #[tokio::test]
@@ -567,12 +592,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
         validation["latest_failure"]["diagnostics"]["reason"],
         NO_STABLE_DIAGNOSTICS_REASON
     );
-    for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
-        assert!(
-            !json_contains_key(validation, key),
-            "finish validation summary must not include {key}: {validation}"
-        );
-    }
+    assert_no_raw_validation_output_fields(validation, "finish validation summary");
 
     let handoff = runtime
         .dispatch(ToolCall::SessionHandoffSummary {
@@ -588,6 +608,10 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     assert_eq!(
         handoff.output["validation"], finish.output["validation"],
         "handoff validation should match finish_coding_task validation for the same session ledger"
+    );
+    assert_no_raw_validation_output_fields(
+        &handoff.output["validation"],
+        "handoff validation summary",
     );
 }
 
@@ -616,6 +640,23 @@ fn json_contains_key(value: &Value, key: &str) -> bool {
         }
         Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
         _ => false,
+    }
+}
+
+fn assert_no_raw_validation_output_fields(value: &Value, context: &str) {
+    for key in [
+        "stdout",
+        "stderr",
+        "stdout_tail",
+        "stderr_tail",
+        "stdout_tail_excerpt",
+        "stderr_tail_excerpt",
+        "validation_output_summary",
+    ] {
+        assert!(
+            !json_contains_key(value, key),
+            "{context} must not include {key}: {value}"
+        );
     }
 }
 

@@ -54,6 +54,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "include_hygiene",
         "include_handoff",
         "include_validation_summary",
+        "include_validation",
     ] {
         assert!(
             properties.contains_key(field),

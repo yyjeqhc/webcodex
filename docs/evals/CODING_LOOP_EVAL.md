@@ -91,9 +91,10 @@ scripted raw shell runtime calls.
 Exercises a small source edit using line-number metadata. Assertions include
 structured line-edit usage, no raw shell runtime editing, `show_changes`
 reporting `src/lib.rs`, successful `cargo_check`, successful closeout handoff,
-and clean worktree cleanup. Guided additionally asserts that
-`finish_coding_task` reports the changed file and returns a ledger-based
-validation summary with at least one validation-like event after `cargo_check`.
+and clean worktree cleanup. Both baseline and guided assert that the closeout
+validation summary reports at least one validation-like event after
+`cargo_check`; guided also asserts that `finish_coding_task` reports the changed
+file.
 
 ### `failed_call_recovery`
 
@@ -105,18 +106,24 @@ availability because it does not run `cargo_check`.
 
 ## Validation Summary
 
-`finish_coding_task.validation` is a conservative session-ledger summary. It
-records validation-like tool-call outcomes such as `cargo_fmt`, `cargo_check`,
-`cargo_test`, `validate_patch`, and `apply_patch_checked`.
+Validation metrics are ledger-derived. Baseline reads validation from
+`session_handoff_summary.validation`; guided reads validation from
+`finish_coding_task.validation`. Both sections use the same conservative
+session-ledger summary for validation-like tool-call outcomes such as
+`cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
+`apply_patch_checked`.
 
 The summary is observability data only. It records factual tool metadata such as
 tool name, validation kind, success, exit code when available, timestamps when
 available, and safe bounded input summaries. It does not include stdout/stderr
 bodies, parse compiler or test output, extract root causes, or provide semantic
-diagnosis.
+diagnosis. There is no stdout/stderr parser yet, and there is no test failure
+root-cause extraction yet.
 
 Inspect-only cases may still report `validation.available=false` when no
 validation-like tool calls exist in the session ledger.
+Validation availability should match between baseline and guided when both
+flows run the same validation-like tools.
 
 ## Metrics
 
@@ -152,6 +159,10 @@ The final stdout line is a JSON object with this top-level shape:
   "recovered_failed_tool_calls": 0,
   "workspace_clean_after_each_case": true,
   "handoff_available_rate": 1.0,
+  "validation_available_rate": 0.3333333333,
+  "validation_events_total": 1,
+  "validation_successes": 1,
+  "validation_failures": 0,
   "finish_coding_task_success_rate": null,
   "cases": []
 }
@@ -164,7 +175,9 @@ For baseline summaries, it is always `null`.
 Each case summary includes `mode`, `case`, `passed`, `tool_calls`,
 `raw_shell_calls`, `structured_edit_calls`, `failed_tool_calls`,
 `recovered_failed_tool_calls`, `handoff_available`, `workspace_clean`,
-`finish_coding_task_calls`, `finish_coding_task_successes`, and `warnings`.
+`finish_coding_task_calls`, `finish_coding_task_successes`,
+`validation_available`, `validation_events_total`, `validation_successes`,
+`validation_failures`, and `warnings`.
 
 `comparison` is present only in `EVAL_MODE=compare`:
 
@@ -174,6 +187,8 @@ Each case summary includes `mode`, `case`, `passed`, `tool_calls`,
   "guided_minus_baseline_raw_shell_ratio": 0.0,
   "guided_minus_baseline_structured_edit_calls": 0,
   "guided_handoff_available_delta": 0.0,
+  "guided_minus_baseline_validation_available_rate": 0.0,
+  "guided_minus_baseline_validation_events_total": 0,
   "guided_cleanup_delta": 0.0
 }
 ```
@@ -228,10 +243,10 @@ summary.
 
 ## Limitations
 
-- Metrics are scripted tool-call metrics, not full model behavior.
+- Eval remains scripted tool-call metrics, not full model behavior.
 - Guided may use more tool calls because it includes start/finish aggregators.
-- Validation stdout/stderr is not parsed yet.
-- Test failure root-cause extraction is not implemented yet.
+- No stdout/stderr parser.
+- No test failure root-cause extraction.
 - There is no semantic code understanding signal yet.
-- There is no LSP or tree-sitter signal yet.
+- No LSP/tree-sitter signal.
 - The harness does not exercise the Codex CLI or any LLM delegation.

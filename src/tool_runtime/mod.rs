@@ -432,6 +432,7 @@ impl ToolRuntime {
                 project,
                 include_workspace,
                 include_checkpoints,
+                include_validation,
                 limit,
             } => {
                 self.session_handoff_summary(
@@ -439,6 +440,7 @@ impl ToolRuntime {
                     project,
                     include_workspace,
                     include_checkpoints,
+                    include_validation,
                     limit,
                 )
                 .await

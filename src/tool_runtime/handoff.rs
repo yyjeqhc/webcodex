@@ -14,10 +14,12 @@ use serde_json::{json, Value};
 
 use super::sessions::{SessionDiscussionCounts, SessionDiscussionSummary, SessionMessage};
 use super::types::ToolResult;
+use super::validation_events::validation_summary_for_session;
 use super::ToolRuntime;
 
 const DEFAULT_HANDOFF_LIMIT: usize = 20;
 const MAX_HANDOFF_LIMIT: usize = 100;
+const HANDOFF_VALIDATION_SESSION_EVENT_LIMIT: usize = 200;
 const MAX_RECENT_FAILED_TOOLS: usize = 10;
 const MAX_RECENT_PROGRESS: usize = 10;
 const MAX_RECENT_DECISIONS: usize = 10;
@@ -32,6 +34,7 @@ impl ToolRuntime {
         project: Option<String>,
         include_workspace: Option<bool>,
         include_checkpoints: Option<bool>,
+        include_validation: Option<bool>,
         limit: Option<usize>,
     ) -> ToolResult {
         let limit = limit
@@ -40,6 +43,7 @@ impl ToolRuntime {
             .min(MAX_HANDOFF_LIMIT);
         let include_workspace = include_workspace.unwrap_or(true);
         let include_checkpoints = include_checkpoints.unwrap_or(true);
+        let include_validation = include_validation.unwrap_or(true);
 
         // --- session basic info + events ---
         let summary = match self.sessions.summary(&session_id, Some(limit)) {
@@ -149,6 +153,16 @@ impl ToolRuntime {
             let project = project.clone().unwrap_or_default();
             let checkpoints = self.handoff_checkpoint_summary(&project, limit).await;
             output["checkpoints"] = checkpoints;
+        }
+
+        // --- optional ledger-derived validation summary ---
+        if include_validation {
+            let validation_summary = self
+                .sessions
+                .summary(&session_id, Some(HANDOFF_VALIDATION_SESSION_EVENT_LIMIT))
+                .map(|summary| validation_summary_for_session(&summary))
+                .unwrap_or_else(|| validation_summary_for_session(&summary));
+            output["validation"] = validation_summary;
         }
 
         // --- bounded suggested next actions ---

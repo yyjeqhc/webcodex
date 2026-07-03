@@ -56,6 +56,10 @@ CASE_STRUCTURED_EDIT_CALLS=0
 CASE_FAILED_TOOL_CALLS=0
 CASE_RECOVERED_FAILED_TOOL_CALLS=0
 CASE_HANDOFF_AVAILABLE=0
+CASE_VALIDATION_AVAILABLE=0
+CASE_VALIDATION_EVENTS_TOTAL=0
+CASE_VALIDATION_SUCCESSES=0
+CASE_VALIDATION_FAILURES=0
 CASE_FINISH_CALLED=0
 CASE_FINISH_SUCCEEDED=0
 CASE_ASSERT_FAILURES=0
@@ -122,9 +126,30 @@ import json
 import sys
 
 cases = [
-    {"case": "inspect_only", "planned": True},
-    {"case": "small_structured_line_edit", "planned": True},
-    {"case": "failed_call_recovery", "planned": True},
+    {
+        "case": "inspect_only",
+        "planned": True,
+        "validation_available": None,
+        "validation_events_total": 0,
+        "validation_successes": 0,
+        "validation_failures": 0,
+    },
+    {
+        "case": "small_structured_line_edit",
+        "planned": True,
+        "validation_available": None,
+        "validation_events_total": 0,
+        "validation_successes": 0,
+        "validation_failures": 0,
+    },
+    {
+        "case": "failed_call_recovery",
+        "planned": True,
+        "validation_available": None,
+        "validation_events_total": 0,
+        "validation_successes": 0,
+        "validation_failures": 0,
+    },
 ]
 mode = sys.argv[1]
 
@@ -143,6 +168,10 @@ def flow(name):
         "recovered_failed_tool_calls": 0,
         "workspace_clean_after_each_case": None,
         "handoff_available_rate": None,
+        "validation_available_rate": None,
+        "validation_events_total": 0,
+        "validation_successes": 0,
+        "validation_failures": 0,
         "finish_coding_task_success_rate": None,
         "cases": cases,
     }
@@ -152,6 +181,8 @@ comparison = {
     "guided_minus_baseline_raw_shell_ratio": None,
     "guided_minus_baseline_structured_edit_calls": None,
     "guided_handoff_available_delta": None,
+    "guided_minus_baseline_validation_available_rate": None,
+    "guided_minus_baseline_validation_events_total": None,
     "guided_cleanup_delta": None,
 }
 
@@ -346,6 +377,7 @@ print(json.dumps({
     "project": sys.argv[1],
     "include_workspace": True,
     "include_checkpoints": False,
+    "include_validation": True,
     "limit": 50,
 }, separators=(",", ":")))
 PY
@@ -467,6 +499,10 @@ begin_case() {
     CASE_FAILED_TOOL_CALLS=0
     CASE_RECOVERED_FAILED_TOOL_CALLS=0
     CASE_HANDOFF_AVAILABLE=0
+    CASE_VALIDATION_AVAILABLE=0
+    CASE_VALIDATION_EVENTS_TOTAL=0
+    CASE_VALIDATION_SUCCESSES=0
+    CASE_VALIDATION_FAILURES=0
     CASE_FINISH_CALLED=0
     CASE_FINISH_SUCCEEDED=0
     CASE_ASSERT_FAILURES=0
@@ -498,13 +534,17 @@ record_case_summary() {
         "$workspace_clean" \
         "$CASE_FINISH_CALLED" \
         "$CASE_FINISH_SUCCEEDED" \
+        "$CASE_VALIDATION_AVAILABLE" \
+        "$CASE_VALIDATION_EVENTS_TOTAL" \
+        "$CASE_VALIDATION_SUCCESSES" \
+        "$CASE_VALIDATION_FAILURES" \
         "$CASE_WARNINGS_FILE" <<'PY' >>"$CASE_SUMMARIES_FILE"
 import json
 import sys
 
 warnings = []
 try:
-    with open(sys.argv[13], "r", encoding="utf-8") as handle:
+    with open(sys.argv[17], "r", encoding="utf-8") as handle:
         warnings = [json.loads(line) for line in handle if line.strip()]
 except FileNotFoundError:
     warnings = []
@@ -522,6 +562,10 @@ summary = {
     "workspace_clean": sys.argv[10] == "true",
     "finish_coding_task_calls": int(sys.argv[11]),
     "finish_coding_task_successes": int(sys.argv[12]),
+    "validation_available": int(sys.argv[13]) > 0,
+    "validation_events_total": int(sys.argv[14]),
+    "validation_successes": int(sys.argv[15]),
+    "validation_failures": int(sys.argv[16]),
     "warnings": warnings,
 }
 print(json.dumps(summary, separators=(",", ":"), sort_keys=True))
@@ -685,23 +729,86 @@ PY
     fi
 }
 
-assert_finish_validation_available() {
+capture_validation_metrics() {
     local body="$1"
+    local validation_path="$2"
+    local metrics
 
-    if python3 - "$body" <<'PY'
+    metrics="$(python3 - "$body" "$validation_path" <<'PY'
+import json
+import sys
+
+try:
+    data = json.loads(sys.argv[1])
+except Exception:
+    print("0 0 0 0")
+    sys.exit(0)
+
+cur = data
+for part in sys.argv[2].split("."):
+    if not part:
+        continue
+    if isinstance(cur, dict):
+        cur = cur.get(part)
+    else:
+        cur = None
+    if cur is None:
+        break
+
+validation = cur if isinstance(cur, dict) else {}
+
+def as_int(value):
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    return 0
+
+available = 1 if validation.get("available") is True else 0
+events_total = as_int(validation.get("events_total"))
+successes = as_int(validation.get("successes"))
+failures = as_int(validation.get("failures"))
+print(f"{available} {events_total} {successes} {failures}")
+PY
+)"
+    set -- $metrics
+    CASE_VALIDATION_AVAILABLE="${1:-0}"
+    CASE_VALIDATION_EVENTS_TOTAL="${2:-0}"
+    CASE_VALIDATION_SUCCESSES="${3:-0}"
+    CASE_VALIDATION_FAILURES="${4:-0}"
+}
+
+assert_validation_available() {
+    local label="$1"
+    local body="$2"
+    local validation_path="$3"
+
+    if python3 - "$body" "$validation_path" <<'PY'
 import json
 import sys
 
 data = json.loads(sys.argv[1])
-out = data.get("output") or {}
-validation = out.get("validation") or {}
+cur = data
+for part in sys.argv[2].split("."):
+    if not part:
+        continue
+    if isinstance(cur, dict):
+        cur = cur.get(part)
+    else:
+        cur = None
+    if cur is None:
+        break
+
+validation = cur if isinstance(cur, dict) else {}
 parser = validation.get("parser") or {}
 events = validation.get("events") or []
+latest_success = validation.get("latest_success") or {}
 ok = (
     data.get("success") is True
     and validation.get("available") is True
     and validation.get("source") == "session_ledger"
     and validation.get("events_total", 0) >= 1
+    and latest_success.get("tool_name") == "cargo_check"
     and isinstance(events, list)
     and len(events) >= 1
     and parser.get("available") is False
@@ -709,9 +816,48 @@ ok = (
 sys.exit(0 if ok else 1)
 PY
     then
-        case_ok "finish_coding_task validation summary is available"
+        case_ok "$label"
     else
-        case_fail "finish_coding_task validation summary unavailable after cargo_check"
+        case_fail "$label"
+    fi
+}
+
+assert_validation_unavailable() {
+    local label="$1"
+    local body="$2"
+    local validation_path="$3"
+
+    if python3 - "$body" "$validation_path" <<'PY'
+import json
+import sys
+
+data = json.loads(sys.argv[1])
+cur = data
+for part in sys.argv[2].split("."):
+    if not part:
+        continue
+    if isinstance(cur, dict):
+        cur = cur.get(part)
+    else:
+        cur = None
+    if cur is None:
+        break
+
+validation = cur if isinstance(cur, dict) else {}
+parser = validation.get("parser") or {}
+ok = (
+    data.get("success") is True
+    and validation.get("available") is False
+    and validation.get("source") == "session_ledger"
+    and validation.get("events_total", 0) == 0
+    and parser.get("available") is False
+)
+sys.exit(0 if ok else 1)
+PY
+    then
+        case_ok "$label"
+    else
+        case_fail "$label"
     fi
 }
 
@@ -726,15 +872,28 @@ complete_case_session() {
         call_tool "finish_coding_task" "$params"
         assert_success "finish_coding_task succeeds" "$LAST_BODY"
         assert_handoff_available "finish_coding_task includes handoff" "$LAST_BODY" "output.handoff"
+        capture_validation_metrics "$LAST_BODY" "output.validation"
 
         if [ "$case_name" = "small_structured_line_edit" ]; then
             assert_finish_reports_changed_file "$LAST_BODY"
-            assert_finish_validation_available "$LAST_BODY"
+            assert_validation_available \
+                "finish_coding_task validation summary is available" \
+                "$LAST_BODY" \
+                "output.validation"
         elif [ "$case_name" = "failed_call_recovery" ]; then
+            assert_validation_unavailable \
+                "finish_coding_task validation summary is unavailable without validation events" \
+                "$LAST_BODY" \
+                "output.validation"
             assert_handoff_failed_tool_metadata \
                 "finish_coding_task handoff includes failed tool metadata" \
                 "$LAST_BODY" \
                 "output.handoff"
+        else
+            assert_validation_unavailable \
+                "finish_coding_task validation summary is unavailable without validation events" \
+                "$LAST_BODY" \
+                "output.validation"
         fi
     else
         params="$(params_workspace_hygiene "$session_id")"
@@ -745,12 +904,27 @@ complete_case_session() {
         call_tool "session_handoff_summary" "$params"
         assert_success "session_handoff_summary succeeds" "$LAST_BODY"
         assert_handoff_available "session_handoff_summary returns handoff" "$LAST_BODY" "output"
+        capture_validation_metrics "$LAST_BODY" "output.validation"
 
-        if [ "$case_name" = "failed_call_recovery" ]; then
+        if [ "$case_name" = "small_structured_line_edit" ]; then
+            assert_validation_available \
+                "session_handoff_summary validation summary is available" \
+                "$LAST_BODY" \
+                "output.validation"
+        elif [ "$case_name" = "failed_call_recovery" ]; then
+            assert_validation_unavailable \
+                "session_handoff_summary validation summary is unavailable without validation events" \
+                "$LAST_BODY" \
+                "output.validation"
             assert_handoff_failed_tool_metadata \
                 "session_handoff_summary includes failed tool metadata" \
                 "$LAST_BODY" \
                 "output"
+        else
+            assert_validation_unavailable \
+                "session_handoff_summary validation summary is unavailable without validation events" \
+                "$LAST_BODY" \
+                "output.validation"
         fi
     fi
 }
@@ -1242,6 +1416,8 @@ def summarize(flow_mode):
     raw_shell_calls = sum(c["raw_shell_calls"] for c in flow_cases)
     finish_calls = sum(c["finish_coding_task_calls"] for c in flow_cases)
     finish_successes = sum(c["finish_coding_task_successes"] for c in flow_cases)
+    validation_available = sum(1 for c in flow_cases if c["validation_available"])
+    validation_events_total = sum(c["validation_events_total"] for c in flow_cases)
     finish_rate = None
     if flow_mode == "guided":
         finish_rate = (finish_successes / finish_calls) if finish_calls else 0.0
@@ -1262,6 +1438,12 @@ def summarize(flow_mode):
         "handoff_available_rate": (
             sum(1 for c in flow_cases if c["handoff_available"]) / len(flow_cases)
         ) if flow_cases else 0.0,
+        "validation_available_rate": (
+            validation_available / len(flow_cases)
+        ) if flow_cases else 0.0,
+        "validation_events_total": validation_events_total,
+        "validation_successes": sum(c["validation_successes"] for c in flow_cases),
+        "validation_failures": sum(c["validation_failures"] for c in flow_cases),
         "finish_coding_task_success_rate": finish_rate,
         "cases": flow_cases,
     }
@@ -1279,6 +1461,8 @@ if mode == "compare":
         "guided_minus_baseline_raw_shell_ratio": guided["raw_shell_ratio"] - baseline["raw_shell_ratio"],
         "guided_minus_baseline_structured_edit_calls": guided["structured_edit_calls"] - baseline["structured_edit_calls"],
         "guided_handoff_available_delta": guided["handoff_available_rate"] - baseline["handoff_available_rate"],
+        "guided_minus_baseline_validation_available_rate": guided["validation_available_rate"] - baseline["validation_available_rate"],
+        "guided_minus_baseline_validation_events_total": guided["validation_events_total"] - baseline["validation_events_total"],
         "guided_cleanup_delta": (
             bool_score(guided["workspace_clean_after_each_case"])
             - bool_score(baseline["workspace_clean_after_each_case"])

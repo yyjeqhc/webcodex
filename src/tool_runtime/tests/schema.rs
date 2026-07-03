@@ -959,6 +959,43 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
 }
 
 #[test]
+fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
+    let runtime = test_runtime();
+    let specs = runtime.tool_specs();
+    let spec = spec_named(&specs, "session_handoff_summary");
+    let input_props = spec.input_schema["properties"].as_object().unwrap();
+    assert!(
+        input_props.contains_key("include_validation"),
+        "session_handoff_summary input schema should include include_validation"
+    );
+
+    let schema = crate::tool_runtime::registry::output_schema_for_tool("session_handoff_summary");
+    let output_props = schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
+    assert!(
+        output_props.contains_key("validation"),
+        "session_handoff_summary output schema should include validation"
+    );
+    let description = output_props["validation"]["description"]
+        .as_str()
+        .unwrap()
+        .to_lowercase();
+    for phrase in [
+        "ledger-derived",
+        "validation-like tool-call summary",
+        "does not include stdout/stderr",
+        "does not parse",
+        "parser.available remains false",
+    ] {
+        assert!(
+            description.contains(phrase),
+            "handoff validation output schema should mention {phrase}: {description}"
+        );
+    }
+}
+
+#[test]
 fn session_tool_specs_describe_ledger_vs_current_binding() {
     let runtime = test_runtime();
     let specs = runtime.tool_specs();
@@ -993,6 +1030,9 @@ fn session_tool_specs_describe_ledger_vs_current_binding() {
     for phrase in [
         "session ledger",
         "explicit session_id",
+        "ledger-derived validation",
+        "stdout/stderr parser",
+        "validation.parser.available",
         "does not depend on current-session binding",
     ] {
         assert!(

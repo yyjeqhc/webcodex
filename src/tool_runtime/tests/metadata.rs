@@ -860,6 +860,16 @@ fn runtime_status_is_in_tool_specs() {
     );
 }
 
+#[test]
+fn session_handoff_validation_exposure_keeps_read_only_metadata() {
+    let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("session_handoff_summary")
+        .expect("session_handoff_summary metadata");
+    assert!(metadata.read_only);
+    assert!(!metadata.destructive);
+    assert!(!metadata.shell_like);
+    assert_eq!(metadata.oauth_scope, Some("runtime:read"));
+}
+
 #[tokio::test]
 async fn tool_manifest_hides_run_codex_from_model_facing_surface() {
     let runtime = test_runtime();

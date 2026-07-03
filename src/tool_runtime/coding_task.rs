@@ -267,6 +267,7 @@ impl ToolRuntime {
                     Some(resolved.resolved_id.clone()),
                     Some(true),
                     Some(true),
+                    Some(include_validation_summary),
                     Some(20),
                 )
                 .await;

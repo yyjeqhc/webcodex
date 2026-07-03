@@ -350,6 +350,22 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
             "finish validation summary must not include {key}: {validation}"
         );
     }
+
+    let handoff = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id,
+            project: None,
+            include_workspace: Some(false),
+            include_checkpoints: Some(false),
+            include_validation: Some(true),
+            limit: None,
+        })
+        .await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(
+        handoff.output["validation"], finish.output["validation"],
+        "handoff validation should match finish_coding_task validation for the same session ledger"
+    );
 }
 
 fn record_finished_tool(

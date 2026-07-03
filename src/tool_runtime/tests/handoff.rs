@@ -4,7 +4,9 @@ use super::super::types::*;
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;
-use serde_json::json;
+use crate::tool_runtime::sessions::SessionTransport;
+use crate::tool_runtime::validation_events::validation_summary_for_session;
+use serde_json::{json, Value};
 
 // =========================================================================
 // 1. Known / spec / metadata / manifest consistency
@@ -72,6 +74,7 @@ async fn session_handoff_summary_returns_message_board_state() {
             project: None,
             include_workspace: None,
             include_checkpoints: None,
+            include_validation: None,
             limit: None,
         })
         .await;
@@ -184,6 +187,7 @@ async fn session_handoff_summary_includes_recent_failed_tools() {
             project: None,
             include_workspace: None,
             include_checkpoints: None,
+            include_validation: None,
             limit: None,
         })
         .await;
@@ -218,6 +222,7 @@ async fn session_handoff_summary_unknown_session() {
             project: None,
             include_workspace: None,
             include_checkpoints: None,
+            include_validation: None,
             limit: None,
         })
         .await;
@@ -248,6 +253,7 @@ async fn session_handoff_summary_read_only_session_allowed() {
             project: None,
             include_workspace: None,
             include_checkpoints: None,
+            include_validation: None,
             limit: None,
         })
         .await;
@@ -258,7 +264,152 @@ async fn session_handoff_summary_read_only_session_allowed() {
 }
 
 // =========================================================================
-// 6. Workspace — clean git project
+// 6. Validation summary
+// =========================================================================
+
+#[tokio::test]
+async fn session_handoff_summary_includes_validation_by_default_from_session_ledger() {
+    let runtime = test_runtime();
+    let project = "agent:eval:demo".to_string();
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("validation handoff".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_check",
+        json!({
+            "project": project,
+            "all_targets": true,
+        }),
+        true,
+        json!({
+            "exit_code": 0,
+            "stdout": "must not leak",
+            "stderr_tail": "must not leak",
+        }),
+    );
+
+    let expected_summary = runtime.sessions.summary(&sid, Some(200)).unwrap();
+    let expected_validation = validation_summary_for_session(&expected_summary);
+    let result = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: sid,
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: None,
+            limit: None,
+        })
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let validation = &result.output["validation"];
+    assert_eq!(validation, &expected_validation);
+    assert_eq!(validation["available"], true);
+    assert_eq!(validation["source"], "session_ledger");
+    assert_eq!(validation["events_total"], 1);
+    assert_eq!(validation["successes"], 1);
+    assert_eq!(validation["failures"], 0);
+    assert_eq!(validation["latest_success"]["tool_name"], "cargo_check");
+    assert_eq!(validation["latest_success"]["validation_kind"], "check");
+    assert_eq!(validation["latest_success"]["success"], true);
+    assert_eq!(validation["latest_success"]["exit_code"], 0);
+    assert_eq!(
+        validation["latest_success"]["summary"],
+        "cargo_check succeeded"
+    );
+    assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(
+        validation["parser"]["reason"],
+        "stdout/stderr parser not implemented"
+    );
+    for key in ["stdout", "stderr", "stdout_tail", "stderr_tail"] {
+        assert!(
+            !json_contains_key(validation, key),
+            "handoff validation summary must not include {key}: {validation}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn session_handoff_summary_can_omit_validation() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("omit validation".to_string()));
+    let sid = session.session_id.clone();
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "cargo_check",
+        json!({"project": "agent:eval:demo"}),
+        true,
+        json!({"exit_code": 0}),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: sid,
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: Some(false),
+            limit: None,
+        })
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert!(result.output.get("validation").is_none());
+}
+
+#[tokio::test]
+async fn session_handoff_summary_validation_unavailable_without_validation_events() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("inspect-only validation".to_string()));
+    let sid = session.session_id.clone();
+    record_handoff_tool_event(
+        &runtime,
+        &sid,
+        "read_file",
+        json!({"project": "agent:eval:demo", "path": "src/lib.rs"}),
+        true,
+        json!({}),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: sid,
+            project: None,
+            include_workspace: None,
+            include_checkpoints: None,
+            include_validation: None,
+            limit: None,
+        })
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let validation = &result.output["validation"];
+    assert_eq!(validation["available"], false);
+    assert_eq!(validation["source"], "session_ledger");
+    assert_eq!(validation["events_total"], 0);
+    assert!(validation["events"].as_array().unwrap().is_empty());
+    assert_eq!(validation["parser"]["available"], false);
+    assert_eq!(
+        validation["parser"]["reason"],
+        "stdout/stderr parser not implemented"
+    );
+    assert!(validation.get("latest_success").is_none());
+    assert!(validation.get("latest_failure").is_none());
+}
+
+// =========================================================================
+// 7. Workspace — clean git project
 // =========================================================================
 
 #[tokio::test]
@@ -290,7 +441,7 @@ async fn session_handoff_summary_with_workspace_clean_project() {
 }
 
 // =========================================================================
-// 7. Non-git project does not fail the whole tool
+// 8. Non-git project does not fail the whole tool
 // =========================================================================
 
 #[tokio::test]
@@ -330,7 +481,7 @@ async fn session_handoff_summary_non_git_project_does_not_fail_whole_tool() {
 }
 
 // =========================================================================
-// 8. Checkpoint — latest last_known_good selection
+// 9. Checkpoint — latest last_known_good selection
 // =========================================================================
 
 #[tokio::test]
@@ -434,7 +585,7 @@ async fn session_handoff_summary_includes_latest_last_known_good_checkpoint() {
 }
 
 // =========================================================================
-// 9. Output is bounded
+// 10. Output is bounded
 // =========================================================================
 
 #[tokio::test]
@@ -475,6 +626,7 @@ async fn session_handoff_summary_output_is_bounded() {
             project: None,
             include_workspace: None,
             include_checkpoints: None,
+            include_validation: None,
             limit: Some(5),
         })
         .await;
@@ -513,7 +665,7 @@ async fn session_handoff_summary_output_is_bounded() {
 }
 
 // =========================================================================
-// 10. Metadata / MCP / OpenAPI consistency
+// 11. Metadata / MCP / OpenAPI consistency
 // =========================================================================
 
 #[test]
@@ -529,6 +681,31 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     assert_eq!(spec.annotations["readOnlyHint"], true);
     assert_eq!(spec.annotations["destructiveHint"], false);
     assert_eq!(spec.annotations["openWorldHint"], false);
+    let input_props = spec.input_schema["properties"]
+        .as_object()
+        .expect("handoff input properties");
+    assert!(
+        input_props.contains_key("include_validation"),
+        "session_handoff_summary input schema should expose include_validation"
+    );
+    let output_props = spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .expect("handoff output properties");
+    assert!(
+        output_props.contains_key("validation"),
+        "session_handoff_summary output schema should expose validation"
+    );
+    let description = spec.description.to_lowercase();
+    for phrase in [
+        "ledger-derived validation",
+        "stdout/stderr parser",
+        "validation.parser.available",
+    ] {
+        assert!(
+            description.contains(phrase),
+            "session_handoff_summary description should mention {phrase}: {description}"
+        );
+    }
 
     // Metadata: read-only, runtime:read scope.
     let metadata = crate::tool_runtime::metadata::lookup_tool_metadata("session_handoff_summary")
@@ -547,6 +724,13 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     assert!(
         tool_desc.contains("session_handoff_summary"),
         "OpenAPI ToolCallRequest.tool should list session_handoff_summary"
+    );
+    let tool_props = spec["components"]["schemas"]["ToolCallRequest"]["properties"]
+        .as_object()
+        .expect("ToolCallRequest properties");
+    assert!(
+        tool_props.contains_key("include_validation"),
+        "OpenAPI ToolCallRequest should expose flattened include_validation"
     );
     let count: usize = spec["paths"]
         .as_object()
@@ -621,6 +805,36 @@ fn handoff_checkpoint_validation(
     }
 }
 
+fn record_handoff_tool_event(
+    runtime: &ToolRuntime,
+    session_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    success: bool,
+    output: Value,
+) {
+    let start = runtime.sessions.record_tool_call_started(
+        Some(session_id),
+        SessionTransport::Api,
+        tool_name,
+        &arguments,
+    );
+    let error = (!success).then_some("tool failed");
+    runtime
+        .sessions
+        .record_tool_call_finished(start, success, &output, error, None);
+}
+
+fn json_contains_key(value: &Value, key: &str) -> bool {
+    match value {
+        Value::Object(map) => {
+            map.contains_key(key) || map.values().any(|value| json_contains_key(value, key))
+        }
+        Value::Array(values) => values.iter().any(|value| json_contains_key(value, key)),
+        _ => false,
+    }
+}
+
 /// Dispatch `session_handoff_summary` through the agent path, completing any
 /// agent shell requests (from the internal `show_changes` call) locally.
 async fn dispatch_handoff_with_agent(
@@ -639,6 +853,7 @@ async fn dispatch_handoff_with_agent(
                 project,
                 include_workspace: Some(include_workspace),
                 include_checkpoints: Some(include_checkpoints),
+                include_validation: Some(true),
                 limit: None,
             })
             .await

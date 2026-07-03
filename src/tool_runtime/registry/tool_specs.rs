@@ -84,7 +84,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "session_handoff_summary".to_string(),
-                description: "Read-only handoff for multi-step tasks. Returns bounded data from the session ledger for explicit session_id: session info, messages, progress/decisions, open todos/risks/questions, failed tools, and workspace/checkpoint metadata. Never calls an LLM and does not depend on current-session binding.".to_string(),
+                description: "Read-only handoff for multi-step tasks. Returns session ledger data for explicit session_id: messages, failed tools, workspace/checkpoints, ledger-derived validation. No stdout/stderr parser; validation.parser.available remains false until parser exists. Does not depend on current-session binding.".to_string(),
                 input_schema: session_handoff_summary_input_schema(),
                 output_schema: output_schema_for_tool("session_handoff_summary"),
                 annotations: tool_annotations("session_handoff_summary"),

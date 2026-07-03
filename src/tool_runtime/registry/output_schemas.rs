@@ -643,6 +643,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 open_object_schema("Bounded checkpoint candidates when project is provided: latest_last_known_good and recent list. Never includes validation.commands or diffs."),
             ),
             (
+                "validation",
+                open_object_schema("Ledger-derived validation-like tool-call summary. Does not include stdout/stderr bodies and does not parse compiler or test output. parser.available remains false until a parser exists."),
+            ),
+            (
                 "suggested_next_actions",
                 array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions for the receiving agent."),
             ),

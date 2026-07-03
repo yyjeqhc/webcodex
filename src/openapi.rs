@@ -1228,6 +1228,10 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened finish_coding_task flag. Defaults to true; no stdout/stderr parsing is performed. Used only when `params` and `arguments` are absent."
                 },
+                "include_validation": {
+                    "type": "boolean",
+                    "description": "Flattened session_handoff_summary flag. Defaults to true; validation is ledger-derived and parser.available remains false until parser exists. Used only when `params` and `arguments` are absent."
+                },
                 "max_hunks": {
                     "type": "integer",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
@@ -2958,6 +2962,7 @@ mod tests {
             "include_hygiene",
             "include_handoff",
             "include_validation_summary",
+            "include_validation",
             "context_before",
             "context_after",
             "with_line_numbers",

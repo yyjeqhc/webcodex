@@ -216,9 +216,10 @@ pub enum ToolCall {
     /// Return a bounded structured handoff summary for an explicit session id:
     /// session ledger info, message-board state, recent progress/decisions,
     /// open todos/risks/questions/guidance, recent failed tool calls, and
-    /// optional workspace + checkpoint metadata. Read-only; never calls an LLM
-    /// or generates natural-language summaries. Exposed only through runtime
-    /// tools / MCP / `callRuntimeTool` (no dedicated OpenAPI op).
+    /// optional workspace, checkpoint, and ledger-derived validation metadata.
+    /// Read-only; never calls an LLM or generates natural-language summaries.
+    /// Exposed only through runtime tools / MCP / `callRuntimeTool` (no
+    /// dedicated OpenAPI op).
     SessionHandoffSummary {
         session_id: String,
         #[serde(default)]
@@ -227,6 +228,8 @@ pub enum ToolCall {
         include_workspace: Option<bool>,
         #[serde(default)]
         include_checkpoints: Option<bool>,
+        #[serde(default)]
+        include_validation: Option<bool>,
         #[serde(default)]
         limit: Option<usize>,
     },
@@ -1697,12 +1700,14 @@ impl ToolCall {
                 project,
                 include_workspace,
                 include_checkpoints,
+                include_validation,
                 limit,
             } => serde_json::json!({
                 "session_id": session_id,
                 "project": project,
                 "include_workspace": include_workspace,
                 "include_checkpoints": include_checkpoints,
+                "include_validation": include_validation,
                 "limit": limit,
             }),
             Self::StartCodingTask {

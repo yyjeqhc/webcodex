@@ -278,6 +278,10 @@ pub(super) fn session_handoff_summary_input_schema() -> Value {
                 "type": "boolean",
                 "description": "Include bounded checkpoint candidates, especially the latest last_known_good. Defaults to true. Only effective when project is provided."
             },
+            "include_validation": {
+                "type": "boolean",
+                "description": "Include ledger-derived validation summary. Defaults to true. Does not parse stdout/stderr; parser.available remains false until parser exists."
+            },
             "limit": {
                 "type": "integer",
                 "minimum": 1,

@@ -62,32 +62,6 @@ impl Database {
             );
             CREATE INDEX IF NOT EXISTS idx_codex_goals_created_at ON codex_goals(created_at DESC);
 
-            CREATE TABLE IF NOT EXISTS desktop_tasks (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                instructions TEXT NOT NULL,
-                status TEXT NOT NULL,
-                priority INTEGER NOT NULL,
-                claimed_by TEXT,
-                last_event TEXT,
-                screenshot_url TEXT,
-                created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_desktop_tasks_status_priority ON desktop_tasks(status, priority DESC, created_at ASC);
-            CREATE INDEX IF NOT EXISTS idx_desktop_tasks_updated_at ON desktop_tasks(updated_at DESC);
-
-            CREATE TABLE IF NOT EXISTS desktop_task_events (
-                id TEXT PRIMARY KEY,
-                task_id TEXT NOT NULL,
-                status TEXT NOT NULL,
-                worker TEXT,
-                message TEXT,
-                screenshot_url TEXT,
-                created_at INTEGER NOT NULL
-            );
-            CREATE INDEX IF NOT EXISTS idx_desktop_task_events_task_created ON desktop_task_events(task_id, created_at ASC);
-
             CREATE TABLE IF NOT EXISTS agent_specs (
                 id TEXT PRIMARY KEY,
                 name TEXT NOT NULL,

@@ -886,6 +886,69 @@ async fn tool_manifest_hides_run_codex_from_model_facing_surface() {
 }
 
 #[tokio::test]
+async fn tool_manifest_recommends_default_remote_coding_loop() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            include_recommended_flows: true,
+            include_risk_summary: true,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+
+    let flows = result.output["recommended_flows"]
+        .as_array()
+        .expect("tool_manifest should include recommended_flows");
+    for name in [
+        "discovery",
+        "inspect",
+        "edit",
+        "validate",
+        "review",
+        "handoff",
+    ] {
+        assert!(
+            flows.iter().any(|flow| flow["name"] == name),
+            "recommended_flows should include {name}: {:?}",
+            flows
+        );
+    }
+
+    let serialized = result.output["recommended_flows"]
+        .to_string()
+        .to_lowercase();
+    for tool in [
+        "read_file",
+        "search_project_text",
+        "show_changes",
+        "replace_line_range",
+        "insert_at_line",
+        "delete_line_range",
+        "apply_text_edits",
+        "apply_patch_checked",
+        "cargo_check",
+        "cargo_test",
+        "validate_patch",
+        "git_diff_hunks",
+        "workspace_hygiene_check",
+        "session_summary",
+        "session_handoff_summary",
+    ] {
+        assert!(
+            serialized.contains(tool),
+            "recommended_flows should mention {tool}: {serialized}"
+        );
+    }
+    assert!(
+        serialized.contains("run_shell")
+            && serialized.contains("escape hatch")
+            && serialized.contains("not the primary validation path"),
+        "run_shell should be a bounded escape hatch in recommended_flows: {serialized}"
+    );
+}
+
+#[tokio::test]
 async fn runtime_status_with_no_projects_returns_configured_false() {
     let runtime = test_runtime();
     let result = runtime.dispatch(ToolCall::RuntimeStatus).await;

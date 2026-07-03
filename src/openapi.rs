@@ -698,7 +698,7 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation_with_examples(
                     "callRuntimeTool",
                     "Call runtime tool (advanced)",
-                    "Advanced generic entry point for any runtime tool. Prefer dedicated actions. Use listRuntimeTools for names. GPT Actions should use flattened top-level fields; params/arguments remain for non-Action clients. Use recording_session_id to record this generic wrapper call.",
+                    "Advanced generic escape hatch for runtime tools. Prefer dedicated actions when available. Use listRuntimeTools for names. GPT Actions should use flattened top-level fields; params/arguments remain for non-Action clients. Use recording_session_id to record this generic wrapper call.",
                     "ToolCallRequest",
                     "ToolResult",
                     json!({
@@ -2399,6 +2399,11 @@ mod tests {
         assert!(
             call_tool.contains("Advanced"),
             "callRuntimeTool description should mark it as advanced"
+        );
+        assert!(
+            call_tool.contains("generic escape hatch")
+                && call_tool.contains("Prefer dedicated actions"),
+            "callRuntimeTool description should prefer dedicated tools: {call_tool}"
         );
         // getRuntimeJobStatus / getRuntimeJobLog should mention job_id polling.
         let status_desc = &spec["paths"]["/api/jobs/status"]["post"]["description"]

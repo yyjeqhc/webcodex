@@ -1443,34 +1443,34 @@ fn build_risk_summary(tools: &[Value]) -> Value {
 fn tool_manifest_recommended_flows() -> Vec<Value> {
     vec![
         json!({
-            "name": "large_refactor",
-            "purpose": "Safely perform large single-file refactors.",
-            "tools": ["workspace_checkpoint_create", "read_file", "apply_text_edits", "cargo_test", "show_changes"]
-        }),
-        json!({
-            "name": "deployment_smoke",
-            "purpose": "Check runtime health and persistent session behavior.",
-            "tools": ["runtime_status", "start_session", "post_session_message", "git_log", "session_summary"]
-        }),
-        json!({
-            "name": "small_line_edit",
-            "purpose": "Make small targeted edits by stable line numbers.",
-            "tools": ["read_file", "replace_line_range", "insert_at_line", "delete_line_range", "show_changes"]
-        }),
-        json!({
-            "name": "patch_review",
-            "purpose": "Validate a patch before applying it safely.",
-            "tools": ["validate_patch", "apply_patch_checked", "show_changes", "cargo_test"]
-        }),
-        json!({
             "name": "discovery",
-            "purpose": "Discover projects, agents, and available tools.",
-            "tools": ["tool_manifest", "list_projects", "runtime_status"]
+            "purpose": "Resolve the project and load rules/context before editing.",
+            "tools": ["list_projects", "runtime_status", "read_file"]
+        }),
+        json!({
+            "name": "inspect",
+            "purpose": "Use the default inspect tools before editing.",
+            "tools": ["read_file", "search_project_text", "show_changes"]
+        }),
+        json!({
+            "name": "edit",
+            "purpose": "Prefer structured line edits, batch text edits, or checked patches for source changes.",
+            "tools": ["replace_line_range", "insert_at_line", "delete_line_range", "apply_text_edits", "apply_patch_checked"]
+        }),
+        json!({
+            "name": "validate",
+            "purpose": "Use structured validation; run_shell is a bounded diagnostics escape hatch, not the primary validation path.",
+            "tools": ["cargo_check", "cargo_test", "validate_patch", "run_shell"]
+        }),
+        json!({
+            "name": "review",
+            "purpose": "Review diffs and workspace hygiene before the final response.",
+            "tools": ["show_changes", "git_diff_hunks", "workspace_hygiene_check"]
         }),
         json!({
             "name": "handoff",
-            "purpose": "Quickly understand task state before taking over a session.",
-            "tools": ["session_handoff_summary", "show_changes", "workspace_checkpoint_create"]
+            "purpose": "Summarize or hand off multi-step session state.",
+            "tools": ["session_summary", "session_handoff_summary"]
         }),
     ]
 }

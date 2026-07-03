@@ -69,14 +69,14 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "session_handoff_summary".to_string(),
-                description: "Return a bounded structured handoff summary for an explicit session: session info, message board, recent progress/decisions, open todos/risks/questions, recent failed tools, and optional workspace + checkpoint metadata. Read-only; never calls an LLM.".to_string(),
+                description: "Read-only handoff tool for multi-step tasks. Returns a bounded structured summary for an explicit session: session info, messages, progress/decisions, open todos/risks/questions, recent failed tools, and optional workspace/checkpoint metadata. Never calls an LLM.".to_string(),
                 input_schema: session_handoff_summary_input_schema(),
                 output_schema: output_schema_for_tool("session_handoff_summary"),
                 annotations: tool_annotations("session_handoff_summary"),
             },
             ToolSpec {
                 name: "workspace_hygiene_check".to_string(),
-                description: "Read-only workspace hygiene inspection. Detects pollution risks before smoke, handoff, or development: dirty worktree, untracked temp/smoke files, cache dirs, secret-like path names, large untracked files. Never reads file contents.".to_string(),
+                description: "Default pre-final workspace hygiene review; read-only. Detects dirty worktree, untracked temp/smoke files, cache dirs, secret-like names, and large untracked files before validation or handoff. Never reads file contents.".to_string(),
                 input_schema: workspace_hygiene_check_input_schema(),
                 output_schema: output_schema_for_tool("workspace_hygiene_check"),
                 annotations: tool_annotations("workspace_hygiene_check"),
@@ -248,9 +248,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "run_shell".to_string(),
-                description: "Run checks, builds, tests, read-only diagnostics, or necessary commands in a project. "
-                    .to_string()
-                    + "Do not use as the primary project file editing path; prefer structured line edit tools for source edits.",
+                description: "Bounded command escape hatch for validation, builds, tests, or diagnostics only. Do not use as the primary file editing path; prefer cargo_* / validate_patch for common checks and structured line edit tools for source edits.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id.", true),
                     ("command", "string", "Shell command to run.", true),
@@ -392,10 +390,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "search_project_text".to_string(),
-                description: "Default source-inspection search for a project (rg-first, bounded matches)."
-                    .to_string()
-                    + " Each match carries a project-relative path, 1-based line number, and a "
-                    + "preview/context lines. Sensitive/build directories are excluded by default.",
+                description: "Default inspect/search tool for project text (rg-first with grep fallback). Returns structured output: matches with path, 1-based line, preview/context, plus backend, truncated, count, context_before, and context_after.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("pattern", "string", "Text pattern to search for.", true),
@@ -444,7 +439,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "show_changes".to_string(),
-                description: "Read-only git worktree and optional session activity summary for task review. Reports status, warnings, next actions, bounded hunks, and never modifies the worktree.".to_string(),
+                description: "Default inspect/review tool before final response. Read-only worktree plus optional session summary; reports status, warnings, next actions, and bounded hunks without modifying files.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("session_id", "string", "Optional wc_sess_* id to summarize with the git changes.", false),
@@ -496,7 +491,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "read_file".to_string(),
-                description: "Read a UTF-8 file from an agent-registered project.".to_string(),
+                description: "Default inspect tool for targeted source reading. Reads bounded UTF-8 file ranges from an agent-registered project, optionally with 1-based line numbers for structured line edits.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -572,7 +567,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "cargo_check".to_string(),
-                description: "Run structured cargo check. Defaults to --all-targets; supports features/package/cwd without shell interpolation.".to_string(),
+                description: "Preferred structured Rust validation for cargo check. Defaults to --all-targets and supports features/package/cwd/timeout without shell interpolation; use before raw run_shell when applicable.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("cwd", "string", "Optional project-relative working directory.", false),
@@ -588,7 +583,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "cargo_test".to_string(),
-                description: "Run structured cargo test. Supports optional filter, feature flags, package, --no-run, and bounded output tails.".to_string(),
+                description: "Preferred structured Rust test runner. Supports filter, feature flags, package, --no-run, timeout, and bounded output tails; use before raw run_shell when applicable.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("cwd", "string", "Optional project-relative working directory.", false),
@@ -617,7 +612,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "apply_patch_checked".to_string(),
-                description: "Validate/apply a unified diff and return a diff summary. Best for broad or multi-file patches; for local line edits prefer structured line edit tools.".to_string(),
+                description: "Validated unified-diff edit tool for broad or multi-file patches. Returns a diff summary; for local line edits prefer replace_line_range, insert_at_line, delete_line_range, or apply_text_edits.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
@@ -669,7 +664,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "replace_in_file".to_string(),
-                description: "Replace a short unique substring in a project file. Good for small exact text changes; not for large source rewrites. Fails without writing when old is missing or ambiguous.".to_string(),
+                description: "Literal pattern compatibility path for short exact replacements. Prefer replace_line_range, insert_at_line, or delete_line_range when line numbers are available; fails without writing when old text is missing or ambiguous.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -730,7 +725,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "write_project_file".to_string(),
-                description: "Create a new UTF-8 file or deliberately overwrite a small whole file. Not the first choice for ordinary local source edits; prefer line edit tools when scoped by line.".to_string(),
+                description: "Whole-file write compatibility path for new files or deliberate small overwrites. Prefer structured line edits or apply_text_edits for source changes; requires overwrite/guards for existing files.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -816,7 +811,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "replace_line_range".to_string(),
-                description: "Preferred source-code edit tool for local changes with clear line numbers. Replaces a 1-based inclusive line range; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
+                description: "Preferred source-code edit tool for local line changes with clear line numbers. Replaces a 1-based inclusive range; better than write_project_file or run_shell for source edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -831,7 +826,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "insert_at_line".to_string(),
-                description: "Preferred source-code edit tool for local changes with clear line numbers. Inserts before a specified 1-based line; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
+                description: "Preferred source-code edit tool for local line changes with clear line numbers. Inserts before a specified 1-based line; better than write_project_file or run_shell for source edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -845,7 +840,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "delete_line_range".to_string(),
-                description: "Preferred source-code edit tool for local changes with clear line numbers. Deletes a 1-based inclusive line range; safer than run_shell/sed/perl/python and better than write_project_file for medium edits. Supports sha256/prefix guards.".to_string(),
+                description: "Preferred source-code edit tool for local line changes with clear line numbers. Deletes a 1-based inclusive range; better than write_project_file or run_shell for source edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
                     ("path", "string", "Project-relative file path.", true),
@@ -859,7 +854,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "apply_text_edits".to_string(),
-                description: "Atomic multi-block text edit tool for large refactors. Applies a bounded batch of exact-match edits (replace/insert/delete) to one UTF-8 file. Each match must be unique and non-overlapping; the file is written atomically only when all edits validate. Supports dry_run and a sha256 guard.".to_string(),
+                description: "Preferred batch text edit tool for coordinated source changes in one UTF-8 file. Applies bounded exact replace/insert/delete edits atomically only when all matches validate as unique/non-overlapping. Supports dry_run and sha256 guard.".to_string(),
                 input_schema: apply_text_edits_input_schema(),
                 output_schema: output_schema_for_tool("apply_text_edits"),
                 annotations: tool_annotations("apply_text_edits"),
@@ -890,9 +885,9 @@ impl ToolRuntime {
         json!({
             "inspect": pick(&[
                 "list_tools", "list_projects", "list_agents", "runtime_status",
-                "read_file", "list_project_files", "search_project_text",
+                "read_file", "search_project_text", "show_changes", "list_project_files",
                 "git_status", "git_diff", "git_diff_summary", "git_diff_hunks", "git_log",
-                "show_changes", "workspace_checkpoint_list", "workspace_checkpoint_show"
+                "workspace_checkpoint_list", "workspace_checkpoint_show"
             ]),
             "projects": pick(&["list_projects", "register_project", "create_project"]),
             "git": pick(&[
@@ -902,7 +897,8 @@ impl ToolRuntime {
                 "workspace_checkpoint_create", "workspace_checkpoint_restore"
             ]),
             "review": pick(&[
-                "show_changes", "git_diff_hunks", "git_diff_summary", "git_log", "git_status", "git_diff",
+                "show_changes", "git_diff_hunks", "workspace_hygiene_check",
+                "git_diff_summary", "git_log", "git_status", "git_diff",
                 "workspace_checkpoint_show", "workspace_checkpoint_list"
             ]),
             "validation": pick(&[
@@ -910,15 +906,14 @@ impl ToolRuntime {
             ]),
             "patch": pick(&["apply_patch", "apply_patch_checked", "validate_patch"]),
             "edit": pick(&[
+                "replace_line_range", "insert_at_line", "delete_line_range",
+                "apply_text_edits", "apply_patch_checked",
                 "replace_in_file", "replace_exact_block",
                 "insert_before_pattern", "insert_after_pattern",
                 "write_project_file", "save_project_artifact",
-                "read_project_artifact_metadata", "read_project_artifact",
-                "replace_line_range", "insert_at_line", "delete_line_range",
-                "apply_text_edits",
-                "apply_patch_checked"
+                "read_project_artifact_metadata", "read_project_artifact"
             ]),
-            "shell": pick(&["run_shell", "run_job", "cargo_fmt", "cargo_check", "cargo_test"]),
+            "shell": pick(&["cargo_fmt", "cargo_check", "cargo_test", "run_shell", "run_job"]),
             "jobs": pick(&[
                 "run_job", "job_status", "job_log",
                 "list_jobs", "job_tail"
@@ -950,14 +945,12 @@ impl ToolRuntime {
     /// ToolSpec/operation description budget.
     pub fn recommended_flows() -> Vec<&'static str> {
         vec![
-            "Discovery: call list_projects then runtime_status to see agents and projects.",
-            "Inspect: use read_file, search_project_text, and show_changes before proposing changes.",
-            "Review: use show_changes first; request include_diff=true or call git_diff_hunks for bounded hunk review, then run focused tests.",
-            "Source code edit: inspect with read_file/search_project_text/show_changes; prefer replace_line_range/insert_at_line/delete_line_range with guards. apply_patch_checked for broad diffs; run_shell not primary.",
-            "Rust validation: use cargo_fmt, cargo_check, cargo_test before run_shell for common checks.",
-            "Patch: call validate_patch to dry-run, then apply_patch_checked to apply safely.",
-            "Checkpoint: after tests pass, call workspace_checkpoint_create before broad edits; use show/list to inspect, restore with confirm=true only when HEAD still matches.",
-            "Cleanup: use delete_project_files / git_restore_paths / discard_untracked instead of ad hoc rm.",
+            "Discovery: resolve project with list_projects/runtime_status, then load rules/context with read_file before editing.",
+            "Inspect: use read_file, search_project_text, and show_changes before editing.",
+            "Edit: prefer replace_line_range / insert_at_line / delete_line_range for local line edits; use apply_text_edits for batches; use apply_patch_checked for broad diffs.",
+            "Validate: use cargo_check / cargo_test / validate_patch when applicable. raw run_shell is a bounded escape hatch, not the primary editing or validation path.",
+            "Review: use show_changes / git_diff_hunks / workspace_hygiene_check before final response.",
+            "Handoff: use session_summary / session_handoff_summary when a task spans multiple steps.",
         ]
     }
 }

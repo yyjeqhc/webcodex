@@ -881,7 +881,32 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     }
     let review = categories["review"].as_array().unwrap();
     assert!(review.iter().any(|v| v == "git_diff_hunks"));
+    assert!(review.iter().any(|v| v == "workspace_hygiene_check"));
     assert!(review.iter().any(|v| v == "git_log"));
+    let inspect = categories["inspect"].as_array().unwrap();
+    for name in ["read_file", "search_project_text", "show_changes"] {
+        assert!(
+            inspect.iter().any(|v| v == name),
+            "inspect category should include default inspect tool {name}"
+        );
+    }
+    let edit = categories["edit"].as_array().unwrap();
+    let edit_prefix: Vec<&str> = edit
+        .iter()
+        .take(5)
+        .map(|value| value.as_str().unwrap())
+        .collect();
+    assert_eq!(
+        edit_prefix,
+        vec![
+            "replace_line_range",
+            "insert_at_line",
+            "delete_line_range",
+            "apply_text_edits",
+            "apply_patch_checked",
+        ],
+        "preferred edit tools should lead the edit category"
+    );
     // recommended_flows are short and non-empty.
     let flows = ToolRuntime::recommended_flows();
     assert!(!flows.is_empty());
@@ -889,41 +914,167 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
         assert!(flow.chars().count() <= 300, "flow too long: {}", flow);
     }
     let joined_flows = flows.join("\n").to_lowercase();
-    assert!(joined_flows.contains("source code edit"));
-    for name in ["replace_line_range", "insert_at_line", "delete_line_range"] {
+    for phrase in [
+        "inspect: use read_file, search_project_text, and show_changes before editing",
+        "edit: prefer replace_line_range / insert_at_line / delete_line_range",
+        "apply_text_edits for batches",
+        "apply_patch_checked for broad diffs",
+        "validate: use cargo_check / cargo_test / validate_patch",
+        "raw run_shell is a bounded escape hatch",
+        "not the primary editing or validation path",
+        "review: use show_changes / git_diff_hunks / workspace_hygiene_check",
+        "handoff: use session_summary / session_handoff_summary",
+    ] {
         assert!(
-            joined_flows.contains(name),
-            "recommended flows should mention {}",
-            name
+            joined_flows.contains(phrase),
+            "recommended flows should mention {phrase}: {joined_flows}"
         );
     }
-    assert!(joined_flows.contains("run_shell"));
-    assert!(
-        joined_flows.contains("validation") || joined_flows.contains("checks"),
-        "run_shell guidance should mention validation/checks"
-    );
-    assert!(
-        joined_flows.contains("not primary"),
-        "run_shell should not be the primary edit path"
-    );
-    for name in ["cargo_fmt", "cargo_check", "cargo_test", "git_diff_hunks"] {
-        assert!(
-            joined_flows.contains(name),
-            "recommended flows should mention {}",
-            name
-        );
-    }
+}
+
+#[test]
+fn tool_specs_describe_default_coding_loop_preferences() {
+    let runtime = test_runtime();
     let specs = runtime.tool_specs();
-    for name in ["replace_line_range", "insert_at_line", "delete_line_range"] {
-        let desc = spec_named(&specs, name).description.to_lowercase();
-        assert!(desc.contains("preferred"), "{} should be preferred", name);
-        assert!(desc.contains("source"), "{} should mention source", name);
-        assert!(desc.contains("line"), "{} should mention line", name);
+
+    let desc = |name: &str| spec_named(&specs, name).description.to_lowercase();
+
+    let read_file_desc = desc("read_file");
+    for phrase in [
+        "default inspect tool",
+        "targeted source reading",
+        "line numbers",
+    ] {
+        assert!(
+            read_file_desc.contains(phrase),
+            "read_file description should mention {phrase}: {read_file_desc}"
+        );
     }
 
-    let run_shell_desc = spec_named(&specs, "run_shell").description.to_lowercase();
-    assert!(run_shell_desc.contains("file editing path"));
-    assert!(run_shell_desc.contains("not"));
+    let search_desc = desc("search_project_text");
+    for phrase in [
+        "default inspect/search tool",
+        "rg-first",
+        "grep fallback",
+        "structured output",
+        "matches",
+        "context",
+        "backend",
+        "truncated",
+    ] {
+        assert!(
+            search_desc.contains(phrase),
+            "search_project_text description should mention {phrase}: {search_desc}"
+        );
+    }
+
+    let show_changes_desc = desc("show_changes");
+    for phrase in [
+        "default inspect/review tool",
+        "before final response",
+        "bounded hunks",
+    ] {
+        assert!(
+            show_changes_desc.contains(phrase),
+            "show_changes description should mention {phrase}: {show_changes_desc}"
+        );
+    }
+
+    for name in ["replace_line_range", "insert_at_line", "delete_line_range"] {
+        let edit_desc = desc(name);
+        for phrase in ["preferred source-code edit tool", "line", "source edits"] {
+            assert!(
+                edit_desc.contains(phrase),
+                "{name} description should mention {phrase}: {edit_desc}"
+            );
+        }
+    }
+
+    let apply_text_edits_desc = desc("apply_text_edits");
+    for phrase in ["preferred batch text edit tool", "atomically", "dry_run"] {
+        assert!(
+            apply_text_edits_desc.contains(phrase),
+            "apply_text_edits description should mention {phrase}: {apply_text_edits_desc}"
+        );
+    }
+
+    let apply_patch_checked_desc = desc("apply_patch_checked");
+    for phrase in [
+        "validated unified-diff",
+        "broad or multi-file",
+        "local line edits prefer",
+    ] {
+        assert!(
+            apply_patch_checked_desc.contains(phrase),
+            "apply_patch_checked description should mention {phrase}: {apply_patch_checked_desc}"
+        );
+    }
+
+    for name in ["cargo_check", "cargo_test"] {
+        let validation_desc = desc(name);
+        assert!(
+            validation_desc.contains("preferred structured"),
+            "{name} should be described as preferred structured validation: {validation_desc}"
+        );
+        assert!(
+            validation_desc.contains("before raw run_shell"),
+            "{name} should steer callers away from raw run_shell first: {validation_desc}"
+        );
+    }
+
+    let workspace_hygiene_desc = desc("workspace_hygiene_check");
+    for phrase in ["pre-final", "workspace hygiene", "read-only"] {
+        assert!(
+            workspace_hygiene_desc.contains(phrase),
+            "workspace_hygiene_check description should mention {phrase}: {workspace_hygiene_desc}"
+        );
+    }
+
+    let handoff_desc = desc("session_handoff_summary");
+    for phrase in ["handoff", "multi-step tasks", "read-only"] {
+        assert!(
+            handoff_desc.contains(phrase),
+            "session_handoff_summary description should mention {phrase}: {handoff_desc}"
+        );
+    }
+
+    let run_shell_desc = desc("run_shell");
+    for phrase in [
+        "bounded command escape hatch",
+        "validation",
+        "diagnostics",
+        "do not use as the primary file editing path",
+    ] {
+        assert!(
+            run_shell_desc.contains(phrase),
+            "run_shell description should mention {phrase}: {run_shell_desc}"
+        );
+    }
+
+    let write_file_desc = desc("write_project_file");
+    for phrase in [
+        "whole-file write compatibility path",
+        "prefer structured line edits",
+        "apply_text_edits",
+    ] {
+        assert!(
+            write_file_desc.contains(phrase),
+            "write_project_file description should mention {phrase}: {write_file_desc}"
+        );
+    }
+
+    let replace_in_file_desc = desc("replace_in_file");
+    for phrase in [
+        "literal pattern compatibility path",
+        "prefer replace_line_range",
+        "insert_at_line",
+        "delete_line_range",
+    ] {
+        assert!(
+            replace_in_file_desc.contains(phrase),
+            "replace_in_file description should mention {phrase}: {replace_in_file_desc}"
+        );
+    }
 }
 
 #[test]

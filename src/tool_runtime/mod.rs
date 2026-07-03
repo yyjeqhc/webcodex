@@ -7,6 +7,7 @@ mod agent_authorization;
 mod cargo;
 mod checkpoint;
 mod codex;
+mod coding_task;
 pub(crate) mod files;
 mod git;
 mod handoff;
@@ -283,6 +284,55 @@ impl ToolRuntime {
                     "created_at": summary.created_at,
                     "project_instructions": project_instructions,
                 }))
+            }
+
+            ToolCall::StartCodingTask {
+                project,
+                title,
+                mode,
+                deny_write_tools,
+                deny_shell_tools,
+                include_runtime_status,
+                include_git,
+                include_recent_commits,
+                include_rules,
+                bind_current,
+            } => {
+                self.start_coding_task(
+                    project,
+                    title,
+                    mode,
+                    deny_write_tools,
+                    deny_shell_tools,
+                    include_runtime_status,
+                    include_git,
+                    include_recent_commits,
+                    include_rules,
+                    bind_current,
+                    auth,
+                    transport,
+                )
+                .await
+            }
+
+            ToolCall::FinishCodingTask {
+                project,
+                session_id,
+                include_diff,
+                include_hygiene,
+                include_handoff,
+                include_validation_summary,
+            } => {
+                self.finish_coding_task(
+                    project,
+                    session_id,
+                    include_diff,
+                    include_hygiene,
+                    include_handoff,
+                    include_validation_summary,
+                    auth,
+                )
+                .await
             }
 
             ToolCall::SessionSummary { session_id, limit } => {
@@ -1337,6 +1387,8 @@ fn tool_manifest_category(name: &str) -> &'static str {
     match name {
         // Runtime introspection / discovery
         "list_tools" | "tool_manifest" | "runtime_status" | "list_agents" => "runtime",
+        // Deterministic workflow aggregation
+        "start_coding_task" | "finish_coding_task" => "workflow",
         // Session lifecycle and messaging
         "start_session"
         | "session_summary"
@@ -1445,7 +1497,7 @@ fn tool_manifest_recommended_flows() -> Vec<Value> {
         json!({
             "name": "discovery",
             "purpose": "Resolve the project and load rules/context before editing.",
-            "tools": ["list_projects", "runtime_status", "read_file"]
+            "tools": ["start_coding_task", "list_projects", "runtime_status", "read_file"]
         }),
         json!({
             "name": "inspect",
@@ -1470,7 +1522,7 @@ fn tool_manifest_recommended_flows() -> Vec<Value> {
         json!({
             "name": "handoff",
             "purpose": "Summarize or hand off multi-step session state.",
-            "tools": ["session_summary", "session_handoff_summary"]
+            "tools": ["finish_coding_task", "session_summary", "session_handoff_summary"]
         }),
     ]
 }

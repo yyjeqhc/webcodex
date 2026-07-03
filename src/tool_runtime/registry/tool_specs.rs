@@ -4,9 +4,10 @@ use super::super::types::{is_model_hidden_tool_name, ToolSpec};
 use super::super::ToolRuntime;
 use super::input_schemas::{
     apply_text_edits_input_schema, checkpoint_create_input_schema, checkpoint_project_input_schema,
-    current_session_input_schema, list_session_messages_input_schema,
-    post_session_message_input_schema, resolve_session_message_input_schema,
-    session_discussion_summary_input_schema, session_handoff_summary_input_schema,
+    current_session_input_schema, finish_coding_task_input_schema,
+    list_session_messages_input_schema, post_session_message_input_schema,
+    resolve_session_message_input_schema, session_discussion_summary_input_schema,
+    session_handoff_summary_input_schema, start_coding_task_input_schema,
     start_session_input_schema, with_optional_session_id, workspace_hygiene_check_input_schema,
     PATCH_FIELD_DESCRIPTION,
 };
@@ -28,6 +29,20 @@ impl ToolRuntime {
                 input_schema: start_session_input_schema(),
                 output_schema: output_schema_for_tool("start_session"),
                 annotations: tool_annotations("start_session"),
+            },
+            ToolSpec {
+                name: "start_coding_task".to_string(),
+                description: "Deterministic coding-task startup aggregate. Requires project, creates a session, returns explicit session_id, project resolution, optional runtime/git/rules context, recommended flow, warnings, and current binding state. Never calls an LLM; bind_current defaults false.".to_string(),
+                input_schema: start_coding_task_input_schema(),
+                output_schema: output_schema_for_tool("start_coding_task"),
+                annotations: tool_annotations("start_coding_task"),
+            },
+            ToolSpec {
+                name: "finish_coding_task".to_string(),
+                description: "Deterministic coding-task finish aggregate for an explicit session_id. Returns show_changes, optional hygiene and handoff, validation-like ledger events, workspace warnings, and dirty-state signals. Never calls an LLM or parses test output.".to_string(),
+                input_schema: finish_coding_task_input_schema(),
+                output_schema: output_schema_for_tool("finish_coding_task"),
+                annotations: tool_annotations("finish_coding_task"),
             },
             ToolSpec {
                 name: "session_summary".to_string(),
@@ -885,6 +900,7 @@ impl ToolRuntime {
         json!({
             "inspect": pick(&[
                 "list_tools", "list_projects", "list_agents", "runtime_status",
+                "start_coding_task",
                 "read_file", "search_project_text", "show_changes", "list_project_files",
                 "git_status", "git_diff", "git_diff_summary", "git_diff_hunks", "git_log",
                 "workspace_checkpoint_list", "workspace_checkpoint_show"
@@ -897,6 +913,7 @@ impl ToolRuntime {
                 "workspace_checkpoint_create", "workspace_checkpoint_restore"
             ]),
             "review": pick(&[
+                "finish_coding_task",
                 "show_changes", "git_diff_hunks", "workspace_hygiene_check",
                 "git_diff_summary", "git_log", "git_status", "git_diff",
                 "workspace_checkpoint_show", "workspace_checkpoint_list"
@@ -919,7 +936,8 @@ impl ToolRuntime {
                 "list_jobs", "job_tail"
             ]),
             "runtime": pick(&[
-                "list_tools", "start_session", "session_summary",
+                "list_tools", "start_session", "start_coding_task", "finish_coding_task",
+                "session_summary",
                 "post_session_message", "list_session_messages",
                 "resolve_session_message", "session_discussion_summary",
                 "session_handoff_summary",

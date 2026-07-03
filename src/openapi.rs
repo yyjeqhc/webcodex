@@ -996,7 +996,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Use listRuntimeTools for all names."
                 },
                 "recording_session_id": {
                     "type": "string",
@@ -1158,6 +1158,26 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
+                "include_runtime_status": {
+                    "type": "boolean",
+                    "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                },
+                "include_git": {
+                    "type": "boolean",
+                    "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                },
+                "include_recent_commits": {
+                    "type": "boolean",
+                    "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                },
+                "include_rules": {
+                    "type": "boolean",
+                    "description": "Flattened start_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                },
+                "bind_current": {
+                    "type": "boolean",
+                    "description": "Flattened start_coding_task flag. Defaults to false. Binding is process-local in-memory control metadata. Used only when `params` and `arguments` are absent."
+                },
                 "path": {
                     "type": "string",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
@@ -1195,6 +1215,18 @@ fn schemas() -> Value {
                 "include_diff": {
                     "type": "boolean",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "include_hygiene": {
+                    "type": "boolean",
+                    "description": "Flattened finish_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                },
+                "include_handoff": {
+                    "type": "boolean",
+                    "description": "Flattened finish_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                },
+                "include_validation_summary": {
+                    "type": "boolean",
+                    "description": "Flattened finish_coding_task flag. Defaults to true; no stdout/stderr parsing is performed. Used only when `params` and `arguments` are absent."
                 },
                 "max_hunks": {
                     "type": "integer",
@@ -2910,6 +2942,11 @@ mod tests {
             "mode",
             "deny_write_tools",
             "deny_shell_tools",
+            "include_runtime_status",
+            "include_git",
+            "include_recent_commits",
+            "include_rules",
+            "bind_current",
             "path",
             "start_line",
             "end_line",
@@ -2918,6 +2955,9 @@ mod tests {
             "old_text",
             "new_text",
             "include_diff",
+            "include_hygiene",
+            "include_handoff",
+            "include_validation_summary",
             "context_before",
             "context_after",
             "with_line_numbers",

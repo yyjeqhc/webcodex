@@ -130,7 +130,12 @@ pub(crate) fn is_current_session_eligible(call: &ToolCall) -> bool {
     // checkpoint enrichment, but its `session_id` is required business input
     // (the session to summarize), not a recorder session. It must never fall
     // back to the current-session binding.
-    if matches!(call, ToolCall::SessionHandoffSummary { .. }) {
+    if matches!(
+        call,
+        ToolCall::SessionHandoffSummary { .. }
+            | ToolCall::StartCodingTask { .. }
+            | ToolCall::FinishCodingTask { .. }
+    ) {
         return false;
     }
     call.project().is_some() && !is_current_session_control_tool(call)

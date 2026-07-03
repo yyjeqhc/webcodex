@@ -345,6 +345,87 @@ pub(super) fn start_session_input_schema() -> Value {
     })
 }
 
+pub(super) fn start_coding_task_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Required runtime project id. Use a full id from list_projects, such as agent:<client_id>:<project_id>."
+            },
+            "title": {
+                "type": "string",
+                "description": "Optional human-readable task title for the created session."
+            },
+            "mode": session_mode_schema("Optional session mode. Defaults to normal. read_only automatically blocks write-like and shell/job-like tools in the created session."),
+            "deny_write_tools": {
+                "type": "boolean",
+                "description": "Optional task guard for the created session. Defaults to false unless mode=read_only."
+            },
+            "deny_shell_tools": {
+                "type": "boolean",
+                "description": "Optional task guard for the created session. Defaults to false unless mode=read_only."
+            },
+            "include_runtime_status": {
+                "type": "boolean",
+                "description": "Include runtime_status output. Defaults to true."
+            },
+            "include_git": {
+                "type": "boolean",
+                "description": "Include structured git/worktree status derived from show_changes. Defaults to true."
+            },
+            "include_recent_commits": {
+                "type": "boolean",
+                "description": "Include recent commits from git_log. Defaults to true."
+            },
+            "include_rules": {
+                "type": "boolean",
+                "description": "Include a deterministic project instruction source summary. Defaults to true."
+            },
+            "bind_current": {
+                "type": "boolean",
+                "description": "If true, bind the new session as the caller/transport/project current session. Defaults to false. Binding is process-local in-memory control metadata."
+            }
+        },
+        "required": ["project"],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn finish_coding_task_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "project": {
+                "type": "string",
+                "description": "Required runtime project id. Use the same project used to start the task."
+            },
+            "session_id": {
+                "type": "string",
+                "description": "Required explicit wc_sess_* id returned by start_coding_task or start_session. This is business input, not current-session fallback."
+            },
+            "include_diff": {
+                "type": "boolean",
+                "description": "Include bounded diff hunks in show_changes. Defaults to true."
+            },
+            "include_hygiene": {
+                "type": "boolean",
+                "description": "Include workspace_hygiene_check output. Defaults to true."
+            },
+            "include_handoff": {
+                "type": "boolean",
+                "description": "Include session_handoff_summary output. Defaults to true."
+            },
+            "include_validation_summary": {
+                "type": "boolean",
+                "description": "Include deterministic validation-like session ledger event summary when available. Defaults to true; no stdout/stderr parsing is performed."
+            }
+        },
+        "required": ["project", "session_id"],
+        "additionalProperties": false,
+    })
+}
+
 pub(super) fn current_session_input_schema(require_session_id: bool) -> Value {
     let mut fields = vec![(
             "project",

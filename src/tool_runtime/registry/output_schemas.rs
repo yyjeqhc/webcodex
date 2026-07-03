@@ -397,6 +397,69 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 ),
             ),
         ]),
+        "start_coding_task" => wrapped_output_schema(vec![
+            ("project", schema_type("string", "Original project input.")),
+            (
+                "resolved_project",
+                open_object_schema("Resolved project id, path, executor, and safe project metadata."),
+            ),
+            (
+                "session",
+                open_object_schema("Created session id, mode, guards, explicit-session guidance, and current binding state."),
+            ),
+            (
+                "runtime_status",
+                nullable_schema("object", "runtime_status output when requested; null otherwise."),
+            ),
+            (
+                "rules",
+                nullable_schema("object", "Deterministic project instruction source summary when requested; null otherwise."),
+            ),
+            (
+                "git",
+                nullable_schema("object", "Structured worktree/git summary when requested; null otherwise."),
+            ),
+            (
+                "recommended_flow",
+                open_object_schema("Deterministic recommended inspect/edit/validate/review/handoff tool groups."),
+            ),
+            (
+                "warnings",
+                array_schema(open_object_schema("Startup warning."), "Bounded startup warnings."),
+            ),
+        ]),
+        "finish_coding_task" => wrapped_output_schema(vec![
+            ("project", schema_type("string", "Original project input.")),
+            (
+                "resolved_project",
+                open_object_schema("Resolved project id, path, executor, and safe project metadata."),
+            ),
+            ("session_id", schema_type("string", "Explicit task session id.")),
+            (
+                "workspace",
+                open_object_schema("Workspace cleanliness, changed file count, and warnings."),
+            ),
+            (
+                "changes",
+                open_object_schema("show_changes output and hunk truncation metadata."),
+            ),
+            (
+                "validation",
+                open_object_schema("Deterministic validation-like session ledger summary; no output parsing."),
+            ),
+            (
+                "hygiene",
+                nullable_schema("object", "workspace_hygiene_check output when requested; null otherwise."),
+            ),
+            (
+                "handoff",
+                nullable_schema("object", "session_handoff_summary output when requested; null otherwise."),
+            ),
+            (
+                "final_warnings",
+                array_schema(open_object_schema("Finish warning."), "Bounded finish warnings."),
+            ),
+        ]),
         "start_session" => wrapped_output_schema(vec![
             ("success", schema_type("boolean", "Always true on success.")),
             ("session_id", schema_type("string", "Opaque session id.")),

@@ -123,6 +123,47 @@ pub enum ToolCall {
         deny_shell_tools: bool,
     },
 
+    /// Create a task session and return deterministic startup context: project
+    /// resolution, optional runtime/git/rules summaries, recommended flow, and
+    /// explicit current-session binding state. Never calls an LLM.
+    StartCodingTask {
+        project: String,
+        #[serde(default)]
+        title: Option<String>,
+        #[serde(default)]
+        mode: SessionMode,
+        #[serde(default)]
+        deny_write_tools: bool,
+        #[serde(default)]
+        deny_shell_tools: bool,
+        #[serde(default)]
+        include_runtime_status: Option<bool>,
+        #[serde(default)]
+        include_git: Option<bool>,
+        #[serde(default)]
+        include_recent_commits: Option<bool>,
+        #[serde(default)]
+        include_rules: Option<bool>,
+        #[serde(default)]
+        bind_current: bool,
+    },
+
+    /// Return deterministic finish context for an explicit task session:
+    /// changes, workspace hygiene, session/handoff summaries, and bounded
+    /// validation-like ledger events. Never calls an LLM.
+    FinishCodingTask {
+        project: String,
+        session_id: String,
+        #[serde(default)]
+        include_diff: Option<bool>,
+        #[serde(default)]
+        include_hygiene: Option<bool>,
+        #[serde(default)]
+        include_handoff: Option<bool>,
+        #[serde(default)]
+        include_validation_summary: Option<bool>,
+    },
+
     /// Return a bounded structured summary of recorded session ledger data for
     /// an explicit session id.
     SessionSummary {
@@ -843,6 +884,8 @@ pub enum ToolCall {
 pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "list_tools",
     "start_session",
+    "start_coding_task",
+    "finish_coding_task",
     "session_summary",
     "post_session_message",
     "list_session_messages",
@@ -968,6 +1011,8 @@ impl ToolCall {
         match self {
             Self::ListTools => "list_tools",
             Self::StartSession { .. } => "start_session",
+            Self::StartCodingTask { .. } => "start_coding_task",
+            Self::FinishCodingTask { .. } => "finish_coding_task",
             Self::SessionSummary { .. } => "session_summary",
             Self::PostSessionMessage { .. } => "post_session_message",
             Self::ListSessionMessages { .. } => "list_session_messages",
@@ -1168,6 +1213,9 @@ impl ToolCall {
             | Self::WorkspaceCheckpointRestore { project, .. }
             | Self::WorkspaceCheckpointDelete { project, .. }
             | Self::WorkspaceHygieneCheck { project, .. } => Some(project.as_str()),
+            Self::StartCodingTask { project, .. } | Self::FinishCodingTask { project, .. } => {
+                Some(project.as_str())
+            }
             Self::SessionHandoffSummary { project, .. } => project.as_deref(),
             _ => None,
         }
@@ -1656,6 +1704,44 @@ impl ToolCall {
                 "include_workspace": include_workspace,
                 "include_checkpoints": include_checkpoints,
                 "limit": limit,
+            }),
+            Self::StartCodingTask {
+                project,
+                title,
+                mode,
+                deny_write_tools,
+                deny_shell_tools,
+                include_runtime_status,
+                include_git,
+                include_recent_commits,
+                include_rules,
+                bind_current,
+            } => serde_json::json!({
+                "project": project,
+                "title": title,
+                "mode": mode,
+                "deny_write_tools": deny_write_tools,
+                "deny_shell_tools": deny_shell_tools,
+                "include_runtime_status": include_runtime_status,
+                "include_git": include_git,
+                "include_recent_commits": include_recent_commits,
+                "include_rules": include_rules,
+                "bind_current": bind_current,
+            }),
+            Self::FinishCodingTask {
+                project,
+                session_id,
+                include_diff,
+                include_hygiene,
+                include_handoff,
+                include_validation_summary,
+            } => serde_json::json!({
+                "project": project,
+                "session_id": session_id,
+                "include_diff": include_diff,
+                "include_hygiene": include_hygiene,
+                "include_handoff": include_handoff,
+                "include_validation_summary": include_validation_summary,
             }),
             Self::ToolManifest {
                 category,

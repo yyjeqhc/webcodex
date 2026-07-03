@@ -79,6 +79,8 @@ https://your-domain.example/openapi.json
 
 GPT Actions 必须保持在 30 个 operation/tool 上限以下。当前 WebCodex OpenAPI surface 是 25 个 operations，因此 chunked artifact upload 和兼容编辑工具通过 `callRuntimeTool` 使用，而不是 promoted 为 dedicated GPT Action operations。
 
+旧 `/api/codex/*` REST API 已进入 lifecycle-deprecated 状态，并且不暴露在 GPT Actions OpenAPI schema 中。新客户端应使用 `/api/tools/call`、`/api/projects/*` 或 MCP；`/api/codex/*` 仅保留给历史调用方和 audit 连续性。
+
 ### MCP surface
 
 MCP client 连接：

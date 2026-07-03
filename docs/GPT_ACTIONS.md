@@ -105,6 +105,10 @@ runtime-only compatibility paths. Use them through `callRuntimeTool` when
 needed; source editing should prefer `replace_line_range`, `insert_at_line`,
 `delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
 
+Legacy `/api/codex/*` routes are not part of the GPT Actions schema. New GPT
+workflows should use the dedicated `/api/projects/*` Actions or
+`callRuntimeTool`.
+
 It does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints such as:
 
 ```text

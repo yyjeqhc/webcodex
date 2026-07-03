@@ -132,9 +132,10 @@ only for local/trusted-network demos."
     // Set max payload size to 2MB for text messages
     salvo::http::request::set_global_secure_max_size(config.max_text_size);
 
-    // Load projects config for Codex API. Keep Codex routes mounted even when
-    // the config is invalid so callers get a structured JSON error instead of
-    // a confusing router-level 404.
+    // Load projects config for legacy /api/codex/* handlers. Keep those
+    // lifecycle-deprecated routes mounted even when the config is invalid so
+    // historical callers get structured JSON errors instead of router-level
+    // 404s. New clients should use /api/tools/call, /api/projects/*, or MCP.
     let projects_config_path = projects::ProjectsConfig::config_path_from_env();
     let projects_state = match projects::ProjectsConfig::load() {
         Ok(cfg) => {
@@ -147,7 +148,7 @@ only for local/trusted-network demos."
         }
         Err(e) => {
             tracing::warn!(
-                "Projects config not loaded from {}: {}. Codex API will return config errors.",
+                "Projects config not loaded from {}: {}. Legacy /api/codex routes will return config errors.",
                 projects_config_path,
                 e
             );
@@ -393,8 +394,10 @@ only for local/trusted-network demos."
                 .post(mcp::mcp_post),
         );
 
-    // Codex API routes are always mounted. If projects.toml failed to load,
-    // handlers return structured errors instead of disappearing with 404.
+    // Legacy /api/codex/* API routes remain mounted for historical callers and
+    // audit continuity. New clients should use /api/tools/call, /api/projects/*,
+    // or MCP. If projects.toml failed to load, handlers return structured
+    // errors instead of disappearing with 404.
     router = router.push(
         Router::with_path("api/codex")
             .hoop(AuthMiddleware)

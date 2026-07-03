@@ -12,6 +12,8 @@ const MAX_PREVIEW_TEXT: usize = 120;
 
 #[cfg(test)]
 #[allow(dead_code)]
+// Historical /api/codex/* endpoints remain here so audit/session stats can
+// classify old events. They are lifecycle-deprecated for new clients.
 pub const AUDITED_ACTION_ROUTES: &[&str] = &[
     "/api/codex/projects",
     "/api/codex/context_batch",

@@ -123,6 +123,11 @@ OpenAPI surface is 25 operations, so chunked artifact upload and compatibility
 edit tools remain available through `callRuntimeTool` rather than dedicated GPT
 Action operations.
 
+The older `/api/codex/*` REST API is lifecycle-deprecated and not exposed in the
+GPT Actions OpenAPI schema. New clients should use `/api/tools/call`,
+`/api/projects/*`, or MCP; `/api/codex/*` remains only for historical callers
+and audit continuity.
+
 ### MCP surface
 
 MCP clients connect to:

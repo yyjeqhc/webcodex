@@ -95,6 +95,8 @@ webcodex-cli token create-local \
 
 GPT Actions surface 有意小于完整 admin API。它包含 runtime、project、git、patch、file、shell/job、artifact 和 session operations。
 
+legacy `/api/codex/*` routes 不属于 GPT Actions schema。新的 GPT workflow 应使用 dedicated `/api/projects/*` Actions 或 `callRuntimeTool`。
+
 它不暴露 user、API-token、agent-token、pairing/enrollment、setup、doctor、npm、server management 或 audit endpoints，例如：
 
 ```text

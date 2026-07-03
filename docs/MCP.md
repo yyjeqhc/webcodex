@@ -63,6 +63,11 @@ facade, which centralizes metadata-backed OAuth checks, session event recording,
 preparation for later provider work, not an external MCP host or provider
 marketplace.
 
+Runtime tools can be exposed directly as MCP tools, subject to the tool manifest
+and MCP client constraints. GPT Actions are different: the dedicated operation
+surface must stay below the 30-operation limit, so artifact upload remains
+available there through `callRuntimeTool` rather than dedicated operations.
+
 Runtime tool discovery includes annotations derived from `ToolMetadata`, a
 lightweight precursor to ToolProvider. The metadata centralizes risk, OAuth
 scope, read-only/destructive/open-world hints, project requirement, and path
@@ -74,14 +79,41 @@ Typical MCP tools include:
 
 - Discovery, health, and task tracking: `list_tools`, `start_session`, `session_summary`, `runtime_status`, `list_projects`, `list_agents`.
 - Read-only project inspection: `show_changes`, `list_project_files`, `read_file`, `search_project_text`, `git_status`, `git_diff`, `git_diff_summary`, `git_diff_hunks`.
-- Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`.
+- Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`.
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
+- Bounded artifact transfer: `save_project_artifact`, `read_project_artifact_metadata`, `read_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`.
 - Project commands and jobs: `run_shell`, `run_job`, `job_status`, `job_log`, `job_tail`.
 - Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
 
 Codex delegation (`run_codex`) is currently hidden from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex, or wait for a future explicit opt-in feature flag.
 
-Use the structured line edit tools when you already know the target line range. Use patch tools for broader multi-file changes. Treat `run_shell` and `run_job` as diagnostics/build/test fallbacks, not as the first source-editing path.
+Use the structured line edit tools when you already know the target line range,
+and `apply_text_edits` for coordinated exact edits in one UTF-8 file. Use patch
+tools for broader multi-file changes. Treat `run_shell` and `run_job` as
+diagnostics/build/test fallbacks, not as the first source-editing path.
+
+Artifact transfer is a bounded project artifact transfer primitive for binary
+or external files associated with a project. It is not the source-editing path,
+object storage, a gallery, or a large-file platform. Do not use
+`save_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`,
+`artifact_upload_finish`, or `artifact_upload_abort` as replacements for
+`replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`,
+or `apply_patch_checked`.
+
+The minimal chunked upload sequence is `artifact_upload_begin`,
+`artifact_upload_chunk` until all bytes are sent, then
+`artifact_upload_finish`. Use `artifact_upload_abort` when the upload fails, is
+cancelled, or is no longer needed. Each chunk is base64, decoded chunks are
+limited to 64 KiB, the current artifact total limit is 10 MiB, `offset` must be
+contiguous, and `expected_bytes` / `expected_sha256` are integrity guards checked
+before finish atomically commits the target path. Session metadata records
+summary fields rather than raw base64.
+
+For download/readback, use `read_project_artifact_metadata` before
+`read_project_artifact`. `read_project_artifact` returns a bounded base64
+segment with `sha256`, `mime_type`, `offset`, `next_offset`, `truncated`, and
+`eof`; continue from `next_offset` while needed. It is not an unlimited file
+download tool.
 
 Use `show_changes` near the end of a task to summarize the current worktree,
 check for untracked smoke/tmp/test files, review `git diff --stat`, request

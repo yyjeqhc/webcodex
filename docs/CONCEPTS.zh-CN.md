@@ -46,11 +46,17 @@ agent:<client_id>:<project_id>
 
 ### Runtime tool
 
-runtime tools 是通过 `/api/tools/call`、GPT Actions 和 MCP 暴露的类型化操作。例如 `list_projects`、`read_file`、`git_status`、`replace_line_range`、`validate_patch`、`apply_patch_checked`、`run_shell`、`run_job`、`show_changes`、`start_session` 和 `session_handoff_summary`。
+runtime tools 是通过 `/api/tools/call`、GPT Actions 和 MCP 暴露的类型化操作。例如 `list_projects`、`read_file`、`git_status`、`replace_line_range`、`insert_at_line`、`delete_line_range`、`apply_text_edits`、`validate_patch`、`apply_patch_checked`、`run_shell`、`run_job`、`show_changes`、`start_session` 和 `session_handoff_summary`。
 
 推荐的模型工作流是先检查，再在已知行号时使用结构化编辑工具；应用 patch 前先 validate；运行受限 shell/job 检查；最后用 `show_changes` 和 session tools 汇总。
 
 Codex delegation（`run_codex`）当前已从模型可见 surface 隐藏/禁用：包括 GPT Actions、MCP `tools/list`、runtime tool discovery 和 generic model-facing dispatch。不要把它当成推荐路径。
+
+### Artifact transfer
+
+artifact transfer 是受限的项目 artifact 传输基础能力，用于把二进制或外部输入文件安全地导入/导出项目上下文。它使用 project-relative path、字节上限、chunk 上限和 sha256 guard；它不是源码编辑路径，不是对象存储，不是文件管理平台，也不是大文件系统。
+
+源码编辑仍然应优先使用 `replace_line_range`、`insert_at_line`、`delete_line_range`、`apply_text_edits` 和 `apply_patch_checked`。不要把 `save_project_artifact`、`artifact_upload_begin`、`artifact_upload_chunk`、`artifact_upload_finish` 或 `artifact_upload_abort` 当成源码写入工具，也不要让它们替代 `write_project_file`。
 
 ### GPT Actions surface
 
@@ -62,6 +68,8 @@ https://your-domain.example/openapi.json
 
 这个 surface 故意比 admin API 小。它面向 runtime、project、file、Git、patch、shell/job、artifact 和 session 工作流。它不暴露 user 创建、PAT 创建、agent-token 创建、pairing、enrollment、setup、server management 或 audit endpoints。
 
+GPT Actions 必须保持在 30 个 operation/tool 上限以下。当前 WebCodex OpenAPI surface 是 27 个 operations，因此 chunked artifact upload 通过 `callRuntimeTool` 使用，而不是 promoted 为 dedicated GPT Action operations。
+
 ### MCP surface
 
 MCP client 连接：
@@ -71,6 +79,8 @@ https://your-domain.example/mcp
 ```
 
 MCP 和 GPT Actions 共用同一套 `ToolRuntime`、agent registry、project id、基于 metadata 的 OAuth 检查和 session recording。MCP 是远程 WebCodex runtime endpoint；外部 MCP-server brokering 是后续扩展，不是当前 endpoint 的前置条件。
+
+runtime tools 可以作为 MCP tools 直接暴露，但仍受 tool manifest 和 client 约束。这不同于 GPT Actions：GPT Actions 的 dedicated operation surface 必须保持在 30 个 operation/tool 上限以下。
 
 ## 认证词汇
 

@@ -32,10 +32,12 @@ Guide for autonomous agents (Codex, GLM, ChatGPT, MCP, GPT Action) developing ag
 
 ## 3. Editing and Refactoring Rules
 
-- **Prefer structured WebCodex line-edit tools** for source edits when available:
+- **Prefer structured WebCodex edit tools** for source edits when available:
   - `replace_line_range`
   - `insert_at_line`
   - `delete_line_range`
+  - `apply_text_edits`
+  - `apply_patch_checked`
 - **Do not** use shell `sed`/`perl`/`python` as the primary editing mechanism.
 - Use shell for inspection, tests, and bounded diagnostics only.
 - Keep changes scoped to the requested task.
@@ -168,7 +170,17 @@ If adding or renaming a runtime tool, update **all** of:
 - Prefer **non-consequential** labels for read-only, discovery, onboarding, and bounded local project setup actions.
 - `registerProject` and `createProject` are **non-consequential** onboarding actions when constrained by agent policy, allowed roots, and non-overwrite defaults.
 - Keep **destructive actions consequential**: shell/job execution, raw writes, patch application, delete/restore/discard, imports, and generic dispatch.
-- `callRuntimeTool` is advanced/generic; prefer dedicated actions when available.
+- `callRuntimeTool` is advanced/generic; use dedicated Actions only for stable
+  common workflows that fit the operation budget.
+- WebCodex GPT Actions must stay below the 30-operation GPT Actions limit. The
+  current OpenAPI surface is 27 operations.
+- Chunked artifact upload tools (`artifact_upload_begin`,
+  `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`)
+  remain runtime-only through `callRuntimeTool`; do not promote them to
+  dedicated GPT Action operations.
+- When adding future runtime tools, default to `callRuntimeTool` exposure unless
+  there is an explicit product reason and operation-count budget for a dedicated
+  Action.
 - GPT Actions should prefer **flattened top-level fields** over `params` / `arguments`.
 - Use `recording_session_id` for generic wrapper recorder metadata.
 - Use `session_id` as tool business input.

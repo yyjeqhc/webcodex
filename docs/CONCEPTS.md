@@ -59,7 +59,8 @@ The `<project_id>` comes from the top-level `id` field in an agent
 
 Runtime tools are the typed operations exposed through `/api/tools/call`, GPT
 Actions, and MCP. Examples include `list_projects`, `read_file`, `git_status`,
-`replace_line_range`, `validate_patch`, `apply_patch_checked`, `run_shell`,
+`replace_line_range`, `insert_at_line`, `delete_line_range`,
+`apply_text_edits`, `validate_patch`, `apply_patch_checked`, `run_shell`,
 `run_job`, `show_changes`, `start_session`, and `session_handoff_summary`.
 
 The recommended model workflow is to inspect first, use structured edit tools
@@ -74,6 +75,19 @@ Codex delegation (`run_codex`) is currently hidden/disabled from model-facing
 surfaces: GPT Actions, MCP `tools/list`, runtime tool discovery, and generic
 model-facing dispatch. Do not treat it as the recommended path.
 
+### Artifact transfer
+
+Artifact transfer is a bounded project artifact transfer primitive. It is for
+importing or exporting binary and external files associated with a project, using
+project-relative paths, byte limits, chunk limits, and sha256 guards. It is not
+the source-editing path, object storage, a gallery, or a large-file platform.
+
+For source edits, continue to use `replace_line_range`, `insert_at_line`,
+`delete_line_range`, `apply_text_edits`, and `apply_patch_checked`. Do not treat
+`save_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`,
+`artifact_upload_finish`, or `artifact_upload_abort` as replacements for
+source-editing tools or `write_project_file`.
+
 ### GPT Actions surface
 
 GPT Actions use the WebCodex OpenAPI schema from:
@@ -87,6 +101,10 @@ project, file, Git, patch, shell/job, artifact, and session workflows. It does
 not expose user creation, PAT creation, agent-token creation, pairing,
 enrollment, setup, server management, or audit endpoints.
 
+GPT Actions must stay below the 30-operation limit. The current WebCodex
+OpenAPI surface is 27 operations, so chunked artifact upload remains available
+through `callRuntimeTool` rather than dedicated GPT Action operations.
+
 ### MCP surface
 
 MCP clients connect to:
@@ -99,6 +117,10 @@ MCP and GPT Actions share the same `ToolRuntime`, agent registry, project ids,
 metadata-backed OAuth checks, and session recording. MCP is a remote WebCodex
 runtime endpoint; external MCP-server brokering is future work, not required for
 the current endpoint.
+
+Runtime tools can be exposed directly as MCP tools, subject to the tool manifest
+and client constraints. This is separate from GPT Actions, where the dedicated
+operation surface must stay under the 30-operation limit.
 
 ## Authentication vocabulary
 

@@ -94,6 +94,13 @@ webcodex-cli token create-local \
 
 The GPT Actions surface is intentionally smaller than the full admin API. It includes runtime, project, git, patch, file, shell/job, artifact, and session operations.
 
+GPT Actions can expose at most 30 operations/tools. The current WebCodex OpenAPI
+surface is intentionally held at 27 operations. New runtime tools should usually
+remain reachable through `callRuntimeTool` instead of becoming dedicated
+Actions. Chunked artifact upload tools (`artifact_upload_begin`,
+`artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`) are
+not dedicated GPT Action operations; call them through `callRuntimeTool`.
+
 It does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints such as:
 
 ```text
@@ -114,12 +121,17 @@ Use `webcodex-cli` for those management tasks.
 3. `getRuntimeStatus`, or `callRuntimeTool` with `list_agents` — confirm an online agent and its redacted policy summary or `agent_instance_id`.
 4. `listProjects` — choose an `agent:<client_id>:<project_id>`.
 5. `callRuntimeTool` with `show_changes`, plus `getProjectGitStatus`, `listProjectFiles`, `readProjectFile`, and `searchProjectText` — inspect before editing.
-6. For scoped source edits with known line numbers, use `callRuntimeTool` with the structured line edit tools: `replace_line_range`, `insert_at_line`, and `delete_line_range`.
+6. For scoped source edits with known line numbers, use `callRuntimeTool` with the structured edit tools: `replace_line_range`, `insert_at_line`, `delete_line_range`, and `apply_text_edits`.
 7. For broader multi-file edits, use `validateProjectPatch` first, then `applyProjectPatchChecked` only when the patch is intentional.
 8. Use `writeProjectFile` only for new files or deliberate small whole-file overwrites; use `replaceProjectFileText` only for short exact substring changes.
 9. `runProjectShellCommand` or `startProjectShellJob` — execute only bounded commands in registered projects after file edits are complete.
 10. Call `callRuntimeTool` with `session_summary` to inspect recorded tool calls, then use `show_changes` for the current worktree state.
 11. Prefer structured edit tools and the controlled `runProjectShellCommand` / `startProjectShellJob` validation flow for coding tasks.
+
+Do not use `save_project_artifact`, `artifact_upload_begin`,
+`artifact_upload_chunk`, `artifact_upload_finish`, or `artifact_upload_abort` as
+source-writing tools. They are for bounded project artifact transfer, not for
+editing UTF-8 source files.
 
 Codex delegation is currently hidden from GPT Actions and model-facing runtime tool discovery. Operators who want Codex should run it outside WebCodex, or wait for a future explicit opt-in feature flag.
 
@@ -226,9 +238,19 @@ They must not expose tokens, env values, `Authorization` headers, full `agent.to
 
 The management CLI compatibility commands `webcodex users`, `webcodex tokens`, and `webcodex agent-tokens` still work, but `webcodex-cli` is the recommended CLI for current setup and operations.
 
-## Conversation file import / generated image saving
+## Artifact transfer and conversation file import
 
-GPT Action OpenAPI operations and MCP/runtime tools are related but not identical. The runtime side exposes more tools, and `callRuntimeTool` is the generic entry point for runtime-only tools. To avoid approaching the GPT Actions operation limit, WebCodex exposes exactly one dedicated conversation-file import Action: `importConversationFilesToProject` at `POST /api/artifacts/import`.
+Artifact transfer is a bounded project artifact transfer primitive. It is for
+importing and exporting binary or external files associated with a project. It
+is not the source-editing path, object storage, a gallery, or a large-file
+platform.
+
+GPT Action OpenAPI operations and MCP/runtime tools are related but not
+identical. The runtime side exposes more tools, and `callRuntimeTool` is the
+generic entry point for runtime-only tools. To stay under the GPT Actions
+30-operation limit, WebCodex exposes exactly one dedicated conversation-file
+import Action: `importConversationFilesToProject` at
+`POST /api/artifacts/import`.
 
 Use this single Action for generated images, user-uploaded files, Code Interpreter outputs, PDFs, zip archives, CSV/JSON/text files, and other supported bounded binary artifacts. The recommended path remains `importConversationFilesToProject` plus `openaiFileIdRefs`. Do not create separate dedicated GPT Actions for images, zip files, or PDFs.
 
@@ -240,13 +262,22 @@ Recommended generated-image flow:
 4. The response returns each saved file's `source_name`, `project`, `path`, `bytes_written`, `mime_type`, and `sha256`.
 
 
-Do not use shell/base64 as a fallback for large files. Calling `save_project_artifact` through `callRuntimeTool` is only appropriate for small binary payloads or cases where a trusted base64 string already exists; the import Action with `openaiFileIdRefs` is the preferred path for ChatGPT conversation files.
+Do not use shell/base64 as a fallback for large files. Calling
+`save_project_artifact` through `callRuntimeTool` is only appropriate for small
+binary payloads or cases where a trusted base64 string already exists; the
+import Action with `openaiFileIdRefs` is the preferred path for ChatGPT
+conversation files. `save_project_artifact` is not a replacement for
+`writeProjectFile` or the structured source-editing tools.
 
 Artifact runtime tools form the project-local read/write loop:
 
-- `save_project_artifact` saves a bounded base64 payload into a project artifact path.
+- `save_project_artifact` saves a bounded one-shot base64 payload into a project artifact path.
+- `artifact_upload_begin` starts a bounded upload with optional `expected_bytes` and `expected_sha256` guards.
+- `artifact_upload_chunk` appends one base64 chunk at the next contiguous `offset`.
+- `artifact_upload_finish` verifies guards and atomically commits the temporary upload to the target path.
+- `artifact_upload_abort` cleans temporary upload state when the upload fails, is cancelled, or is no longer needed.
 - `read_project_artifact_metadata` inspects artifact metadata such as bytes, MIME type, sha256, image dimensions, and zip entry count without returning file content.
-- `read_project_artifact` reads small artifact content from a non-sensitive project path and returns `content_base64` plus `bytes`, `mime_type`, and `sha256`. It defaults to a small 1 MiB `max_bytes` cap and is intended for thumbnails, small JSON/zip test fixtures, and other small binary artifacts.
+- `read_project_artifact` is a bounded chunked read from a non-sensitive project path and returns one base64 segment plus full-file metadata.
 
 Do not use `read_project_artifact` for large files. Prefer metadata-only inspection, targeted source reads, or external artifact transfer flows instead of returning large base64 payloads through `callRuntimeTool`.
 
@@ -255,8 +286,35 @@ This flow does not call the OpenAI Images API from WebCodex and therefore does n
 Security constraints: imports are limited to at most 10 files per request and 10 MiB per file. Paths must stay inside the project root; `..`, absolute paths, `.git`, `.env*`, `*.pem`, `secrets`, `tokens`, `node_modules`, and `target` paths are rejected. `overwrite` defaults to `false`. Zip files are saved as zip files and are not automatically extracted.
 
 
+## Chunked artifact uploads
+
+Use chunked upload through the generic `callRuntimeTool` Action:
+
+1. `artifact_upload_begin`
+2. `artifact_upload_chunk` until all bytes are sent
+3. `artifact_upload_finish`
+
+Call `artifact_upload_abort` when an upload fails, is cancelled, or is no longer
+needed.
+
+Each `artifact_upload_chunk` payload is base64 and the decoded chunk must be at
+most 64 KiB. The artifact total limit is currently 10 MiB. `offset` must be
+contiguous with the bytes already received. `expected_bytes` and
+`expected_sha256` are optional integrity guards captured at begin time and
+checked before finish commits the upload. `artifact_upload_finish` succeeds only
+after the guard checks pass, then atomically commits the temporary upload to the
+target project-relative path. `artifact_upload_abort` removes the temporary
+upload state. Session logs do not record raw base64; they keep bounded summary
+fields such as path, upload id, offsets, byte counts, and sha256 guard metadata.
+
 ## Artifact metadata and chunked content reads
 
 For existing project artifacts, prefer `read_project_artifact_metadata` first. It returns size, sha256, MIME type, and image dimensions where available without embedding file content in the GPT Action response.
 
-Do not read large files as one base64 response. If content is needed, call `read_project_artifact` as a chunked content read: use `offset` and `length` (default 32768 bytes, maximum 65536 bytes) and continue from `next_offset` while `truncated` is true. The returned `content_base64` contains only the current chunk; `sha256` and `file_bytes` describe the full artifact file. This tool is for targeted inspection or small binary transfer, not large-file transfer.
+Do not read large files as one base64 response. If content is needed, call
+`read_project_artifact` as a bounded chunked read: use `offset` and `length`
+(default 32768 bytes, maximum 65536 bytes) and continue from `next_offset` while
+`truncated` is true. The returned `content_base64` contains only the current
+segment; `sha256`, `mime_type`, `file_bytes`, `offset`, `bytes_returned`,
+`next_offset`, `truncated`, and `eof` describe the segment and full artifact
+file. This is not an unlimited download tool.

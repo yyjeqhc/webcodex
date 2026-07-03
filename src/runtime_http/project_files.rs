@@ -94,8 +94,7 @@ struct DiscardUntrackedRequest {
 
 /// `POST /api/projects/replace_in_file` — thin REST wrapper over
 /// `ToolCall::ReplaceInFile`. Mutation with side effects: replaces a substring
-/// in a project file via the owning agent using a fixed helper (old/new travel
-/// over stdin, never interpolated into the shell command). Dedicated GPT Action
+/// in a project file via the owning agent's native file-op path. Dedicated GPT Action
 /// (`replaceProjectFileText`); also reachable via callRuntimeTool / MCP.
 #[derive(Debug, Deserialize)]
 struct ReplaceInFileRequest {
@@ -557,8 +556,8 @@ pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, re
 
 /// `POST /api/projects/replace_in_file` — thin REST wrapper over
 /// `ToolCall::ReplaceInFile`. Mutation with side effects: replaces a substring
-/// in a project file via the owning agent's fixed helper. Requires Bearer auth
-/// and the agent shell capability. Dedicated GPT Action
+/// in a project file via the owning agent's native file-op path. Requires Bearer auth
+/// and the agent file_write capability. Dedicated GPT Action
 /// (`replaceProjectFileText`); also reachable via callRuntimeTool / MCP
 /// tools/call.
 #[handler]
@@ -605,7 +604,7 @@ pub async fn projects_replace_in_file(req: &mut Request, depot: &mut Depot, res:
 /// `POST /api/projects/write_file` — thin REST wrapper over
 /// `ToolCall::WriteProjectFile`. Mutation with side effects: writes a UTF-8
 /// file via the owning agent with optional overwrite guards. Requires Bearer
-/// auth and the agent shell capability. Dedicated GPT Action
+/// auth and the agent file_write capability. Dedicated GPT Action
 /// (`writeProjectFile`); also reachable via callRuntimeTool / MCP tools/call.
 #[handler]
 pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut Response) {

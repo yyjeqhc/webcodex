@@ -629,7 +629,7 @@ pub enum ToolCall {
     },
 
     /// Write a binary artifact in a project via the owning agent. The payload is
-    /// base64-encoded and decoded by a fixed helper on the agent side.
+    /// base64-encoded and decoded by the agent's native artifact file-op path.
     SaveProjectArtifact {
         project: String,
         path: String,

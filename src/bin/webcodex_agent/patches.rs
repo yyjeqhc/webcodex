@@ -15,6 +15,8 @@ pub(crate) fn is_line_edit_request_kind(kind: &str) -> bool {
             | "file_replace_exact_block"
             | "file_insert_before_pattern"
             | "file_insert_after_pattern"
+            | "file_replace_in_file"
+            | "file_write_project_file"
             | "file_apply_text_edits"
     )
 }
@@ -71,13 +73,21 @@ fn line_edit_text_line_count(text: &str) -> usize {
     }
 }
 
-fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
+fn write_file_atomic_with_options(
+    path: &Path,
+    content: &str,
+    create_dirs: bool,
+    tmp_prefix: &str,
+) -> Result<(), String> {
     let parent = path
         .parent()
         .ok_or_else(|| "target path has no parent directory".to_string())?;
+    if create_dirs {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let mut last_error = None;
     for attempt in 0..16 {
-        let tmp = parent.join(format!(".pd-line-{}-{}", std::process::id(), attempt));
+        let tmp = parent.join(format!("{tmp_prefix}-{}-{}", std::process::id(), attempt));
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -88,13 +98,14 @@ fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
                     let _ = std::fs::remove_file(&tmp);
                     return Err(e.to_string());
                 }
-                if let Err(e) = file.sync_all() {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(e.to_string());
-                }
+                let _ = file.sync_all();
+                drop(file);
                 if let Err(e) = std::fs::rename(&tmp, path) {
                     let _ = std::fs::remove_file(&tmp);
                     return Err(e.to_string());
+                }
+                if let Ok(dir) = std::fs::File::open(parent) {
+                    let _ = dir.sync_all();
                 }
                 return Ok(());
             }
@@ -105,6 +116,10 @@ fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
         }
     }
     Err(last_error.unwrap_or_else(|| "could not create temporary file".to_string()))
+}
+
+fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
+    write_file_atomic_with_options(path, content, false, ".pd-line")
 }
 
 pub(crate) fn handle_line_edit_file_request(
@@ -498,6 +513,373 @@ pub(crate) fn handle_line_edit_file_request(
     });
     merge_json_object(&mut out, coords);
     line_edit_stdout(out, start)
+}
+
+fn parse_json_payload(request: &ShellAgentShellRequest) -> Result<serde_json::Value, String> {
+    serde_json::from_str(request.content.as_deref().unwrap_or_default())
+        .map_err(|e| format!("invalid json: {}", e))
+}
+
+fn parse_expected_replacements(payload: &serde_json::Value) -> Result<i64, ()> {
+    let Some(value) = payload.get("expected_replacements") else {
+        return Ok(1);
+    };
+    if let Some(n) = value.as_i64() {
+        return Ok(n);
+    }
+    if let Some(n) = value.as_u64() {
+        return i64::try_from(n).map_err(|_| ());
+    }
+    if let Some(s) = value.as_str() {
+        return s.parse::<i64>().map_err(|_| ());
+    }
+    if let Some(b) = value.as_bool() {
+        return Ok(if b { 1 } else { 0 });
+    }
+    Err(())
+}
+
+fn parse_bool_like(payload: &serde_json::Value, key: &str) -> bool {
+    match payload.get(key) {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Bool(v)) => *v,
+        Some(serde_json::Value::Number(n)) => n.as_i64().unwrap_or(1) != 0,
+        Some(serde_json::Value::String(s)) => !s.is_empty(),
+        Some(_) => true,
+    }
+}
+
+pub(crate) fn handle_replace_in_file_request(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let payload = match parse_json_payload(request) {
+        Ok(payload) => payload,
+        Err(e) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "error": e,
+                }),
+                start,
+            );
+        }
+    };
+
+    let old = payload
+        .get("old")
+        .and_then(|value| value.as_str())
+        .unwrap_or_default();
+    let new = match payload.get("new") {
+        None => "",
+        Some(value) => match value.as_str() {
+            Some(value) => value,
+            None => {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "error": "new must be a string without NUL",
+                    }),
+                    start,
+                );
+            }
+        },
+    };
+    let expected = match parse_expected_replacements(&payload) {
+        Ok(expected) => expected,
+        Err(()) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "error": "expected_replacements must be an integer",
+                }),
+                start,
+            );
+        }
+    };
+    let allow_multi = parse_bool_like(&payload, "allow_multiple");
+
+    if old.is_empty() || old.contains('\0') {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "error": "old must be a non-empty string without NUL",
+            }),
+            start,
+        );
+    }
+    if new.contains('\0') {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "error": "new must be a string without NUL",
+            }),
+            start,
+        );
+    }
+    if expected < 1 {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "error": "expected_replacements must be >= 1",
+            }),
+            start,
+        );
+    }
+    if !allow_multi && expected != 1 {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "error": "expected_replacements must be 1 when allow_multiple is false",
+            }),
+            start,
+        );
+    }
+
+    let content = match std::fs::read(resolved) {
+        Ok(bytes) => match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(_) => {
+                return line_edit_stdout(
+                    serde_json::json!({
+                        "changed": false,
+                        "error": "file is not valid UTF-8",
+                        "path": path,
+                    }),
+                    start,
+                );
+            }
+        },
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "error": "file not found",
+                    "path": path,
+                }),
+                start,
+            );
+        }
+        Err(e) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "error": format!("read failed: {}", e),
+                }),
+                start,
+            );
+        }
+    };
+
+    let before = sha256_hex_bytes(content.as_bytes());
+    let count = content.matches(old).count();
+    if count == 0 {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "before_sha256": before,
+                "occurrences": 0,
+                "error": "old not found in file",
+            }),
+            start,
+        );
+    }
+    if count > 1 && !allow_multi {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "before_sha256": before,
+                "occurrences": count,
+                "error": "old appears multiple times and allow_multiple is false",
+            }),
+            start,
+        );
+    }
+    if allow_multi && count as i64 != expected {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "before_sha256": before,
+                "occurrences": count,
+                "expected": expected,
+                "error": "expected_replacements mismatch",
+            }),
+            start,
+        );
+    }
+
+    let replacements = if allow_multi { expected as usize } else { 1 };
+    let replaced = content.replacen(old, new, replacements);
+    if let Err(e) = write_file_atomic_with_options(resolved, &replaced, false, ".pd-rep") {
+        return line_edit_stdout(
+            serde_json::json!({
+                "changed": false,
+                "path": path,
+                "before_sha256": before,
+                "error": format!("write failed: {}", e),
+            }),
+            start,
+        );
+    }
+    let after = sha256_hex_bytes(replaced.as_bytes());
+    line_edit_stdout(
+        serde_json::json!({
+            "changed": true,
+            "path": path,
+            "replacements": replacements,
+            "before_sha256": before,
+            "after_sha256": after,
+            "bytes_written": replaced.len(),
+        }),
+        start,
+    )
+}
+
+fn write_project_file_error(path: serde_json::Value, error: String) -> serde_json::Value {
+    serde_json::json!({
+        "path": path,
+        "created": false,
+        "overwritten": false,
+        "bytes_written": 0,
+        "sha256": serde_json::Value::Null,
+        "warning": serde_json::Value::Null,
+        "error": error,
+    })
+}
+
+pub(crate) fn handle_write_project_file_request(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let payload = match parse_json_payload(request) {
+        Ok(payload) => payload,
+        Err(e) => {
+            return line_edit_stdout(write_project_file_error(serde_json::Value::Null, e), start);
+        }
+    };
+
+    let content = match payload.get("content") {
+        Some(value) => match value.as_str() {
+            Some(value) => value,
+            None => {
+                return line_edit_stdout(
+                    write_project_file_error(
+                        serde_json::json!(path),
+                        "content must be a UTF-8 string without NUL".to_string(),
+                    ),
+                    start,
+                );
+            }
+        },
+        None => "",
+    };
+    if content.contains('\0') {
+        return line_edit_stdout(
+            write_project_file_error(
+                serde_json::json!(path),
+                "content must be a UTF-8 string without NUL".to_string(),
+            ),
+            start,
+        );
+    }
+
+    let overwrite = parse_bool_like(&payload, "overwrite");
+    let exists = std::fs::symlink_metadata(resolved).is_ok();
+    if exists && !overwrite {
+        return line_edit_stdout(
+            write_project_file_error(
+                serde_json::json!(path),
+                "file exists and overwrite is false".to_string(),
+            ),
+            start,
+        );
+    }
+
+    let mut warning = serde_json::Value::Null;
+    if exists && overwrite {
+        let current = match std::fs::read(resolved) {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(content) => content,
+                Err(_) => {
+                    return line_edit_stdout(
+                        write_project_file_error(
+                            serde_json::json!(path),
+                            "existing file is not valid UTF-8".to_string(),
+                        ),
+                        start,
+                    );
+                }
+            },
+            Err(e) => {
+                return line_edit_stdout(
+                    write_project_file_error(
+                        serde_json::json!(path),
+                        format!("read failed: {}", e),
+                    ),
+                    start,
+                );
+            }
+        };
+        let expected_sha = payload
+            .get("expected_sha256")
+            .filter(|value| !value.is_null());
+        if let Some(expected) = expected_sha {
+            let current_sha = sha256_hex_bytes(current.as_bytes());
+            if expected.as_str() != Some(current_sha.as_str()) {
+                let mut out = write_project_file_error(
+                    serde_json::json!(path),
+                    "expected_sha256 mismatch".to_string(),
+                );
+                out["sha256"] = serde_json::json!(current_sha);
+                return line_edit_stdout(out, start);
+            }
+        }
+
+        let expected_prefix = payload
+            .get("expected_content_prefix")
+            .filter(|value| !value.is_null());
+        if let Some(expected) = expected_prefix {
+            if expected.as_str().map(|prefix| current.starts_with(prefix)) != Some(true) {
+                return line_edit_stdout(
+                    write_project_file_error(
+                        serde_json::json!(path),
+                        "expected_content_prefix mismatch".to_string(),
+                    ),
+                    start,
+                );
+            }
+        }
+        if expected_sha.is_none() && expected_prefix.is_none() {
+            warning = serde_json::json!(
+                "overwrite without expected_sha256 or expected_content_prefix; provide expected_sha256 for safer overwrites"
+            );
+        }
+    }
+
+    if let Err(e) = write_file_atomic_with_options(resolved, content, true, ".pd-write") {
+        return line_edit_stdout(
+            write_project_file_error(serde_json::json!(path), format!("write failed: {}", e)),
+            start,
+        );
+    }
+    line_edit_stdout(
+        serde_json::json!({
+            "path": path,
+            "created": !exists,
+            "overwritten": exists,
+            "bytes_written": content.len(),
+            "sha256": sha256_hex_bytes(content.as_bytes()),
+            "warning": warning,
+        }),
+        start,
+    )
 }
 
 /// Maximum file size accepted by `file_apply_text_edits` on the agent side.

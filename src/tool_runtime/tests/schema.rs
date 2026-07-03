@@ -78,7 +78,7 @@ fn required_agent_capability_matches_metadata_risk_table() {
         (
             "replace_in_file",
             ToolRisk::ProjectWrite,
-            AgentCapability::Shell,
+            AgentCapability::FileWrite,
         ),
         (
             "replace_exact_block",
@@ -98,7 +98,7 @@ fn required_agent_capability_matches_metadata_risk_table() {
         (
             "write_project_file",
             ToolRisk::ProjectWrite,
-            AgentCapability::Shell,
+            AgentCapability::FileWrite,
         ),
         (
             "save_project_artifact",

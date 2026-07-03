@@ -1469,6 +1469,27 @@ mod tests {
         assert_eq!(err, "invalid line range");
     }
 
+    #[test]
+    fn validate_file_request_allows_structured_edit_payload_ops() {
+        for op in ["replace_in_file", "write_project_file"] {
+            let mut req = file_request(op);
+            req.content = Some(r#"{"path":"src/lib.rs"}"#.to_string());
+
+            validate_file_request(&req).unwrap();
+        }
+    }
+
+    #[test]
+    fn validate_file_request_rejects_structured_edit_extra_fields() {
+        let mut req = file_request("write_project_file");
+        req.content = Some(r#"{"path":"src/lib.rs"}"#.to_string());
+        req.expected_sha256 =
+            Some("e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855".to_string());
+
+        let err = validate_file_request(&req).unwrap_err();
+        assert!(err.contains("expected_sha256 is only allowed"), "{err}");
+    }
+
     #[tokio::test]
     async fn registry_filters_lightweight_clients_by_auth_group() {
         let registry = ShellClientRegistry::default();

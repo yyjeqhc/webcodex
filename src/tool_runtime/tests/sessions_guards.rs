@@ -54,6 +54,7 @@ async fn read_only_current_session_guard_blocks_write_before_enqueue() {
     let runtime = runtime_with_agent_project("current-guard");
     let mut caps = ShellClientCapabilities::default();
     caps.shell = true;
+    caps.file_write = true;
     register_agent(&runtime, "current-guard", None, caps).await;
     let project = agent_test_project_id("current-guard");
     let session = runtime.sessions.start_session_with_guards(
@@ -271,6 +272,7 @@ async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
         None,
         ShellClientCapabilities {
             shell: true,
+            file_write: true,
             ..Default::default()
         },
     )

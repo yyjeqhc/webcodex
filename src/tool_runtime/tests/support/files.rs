@@ -256,23 +256,6 @@ pub(in crate::tool_runtime::tests) fn run_helper_locally(
     })
 }
 
-/// Compute a lowercase hex sha256 of a string (test helper).
-pub(in crate::tool_runtime::tests) fn sha256_hex(s: &str) -> String {
-    // Use the same approach as the python helper: sha256 of utf-8 bytes.
-    // We shell out to python3 to avoid pulling a sha256 crate into tests.
-    let child = std::process::Command::new("python3")
-        .arg("-c")
-        .arg(
-            "import sys,hashlib;sys.stdout.write(hashlib.sha256(sys.argv[1].encode()).hexdigest())",
-        )
-        .arg(s)
-        .stdout(std::process::Stdio::piped())
-        .spawn()
-        .expect("spawn python3");
-    let output = child.wait_with_output().unwrap();
-    String::from_utf8(output.stdout).unwrap()
-}
-
 pub(in crate::tool_runtime::tests) fn text_edit(
     kind: ApplyTextEditKind,
     old_text: Option<&str>,

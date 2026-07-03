@@ -13,7 +13,7 @@ use crate::shell_protocol::{
 async fn write_project_file_with_session_id_records_changed_path_without_content() {
     let runtime = runtime_with_agent_project("telemetry-write");
     let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    caps.file_write = true;
     register_agent(&runtime, "telemetry-write", None, caps).await;
     let project = agent_test_project_id("telemetry-write");
     let session = runtime.sessions.start_session(None, None);
@@ -41,7 +41,14 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     });
     let req = next_patch_agent_request(&runtime, "telemetry-write")
         .await
-        .expect("write_project_file should enqueue helper request");
+        .expect("write_project_file should enqueue a native file-op request");
+    assert_eq!(req.kind, "file_write_project_file");
+    assert!(req.command.is_empty());
+    assert!(req.stdin.is_none());
+    let payload: serde_json::Value =
+        serde_json::from_str(req.content.as_deref().expect("file-op payload")).unwrap();
+    assert_eq!(payload["path"], "src/new.txt");
+    assert_eq!(payload["content"], "do-not-log-this-content\n");
     complete_patch_agent_request(
         &runtime,
         "telemetry-write",
@@ -629,10 +636,10 @@ async fn replace_in_file_rejects_server_configured_project() {
 }
 
 #[tokio::test]
-async fn replace_in_file_routes_to_owning_agent_with_fixed_helper() {
+async fn replace_in_file_routes_to_owning_agent_file_op() {
     let runtime = runtime_with_agent_project("editor");
     let mut caps = ShellClientCapabilities::default();
-    caps.shell = true;
+    caps.file_write = true;
     register_agent(&runtime, "editor", None, caps).await;
     let project = agent_test_project_id("editor");
 
@@ -668,25 +675,17 @@ async fn replace_in_file_routes_to_owning_agent_with_fixed_helper() {
         }
         tokio::task::yield_now().await;
     }
-    let req = req.expect("replace_in_file should enqueue a helper run for the agent");
-    // The command is the FIXED python3 helper — no caller content interpolated.
-    assert!(
-        req.command.starts_with("python3 -c '"),
-        "command must be the fixed helper, got: {}",
-        req.command
-    );
-    assert!(
-        !req.command.contains("foo") && !req.command.contains("EDIT_PROBE"),
-        "caller content must not be interpolated into the command: {}",
-        req.command
-    );
-    // old/new/path travel over stdin as JSON.
-    let stdin = req.stdin.expect("helper payload on stdin");
-    assert!(stdin.contains("EDIT_PROBE.txt"));
-    assert!(stdin.contains("foo"));
-    assert!(stdin.contains("bar"));
-    assert!(stdin.contains("\"expected_replacements\":1"));
-    assert!(stdin.contains("\"allow_multiple\":false"));
+    let req = req.expect("replace_in_file should enqueue a file-op request for the agent");
+    assert_eq!(req.kind, "file_replace_in_file");
+    assert!(req.command.is_empty());
+    assert!(req.stdin.is_none());
+    // old/new/path travel in the native file-op content payload.
+    let payload = req.content.as_deref().expect("file-op payload");
+    assert!(payload.contains("EDIT_PROBE.txt"));
+    assert!(payload.contains("foo"));
+    assert!(payload.contains("bar"));
+    assert!(payload.contains("\"expected_replacements\":1"));
+    assert!(payload.contains("\"allow_multiple\":false"));
     // The agent (server side) never reads the agent fs: respond with a
     // canned JSON result that the runtime forwards verbatim.
     runtime

@@ -17,14 +17,13 @@ impl ToolRuntime {
             // the agent shell path; it requires the same shell capability as
             // apply_patch but never mutates the worktree.
             ToolCall::ValidatePatch { .. } => Some(AgentCapability::Shell),
-            // Fixed helper commands over the shell path. Line edits use native
-            // agent file ops and require file_write instead.
-            ToolCall::ReplaceInFile { .. }
-            | ToolCall::WriteProjectFile { .. }
-            | ToolCall::SaveProjectArtifact { .. }
+            // Artifact helpers still run fixed commands over the shell path.
+            ToolCall::SaveProjectArtifact { .. }
             | ToolCall::ReadProjectArtifactMetadata { .. }
             | ToolCall::ReadProjectArtifact { .. } => Some(AgentCapability::Shell),
-            ToolCall::ReplaceLineRange { .. }
+            ToolCall::ReplaceInFile { .. }
+            | ToolCall::WriteProjectFile { .. }
+            | ToolCall::ReplaceLineRange { .. }
             | ToolCall::InsertAtLine { .. }
             | ToolCall::DeleteLineRange { .. }
             | ToolCall::ApplyTextEdits { .. }

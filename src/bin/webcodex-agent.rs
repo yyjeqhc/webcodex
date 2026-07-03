@@ -59,8 +59,9 @@ use webcodex_agent::{
     client_profile_agent_config, configured_prepared_shell_job_command,
     configured_shell_job_command, cwd_allowed, default_config_path, dispatch_request, err_cmd,
     handle_apply_text_edits_file_request, handle_basic_file_request, handle_line_edit_file_request,
-    hostname, is_basic_file_request_kind, is_line_edit_request_kind, is_project_op, load_config,
-    ok_cmd, projects_dir, resolve_prepared_shell_profile, resolve_requested_path, run_agent,
+    handle_replace_in_file_request, handle_write_project_file_request, hostname,
+    is_basic_file_request_kind, is_line_edit_request_kind, is_project_op, load_config, ok_cmd,
+    projects_dir, resolve_prepared_shell_profile, resolve_requested_path, run_agent,
     validate_client_profile, validate_line_edit_agent_path, AgentConfig, AgentPolicy,
     AgentProjectCache, AgentSink, CommandResult, HttpSendConfig, PreparedShellProfileCache,
     ShellConfig,
@@ -499,6 +500,8 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         | "file_replace_exact_block"
         | "file_insert_before_pattern"
         | "file_insert_after_pattern" => handle_line_edit_file_request(request, &resolved, start),
+        "file_replace_in_file" => handle_replace_in_file_request(request, &resolved, start),
+        "file_write_project_file" => handle_write_project_file_request(request, &resolved, start),
         "file_apply_text_edits" => handle_apply_text_edits_file_request(request, &resolved, start),
         "file_read" | "file_write" | "file_list" => {
             handle_basic_file_request(policy, request, &resolved, start)
@@ -2765,6 +2768,349 @@ shell_profile = "../rust"
             requested_by: "tester".to_string(),
             created_at: 0,
         }
+    }
+
+    fn json_file_op_request(
+        cwd: &Path,
+        kind: &str,
+        path: &str,
+        payload: serde_json::Value,
+    ) -> ShellAgentShellRequest {
+        ShellAgentShellRequest {
+            request_id: format!("req-{kind}"),
+            client_id: "agent-1".to_string(),
+            kind: kind.to_string(),
+            job_id: None,
+            cwd: Some(cwd.to_string_lossy().to_string()),
+            path: Some(path.to_string()),
+            content: Some(payload.to_string()),
+            max_bytes: None,
+            old_text: None,
+            pattern: None,
+            expected_sha256: None,
+            expected_prefix: None,
+            start_line: None,
+            end_line: None,
+            line: None,
+            create_dirs: false,
+            command: String::new(),
+            stdin: None,
+            timeout_secs: 30,
+            requested_by: "tester".to_string(),
+            created_at: 0,
+        }
+    }
+
+    #[test]
+    fn file_replace_in_file_replaces_multiple_when_expected_count_matches() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "a a a").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_replace_in_file",
+                "target.txt",
+                serde_json::json!({
+                    "path": "target.txt",
+                    "old": "a",
+                    "new": "b",
+                    "expected_replacements": 3,
+                    "allow_multiple": true,
+                }),
+            ),
+        ));
+
+        assert_eq!(out["changed"], true);
+        assert_eq!(out["replacements"], 3);
+        assert_eq!(out["before_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(out["after_sha256"].as_str().unwrap().len(), 64);
+        assert_eq!(out["bytes_written"], "b b b".len());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "b b b");
+    }
+
+    #[test]
+    fn file_replace_in_file_rejects_missing_and_ambiguous_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let missing_file = tmp.path().join("missing.txt");
+        let dup_file = tmp.path().join("dup.txt");
+        std::fs::write(&missing_file, "hello world").unwrap();
+        std::fs::write(&dup_file, "a a a").unwrap();
+
+        let missing = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_replace_in_file",
+                "missing.txt",
+                serde_json::json!({
+                    "old": "absent",
+                    "new": "x",
+                    "expected_replacements": 1,
+                    "allow_multiple": false,
+                }),
+            ),
+        ));
+        assert_eq!(missing["changed"], false);
+        assert!(missing["error"].as_str().unwrap().contains("not found"));
+        assert_eq!(
+            std::fs::read_to_string(&missing_file).unwrap(),
+            "hello world"
+        );
+
+        let ambiguous = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_replace_in_file",
+                "dup.txt",
+                serde_json::json!({
+                    "old": "a",
+                    "new": "b",
+                    "expected_replacements": 1,
+                    "allow_multiple": false,
+                }),
+            ),
+        ));
+        assert_eq!(ambiguous["changed"], false);
+        assert!(ambiguous["error"].as_str().unwrap().contains("multiple"));
+        assert_eq!(std::fs::read_to_string(&dup_file).unwrap(), "a a a");
+    }
+
+    #[test]
+    fn file_replace_in_file_rejects_count_mismatch_and_non_utf8_without_write() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let count_file = tmp.path().join("count.txt");
+        let bin_file = tmp.path().join("bin.dat");
+        std::fs::write(&count_file, "a a a").unwrap();
+        std::fs::write(&bin_file, [0xFF, 0xFE, 0xFD]).unwrap();
+
+        let count = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_replace_in_file",
+                "count.txt",
+                serde_json::json!({
+                    "old": "a",
+                    "new": "b",
+                    "expected_replacements": 2,
+                    "allow_multiple": true,
+                }),
+            ),
+        ));
+        assert_eq!(count["changed"], false);
+        assert_eq!(count["occurrences"], 3);
+        assert!(count["error"].as_str().unwrap().contains("mismatch"));
+        assert_eq!(std::fs::read_to_string(&count_file).unwrap(), "a a a");
+
+        let non_utf8 = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_replace_in_file",
+                "bin.dat",
+                serde_json::json!({
+                    "old": "x",
+                    "new": "y",
+                    "expected_replacements": 1,
+                    "allow_multiple": false,
+                }),
+            ),
+        ));
+        assert_eq!(non_utf8["changed"], false);
+        assert!(non_utf8["error"].as_str().unwrap().contains("UTF-8"));
+    }
+
+    #[test]
+    fn file_write_project_file_creates_parent_dirs_and_reports_hash() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("nested/new.txt");
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "nested/new.txt",
+                serde_json::json!({
+                    "path": "nested/new.txt",
+                    "content": "line1\nline2\n",
+                    "overwrite": false,
+                    "expected_sha256": null,
+                    "expected_content_prefix": null,
+                }),
+            ),
+        ));
+
+        assert_eq!(out["created"], true);
+        assert_eq!(out["overwritten"], false);
+        assert_eq!(out["bytes_written"], 12);
+        assert_eq!(out["sha256"].as_str().unwrap().len(), 64);
+        assert!(out["warning"].is_null());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "line1\nline2\n");
+    }
+
+    #[test]
+    fn file_write_project_file_rejects_existing_without_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "original").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "target.txt",
+                serde_json::json!({
+                    "content": "new",
+                    "overwrite": false,
+                    "expected_sha256": null,
+                    "expected_content_prefix": null,
+                }),
+            ),
+        ));
+
+        assert_eq!(out["created"], false);
+        assert_eq!(out["overwritten"], false);
+        assert!(out["error"].as_str().unwrap().contains("overwrite"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "original");
+    }
+
+    #[test]
+    fn file_write_project_file_enforces_sha_and_prefix_guards() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "original").unwrap();
+        let original_sha = sha256_hex_bytes("original".as_bytes());
+
+        let sha_ok = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "target.txt",
+                serde_json::json!({
+                    "content": "v1 replaced",
+                    "overwrite": true,
+                    "expected_sha256": original_sha,
+                    "expected_content_prefix": null,
+                }),
+            ),
+        ));
+        assert_eq!(sha_ok["overwritten"], true);
+        assert!(sha_ok["warning"].is_null());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1 replaced");
+
+        let prefix_ok = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "target.txt",
+                serde_json::json!({
+                    "content": "v1 final",
+                    "overwrite": true,
+                    "expected_sha256": null,
+                    "expected_content_prefix": "v1 ",
+                }),
+            ),
+        ));
+        assert_eq!(prefix_ok["overwritten"], true);
+        assert!(prefix_ok["warning"].is_null());
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1 final");
+
+        let sha_bad = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "target.txt",
+                serde_json::json!({
+                    "content": "bad",
+                    "overwrite": true,
+                    "expected_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+                    "expected_content_prefix": null,
+                }),
+            ),
+        ));
+        assert_eq!(sha_bad["created"], false);
+        assert!(sha_bad["error"].as_str().unwrap().contains("sha256"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v1 final");
+    }
+
+    #[test]
+    fn file_write_project_file_warns_on_unguarded_overwrite_and_rejects_bad_prefix() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "v2 content").unwrap();
+
+        let prefix_bad = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "target.txt",
+                serde_json::json!({
+                    "content": "bad",
+                    "overwrite": true,
+                    "expected_sha256": null,
+                    "expected_content_prefix": "v1 ",
+                }),
+            ),
+        ));
+        assert_eq!(prefix_bad["created"], false);
+        assert!(prefix_bad["error"].as_str().unwrap().contains("prefix"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "v2 content");
+
+        let unguarded = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "target.txt",
+                serde_json::json!({
+                    "content": "unguarded",
+                    "overwrite": true,
+                    "expected_sha256": null,
+                    "expected_content_prefix": null,
+                }),
+            ),
+        ));
+        assert_eq!(unguarded["overwritten"], true);
+        assert!(unguarded["warning"]
+            .as_str()
+            .unwrap()
+            .contains("expected_sha256"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "unguarded");
+
+        let nul = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "new.txt",
+                serde_json::json!({
+                    "content": "a\u{0000}b",
+                    "overwrite": false,
+                    "expected_sha256": null,
+                    "expected_content_prefix": null,
+                }),
+            ),
+        ));
+        assert_eq!(nul["created"], false);
+        assert!(nul["error"].as_str().unwrap().contains("NUL"));
+        assert!(!tmp.path().join("new.txt").exists());
     }
 
     #[test]

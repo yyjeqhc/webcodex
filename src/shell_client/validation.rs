@@ -11,6 +11,7 @@ pub(super) const MAX_COMMAND_LEN: usize = 8_000;
 const MAX_CWD_LEN: usize = 1_024;
 const MAX_FILE_PATH_LEN: usize = 2_048;
 const MAX_FILE_CONTENT_BYTES: usize = 512 * 1024;
+const MAX_STRUCTURED_EDIT_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 pub(super) const MAX_RUN_STDIN_BYTES: usize = 15 * 1024 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
@@ -87,10 +88,12 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "replace_exact_block"
         | "insert_before_pattern"
         | "insert_after_pattern"
+        | "replace_in_file"
+        | "write_project_file"
         | "apply_text_edits" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, apply_text_edits"
+                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, replace_in_file, write_project_file, apply_text_edits"
                     .to_string(),
             )
         }
@@ -105,6 +108,8 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         "insert_before_pattern" | "insert_after_pattern"
     );
     let anchor_edit = replace_exact_block || insert_pattern;
+    let structured_edit_payload =
+        matches!(body.op.as_str(), "replace_in_file" | "write_project_file");
 
     let path = body.path.trim();
     if path.is_empty() {
@@ -148,20 +153,26 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
     }
 
     if let Some(content) = &body.content {
-        if content.len() > MAX_FILE_CONTENT_BYTES {
+        let max_content_bytes = if structured_edit_payload {
+            MAX_STRUCTURED_EDIT_PAYLOAD_BYTES
+        } else {
+            MAX_FILE_CONTENT_BYTES
+        };
+        if content.len() > max_content_bytes {
             return Err(format!(
                 "content is too large; maximum is {} bytes",
-                MAX_FILE_CONTENT_BYTES
+                max_content_bytes
             ));
         }
         if body.op != "write"
             && body.op != "replace_line_range"
             && body.op != "insert_at_line"
             && body.op != "apply_text_edits"
+            && !structured_edit_payload
             && !anchor_edit
         {
             return Err(
-                "content is only allowed for op=write, line edit insert/replace, apply_text_edits, or anchor edit tools"
+                "content is only allowed for op=write, line edit insert/replace, apply_text_edits, structured edit tools, or anchor edit tools"
                     .to_string(),
             );
         }
@@ -292,6 +303,23 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
                 || body.line.is_some()
             {
                 return Err("insert pattern ops only accept pattern/content".to_string());
+            }
+        }
+        "replace_in_file" | "write_project_file" => {
+            if body.content.is_none() {
+                return Err(format!("content is required for op={}", body.op));
+            }
+            if body.old_text.is_some()
+                || body.pattern.is_some()
+                || body.expected_sha256.is_some()
+                || body.expected_prefix.is_some()
+                || body.start_line.is_some()
+                || body.end_line.is_some()
+                || body.line.is_some()
+                || body.max_bytes.is_some()
+                || body.create_dirs
+            {
+                return Err(format!("{} only accepts path/content", body.op));
             }
         }
         _ => {

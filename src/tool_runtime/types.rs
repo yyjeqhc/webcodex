@@ -561,9 +561,9 @@ pub enum ToolCall {
 
     /// Replace a (unique) substring in a project file via the owning agent.
     /// Safer than `run_shell` sed/awk/python one-liners for text edits: the
-    /// command is a fixed helper, old/new travel over stdin (never interpolated
-    /// into the shell command), sensitive paths are rejected, and the file is
-    /// left untouched whenever `old` is missing or ambiguous.
+    /// edit travels through a native file-op request, sensitive paths are
+    /// rejected, and the file is left untouched whenever `old` is missing or
+    /// ambiguous.
     ReplaceInFile {
         project: String,
         path: String,
@@ -613,7 +613,7 @@ pub enum ToolCall {
     /// and (with `overwrite`) replaces existing ones, gating overwrites on an
     /// optional `expected_sha256` / `expected_content_prefix` so a stale caller
     /// cannot clobber a file that changed underneath it. The server never reads
-    /// the agent filesystem directly; the fixed helper runs on the agent.
+    /// the agent filesystem directly; the write runs as a native agent file op.
     WriteProjectFile {
         project: String,
         path: String,

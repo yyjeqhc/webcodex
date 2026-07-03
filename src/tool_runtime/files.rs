@@ -475,13 +475,12 @@ fn parse_context_lines(value: Option<&Value>) -> Vec<Value> {
 /// Generous for text edits while bounding memory and the agent stdin payload.
 pub(crate) const MAX_REPLACE_FIELD_BYTES: usize = 256 * 1024; // 256 KiB
 
-/// Maximum accepted size for `write_project_file` `content`. Bounded by the
-/// agent run-shell stdin transport (`RUN_HELPER_STDIN_BUDGET`).
+/// Maximum accepted size for `write_project_file` `content`.
 pub(crate) const MAX_WRITE_CONTENT_BYTES: usize = 256 * 1024; // 256 KiB
 
 /// Maximum accepted size for line-edit expected prefix guards. Keep this well
-/// below the helper stdin budget so oversized optimistic-concurrency guards
-/// fail locally before any agent helper request is enqueued.
+/// below the file-op payload budget so oversized optimistic-concurrency guards
+/// fail locally before any agent request is enqueued.
 pub(crate) const MAX_EXPECTED_PREFIX_BYTES: usize = 64 * 1024; // 64 KiB
 
 /// Hard cap on the serialized helper payload sent to the agent over the
@@ -981,153 +980,6 @@ fn edit_match_error(index: usize, kind: super::types::ApplyTextEditKind, msg: &s
     )
 }
 
-/// Fixed python3 helper run on the owning agent for `replace_in_file`.
-///
-/// The script is wrapped in single quotes (`python3 -c '<script>'`), so it
-/// MUST NOT contain single quotes — all Python string literals use double
-/// quotes. `old`/`new`/`path` arrive over stdin as JSON (never interpolated
-/// into the command). The helper counts occurrences, refuses to write on a
-/// missing or ambiguous match, and writes atomically via tempfile + os.replace
-/// in the file's directory. It always prints exactly one JSON object on stdout
-/// and exits 0 (logical failures carry an `error` field in that object).
-pub(crate) const REPLACE_IN_FILE_HELPER: &str = r#"
-import sys, json, hashlib, os, tempfile
-NUL = "\x00"
-def emit(obj):
-    sys.stdout.write(json.dumps(obj))
-    sys.exit(0)
-try:
-    req = json.load(sys.stdin)
-except Exception as e:
-    emit({"changed": False, "error": "invalid json: " + str(e)})
-path = req.get("path", "")
-old = req.get("old", "")
-new = req.get("new", "")
-expected = req.get("expected_replacements", 1)
-allow_multi = bool(req.get("allow_multiple", False))
-if not isinstance(path, str) or not path or path.startswith("/") or NUL in path or ".." in path.split("/"):
-    emit({"changed": False, "error": "invalid path"})
-if not isinstance(old, str) or old == "" or NUL in old:
-    emit({"changed": False, "error": "old must be a non-empty string without NUL"})
-if not isinstance(new, str) or NUL in new:
-    emit({"changed": False, "error": "new must be a string without NUL"})
-try:
-    expected = int(expected)
-except Exception:
-    emit({"changed": False, "error": "expected_replacements must be an integer"})
-if expected < 1:
-    emit({"changed": False, "error": "expected_replacements must be >= 1"})
-if not allow_multi and expected != 1:
-    emit({"changed": False, "error": "expected_replacements must be 1 when allow_multiple is false"})
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        content = f.read()
-except FileNotFoundError:
-    emit({"changed": False, "error": "file not found", "path": path})
-except UnicodeDecodeError:
-    emit({"changed": False, "error": "file is not valid UTF-8", "path": path})
-except Exception as e:
-    emit({"changed": False, "error": "read failed: " + str(e)})
-before = hashlib.sha256(content.encode("utf-8")).hexdigest()
-count = content.count(old)
-if count == 0:
-    emit({"changed": False, "path": path, "before_sha256": before, "occurrences": 0, "error": "old not found in file"})
-if count > 1 and not allow_multi:
-    emit({"changed": False, "path": path, "before_sha256": before, "occurrences": count, "error": "old appears multiple times and allow_multiple is false"})
-if allow_multi:
-    if count != expected:
-        emit({"changed": False, "path": path, "before_sha256": before, "occurrences": count, "expected": expected, "error": "expected_replacements mismatch"})
-    reps = expected
-    replaced = content.replace(old, new, expected)
-else:
-    reps = 1
-    replaced = content.replace(old, new, 1)
-after_bytes = len(replaced.encode("utf-8"))
-base_dir = os.path.dirname(path) or "."
-tmp = None
-try:
-    os.makedirs(base_dir, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-rep-")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(replaced)
-    os.replace(tmp, path)
-except Exception as e:
-    if tmp is not None:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    emit({"changed": False, "path": path, "before_sha256": before, "error": "write failed: " + str(e)})
-after = hashlib.sha256(replaced.encode("utf-8")).hexdigest()
-emit({"changed": True, "path": path, "replacements": reps, "before_sha256": before, "after_sha256": after, "bytes_written": after_bytes})
-"#;
-
-/// Fixed python3 helper run on the owning agent for `write_project_file`.
-///
-/// Same single-quote wrapping rules as `REPLACE_IN_FILE_HELPER` (no single
-/// quotes inside). Enforces create-vs-overwrite semantics with optional
-/// `expected_sha256` / `expected_content_prefix` guards and writes atomically.
-/// Always prints exactly one JSON object on stdout and exits 0.
-pub(crate) const WRITE_PROJECT_FILE_HELPER: &str = r#"
-import sys, json, hashlib, os, tempfile
-NUL = "\x00"
-def emit(obj):
-    sys.stdout.write(json.dumps(obj))
-    sys.exit(0)
-try:
-    req = json.load(sys.stdin)
-except Exception as e:
-    emit({"path": None, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "invalid json: " + str(e)})
-path = req.get("path", "")
-content = req.get("content", "")
-overwrite = bool(req.get("overwrite", False))
-exp_sha = req.get("expected_sha256", None)
-exp_prefix = req.get("expected_content_prefix", None)
-if not isinstance(path, str) or not path or path.startswith("/") or NUL in path or ".." in path.split("/"):
-    emit({"path": path if isinstance(path, str) else None, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "invalid path"})
-if not isinstance(content, str) or NUL in content:
-    emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "content must be a UTF-8 string without NUL"})
-exists = os.path.lexists(path)
-warning = None
-if exists and not overwrite:
-    emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "file exists and overwrite is false"})
-if exists and overwrite:
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            current = f.read()
-    except UnicodeDecodeError:
-        emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "existing file is not valid UTF-8"})
-    except Exception as e:
-        emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "read failed: " + str(e)})
-    if exp_sha is not None:
-        cur_sha = hashlib.sha256(current.encode("utf-8")).hexdigest()
-        if cur_sha != exp_sha:
-            emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": cur_sha, "warning": None, "error": "expected_sha256 mismatch"})
-    if exp_prefix is not None:
-        if not isinstance(exp_prefix, str) or not current.startswith(exp_prefix):
-            emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "expected_content_prefix mismatch"})
-    if exp_sha is None and exp_prefix is None:
-        warning = "overwrite without expected_sha256 or expected_content_prefix; provide expected_sha256 for safer overwrites"
-base_dir = os.path.dirname(path) or "."
-written_bytes = len(content.encode("utf-8"))
-tmp = None
-try:
-    os.makedirs(base_dir, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=base_dir, prefix=".pd-write-")
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        f.write(content)
-    os.replace(tmp, path)
-except Exception as e:
-    if tmp is not None:
-        try:
-            os.remove(tmp)
-        except OSError:
-            pass
-    emit({"path": path, "created": False, "overwritten": False, "bytes_written": 0, "sha256": None, "warning": None, "error": "write failed: " + str(e)})
-sha = hashlib.sha256(content.encode("utf-8")).hexdigest()
-emit({"path": path, "created": not exists, "overwritten": exists, "bytes_written": written_bytes, "sha256": sha, "warning": warning})
-"#;
-
 /// Fixed python3 helper for binary artifact writes. Payload carries base64 over
 /// stdin; helper decodes and writes bytes atomically on the owning agent.
 pub(crate) const SAVE_PROJECT_ARTIFACT_HELPER: &str = r#"
@@ -1369,13 +1221,75 @@ impl ToolRuntime {
     // -------------------------------------------------------------------------
     //
     // Both tools mutate the worktree through the owning agent only. The server
-    // never reads or writes the agent project filesystem directly. Instead a
-    // FIXED python3 helper is sent as the shell `command` and the tool
-    // arguments (path/old/new/content/...) travel as a JSON document over the
-    // process stdin. The command string is a compile-time constant — no caller
-    // content is ever interpolated into it — so there is no shell-injection
-    // surface. The helper performs all validation + the atomic write on the
-    // agent side and prints a single JSON line on stdout.
+    // never reads or writes the agent project filesystem directly. Arguments
+    // travel as JSON in a native agent file-op payload; the agent performs the
+    // validation and atomic write, then returns one JSON object on stdout.
+
+    async fn run_structured_edit_file_op(
+        &self,
+        client_id: String,
+        cwd: String,
+        path: String,
+        op: &str,
+        payload: Value,
+        tool_name: &str,
+    ) -> Result<Value, String> {
+        let serialized = serde_json::to_string(&payload)
+            .map_err(|e| format!("failed to serialize file-op payload: {}", e))?;
+        let wait_timeout = 60_u64;
+        let (request_id, rx) = self
+            .shell_clients
+            .enqueue_file_op(
+                ShellFileOpRequest {
+                    op: op.to_string(),
+                    client_id,
+                    path: path.clone(),
+                    cwd: Some(cwd),
+                    content: Some(serialized),
+                    max_bytes: None,
+                    old_text: None,
+                    pattern: None,
+                    expected_sha256: None,
+                    expected_prefix: None,
+                    start_line: None,
+                    end_line: None,
+                    line: None,
+                    create_dirs: false,
+                    wait_timeout_secs: wait_timeout,
+                },
+                "tool_runtime".to_string(),
+            )
+            .await?;
+        let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(_)) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return Err(format!("agent {} request was dropped", tool_name));
+            }
+            Err(_) => {
+                self.shell_clients.cancel_request(&request_id).await;
+                return Err(format!("timed out waiting for agent {}", tool_name));
+            }
+        };
+        if let Some(e) = resp.error {
+            return Err(e);
+        }
+        if resp.exit_code != Some(0) {
+            return Err(resp.stderr.unwrap_or_else(|| {
+                format!("agent {} failed with code {:?}", tool_name, resp.exit_code)
+            }));
+        }
+        let stdout = resp.stdout.unwrap_or_default();
+        let stdout = stdout.trim();
+        serde_json::from_str(stdout).map_err(|e| {
+            format!(
+                "agent {} returned invalid JSON: {} (got: {})",
+                tool_name,
+                e,
+                &stdout[..stdout.len().min(200)]
+            )
+        })
+    }
 
     pub(crate) async fn replace_in_file(
         &self,
@@ -1428,15 +1342,21 @@ impl ToolRuntime {
         };
 
         let payload = json!({
-            "path": path,
+            "path": path.clone(),
             "old": old,
             "new": new,
             "expected_replacements": expected,
             "allow_multiple": allow_multi,
         });
-        let command = format!("python3 -c '{}'", REPLACE_IN_FILE_HELPER);
         let obj = match self
-            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .run_structured_edit_file_op(
+                client_id,
+                proj.path.clone(),
+                path.clone(),
+                "replace_in_file",
+                payload,
+                "replace_in_file",
+            )
             .await
         {
             Ok(v) => v,
@@ -1503,15 +1423,21 @@ impl ToolRuntime {
         };
 
         let payload = json!({
-            "path": path,
+            "path": path.clone(),
             "content": content,
             "overwrite": overwrite.unwrap_or(false),
             "expected_sha256": expected_sha256,
             "expected_content_prefix": expected_content_prefix,
         });
-        let command = format!("python3 -c '{}'", WRITE_PROJECT_FILE_HELPER);
         let obj = match self
-            .run_agent_helper(client_id, proj.path.clone(), command, payload)
+            .run_structured_edit_file_op(
+                client_id,
+                proj.path.clone(),
+                path.clone(),
+                "write_project_file",
+                payload,
+                "write_project_file",
+            )
             .await
         {
             Ok(v) => v,

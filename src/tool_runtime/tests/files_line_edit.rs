@@ -406,22 +406,12 @@ async fn replace_in_file_rejects_invalid_input_before_agent_dispatch() {
 #[tokio::test]
 async fn edit_tools_rejected_without_required_capability() {
     let runtime = runtime_with_agent_project("editor");
-    // ReplaceInFile requires shell; ReplaceLineRange requires file_write.
-    // Default caps have shell=true, file_write=false, so register once and
-    // test both: ReplaceInFile with shell=false, ReplaceLineRange with defaults.
-    register_agent(
-        &runtime,
-        "editor",
-        None,
-        ShellClientCapabilities {
-            shell: false,
-            ..Default::default()
-        },
-    )
-    .await;
+    // Structured edit tools require file_write. Default caps have shell=true
+    // and file_write=false, so both calls should fail the same capability gate.
+    register_agent(&runtime, "editor", None, ShellClientCapabilities::default()).await;
     let auth = auth_context(None, true);
 
-    // replace_in_file: requires shell
+    // replace_in_file: requires file_write
     let result = runtime
         .dispatch_with_auth(
             ToolCall::ReplaceInFile {
@@ -437,7 +427,25 @@ async fn edit_tools_rejected_without_required_capability() {
         )
         .await;
     assert!(!result.success);
-    assert!(result.error.unwrap().contains("shell"));
+    assert!(result.error.unwrap().contains("file_write"));
+
+    // write_project_file: requires file_write
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::WriteProjectFile {
+                project: agent_test_project_id("editor"),
+                path: "EDIT_PROBE.txt".to_string(),
+                content: "new".to_string(),
+                session_id: None,
+                overwrite: None,
+                expected_sha256: None,
+                expected_content_prefix: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(!result.success);
+    assert!(result.error.unwrap().contains("file_write"));
 
     // line edit tools: requires file_write
     let result = runtime

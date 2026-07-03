@@ -1,8 +1,9 @@
 use super::config::{
     default_true, projects_dir, validate_shell_profile_name, AgentConfig, AgentPolicy,
 };
+use super::shell::canonicalize_existing;
 use crate::shell_protocol::{ShellAgentProjectSummary, ShellAgentShellRequest};
-use crate::{canonicalize_existing, err_cmd, ok_cmd, write_created_file};
+use crate::{err_cmd, ok_cmd, write_created_file};
 use crate::{CommandResult, CreatedProjectPaths};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};

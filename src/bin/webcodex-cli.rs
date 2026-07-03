@@ -55,21 +55,24 @@ use webcodex_cli::{
     agent_init_usage, agent_install_service_usage, agent_status_usage, agent_usage,
     client_enroll_usage, client_profile_agent_config, client_profile_agent_token_file,
     client_profile_projects_dir, client_profile_service_file, client_profile_user_token_file,
-    client_usage, compare_build_commits, connect_usage, default_client_output_dir_for_profile,
-    default_server_paths, doctor_usage, fetch_runtime_status, http_post_json_status,
-    local_cli_build_metadata, pairing_create_usage, pairing_usage, read_env_file_value,
-    render_build_metadata_block, render_token_generate, run_agent_install_service,
-    run_agent_status, run_agent_token_create_local, run_client_enroll, run_connect, run_doctor,
-    run_pairing_create, run_server_init, run_server_install_service, run_server_up,
-    run_setup_single_user, run_token_create_local, runtime_build_metadata, server_init_usage,
-    server_install_service_usage, server_status_revision_check, server_status_usage,
-    server_up_usage, server_usage, usage, validate_client_profile, DoctorCheck,
+    client_usage, connect_usage, default_client_output_dir_for_profile, default_server_paths,
+    discover_binary, discover_named_binary_absolute, discover_webcodex_binary, doctor_usage,
+    http_post_json_status, is_systemd_platform, pairing_create_usage, pairing_usage,
+    query_systemd_service_status, read_env_file_value, read_optional_token, render_token_generate,
+    run_agent_install_service, run_agent_status, run_agent_token_create_local, run_client_enroll,
+    run_connect, run_doctor, run_pairing_create, run_server_init, run_server_install_service,
+    run_server_status, run_server_up, run_setup_single_user, run_token_create_local,
+    server_init_usage, server_install_service_usage, server_status_usage, server_up_usage,
+    server_usage, usage, validate_client_profile, write_secret_file, write_text_file, DoctorCheck,
+    ServerStatusOptions,
 };
 #[cfg(test)]
 use webcodex_cli::{
-    client_output_dir_for_profile, doctor_revision_check, ensure_enroll_outputs_available,
-    format_error_body, is_effective_root, render_agent_systemd_unit, resolve_account_credential,
-    resolve_pairing_create_token, RevisionComparison, RuntimeBuildMetadata, CLIENT_PROFILE_ERROR,
+    client_output_dir_for_profile, compare_build_commits, doctor_revision_check,
+    ensure_enroll_outputs_available, format_error_body, is_effective_root,
+    render_agent_systemd_unit, render_build_metadata_block, resolve_account_credential,
+    resolve_pairing_create_token, runtime_build_metadata, server_status_revision_check,
+    RevisionComparison, RuntimeBuildMetadata, CLIENT_PROFILE_ERROR,
 };
 
 const SETUP_GPT_SCOPES: &[&str] = &["runtime:read", "project:read", "project:write", "job:run"];
@@ -241,15 +244,6 @@ struct AgentInstallServiceOptions {
     overwrite: bool,
     dry_run: bool,
     output_stdout: bool,
-    json: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct ServerStatusOptions {
-    url: String,
-    env_file: Option<PathBuf>,
-    env_file_explicit: bool,
-    token_file: Option<PathBuf>,
     json: bool,
 }
 
@@ -1596,170 +1590,6 @@ where
         .ok_or_else(|| format!("{} requires a value", flag))
 }
 
-fn write_text_file(
-    path: &Path,
-    content: &str,
-    overwrite: bool,
-    secret: bool,
-) -> Result<(), String> {
-    if path.exists() && !overwrite {
-        return Err(format!(
-            "{} already exists; pass --overwrite to replace it",
-            path.display()
-        ));
-    }
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true);
-        if overwrite {
-            options.create(true).truncate(true);
-        } else {
-            options.create_new(true);
-        }
-        if secret {
-            options.mode(0o600);
-        }
-        let mut file = options
-            .open(path)
-            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        use std::io::Write;
-        file.write_all(content.as_bytes())
-            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        if secret {
-            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-                .map_err(|e| format!("failed to set permissions on {}: {}", path.display(), e))?;
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = secret;
-        if overwrite {
-            std::fs::write(path, content)
-                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        } else {
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(path)
-                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-            use std::io::Write;
-            file.write_all(content.as_bytes())
-                .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        }
-    }
-    Ok(())
-}
-
-fn discover_webcodex_binary() -> Option<PathBuf> {
-    discover_named_binary_absolute("webcodex")
-}
-
-fn discover_named_binary_absolute(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        if !dir.is_absolute() {
-            continue;
-        }
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        #[cfg(windows)]
-        {
-            let candidate = dir.join(format!("{}.exe", name));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn systemctl_available() -> bool {
-    let Some(path) = std::env::var_os("PATH") else {
-        return false;
-    };
-    std::env::split_paths(&path).any(|dir| dir.join("systemctl").is_file())
-}
-
-fn is_systemd_platform() -> bool {
-    cfg!(target_os = "linux") && systemctl_available()
-}
-
-/// Write `content` to `path` with 0600 permissions on Unix, creating parent
-/// directories as needed. Used for one-time plaintext token files.
-fn write_secret_file(path: &Path, content: &str) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        if !parent.as_os_str().is_empty() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| format!("failed to create {}: {}", parent.display(), e))?;
-        }
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        let mut file = std::fs::OpenOptions::new()
-            .write(true)
-            .create(true)
-            .truncate(true)
-            .mode(0o600)
-            .open(path)
-            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        use std::io::Write;
-        file.write_all(content.as_bytes())
-            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .map_err(|e| format!("failed to set permissions on {}: {}", path.display(), e))?;
-    }
-    #[cfg(not(unix))]
-    {
-        std::fs::write(path, content)
-            .map_err(|e| format!("failed to write {}: {}", path.display(), e))?;
-    }
-    Ok(())
-}
-
-fn discover_binary(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for dir in std::env::split_paths(&path) {
-        let candidate = dir.join(name);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        #[cfg(windows)]
-        {
-            let candidate = dir.join(format!("{}.exe", name));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
-fn read_optional_token(path: &Option<PathBuf>, label: &str) -> Result<Option<String>, String> {
-    let Some(path) = path else {
-        return Ok(None);
-    };
-    let token = std::fs::read_to_string(path)
-        .map_err(|e| format!("failed to read {} {}: {}", label, path.display(), e))?
-        .trim()
-        .to_string();
-    if token.is_empty() {
-        return Err(format!("{} {} is empty", label, path.display()));
-    }
-    Ok(Some(token))
-}
-
 fn resolve_doctor_general_token(opts: &DoctorOptions) -> Result<Option<String>, String> {
     if let Some(token) = read_optional_token(&opts.token_file, "--token-file")? {
         return Ok(Some(token));
@@ -2735,196 +2565,6 @@ fn run_local_agent_doctor(config_path: &Path) -> Vec<DoctorCheck> {
         ),
     ));
     checks
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct SystemdStatus {
-    active: String,
-    enabled: String,
-}
-
-fn query_systemd_service_status(service_name: &str) -> SystemdStatus {
-    fn run_status(args: &[&str]) -> String {
-        let output = std::process::Command::new("systemctl").args(args).output();
-        match output {
-            Ok(output) => {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if stdout.is_empty() {
-                    "unknown".to_string()
-                } else {
-                    stdout
-                }
-            }
-            Err(_) => "unknown".to_string(),
-        }
-    }
-    if !systemctl_available() {
-        return SystemdStatus {
-            active: "unknown".to_string(),
-            enabled: "unknown".to_string(),
-        };
-    }
-    SystemdStatus {
-        active: run_status(&["is-active", service_name]),
-        enabled: run_status(&["is-enabled", service_name]),
-    }
-}
-
-fn query_systemd_status() -> SystemdStatus {
-    query_systemd_service_status("webcodex.service")
-}
-
-fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, String> {
-    if let Some(path) = &opts.token_file {
-        let token = std::fs::read_to_string(path)
-            .map_err(|e| format!("failed to read token file {}: {}", path.display(), e))?
-            .trim()
-            .to_string();
-        if token.is_empty() {
-            return Err("--token-file cannot be empty".to_string());
-        }
-        return Ok(Some(token));
-    }
-    if let Some(path) = &opts.env_file {
-        if !path.exists() {
-            if opts.env_file_explicit {
-                return Err(format!("env file {} does not exist", path.display()));
-            }
-        } else if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
-            let token = token.trim().to_string();
-            if !token.is_empty() {
-                return Ok(Some(token));
-            }
-        }
-    }
-    if let Ok(token) = std::env::var("WEBCODEX_TOKEN") {
-        let token = token.trim().to_string();
-        if !token.is_empty() {
-            return Ok(Some(token));
-        }
-    }
-    Ok(None)
-}
-
-async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> {
-    let systemd = query_systemd_status();
-    let token = resolve_status_token(&opts)?;
-    let http = fetch_runtime_status(&opts.url, token.as_deref()).await?;
-    let output = http.output.as_ref();
-    let auth_enabled = output.and_then(|v| v.get("auth_enabled")).cloned();
-    let configured_public_url = output
-        .and_then(|v| v.get("configured_public_url"))
-        .cloned()
-        .unwrap_or(Value::Null);
-    let tools_count = output
-        .and_then(|v| v.pointer("/tools/count"))
-        .and_then(Value::as_u64);
-    let agents_online_count = output
-        .and_then(|v| v.pointer("/agents/online_count"))
-        .and_then(Value::as_u64);
-    let server_build = runtime_build_metadata(output);
-    let local_build = local_cli_build_metadata();
-    let revision_comparison = compare_build_commits(
-        local_build.git_commit.as_deref(),
-        server_build.git_commit.as_deref(),
-    );
-    if opts.json {
-        let summary = json!({
-            "http_reachable": http.reachable,
-            "http_status_code": http.status_code,
-            "http_content_type": http.content_type,
-            "http_error": http.error,
-            "service": {
-                "active": systemd.active,
-                "enabled": systemd.enabled,
-            },
-            "auth_enabled": auth_enabled.unwrap_or(Value::Null),
-            "configured_public_url": configured_public_url,
-            "tools": {
-                "count": tools_count,
-            },
-            "agents": {
-                "online_count": agents_online_count,
-            },
-            "server_build": {
-                "version": server_build.version,
-                "git_commit": server_build.git_commit,
-                "git_dirty": server_build.git_dirty,
-                "built_at": server_build.built_at,
-            },
-            "local_cli_build": {
-                "version": local_build.version,
-                "git_commit": local_build.git_commit,
-                "git_dirty": local_build.git_dirty,
-                "built_at": local_build.built_at,
-            },
-            "revision_check": server_status_revision_check(&revision_comparison),
-        });
-        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
-    }
-    let mut out = String::new();
-    out.push_str("Server status:\n\n");
-    out.push_str(&format!(
-        "  HTTP reachable:        {}\n",
-        if http.reachable { "yes" } else { "no" }
-    ));
-    if !http.reachable {
-        if let Some(code) = http.status_code {
-            out.push_str(&format!("  HTTP status:           {}\n", code));
-        }
-        if let Some(content_type) = &http.content_type {
-            out.push_str(&format!("  HTTP content-type:     {}\n", content_type));
-        }
-        if let Some(error) = &http.error {
-            out.push_str(&format!("  HTTP error:            {}\n", error));
-        }
-    }
-    out.push_str(&format!("  service active:        {}\n", systemd.active));
-    out.push_str(&format!("  service enabled:       {}\n", systemd.enabled));
-    out.push_str(&format!(
-        "  auth_enabled:          {}\n",
-        auth_enabled
-            .as_ref()
-            .map(Value::to_string)
-            .unwrap_or_else(|| "unknown".to_string())
-    ));
-    out.push_str(&format!(
-        "  configured_public_url: {}\n",
-        if configured_public_url.is_null() {
-            "null".to_string()
-        } else {
-            configured_public_url
-                .as_str()
-                .map(str::to_string)
-                .unwrap_or_else(|| configured_public_url.to_string())
-        }
-    ));
-    out.push_str(&format!(
-        "  tools.count:           {}\n",
-        tools_count
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    ));
-    out.push_str(&format!(
-        "  agents.online_count:   {}\n",
-        agents_online_count
-            .map(|v| v.to_string())
-            .unwrap_or_else(|| "unknown".to_string())
-    ));
-    out.push('\n');
-    out.push_str(&render_build_metadata_block("Server build", &server_build));
-    out.push('\n');
-    out.push_str(&render_build_metadata_block(
-        "Local CLI build",
-        &local_build,
-    ));
-    out.push('\n');
-    out.push_str("Revision check:\n");
-    out.push_str(&format!(
-        "  {}\n",
-        server_status_revision_check(&revision_comparison)
-    ));
-    Ok(out)
 }
 
 #[tokio::main]

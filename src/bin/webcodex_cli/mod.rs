@@ -8,6 +8,7 @@ pub(crate) mod pairing;
 pub(crate) mod profiles;
 pub(crate) mod server;
 pub(crate) mod setup;
+pub(crate) mod system;
 pub(crate) mod token_commands;
 pub(crate) mod tokens;
 pub(crate) mod usage;
@@ -47,8 +48,16 @@ pub(crate) use profiles::{
     client_profile_service_file, client_profile_user_token_file,
     default_client_output_dir_for_profile, validate_client_profile,
 };
-pub(crate) use server::{run_server_init, run_server_install_service, run_server_up};
+pub(crate) use server::{
+    run_server_init, run_server_install_service, run_server_status, run_server_up,
+    ServerStatusOptions,
+};
 pub(crate) use setup::run_setup_single_user;
+pub(crate) use system::{
+    discover_binary, discover_named_binary_absolute, discover_webcodex_binary, is_systemd_platform,
+    query_systemd_service_status, query_systemd_status, read_optional_token, write_secret_file,
+    write_text_file,
+};
 #[cfg(test)]
 pub(crate) use token_commands::resolve_account_credential;
 pub(crate) use token_commands::{run_agent_token_create_local, run_token_create_local};

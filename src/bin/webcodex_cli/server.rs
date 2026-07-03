@@ -1,4 +1,5 @@
-use serde_json::json;
+use serde_json::{json, Value};
+use std::path::PathBuf;
 
 use crate::{
     is_systemd_platform, write_text_file, ServerInitOptions, ServerInstallServiceOptions,
@@ -6,9 +7,20 @@ use crate::{
 };
 
 use super::{
-    default_server_paths, generate_bootstrap_token, read_env_file_value, render_server_env,
-    token_prefix,
+    compare_build_commits, default_server_paths, fetch_runtime_status, generate_bootstrap_token,
+    local_cli_build_metadata, query_systemd_status, read_env_file_value,
+    render_build_metadata_block, render_server_env, runtime_build_metadata,
+    server_status_revision_check, token_prefix,
 };
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ServerStatusOptions {
+    pub(crate) url: String,
+    pub(crate) env_file: Option<PathBuf>,
+    pub(crate) env_file_explicit: bool,
+    pub(crate) token_file: Option<PathBuf>,
+    pub(crate) json: bool,
+}
 
 pub(crate) fn run_server_up(opts: ServerUpOptions) -> Result<String, String> {
     let defaults = default_server_paths();
@@ -252,4 +264,157 @@ fn render_systemd_unit(opts: &ServerInstallServiceOptions) -> String {
     unit.push_str("\n[Install]\n");
     unit.push_str("WantedBy=multi-user.target\n");
     unit
+}
+
+fn resolve_status_token(opts: &ServerStatusOptions) -> Result<Option<String>, String> {
+    if let Some(path) = &opts.token_file {
+        let token = std::fs::read_to_string(path)
+            .map_err(|e| format!("failed to read token file {}: {}", path.display(), e))?
+            .trim()
+            .to_string();
+        if token.is_empty() {
+            return Err("--token-file cannot be empty".to_string());
+        }
+        return Ok(Some(token));
+    }
+    if let Some(path) = &opts.env_file {
+        if !path.exists() {
+            if opts.env_file_explicit {
+                return Err(format!("env file {} does not exist", path.display()));
+            }
+        } else if let Some(token) = read_env_file_value(path, "WEBCODEX_TOKEN")? {
+            let token = token.trim().to_string();
+            if !token.is_empty() {
+                return Ok(Some(token));
+            }
+        }
+    }
+    if let Ok(token) = std::env::var("WEBCODEX_TOKEN") {
+        let token = token.trim().to_string();
+        if !token.is_empty() {
+            return Ok(Some(token));
+        }
+    }
+    Ok(None)
+}
+
+pub(crate) async fn run_server_status(opts: ServerStatusOptions) -> Result<String, String> {
+    let systemd = query_systemd_status();
+    let token = resolve_status_token(&opts)?;
+    let http = fetch_runtime_status(&opts.url, token.as_deref()).await?;
+    let output = http.output.as_ref();
+    let auth_enabled = output.and_then(|v| v.get("auth_enabled")).cloned();
+    let configured_public_url = output
+        .and_then(|v| v.get("configured_public_url"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    let tools_count = output
+        .and_then(|v| v.pointer("/tools/count"))
+        .and_then(Value::as_u64);
+    let agents_online_count = output
+        .and_then(|v| v.pointer("/agents/online_count"))
+        .and_then(Value::as_u64);
+    let server_build = runtime_build_metadata(output);
+    let local_build = local_cli_build_metadata();
+    let revision_comparison = compare_build_commits(
+        local_build.git_commit.as_deref(),
+        server_build.git_commit.as_deref(),
+    );
+    if opts.json {
+        let summary = json!({
+            "http_reachable": http.reachable,
+            "http_status_code": http.status_code,
+            "http_content_type": http.content_type,
+            "http_error": http.error,
+            "service": {
+                "active": systemd.active,
+                "enabled": systemd.enabled,
+            },
+            "auth_enabled": auth_enabled.unwrap_or(Value::Null),
+            "configured_public_url": configured_public_url,
+            "tools": {
+                "count": tools_count,
+            },
+            "agents": {
+                "online_count": agents_online_count,
+            },
+            "server_build": {
+                "version": server_build.version,
+                "git_commit": server_build.git_commit,
+                "git_dirty": server_build.git_dirty,
+                "built_at": server_build.built_at,
+            },
+            "local_cli_build": {
+                "version": local_build.version,
+                "git_commit": local_build.git_commit,
+                "git_dirty": local_build.git_dirty,
+                "built_at": local_build.built_at,
+            },
+            "revision_check": server_status_revision_check(&revision_comparison),
+        });
+        return serde_json::to_string_pretty(&summary).map_err(|e| e.to_string());
+    }
+    let mut out = String::new();
+    out.push_str("Server status:\n\n");
+    out.push_str(&format!(
+        "  HTTP reachable:        {}\n",
+        if http.reachable { "yes" } else { "no" }
+    ));
+    if !http.reachable {
+        if let Some(code) = http.status_code {
+            out.push_str(&format!("  HTTP status:           {}\n", code));
+        }
+        if let Some(content_type) = &http.content_type {
+            out.push_str(&format!("  HTTP content-type:     {}\n", content_type));
+        }
+        if let Some(error) = &http.error {
+            out.push_str(&format!("  HTTP error:            {}\n", error));
+        }
+    }
+    out.push_str(&format!("  service active:        {}\n", systemd.active));
+    out.push_str(&format!("  service enabled:       {}\n", systemd.enabled));
+    out.push_str(&format!(
+        "  auth_enabled:          {}\n",
+        auth_enabled
+            .as_ref()
+            .map(Value::to_string)
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    out.push_str(&format!(
+        "  configured_public_url: {}\n",
+        if configured_public_url.is_null() {
+            "null".to_string()
+        } else {
+            configured_public_url
+                .as_str()
+                .map(str::to_string)
+                .unwrap_or_else(|| configured_public_url.to_string())
+        }
+    ));
+    out.push_str(&format!(
+        "  tools.count:           {}\n",
+        tools_count
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    out.push_str(&format!(
+        "  agents.online_count:   {}\n",
+        agents_online_count
+            .map(|v| v.to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    ));
+    out.push('\n');
+    out.push_str(&render_build_metadata_block("Server build", &server_build));
+    out.push('\n');
+    out.push_str(&render_build_metadata_block(
+        "Local CLI build",
+        &local_build,
+    ));
+    out.push('\n');
+    out.push_str("Revision check:\n");
+    out.push_str(&format!(
+        "  {}\n",
+        server_status_revision_check(&revision_comparison)
+    ));
+    Ok(out)
 }

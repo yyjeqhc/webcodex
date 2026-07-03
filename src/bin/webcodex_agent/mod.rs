@@ -1,6 +1,7 @@
 pub(crate) mod config;
 pub(crate) mod files;
 pub(crate) mod output;
+pub(crate) mod patches;
 pub(crate) mod projects;
 pub(crate) mod shell;
 pub(crate) mod transport;
@@ -15,10 +16,16 @@ pub(crate) use config::{
     max_concurrent_jobs, QuicClientConfig, ShellProfileConfig, CLIENT_PROFILE_ERROR,
     DEFAULT_MAX_CONCURRENT_JOBS,
 };
+#[cfg(test)]
+pub(crate) use files::sha256_hex_bytes;
 pub(crate) use files::{
-    handle_basic_file_request, is_basic_file_request_kind, resolve_requested_path, sha256_hex_bytes,
+    handle_basic_file_request, is_basic_file_request_kind, resolve_requested_path,
 };
-pub(crate) use output::{err_cmd, line_edit_stdout, ok_cmd, CommandResult};
+pub(crate) use output::{err_cmd, ok_cmd, CommandResult};
+pub(crate) use patches::{
+    handle_apply_text_edits_file_request, handle_line_edit_file_request, is_line_edit_request_kind,
+    validate_line_edit_agent_path,
+};
 #[cfg(test)]
 pub(crate) use projects::{
     agent_project_summary, load_agent_project_summaries_from_dir, parse_agent_project_toml,

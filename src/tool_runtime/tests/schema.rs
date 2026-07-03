@@ -180,12 +180,12 @@ fn required_agent_capability_matches_metadata_risk_table() {
         (
             "workspace_checkpoint_create",
             ToolRisk::ReadOnly,
-            AgentCapability::Shell,
+            AgentCapability::FileRead,
         ),
         (
             "workspace_checkpoint_restore",
             ToolRisk::ProjectWrite,
-            AgentCapability::Shell,
+            AgentCapability::FileWrite,
         ),
         (
             "workspace_checkpoint_list",

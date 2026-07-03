@@ -42,8 +42,8 @@ impl ToolRuntime {
             | ToolCall::GitDiffSummary { .. }
             | ToolCall::ShowChanges { .. }
             | ToolCall::WorkspaceHygieneCheck { .. } => Some(AgentCapability::GitOrShell),
-            ToolCall::WorkspaceCheckpointCreate { .. }
-            | ToolCall::WorkspaceCheckpointRestore { .. } => Some(AgentCapability::Shell),
+            ToolCall::WorkspaceCheckpointCreate { .. } => Some(AgentCapability::FileRead),
+            ToolCall::WorkspaceCheckpointRestore { .. } => Some(AgentCapability::FileWrite),
             ToolCall::WorkspaceCheckpointList { .. }
             | ToolCall::WorkspaceCheckpointShow { .. }
             | ToolCall::WorkspaceCheckpointDelete { .. } => Some(AgentCapability::OwnerOnly),

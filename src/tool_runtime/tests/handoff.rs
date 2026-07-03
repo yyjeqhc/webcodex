@@ -335,10 +335,6 @@ async fn session_handoff_summary_non_git_project_does_not_fail_whole_tool() {
 
 #[tokio::test]
 async fn session_handoff_summary_includes_latest_last_known_good_checkpoint() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint handoff test: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();

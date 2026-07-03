@@ -209,16 +209,6 @@ pub(in crate::tool_runtime::tests) fn large_marker_patch(filename: &str, marker:
     s
 }
 
-pub(in crate::tool_runtime::tests) fn python3_available() -> bool {
-    std::process::Command::new("python3")
-        .arg("--version")
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-}
-
 pub(in crate::tool_runtime::tests) fn text_edit(
     kind: ApplyTextEditKind,
     old_text: Option<&str>,

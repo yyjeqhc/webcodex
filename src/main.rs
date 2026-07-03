@@ -33,6 +33,7 @@ mod shell_client;
 mod shell_protocol;
 mod tool_runtime;
 mod users_http;
+mod workspace_checkpoint;
 
 pub(crate) use auth::{get_db, json_error, AuthMiddleware};
 pub(crate) use config::load_startup_env_files;

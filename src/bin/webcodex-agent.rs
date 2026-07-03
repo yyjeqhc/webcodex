@@ -18,6 +18,9 @@ mod agent_init;
 #[path = "../build_info.rs"]
 mod build_info;
 
+#[path = "../workspace_checkpoint.rs"]
+mod workspace_checkpoint;
+
 mod webcodex_agent;
 
 use shell_protocol::{
@@ -59,13 +62,13 @@ use webcodex_agent::{
     client_profile_agent_config, configured_prepared_shell_job_command,
     configured_shell_job_command, cwd_allowed, default_config_path, dispatch_request, err_cmd,
     handle_apply_text_edits_file_request, handle_artifact_file_request, handle_basic_file_request,
-    handle_line_edit_file_request, handle_replace_in_file_request,
+    handle_checkpoint_file_request, handle_line_edit_file_request, handle_replace_in_file_request,
     handle_write_project_file_request, hostname, is_artifact_request_kind,
-    is_basic_file_request_kind, is_line_edit_request_kind, is_project_op, load_config, ok_cmd,
-    projects_dir, resolve_prepared_shell_profile, resolve_requested_path, run_agent,
-    validate_client_profile, validate_line_edit_agent_path, AgentConfig, AgentPolicy,
-    AgentProjectCache, AgentSink, CommandResult, HttpSendConfig, PreparedShellProfileCache,
-    ShellConfig,
+    is_basic_file_request_kind, is_checkpoint_request_kind, is_line_edit_request_kind,
+    is_project_op, load_config, ok_cmd, projects_dir, resolve_prepared_shell_profile,
+    resolve_requested_path, run_agent, validate_client_profile, validate_line_edit_agent_path,
+    AgentConfig, AgentPolicy, AgentProjectCache, AgentSink, CommandResult, HttpSendConfig,
+    PreparedShellProfileCache, ShellConfig,
 };
 
 const JOB_UPDATE_INTERVAL_MS: u64 = 250;
@@ -460,6 +463,7 @@ fn is_file_request_kind(kind: &str) -> bool {
     is_basic_file_request_kind(kind)
         || is_line_edit_request_kind(kind)
         || is_artifact_request_kind(kind)
+        || is_checkpoint_request_kind(kind)
 }
 
 fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -> CommandResult {
@@ -509,6 +513,9 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         "file_save_project_artifact"
         | "file_read_project_artifact_metadata"
         | "file_read_project_artifact" => handle_artifact_file_request(request, &resolved, start),
+        "file_checkpoint_create" | "file_checkpoint_restore" => {
+            handle_checkpoint_file_request(request, &resolved, start)
+        }
         "file_read" | "file_write" | "file_list" => {
             handle_basic_file_request(policy, request, &resolved, start)
         }

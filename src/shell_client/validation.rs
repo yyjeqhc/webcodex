@@ -13,6 +13,7 @@ const MAX_FILE_PATH_LEN: usize = 2_048;
 const MAX_FILE_CONTENT_BYTES: usize = 512 * 1024;
 const MAX_STRUCTURED_EDIT_PAYLOAD_BYTES: usize = 2 * 1024 * 1024;
 const MAX_ARTIFACT_PAYLOAD_BYTES: usize = 15 * 1024 * 1024;
+const MAX_CHECKPOINT_PAYLOAD_BYTES: usize = 15 * 1024 * 1024;
 pub(super) const MAX_RUN_STDIN_BYTES: usize = 15 * 1024 * 1024;
 const MAX_SYNC_WAIT_SECS: u64 = 120;
 const MAX_COMMAND_TIMEOUT_SECS: u64 = 24 * 60 * 60;
@@ -94,10 +95,12 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "apply_text_edits"
         | "save_project_artifact"
         | "read_project_artifact_metadata"
-        | "read_project_artifact" => {}
+        | "read_project_artifact"
+        | "checkpoint_create"
+        | "checkpoint_restore" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, replace_in_file, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact"
+                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, replace_in_file, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, checkpoint_create, checkpoint_restore"
                     .to_string(),
             )
         }
@@ -118,6 +121,7 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         body.op.as_str(),
         "save_project_artifact" | "read_project_artifact_metadata" | "read_project_artifact"
     );
+    let checkpoint_payload = matches!(body.op.as_str(), "checkpoint_create" | "checkpoint_restore");
 
     let path = body.path.trim();
     if path.is_empty() {
@@ -163,6 +167,8 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
     if let Some(content) = &body.content {
         let max_content_bytes = if artifact_payload {
             MAX_ARTIFACT_PAYLOAD_BYTES
+        } else if checkpoint_payload {
+            MAX_CHECKPOINT_PAYLOAD_BYTES
         } else if structured_edit_payload {
             MAX_STRUCTURED_EDIT_PAYLOAD_BYTES
         } else {
@@ -180,10 +186,11 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
             && body.op != "apply_text_edits"
             && !structured_edit_payload
             && !artifact_payload
+            && !checkpoint_payload
             && !anchor_edit
         {
             return Err(
-                "content is only allowed for op=write, line edit insert/replace, apply_text_edits, structured edit tools, artifact tools, or anchor edit tools"
+                "content is only allowed for op=write, line edit insert/replace, apply_text_edits, structured edit tools, artifact tools, checkpoint tools, or anchor edit tools"
                     .to_string(),
             );
         }
@@ -348,6 +355,23 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
                 || body.create_dirs
             {
                 return Err(format!("{} only accepts path/content", body.op));
+            }
+        }
+        "checkpoint_create" | "checkpoint_restore" => {
+            if body.content.is_none() {
+                return Err(format!("content is required for op={}", body.op));
+            }
+            if body.old_text.is_some()
+                || body.pattern.is_some()
+                || body.expected_sha256.is_some()
+                || body.expected_prefix.is_some()
+                || body.start_line.is_some()
+                || body.end_line.is_some()
+                || body.line.is_some()
+                || body.max_bytes.is_some()
+                || body.create_dirs
+            {
+                return Err("checkpoint ops only accept path/cwd/content".to_string());
             }
         }
         _ => {

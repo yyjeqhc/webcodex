@@ -562,11 +562,6 @@ pub(crate) const MAX_WRITE_CONTENT_BYTES: usize = 256 * 1024; // 256 KiB
 /// fail locally before any agent request is enqueued.
 pub(crate) const MAX_EXPECTED_PREFIX_BYTES: usize = 64 * 1024; // 64 KiB
 
-/// Hard cap on the serialized helper payload sent to the agent over the
-/// run-shell stdin transport. Mirrors `MAX_RUN_STDIN_BYTES` in shell_client
-/// without coupling this module to that private constant.
-pub(crate) const RUN_HELPER_STDIN_BUDGET: usize = 15 * 1024 * 1024; // 15 MiB
-
 /// Maximum number of edits accepted by a single `apply_text_edits` call.
 pub(crate) const MAX_APPLY_TEXT_EDITS: usize = 20;
 
@@ -1090,7 +1085,7 @@ impl ToolRuntime {
     // Arguments travel as JSON in a native agent file-op payload; the agent
     // performs validation and returns one JSON object on stdout.
 
-    async fn run_agent_json_file_op(
+    pub(crate) async fn run_agent_json_file_op(
         &self,
         client_id: String,
         cwd: String,
@@ -2206,72 +2201,6 @@ impl ToolRuntime {
             obj["path"] = json!(path);
         }
         ToolResult::ok(obj)
-    }
-
-    pub(crate) async fn run_agent_helper(
-        &self,
-        client_id: String,
-        cwd: String,
-        command: String,
-        payload: Value,
-    ) -> Result<Value, String> {
-        let stdin = serde_json::to_string(&payload)
-            .map_err(|e| format!("failed to serialize helper payload: {}", e))?;
-        if stdin.len() > RUN_HELPER_STDIN_BUDGET {
-            return Err(format!(
-                "helper payload too large for the agent stdin transport ({} bytes; max {}). \
-                 Reduce the old/new/content size.",
-                stdin.len(),
-                RUN_HELPER_STDIN_BUDGET
-            ));
-        }
-        let wait_timeout = 60_u64;
-        let (request_id, rx) = match self
-            .shell_clients
-            .enqueue_run(
-                ShellRunRequest {
-                    client_id,
-                    cwd: Some(cwd),
-                    command,
-                    stdin: Some(stdin),
-                    timeout_secs: wait_timeout,
-                    wait_timeout_secs: wait_timeout + 2,
-                },
-                "tool_runtime".to_string(),
-            )
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => return Err(e),
-        };
-        let resp = match tokio::time::timeout(Duration::from_secs(wait_timeout + 4), rx).await {
-            Ok(Ok(resp)) => resp,
-            Ok(Err(_)) => {
-                self.shell_clients.cancel_request(&request_id).await;
-                return Err("agent helper request was dropped".to_string());
-            }
-            Err(_) => {
-                self.shell_clients.cancel_request(&request_id).await;
-                return Err("timed out waiting for agent helper".to_string());
-            }
-        };
-        if let Some(e) = resp.error {
-            return Err(e);
-        }
-        if resp.exit_code != Some(0) {
-            return Err(resp
-                .stderr
-                .unwrap_or_else(|| format!("agent helper exited with code {:?}", resp.exit_code)));
-        }
-        let stdout = resp.stdout.unwrap_or_default();
-        let stdout = stdout.trim();
-        serde_json::from_str(stdout).map_err(|e| {
-            format!(
-                "agent helper returned invalid JSON: {} (got: {})",
-                e,
-                &stdout[..stdout.len().min(200)]
-            )
-        })
     }
 
     pub(crate) async fn read_file(

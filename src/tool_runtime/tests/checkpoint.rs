@@ -103,10 +103,6 @@ fn assert_invalid_checkpoint_metadata(result: &ToolResult, expected: &str) {
 
 #[tokio::test]
 async fn checkpoint_create_lists_and_shows_metadata() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint_create_lists_and_shows_metadata: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -182,10 +178,6 @@ async fn checkpoint_create_lists_and_shows_metadata() {
 
 #[tokio::test]
 async fn checkpoint_create_records_kind_labels_validation() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint_create_records_kind_labels_validation: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -265,12 +257,6 @@ async fn checkpoint_create_records_kind_labels_validation() {
 
 #[tokio::test]
 async fn checkpoint_list_includes_kind_labels_validation_status() {
-    if !python3_available() {
-        eprintln!(
-            "skipping checkpoint_list_includes_kind_labels_validation_status: python3 unavailable"
-        );
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -325,12 +311,6 @@ async fn checkpoint_list_includes_kind_labels_validation_status() {
 
 #[tokio::test]
 async fn checkpoint_defaults_metadata_for_old_or_minimal_checkpoint() {
-    if !python3_available() {
-        eprintln!(
-            "skipping checkpoint_defaults_metadata_for_old_or_minimal_checkpoint: python3 unavailable"
-        );
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -621,10 +601,6 @@ async fn checkpoint_validation_metadata_is_bounded() {
 
 #[tokio::test]
 async fn checkpoint_restore_tracked_changes() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint_restore_tracked_changes: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -684,12 +660,6 @@ async fn checkpoint_restore_tracked_changes() {
 
 #[tokio::test]
 async fn checkpoint_restore_ignores_metadata_and_still_restores() {
-    if !python3_available() {
-        eprintln!(
-            "skipping checkpoint_restore_ignores_metadata_and_still_restores: python3 unavailable"
-        );
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -792,10 +762,6 @@ async fn checkpoint_restore_requires_confirm() {
 
 #[tokio::test]
 async fn checkpoint_restore_rejects_head_mismatch() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint_restore_rejects_head_mismatch: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -837,10 +803,6 @@ async fn checkpoint_restore_rejects_head_mismatch() {
 
 #[tokio::test]
 async fn checkpoint_untracked_text_file_roundtrip() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint_untracked_text_file_roundtrip: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -888,10 +850,6 @@ async fn checkpoint_untracked_text_file_roundtrip() {
 
 #[tokio::test]
 async fn checkpoint_skips_large_or_binary_untracked() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint_skips_large_or_binary_untracked: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -926,11 +884,77 @@ async fn checkpoint_skips_large_or_binary_untracked() {
 }
 
 #[tokio::test]
+async fn checkpoint_restore_rejects_malicious_untracked_paths() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    init_git_repo(root);
+    commit_file(root, "a.txt", "base\n", "base commit");
+    let runtime = test_runtime().with_checkpoint_state_dir(state.path());
+    let project =
+        register_agent_project_at_path(&runtime, "ckpt-malicious", "agent-proj", root).await;
+    let created = dispatch_checkpoint_with_local_agent(
+        &runtime,
+        "ckpt-malicious",
+        checkpoint_create_call(project.clone(), None, None, Some(false)),
+    )
+    .await;
+    assert!(created.success, "{:?}", created.error);
+    let storage_path = PathBuf::from(created.output["storage_path"].as_str().unwrap());
+    let storage_dir = storage_path.parent().unwrap();
+    let mut checkpoint: Value =
+        serde_json::from_str(&fs::read_to_string(&storage_path).unwrap()).unwrap();
+
+    let traversal_id = "wc_ckpt_reject_traversal";
+    checkpoint["checkpoint_id"] = json!(traversal_id);
+    checkpoint["untracked_files"] = json!([{"path": "../escape.txt", "content": "escape\n"}]);
+    fs::write(
+        storage_dir.join(format!("{traversal_id}.json")),
+        serde_json::to_vec_pretty(&checkpoint).unwrap(),
+    )
+    .unwrap();
+    let traversal = dispatch_checkpoint_with_local_agent(
+        &runtime,
+        "ckpt-malicious",
+        ToolCall::WorkspaceCheckpointRestore {
+            project: project.clone(),
+            checkpoint_id: traversal_id.to_string(),
+            confirm: true,
+            session_id: None,
+        },
+    )
+    .await;
+    assert!(!traversal.success);
+    assert_eq!(traversal.output["error_kind"], "invalid_checkpoint");
+    assert!(!tmp.path().join("escape.txt").exists());
+
+    let sensitive_id = "wc_ckpt_reject_sensitive";
+    checkpoint["checkpoint_id"] = json!(sensitive_id);
+    checkpoint["untracked_files"] =
+        json!([{"path": "secrets/agent-token.txt", "content": "secret\n"}]);
+    fs::write(
+        storage_dir.join(format!("{sensitive_id}.json")),
+        serde_json::to_vec_pretty(&checkpoint).unwrap(),
+    )
+    .unwrap();
+    let sensitive = dispatch_checkpoint_with_local_agent(
+        &runtime,
+        "ckpt-malicious",
+        ToolCall::WorkspaceCheckpointRestore {
+            project,
+            checkpoint_id: sensitive_id.to_string(),
+            confirm: true,
+            session_id: None,
+        },
+    )
+    .await;
+    assert!(!sensitive.success);
+    assert_eq!(sensitive.output["error_kind"], "invalid_checkpoint");
+    assert!(!root.join("secrets/agent-token.txt").exists());
+}
+
+#[tokio::test]
 async fn checkpoint_does_not_persist_inside_worktree() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint_does_not_persist_inside_worktree: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -945,6 +969,8 @@ async fn checkpoint_does_not_persist_inside_worktree() {
     )
     .await;
     assert!(created.success, "{:?}", created.error);
+    assert_eq!(created.output["status_summary"]["clean"], true);
+    assert_eq!(created.output["tracked_diff_bytes"], 0);
     let storage_path = PathBuf::from(created.output["storage_path"].as_str().unwrap())
         .canonicalize()
         .unwrap();
@@ -955,10 +981,6 @@ async fn checkpoint_does_not_persist_inside_worktree() {
 
 #[tokio::test]
 async fn checkpoint_session_guards() {
-    if !python3_available() {
-        eprintln!("skipping checkpoint_session_guards: python3 unavailable");
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -1071,12 +1093,6 @@ async fn checkpoint_session_guards() {
 
 #[tokio::test]
 async fn checkpoint_session_input_summary_does_not_leak_commands() {
-    if !python3_available() {
-        eprintln!(
-            "skipping checkpoint_session_input_summary_does_not_leak_commands: python3 unavailable"
-        );
-        return;
-    }
     let tmp = tempfile::tempdir().unwrap();
     let state = tempfile::tempdir().unwrap();
     let root = tmp.path();
@@ -1144,10 +1160,9 @@ async fn checkpoint_session_input_summary_does_not_leak_commands() {
 }
 
 #[tokio::test]
-async fn checkpoint_create_requires_agent_shell_capability() {
+async fn checkpoint_create_requires_agent_file_read_capability() {
     let runtime = runtime_with_agent_project("oe");
-    let mut caps = ShellClientCapabilities::default();
-    caps.shell = false;
+    let caps = ShellClientCapabilities::default();
     register_agent(&runtime, "oe", None, caps).await;
     let bootstrap = auth_context(None, true);
     let result = runtime
@@ -1158,7 +1173,30 @@ async fn checkpoint_create_requires_agent_shell_capability() {
         .await;
     assert!(!result.success);
     let err = result.error.unwrap();
-    assert!(err.contains("does not support shell"), "{}", err);
+    assert!(err.contains("does not support file_read"), "{}", err);
+}
+
+#[tokio::test]
+async fn checkpoint_restore_requires_agent_file_write_capability() {
+    let runtime = runtime_with_agent_project("oe");
+    let mut caps = ShellClientCapabilities::default();
+    caps.file_read = true;
+    register_agent(&runtime, "oe", None, caps).await;
+    let bootstrap = auth_context(None, true);
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::WorkspaceCheckpointRestore {
+                project: agent_test_project_id("oe"),
+                checkpoint_id: "wc_ckpt_missing".to_string(),
+                confirm: true,
+                session_id: None,
+            },
+            Some(&bootstrap),
+        )
+        .await;
+    assert!(!result.success);
+    let err = result.error.unwrap();
+    assert!(err.contains("does not support file_write"), "{}", err);
 }
 
 #[tokio::test]

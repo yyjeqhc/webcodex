@@ -9,8 +9,10 @@ use crate::shell_protocol::{
     ShellProfileSummaryEntry,
 };
 use crate::tool_runtime::{RuntimeInfo, ToolCall, ToolResult, ToolRuntime};
+use crate::workspace_checkpoint::{create_workspace_checkpoint, restore_workspace_checkpoint};
+use serde_json::{json, Value};
 use std::collections::HashMap;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
@@ -31,6 +33,8 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
             capabilities: Some(ShellClientCapabilities {
                 shell: true,
                 git: true,
+                file_read: true,
+                file_write: true,
                 ..Default::default()
             }),
             projects: Some(vec![registered_project(project_id, &project_path)]),
@@ -92,6 +96,46 @@ pub(in crate::tool_runtime::tests) async fn complete_agent_request_by_running_lo
     .await;
 }
 
+pub(in crate::tool_runtime::tests) fn run_agent_checkpoint_request_locally(
+    req: &ShellAgentShellRequest,
+) -> (i32, String, String) {
+    let root = request_root(req);
+    let payload = req
+        .content
+        .as_deref()
+        .and_then(|content| serde_json::from_str::<Value>(content).ok())
+        .unwrap_or_else(|| json!({}));
+    let output = match req.kind.as_str() {
+        "file_checkpoint_create" => {
+            let include_untracked = payload
+                .get("include_untracked")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            create_workspace_checkpoint(&root, include_untracked)
+        }
+        "file_checkpoint_restore" => {
+            let checkpoint = payload.get("checkpoint").unwrap_or(&Value::Null);
+            restore_workspace_checkpoint(&root, checkpoint)
+        }
+        other => panic!("unexpected checkpoint request kind: {other}"),
+    };
+    (0, serde_json::to_string(&output).unwrap(), String::new())
+}
+
+fn request_root(req: &ShellAgentShellRequest) -> PathBuf {
+    let path = req.path.as_deref().unwrap_or(".");
+    let raw = PathBuf::from(path);
+    if raw.is_absolute() {
+        raw
+    } else {
+        req.cwd
+            .as_deref()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(raw)
+    }
+}
+
 pub(in crate::tool_runtime::tests) async fn dispatch_checkpoint_with_local_agent(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -116,15 +160,32 @@ pub(in crate::tool_runtime::tests) async fn dispatch_checkpoint_with_local_agent
         Some(req) => req,
         None => {
             let result = task.await.unwrap();
-            panic!("checkpoint helper did not enqueue an agent shell request: {result:?}");
+            panic!("checkpoint did not enqueue an agent file request: {result:?}");
         }
     };
     assert!(
-        req.command.starts_with("python3 -c "),
-        "unexpected checkpoint helper command: {}",
+        matches!(
+            req.kind.as_str(),
+            "file_checkpoint_create" | "file_checkpoint_restore"
+        ),
+        "unexpected checkpoint request kind: {}",
+        req.kind
+    );
+    assert!(
+        req.command.is_empty(),
+        "checkpoint native request must not use a shell command: {}",
         req.command
     );
-    complete_agent_request_by_running_locally(runtime, client_id, req).await;
+    let (exit_code, stdout, stderr) = run_agent_checkpoint_request_locally(&req);
+    complete_patch_agent_request(
+        runtime,
+        client_id,
+        &req.request_id,
+        exit_code,
+        &stdout,
+        &stderr,
+    )
+    .await;
     task.await.unwrap()
 }
 

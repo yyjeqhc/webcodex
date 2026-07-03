@@ -818,8 +818,6 @@ fn recover_local_job_info(root: &Path, job_id: &str) -> Result<JobInfo, String> 
     })
 }
 
-/// Lightweight metadata-only job info for SSH jobs.
-/// Single SSH call: reads metadata.json + status/pid/exit_code/finished_at.
 /// Find a local job ID by client_request_id. Only reads metadata.json (no status update).
 fn find_local_job_id_by_client_request_id(
     root: &Path,
@@ -916,8 +914,7 @@ fn local_job_info_basic(root: &Path, job_id: &str) -> Result<JobInfo, String> {
     Ok(update_job_status_local_basic(root, &meta))
 }
 
-/// Lightweight status update for SSH jobs (skip kill -0, kill_tree, OOM detection).
-/// Note: basic is metadata/status-file based and may be stale for SSH jobs;
+/// Convert lightweight agent job status into the local job response shape.
 fn agent_shell_job_to_job_info(
     info: AgentShellJobInfo,
     expected_client_id: Option<&str>,

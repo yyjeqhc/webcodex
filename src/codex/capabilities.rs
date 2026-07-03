@@ -51,7 +51,6 @@ fn project_info(
     name: &str,
     project: &ProjectConfig,
     shell_clients: &HashMap<String, ShellClientView>,
-    _ssh_enabled: bool,
 ) -> ProjectCapabilityInfo {
     let mut commands = project.commands.keys().cloned().collect::<Vec<_>>();
     commands.sort();
@@ -75,9 +74,6 @@ fn project_info(
             Executor::Agent => "agent".to_string(),
         },
         root: project.path.clone(),
-        ssh_enabled: false,
-        ssh_target: None,
-        ssh_endpoints: Vec::new(),
         agent_client_id,
         agent_status: agent.map(|client| client.status.clone()).or_else(|| {
             if project.executor == Executor::Agent {
@@ -182,14 +178,13 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
             .collect::<HashMap<_, _>>(),
         Err(_) => HashMap::new(),
     };
-    let ssh_enabled = false; // SSH removed in v2
     let mut infos = project_names
         .iter()
         .filter_map(|name| {
             projects
                 .projects
                 .get(name)
-                .map(|p| project_info(name, p, &shell_clients, ssh_enabled))
+                .map(|p| project_info(name, p, &shell_clients))
         })
         .collect::<Vec<_>>();
     infos.sort_by(|a, b| a.name.cmp(&b.name));
@@ -210,11 +205,6 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
     };
     let project_count = response.projects.len();
     let project_names_count = response.project_names.len();
-    let ssh_project_count = response
-        .projects
-        .iter()
-        .filter(|project| project.executor == "ssh")
-        .count();
     let agent_project_count = response
         .projects
         .iter()
@@ -249,7 +239,6 @@ pub async fn codex_projects(req: &mut Request, depot: &mut Depot, res: &mut Resp
                 summary: json!({
                     "project_count": project_count,
                     "project_names_count": project_names_count,
-                    "ssh_project_count": ssh_project_count,
                     "agent_project_count": agent_project_count,
                     "connected_agent_project_count": connected_agent_project_count,
                 }),

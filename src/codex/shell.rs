@@ -105,7 +105,7 @@ pub(super) fn run_command(cmd: &str, cwd: &Path, timeout_secs: u64) -> (i32, Str
     }
 }
 
-/// Escape a string for safe use as a shell argument via `ssh -- arg`.
+/// Escape a string for safe use as a shell argument.
 /// Uses single-quote wrapping with proper escaping.
 pub(super) fn shell_escape(s: &str) -> String {
     let mut out = String::from("'");

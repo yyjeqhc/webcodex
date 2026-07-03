@@ -163,7 +163,7 @@ pub struct JobOpRequest {
     #[serde(default)]
     pub since_line: Option<usize>,
     /// For op=status: response detail level. "basic" (default, lightweight, no logs,
-    /// no OOM detection, minimal SSH) or "logs" (basic + include log tails).
+    /// no OOM detection) or "logs" (basic + include log tails).
     /// tail_lines only affects detail=logs or op=log, not the default detail level.
     #[serde(default)]
     pub detail: Option<String>,
@@ -330,9 +330,6 @@ pub struct ContextBatchResponse {
     /// Server-enforced maximum allowed batch items (present when rejected or warned).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_allowed_items: Option<usize>,
-    /// Whether the project is SSH (present when rejected or warned).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub project_is_ssh: Option<bool>,
     /// Human-readable suggestion for how to split the request (present when rejected).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub suggestion: Option<String>,
@@ -643,10 +640,6 @@ pub struct ProjectCapabilityInfo {
     pub name: String,
     pub executor: String,
     pub root: String,
-    pub ssh_enabled: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ssh_target: Option<String>,
-    pub ssh_endpoints: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub agent_client_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -875,7 +868,6 @@ mod tests {
             estimated_chars: None,
             max_allowed_chars: None,
             max_allowed_items: None,
-            project_is_ssh: None,
             suggestion: None,
             warnings: Vec::new(),
             result_metadata: Vec::new(),
@@ -903,7 +895,6 @@ mod tests {
             estimated_chars: Some(150_000),
             max_allowed_chars: Some(120_000),
             max_allowed_items: Some(8),
-            project_is_ssh: Some(true),
             suggestion: Some("Split into smaller batches.".to_string()),
             warnings: Vec::new(),
             result_metadata: Vec::new(),

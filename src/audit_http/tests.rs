@@ -14,7 +14,6 @@ fn test_config(token: Option<&str>) -> Arc<crate::Config> {
         addr: "127.0.0.1:0".to_string(),
         data_dir: PathBuf::from("./data"),
         token: token.map(str::to_string),
-        enable_ssh: false,
         max_text_size: 2 * 1024 * 1024,
         max_file_size: 100 * 1024 * 1024,
         codex: crate::CodexConfig::default(),

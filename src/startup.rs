@@ -24,7 +24,6 @@ Environment:\n\
   WEBCODEX_ADDR          Listen address, default 0.0.0.0:8080\n\
   WEBCODEX_DATA          Data directory, default ./data\n\
   WEBCODEX_PUBLIC_URL    Public URL reported to clients\n\
-  WEBCODEX_ENABLE_SSH    Enable SSH-related runtime features\n\
   WEBCODEX_ALLOW_ANONYMOUS  Allow anonymous GPT/MCP and client access (--open). \
 Default off; only safe on localhost/trusted LAN/temporary demos.\n\
   WEBCODEX_QUIC_ENABLED  Enable QUIC agent transport (default off)\n\
@@ -117,7 +116,6 @@ mod tests {
             "WEBCODEX_ADDR",
             "WEBCODEX_DATA",
             "WEBCODEX_PUBLIC_URL",
-            "WEBCODEX_ENABLE_SSH",
             "WEBCODEX_ALLOW_ANONYMOUS",
             "WEBCODEX_QUIC_ENABLED",
             "WEBCODEX_QUIC_LISTEN",
@@ -171,7 +169,6 @@ mod tests {
             "WEBCODEX_ADDR",
             "WEBCODEX_DATA",
             "WEBCODEX_PUBLIC_URL",
-            "WEBCODEX_ENABLE_SSH",
             "WEBCODEX_ALLOW_ANONYMOUS",
             "WEBCODEX_QUIC_ENABLED",
             "WEBCODEX_QUIC_LISTEN",

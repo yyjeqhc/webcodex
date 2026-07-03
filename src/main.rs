@@ -483,7 +483,6 @@ mod tests {
         std::env::remove_var("WEBCODEX_ADDR");
         std::env::remove_var("WEBCODEX_DATA");
         std::env::remove_var("WEBCODEX_TOKEN");
-        std::env::remove_var("WEBCODEX_ENABLE_SSH");
         std::env::remove_var("CODEX_BIN");
         std::env::remove_var("CODEX_APPROVAL_MODE");
         std::env::remove_var("CODEX_DEFAULT_TIMEOUT_SECS");
@@ -495,7 +494,6 @@ mod tests {
         assert_eq!(config.data_dir, PathBuf::from("./data"));
         assert_eq!(config.token, None);
         assert!(!config.is_auth_enabled());
-        assert!(!config.is_ssh_enabled());
         assert_eq!(config.max_text_size, 2 * 1024 * 1024);
         assert_eq!(config.max_file_size, 100 * 1024 * 1024);
         assert_eq!(config.codex.bin, "codex");
@@ -511,7 +509,6 @@ mod tests {
             addr: "0.0.0.0:8080".to_string(),
             data_dir: PathBuf::from("./data"),
             token: Some("secret123".to_string()),
-            enable_ssh: false,
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: CodexConfig::default(),
@@ -529,7 +526,6 @@ mod tests {
             addr: "0.0.0.0:8080".to_string(),
             data_dir: PathBuf::from("./data"),
             token: None,
-            enable_ssh: false,
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: CodexConfig::default(),

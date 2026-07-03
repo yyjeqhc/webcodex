@@ -6,7 +6,6 @@ pub struct Config {
     pub addr: String,
     pub data_dir: PathBuf,
     pub token: Option<String>,
-    pub enable_ssh: bool,
     pub max_text_size: usize,
     pub max_file_size: usize,
     pub codex: CodexConfig,
@@ -448,7 +447,6 @@ impl Config {
                 .map(PathBuf::from)
                 .unwrap_or_else(|_| PathBuf::from("./data")),
             token: std::env::var("WEBCODEX_TOKEN").ok(),
-            enable_ssh: env_flag("WEBCODEX_ENABLE_SSH").unwrap_or(false),
             max_text_size: 2 * 1024 * 1024,
             max_file_size: 100 * 1024 * 1024,
             codex: CodexConfig::from_env(),
@@ -480,10 +478,6 @@ impl Config {
 
     pub fn is_auth_enabled(&self) -> bool {
         self.token.is_some()
-    }
-
-    pub fn is_ssh_enabled(&self) -> bool {
-        self.enable_ssh
     }
 
     pub fn validate_token(&self, token: &str) -> bool {

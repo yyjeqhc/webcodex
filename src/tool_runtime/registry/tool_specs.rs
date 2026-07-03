@@ -18,8 +18,30 @@ impl ToolRuntime {
         let specs = vec![
             ToolSpec {
                 name: "list_tools".to_string(),
-                description: "List tools exposed by this WebCodex runtime.".to_string(),
-                input_schema: object_schema(vec![]),
+                description: "List runtime tools. Full output includes schemas and may be large; use summary_only with category, features, or limit for bounded GPT Action discovery.".to_string(),
+                input_schema: json!({
+                    "type": "object",
+                    "properties": {
+                        "category": {
+                            "type": "string",
+                            "description": "Optional tool_manifest category filter such as artifact, edit, session, git, or runtime."
+                        },
+                        "features": {
+                            "type": "string",
+                            "description": "Optional loose feature filter such as artifact_upload, upload, read, edit, session, git, or validation."
+                        },
+                        "summary_only": {
+                            "type": "boolean",
+                            "description": "When true, omit full input/output schemas and return compact tool summaries."
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Maximum returned tools for focused discovery; capped at 100."
+                        }
+                    },
+                    "required": [],
+                    "additionalProperties": false,
+                }),
                 output_schema: output_schema_for_tool("list_tools"),
                 annotations: tool_annotations("list_tools"),
             },
@@ -840,10 +862,10 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "artifact_upload_chunk".to_string(),
-                description: "Append one base64 chunk to an active artifact upload. The caller must pass the expected offset; raw chunk content is not recorded in sessions.".to_string(),
+                description: "Append one base64 chunk to an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id to the target path.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative output path from begin.", true),
+                    ("path", "string", "Required project-relative path; must exactly match the path used in artifact_upload_begin to bind upload_id to the target.", true),
                     ("upload_id", "string", "Opaque wc_upload_* id from artifact_upload_begin.", true),
                     ("offset", "integer", "Expected current upload byte offset.", true),
                     ("content_base64", "string", "Base64-encoded chunk; decoded chunk max is 65536 bytes.", true),
@@ -853,10 +875,10 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "artifact_upload_finish".to_string(),
-                description: "Verify expected size/sha256 for an active artifact upload and atomically commit the temporary file to the target artifact path.".to_string(),
+                description: "Finish an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before atomic commit.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative output path from begin.", true),
+                    ("path", "string", "Required project-relative path; must exactly match the path used in artifact_upload_begin to bind upload_id to the target.", true),
                     ("upload_id", "string", "Opaque wc_upload_* id from artifact_upload_begin.", true),
                 ])),
                 output_schema: output_schema_for_tool("artifact_upload_finish"),
@@ -864,10 +886,10 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "artifact_upload_abort".to_string(),
-                description: "Abort an active artifact upload and remove its project-local temporary file and sidecar; does not touch the final target path.".to_string(),
+                description: "Abort an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before cleanup.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative output path from begin.", true),
+                    ("path", "string", "Required project-relative path; must exactly match the path used in artifact_upload_begin to bind upload_id to the target.", true),
                     ("upload_id", "string", "Opaque wc_upload_* id from artifact_upload_begin.", true),
                 ])),
                 output_schema: output_schema_for_tool("artifact_upload_abort"),

@@ -16,7 +16,7 @@ fn from_tool_name_parses_unit_tools_without_arguments() {
         assert!(
             matches!(
                 call,
-                ToolCall::ListTools
+                ToolCall::ListTools { .. }
                     | ToolCall::ListProjects
                     | ToolCall::ListAgents
                     | ToolCall::RuntimeStatus
@@ -30,7 +30,53 @@ fn from_tool_name_parses_unit_tools_without_arguments() {
 #[test]
 fn from_tool_name_parses_unit_tools_with_empty_object() {
     let call = ToolCall::from_tool_name("list_tools", json!({})).unwrap();
-    assert!(matches!(call, ToolCall::ListTools));
+    assert!(matches!(call, ToolCall::ListTools { .. }));
+}
+
+#[test]
+fn from_tool_name_parses_bounded_list_tools_options() {
+    let call = ToolCall::from_tool_name(
+        "list_tools",
+        json!({
+            "category": "artifact",
+            "features": "artifact_upload",
+            "summary_only": true,
+            "limit": 4
+        }),
+    )
+    .unwrap();
+    match call {
+        ToolCall::ListTools {
+            category,
+            features,
+            summary_only,
+            limit,
+        } => {
+            assert_eq!(category.as_deref(), Some("artifact"));
+            assert_eq!(features.as_deref(), Some("artifact_upload"));
+            assert!(summary_only);
+            assert_eq!(limit, Some(4));
+        }
+        other => panic!("expected ListTools, got {:?}", other),
+    }
+}
+
+#[test]
+fn artifact_upload_followup_tools_missing_path_error_is_actionable() {
+    for name in [
+        "artifact_upload_chunk",
+        "artifact_upload_finish",
+        "artifact_upload_abort",
+    ] {
+        let err =
+            ToolCall::from_tool_name(name, json!({"upload_id": "wc_upload_test_1"})).unwrap_err();
+        assert!(
+            err.contains("path is required")
+                && err.contains("artifact_upload_begin")
+                && err.contains("bind upload_id"),
+            "{name}: {err}"
+        );
+    }
 }
 
 #[test]

@@ -75,6 +75,15 @@ hint facts without changing dispatch or tool behavior. Future external MCP
 providers must generate equivalent metadata before their tools can be listed or
 called.
 
+MCP `tools/list` remains the full schema-oriented discovery surface. In GPT
+Actions, full `listRuntimeTools` can be too large because schemas, metadata,
+and descriptions expand the response; this is not a sign that the roughly
+65-tool runtime surface has become unbounded. GPT Actions should prefer
+`callRuntimeTool` with `tool_manifest` for daily discovery, or pass
+`summary_only=true` with `category`, `features`, or `limit` to
+`listRuntimeTools` for focused discovery. Use full `listRuntimeTools` only when
+debugging runtime schemas.
+
 Typical MCP tools include:
 
 - Discovery, health, and task tracking: `list_tools`, `start_session`,
@@ -113,9 +122,13 @@ The minimal chunked upload sequence is `artifact_upload_begin`,
 `artifact_upload_finish`. Use `artifact_upload_abort` when the upload fails, is
 cancelled, or is no longer needed. Each chunk is base64, decoded chunks are
 limited to 64 KiB, the current artifact total limit is 10 MiB, `offset` must be
-contiguous, and `expected_bytes` / `expected_sha256` are integrity guards checked
-before finish atomically commits the target path. Session metadata records
-summary fields rather than raw base64.
+contiguous, and `artifact_upload_chunk`, `artifact_upload_finish`, and
+`artifact_upload_abort` must repeat the exact `path` from
+`artifact_upload_begin`. Repeating `path` is intentional because it binds
+`upload_id` to the requested target artifact path. `expected_bytes` /
+`expected_sha256` are integrity guards checked before finish atomically commits
+the target path. Session metadata records summary fields rather than raw
+base64.
 
 For download/readback, use `read_project_artifact_metadata` before
 `read_project_artifact`. `read_project_artifact` returns a bounded base64

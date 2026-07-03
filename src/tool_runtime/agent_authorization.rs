@@ -57,7 +57,7 @@ impl ToolRuntime {
             | ToolCall::CargoCheck { .. }
             | ToolCall::CargoTest { .. } => Some(AgentCapability::Shell),
             ToolCall::RunJob { .. } | ToolCall::RunCodex { .. } => Some(AgentCapability::AsyncJobs),
-            ToolCall::ListTools
+            ToolCall::ListTools { .. }
             | ToolCall::StartSession { .. }
             | ToolCall::SessionSummary { .. }
             | ToolCall::PostSessionMessage { .. }

@@ -341,9 +341,36 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
         "list_tools" => wrapped_output_schema(vec![
             (
                 "tools",
-                array_schema(open_object_schema("Tool metadata."), "Runtime tool specs."),
+                array_schema(
+                    open_object_schema("Tool metadata or compact summary."),
+                    "Runtime tool specs, or compact summaries when summary_only is true.",
+                ),
+            ),
+            (
+                "names",
+                array_schema(schema_type("string", "Tool name."), "Returned tool names."),
             ),
             ("count", schema_type("integer", "Tool count.")),
+            (
+                "total_count",
+                schema_type("integer", "Total number of visible runtime tools."),
+            ),
+            (
+                "filtered_count",
+                schema_type("integer", "Number of tools matching category/features before limit."),
+            ),
+            (
+                "truncated",
+                schema_type("boolean", "Whether limit truncated the matching tools."),
+            ),
+            (
+                "hint",
+                schema_type("string", "Focused discovery guidance."),
+            ),
+            (
+                "recommended_next",
+                schema_type("string", "Recommended next discovery action."),
+            ),
         ]),
         "tool_manifest" => wrapped_output_schema(vec![
             (

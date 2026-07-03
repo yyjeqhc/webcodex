@@ -165,8 +165,8 @@ pub(crate) fn build_openapi_spec() -> Value {
                 "post": operation(
                     "listRuntimeTools",
                     "List runtime tools",
-                    "Read-only. Returns the MCP-compatible tool list plus `names`, `count`, `categories`, and `recommended_flows`. Useful for discovering every tool name accepted by callRuntimeTool. GPT Actions normally do not need this if dedicated actions cover the task.",
-                    "EmptyRequest",
+                    "Read-only. Full detail returns MCP-compatible tool specs and can be too large for GPT Actions. Prefer callRuntimeTool with tool=tool_manifest for daily discovery; when using listRuntimeTools, pass summary_only=true plus category, features, or limit for bounded discovery.",
+                    "ToolsListRequest",
                     "ToolsListResponse"
                 )
             },
@@ -945,7 +945,32 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "properties": {},
-            "description": "Empty request body. Send {} for actions that take no arguments (listRuntimeTools, listProjects)."
+            "description": "Empty request body. Send {} for actions that take no arguments."
+        },
+        "ToolsListRequest": {
+            "type": "object",
+            "additionalProperties": false,
+            "description": "Optional bounded runtime tool discovery request. Omit fields for the legacy full detail list; GPT Actions should prefer summary_only=true with category, features, or limit.",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "description": "Optional tool_manifest category filter such as artifact, edit, session, git, validation, job, project, or runtime."
+                },
+                "features": {
+                    "type": "string",
+                    "description": "Optional loose feature filter such as artifact, artifact_upload, upload, read, edit, session, git, or validation."
+                },
+                "summary_only": {
+                    "type": "boolean",
+                    "description": "When true, return compact summaries without full input/output schemas."
+                },
+                "limit": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 100,
+                    "description": "Maximum returned tools for focused discovery. Runtime caps this at 100."
+                }
+            }
         },
         "OpenAiFileIdRef": {
             "type": "object",
@@ -992,11 +1017,11 @@ fn schemas() -> Value {
             "type": "object",
             "additionalProperties": false,
             "required": ["tool"],
-            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. Omit all arguments for argument-less tools like list_tools.",
+            "description": "Generic runtime tool call. `tool` is the runtime tool name. GPT Actions should pass tool-specific arguments as flattened top-level fields because some Action runtimes reject free-form params/arguments objects. `params` and `arguments` remain accepted for non-Action clients, with `params` taking precedence. Top-level `session_id` is ordinary tool business input; use `recording_session_id` to record this wrapper call in the session ledger and enforce that recorder session's guards. When no explicit tool session_id is provided, project tools may use the caller/transport/project current session established by bind_current_session. That current-session binding is process-local in-memory control metadata, not the durable session ledger, and may be lost on restart. For reliable long-running or cross-client workflows, keep and pass explicit session_id or recording_session_id values. For daily discovery prefer tool_manifest; use list_tools with summary_only/category/features/limit only for focused discovery.",
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging."
                 },
                 "recording_session_id": {
                     "type": "string",
@@ -1180,7 +1205,7 @@ fn schemas() -> Value {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened tool-specific argument. For artifact_upload_chunk/finish/abort this is required and must exactly match the path used by artifact_upload_begin to bind upload_id to the target path. Used only when `params` and `arguments` are absent."
                 },
                 "command": {
                     "type": "string",
@@ -1211,6 +1236,10 @@ fn schemas() -> Value {
                 "limit": {
                     "type": "integer",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "category": {
+                    "type": "string",
+                    "description": "Flattened list_tools/tool_manifest category filter. Used only when `params` and `arguments` are absent."
                 },
                 "include_diff": {
                     "type": "boolean",
@@ -1266,7 +1295,11 @@ fn schemas() -> Value {
                 },
                 "features": {
                     "type": "string",
-                    "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened list_tools feature filter, or cargo feature selection for cargo tools. Used only when `params` and `arguments` are absent."
+                },
+                "summary_only": {
+                    "type": "boolean",
+                    "description": "Flattened list_tools flag. When true, returns compact summaries without full schemas. Used only when `params` and `arguments` are absent."
                 },
                 "package": {
                     "type": "string",
@@ -1346,7 +1379,7 @@ fn schemas() -> Value {
                 },
                 "upload_id": {
                     "type": "string",
-                    "description": "Flattened artifact_upload_chunk/finish/abort wc_upload_* id. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened artifact_upload_chunk/finish/abort wc_upload_* id. The same path from artifact_upload_begin is also required so the runtime can bind upload_id to the requested target path. Used only when `params` and `arguments` are absent."
                 },
                 "expected_bytes": {
                     "type": "integer",
@@ -1930,15 +1963,38 @@ fn schemas() -> Value {
                 }
             }
         },
+        "ToolSummary": {
+            "type": "object",
+            "required": ["name", "category", "risk", "read_only", "requires_project"],
+            "description": "Compact tool summary returned by listRuntimeTools when summary_only=true.",
+            "properties": {
+                "name": { "type": "string" },
+                "description": { "type": "string" },
+                "category": { "type": "string" },
+                "risk": { "type": "string" },
+                "read_only": { "type": "boolean" },
+                "requires_project": { "type": "boolean" },
+                "annotations": {
+                    "type": "object",
+                    "description": "Tool annotations / client hints.",
+                    "additionalProperties": true
+                }
+            }
+        },
         "ToolsListResponse": {
             "type": "object",
             "required": ["success", "tools", "names", "count"],
-            "description": "Runtime tool list. `tools` is the full MCP-compatible ToolSpec list (back-compat). `names` is just the tool name strings, `count` is the tool count, `categories` groups tools by family, and `recommended_flows` lists short GPT flow hints.",
+            "description": "Runtime tool list. No-arg calls return the full MCP-compatible ToolSpec list for schema debugging. Bounded calls can return compact ToolSummary entries without schemas. GPT Actions should prefer tool_manifest for daily discovery.",
             "properties": {
                 "success": { "type": "boolean" },
                 "tools": {
                     "type": "array",
-                    "items": { "$ref": "#/components/schemas/ToolSpec" }
+                    "items": {
+                        "oneOf": [
+                            { "$ref": "#/components/schemas/ToolSpec" },
+                            { "$ref": "#/components/schemas/ToolSummary" }
+                        ]
+                    }
                 },
                 "names": {
                     "type": "array",
@@ -1948,6 +2004,30 @@ fn schemas() -> Value {
                 "count": {
                     "type": "integer",
                     "description": "Number of tools in `tools`/`names`."
+                },
+                "total_count": {
+                    "type": "integer",
+                    "description": "Total number of model-visible runtime tools before filters."
+                },
+                "filtered_count": {
+                    "type": "integer",
+                    "description": "Number of tools matching category/features before limit."
+                },
+                "truncated": {
+                    "type": "boolean",
+                    "description": "Whether the response was truncated by limit."
+                },
+                "category": {
+                    "type": ["string", "null"],
+                    "description": "Requested category filter, when provided."
+                },
+                "features": {
+                    "type": ["string", "null"],
+                    "description": "Requested feature filter, when provided."
+                },
+                "limit": {
+                    "type": ["integer", "null"],
+                    "description": "Effective bounded discovery limit, when a bounded request was used."
                 },
                 "categories": {
                     "type": "object",
@@ -1961,6 +2041,14 @@ fn schemas() -> Value {
                     "type": "array",
                     "items": { "type": "string" },
                     "description": "Optional short GPT flow hints for common tool sequences."
+                },
+                "hint": {
+                    "type": "string",
+                    "description": "Short guidance for using bounded discovery."
+                },
+                "recommended_next": {
+                    "type": "string",
+                    "description": "Recommended next discovery action."
                 }
             }
         },
@@ -3125,6 +3213,29 @@ mod tests {
         assert!(props.contains_key("count"));
         assert!(props.contains_key("categories"));
         assert!(props.contains_key("recommended_flows"));
+        assert!(props.contains_key("total_count"));
+        assert!(props.contains_key("filtered_count"));
+        assert!(props.contains_key("truncated"));
+        assert!(props.contains_key("hint"));
+        assert!(props.contains_key("recommended_next"));
+        assert_eq!(
+            spec["paths"]["/api/tools/list"]["post"]["requestBody"]["content"]["application/json"]
+                ["schema"]["$ref"],
+            "#/components/schemas/ToolsListRequest"
+        );
+        let req_props = spec["components"]["schemas"]["ToolsListRequest"]["properties"]
+            .as_object()
+            .unwrap();
+        for field in ["category", "features", "summary_only", "limit"] {
+            assert!(
+                req_props.contains_key(field),
+                "ToolsListRequest must expose bounded field {field}"
+            );
+        }
+        assert_eq!(
+            spec["components"]["schemas"]["ToolsListRequest"]["properties"]["limit"]["maximum"],
+            100
+        );
     }
 
     #[test]
@@ -3249,6 +3360,23 @@ mod tests {
             assert!(
                 properties.contains_key(field),
                 "ToolCallRequest.properties.{field} must exist for flattened artifact upload calls"
+            );
+        }
+        let path_desc = properties["path"]["description"].as_str().unwrap();
+        assert!(
+            path_desc.contains("must exactly match the path used by artifact_upload_begin")
+                && path_desc.contains("bind upload_id"),
+            "path flattened description must explain upload path binding: {path_desc}"
+        );
+        let upload_id_desc = properties["upload_id"]["description"].as_str().unwrap();
+        assert!(
+            upload_id_desc.contains("same path from artifact_upload_begin is also required"),
+            "upload_id flattened description must mention repeated path: {upload_id_desc}"
+        );
+        for field in ["category", "features", "summary_only", "limit"] {
+            assert!(
+                properties.contains_key(field),
+                "ToolCallRequest.properties.{field} must exist for flattened list_tools calls"
             );
         }
     }

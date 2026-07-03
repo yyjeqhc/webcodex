@@ -34,8 +34,8 @@ mod validation_parser;
 pub use runtime::ToolRuntime;
 #[allow(unused_imports)]
 pub use types::{
-    default_true, is_known_tool_name, ApplyTextEditInput, ApplyTextEditKind, RuntimeInfo,
-    SessionMode, ToolCall, ToolResult, ToolSpec, KNOWN_TOOL_NAMES,
+    default_true, is_known_tool_name, ApplyTextEditInput, ApplyTextEditKind, ListToolsOptions,
+    RuntimeInfo, SessionMode, ToolCall, ToolResult, ToolSpec, KNOWN_TOOL_NAMES,
 };
 
 use crate::auth::AuthContext;
@@ -230,7 +230,17 @@ impl ToolRuntime {
         transport: sessions::SessionTransport,
     ) -> ToolResult {
         match call {
-            ToolCall::ListTools => ToolResult::ok(json!({ "tools": self.tool_specs() })),
+            ToolCall::ListTools {
+                category,
+                features,
+                summary_only,
+                limit,
+            } => ToolResult::ok(self.list_tools_payload(ListToolsOptions {
+                category,
+                features,
+                summary_only,
+                limit,
+            })),
 
             ToolCall::StartSession {
                 project,
@@ -1357,6 +1367,78 @@ impl ToolRuntime {
         ToolResult::ok(output)
     }
 
+    pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 100;
+
+    pub(crate) fn list_tools_payload(&self, options: ListToolsOptions) -> Value {
+        let specs = self.tool_specs();
+        let total_count = specs.len();
+        let filtered_indexes = list_tools_filtered_indexes(&specs, &options);
+        let filtered_count = filtered_indexes.len();
+        let bounded_request = options.summary_only
+            || options.category.is_some()
+            || options.features.is_some()
+            || options.limit.is_some();
+        let effective_limit = options
+            .limit
+            .map(|limit| limit.clamp(1, Self::LIST_TOOLS_MAX_LIMIT))
+            .unwrap_or(Self::LIST_TOOLS_MAX_LIMIT);
+        let returned_indexes: Vec<usize> = if bounded_request {
+            filtered_indexes
+                .iter()
+                .copied()
+                .take(effective_limit)
+                .collect()
+        } else {
+            filtered_indexes
+        };
+        let truncated = filtered_count > returned_indexes.len();
+        let names: Vec<String> = returned_indexes
+            .iter()
+            .map(|index| specs[*index].name.clone())
+            .collect();
+        let all_summary_tools = build_list_tools_summary_entries(&specs);
+        let tools = if options.summary_only {
+            returned_indexes
+                .iter()
+                .map(|index| all_summary_tools[*index].clone())
+                .collect()
+        } else {
+            returned_indexes
+                .iter()
+                .map(|index| serde_json::to_value(&specs[*index]).unwrap_or(Value::Null))
+                .collect()
+        };
+
+        let mut output = json!({
+            "tools": Value::Array(tools),
+            "names": names,
+            "count": returned_indexes.len(),
+            "total_count": total_count,
+            "filtered_count": filtered_count,
+            "truncated": truncated,
+            "category": options.category,
+            "features": options.features,
+            "limit": if bounded_request { Some(effective_limit) } else { None },
+            "categories": if bounded_request {
+                build_manifest_categories(&all_summary_tools)
+            } else {
+                self.tool_categories()
+            },
+            "recommended_flows": ToolRuntime::recommended_flows(),
+            "recommended_next": "For daily GPT Action discovery, call callRuntimeTool with tool=tool_manifest. Use full listRuntimeTools only when debugging schemas.",
+            "hint": "Full listRuntimeTools responses include schemas and may be large. Use summary_only=true with category, features, or limit for focused discovery.",
+        });
+        if !bounded_request {
+            output["filtered_count"] = json!(total_count);
+            output["total_count"] = json!(total_count);
+            output["truncated"] = json!(false);
+            output["category"] = Value::Null;
+            output["features"] = Value::Null;
+            output["limit"] = Value::Null;
+        }
+        output
+    }
+
     /// Return a compact, bounded tool manifest with categories, risk summary,
     /// and recommended flows. Read-only runtime introspection; never exposes
     /// full input/output schemas, tokens, secrets, or internal paths.
@@ -1427,6 +1509,84 @@ impl ToolRuntime {
         }
 
         ToolResult::ok(output)
+    }
+}
+
+fn list_tools_filtered_indexes(specs: &[ToolSpec], options: &ListToolsOptions) -> Vec<usize> {
+    specs
+        .iter()
+        .enumerate()
+        .filter(|(_, spec)| {
+            let name = spec.name.as_str();
+            options
+                .category
+                .as_deref()
+                .map(|category| tool_manifest_category(name) == category)
+                .unwrap_or(true)
+                && options
+                    .features
+                    .as_deref()
+                    .map(|features| list_tool_matches_features(name, features))
+                    .unwrap_or(true)
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value> {
+    specs
+        .iter()
+        .map(|spec| {
+            let name = spec.name.as_str();
+            let m = metadata::tool_metadata(name);
+            json!({
+                "name": name,
+                "description": spec.description,
+                "category": tool_manifest_category(name),
+                "risk": m.risk.session_risk_class(),
+                "read_only": m.read_only,
+                "requires_project": m.requires_project,
+                "annotations": spec.annotations,
+            })
+        })
+        .collect()
+}
+
+fn list_tool_matches_features(name: &str, features: &str) -> bool {
+    features
+        .split(|c: char| c == ',' || c.is_ascii_whitespace())
+        .filter_map(normalize_feature)
+        .any(|feature| list_tool_matches_feature(name, feature.as_str()))
+}
+
+fn normalize_feature(feature: &str) -> Option<String> {
+    let normalized = feature.trim().to_ascii_lowercase().replace('-', "_");
+    if normalized.is_empty() {
+        None
+    } else {
+        Some(normalized)
+    }
+}
+
+fn list_tool_matches_feature(name: &str, feature: &str) -> bool {
+    let category = tool_manifest_category(name);
+    if category == feature {
+        return true;
+    }
+    match feature {
+        "artifact" => category == "artifact",
+        "artifact_upload" | "upload" => name.starts_with("artifact_upload_"),
+        "read" => {
+            metadata::tool_metadata(name).read_only
+                || name.starts_with("read_")
+                || name.contains("_read_")
+        }
+        "edit" => matches!(category, "edit" | "patch"),
+        "session" => category == "session",
+        "git" => category == "git",
+        "validation" => category == "validation",
+        "runtime" => category == "runtime",
+        other => name.contains(other),
     }
 }
 

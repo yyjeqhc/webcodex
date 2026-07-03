@@ -174,10 +174,20 @@ If adding or renaming a runtime tool, update **all** of:
   common workflows that fit the operation budget.
 - WebCodex GPT Actions must stay below the 30-operation GPT Actions limit. The
   current OpenAPI surface is 27 operations.
+- `listRuntimeTools` full detail discovery includes expanded schemas and may be
+  too large for GPT Actions. Daily GPT Action discovery should prefer
+  `callRuntimeTool(tool="tool_manifest")`; focused `listRuntimeTools` calls
+  should pass `summary_only=true` with `category`, `features`, or `limit`.
+  Current tool count is around 65; the response-size issue is schema/metadata
+  expansion, not runtime tool system sprawl.
 - Chunked artifact upload tools (`artifact_upload_begin`,
   `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`)
   remain runtime-only through `callRuntimeTool`; do not promote them to
   dedicated GPT Action operations.
+- `artifact_upload_chunk`, `artifact_upload_finish`, and
+  `artifact_upload_abort` must repeat the exact `path` used by
+  `artifact_upload_begin`. This is intentional: it binds `upload_id` to the
+  requested target artifact path.
 - When adding future runtime tools, default to `callRuntimeTool` exposure unless
   there is an explicit product reason and operation-count budget for a dedicated
   Action.

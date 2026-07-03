@@ -309,6 +309,50 @@ fn tool_specs_input_schemas_are_objects() {
 }
 
 #[test]
+fn list_tools_schema_exposes_bounded_discovery_fields() {
+    let runtime = test_runtime();
+    let specs = runtime.tool_specs();
+    let spec = spec_named(&specs, "list_tools");
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    for field in ["category", "features", "summary_only", "limit"] {
+        assert!(
+            props.contains_key(field),
+            "list_tools input schema must expose {field}"
+        );
+    }
+    assert!(spec.input_schema["required"].as_array().unwrap().is_empty());
+}
+
+#[test]
+fn artifact_upload_followup_descriptions_explain_required_path_binding() {
+    let runtime = test_runtime();
+    let specs = runtime.tool_specs();
+    for name in [
+        "artifact_upload_chunk",
+        "artifact_upload_finish",
+        "artifact_upload_abort",
+    ] {
+        let spec = spec_named(&specs, name);
+        assert!(
+            spec.description.contains("path is required")
+                && spec.description.contains("artifact_upload_begin")
+                && spec.description.contains("binds upload_id"),
+            "{name}: {}",
+            spec.description
+        );
+        let path_desc = spec.input_schema["properties"]["path"]["description"]
+            .as_str()
+            .unwrap();
+        assert!(
+            path_desc.contains("Required")
+                && path_desc.contains("must exactly match the path used in artifact_upload_begin")
+                && path_desc.contains("bind upload_id"),
+            "{name}: {path_desc}"
+        );
+    }
+}
+
+#[test]
 fn tool_specs_output_schemas_are_objects() {
     let runtime = test_runtime();
     for spec in runtime.tool_specs() {

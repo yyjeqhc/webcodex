@@ -3,7 +3,7 @@ use crate::json_error;
 use crate::tool_runtime::kernel::{
     ToolCallContext, ToolCallErrorStatus, ToolCallRequest as KernelToolCallRequest, ToolTransport,
 };
-use crate::tool_runtime::{ToolCall, ToolRuntime};
+use crate::tool_runtime::{ListToolsOptions, ToolCall, ToolRuntime};
 use salvo::prelude::*;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -73,7 +73,7 @@ fn render_result(
 }
 
 #[handler]
-pub async fn tools_list(depot: &mut Depot, res: &mut Response) {
+pub async fn tools_list(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let Some(runtime) = runtime(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(json_error(
@@ -82,17 +82,35 @@ pub async fn tools_list(depot: &mut Depot, res: &mut Response) {
         ));
         return;
     };
-    let specs = runtime.tool_specs();
-    let names: Vec<String> = specs.iter().map(|s| s.name.clone()).collect();
-    let count = specs.len();
-    res.render(Json(json!({
-        "success": true,
-        "tools": specs,
-        "names": names,
-        "count": count,
-        "categories": runtime.tool_categories(),
-        "recommended_flows": ToolRuntime::recommended_flows(),
-    })));
+    let body = match req.payload().await {
+        Ok(body) => body,
+        Err(e) => {
+            res.status_code(StatusCode::BAD_REQUEST);
+            res.render(json_error(
+                StatusCode::BAD_REQUEST,
+                format!("Failed to read request body: {}", e),
+            ));
+            return;
+        }
+    };
+    let options = if body.is_empty() || body.iter().all(|b| b.is_ascii_whitespace()) {
+        ListToolsOptions::default()
+    } else {
+        match serde_json::from_slice::<ListToolsOptions>(&body) {
+            Ok(options) => options,
+            Err(e) => {
+                res.status_code(StatusCode::BAD_REQUEST);
+                res.render(json_error(
+                    StatusCode::BAD_REQUEST,
+                    format!("Invalid listRuntimeTools request: {}", e),
+                ));
+                return;
+            }
+        }
+    };
+    let mut payload = runtime.list_tools_payload(options);
+    payload["success"] = json!(true);
+    res.render(Json(payload));
 }
 
 #[handler]
@@ -925,6 +943,53 @@ mod tests {
         // names and tools must stay in sync.
         let tools_count = body["tools"].as_array().unwrap().len();
         assert_eq!(tools_count, names.len());
+    }
+
+    #[tokio::test]
+    async fn http_tools_list_supports_bounded_summary_request() {
+        let (_tmp, service) = phase2_service();
+        let mut full_resp = TestClient::post("http://localhost/api/tools/list")
+            .bearer_auth("secret")
+            .json(&json!({}))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&full_resp), StatusCode::OK);
+        let full_body: Value = full_resp.take_json().await.unwrap();
+
+        let mut resp = TestClient::post("http://localhost/api/tools/list")
+            .bearer_auth("secret")
+            .json(&json!({
+                "category": "artifact",
+                "features": "artifact_upload",
+                "summary_only": true,
+                "limit": 10
+            }))
+            .send(&service)
+            .await;
+        assert_eq!(effective_status(&resp), StatusCode::OK);
+        let body: Value = resp.take_json().await.unwrap();
+        assert_eq!(body["success"], true);
+        assert_eq!(body["category"], "artifact");
+        assert_eq!(body["features"], "artifact_upload");
+        assert_eq!(body["truncated"], false);
+        assert_eq!(body["total_count"], full_body["total_count"]);
+        let names = body["names"].as_array().unwrap();
+        for tool in [
+            "artifact_upload_begin",
+            "artifact_upload_chunk",
+            "artifact_upload_finish",
+            "artifact_upload_abort",
+        ] {
+            assert!(names.iter().any(|name| name == tool), "missing {tool}");
+        }
+        for tool in body["tools"].as_array().unwrap() {
+            assert!(tool.get("inputSchema").is_none(), "{tool:?}");
+            assert!(tool.get("outputSchema").is_none(), "{tool:?}");
+        }
+        assert!(
+            body.to_string().len() < full_body.to_string().len() / 2,
+            "bounded response should be substantially smaller than full list"
+        );
     }
 
     #[tokio::test]

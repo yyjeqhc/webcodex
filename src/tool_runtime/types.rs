@@ -100,11 +100,32 @@ pub struct CheckpointValidationInput {
     pub summary: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct ListToolsOptions {
+    #[serde(default)]
+    pub category: Option<String>,
+    #[serde(default)]
+    pub features: Option<String>,
+    #[serde(default)]
+    pub summary_only: bool,
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(tag = "tool", content = "params", rename_all = "snake_case")]
 pub enum ToolCall {
     /// List registered tool runtime tools.
-    ListTools,
+    ListTools {
+        #[serde(default)]
+        category: Option<String>,
+        #[serde(default)]
+        features: Option<String>,
+        #[serde(default)]
+        summary_only: bool,
+        #[serde(default)]
+        limit: Option<usize>,
+    },
 
     /// Create a bounded task tracking session and return an explicit opaque
     /// session id. Later callers should pass that id explicitly (for example as
@@ -1039,10 +1060,25 @@ impl ToolCall {
         }
         let mut wrapped = serde_json::Map::new();
         wrapped.insert("tool".to_string(), Value::String(name.to_string()));
-        let unit_tool = matches!(
+        if matches!(
             name,
-            "list_tools" | "list_projects" | "list_agents" | "runtime_status"
-        );
+            "artifact_upload_chunk" | "artifact_upload_finish" | "artifact_upload_abort"
+        ) {
+            let missing_path = arguments
+                .as_object()
+                .and_then(|obj| obj.get("path"))
+                .and_then(Value::as_str)
+                .map(str::is_empty)
+                .unwrap_or(true);
+            if missing_path {
+                return Err(format!(
+                    "invalid arguments for tool '{}': path is required and must match the path \
+                     used by artifact_upload_begin to bind upload_id to the requested target path",
+                    name
+                ));
+            }
+        }
+        let unit_tool = matches!(name, "list_projects" | "list_agents" | "runtime_status");
         if !unit_tool {
             // Non-unit tools always carry a `params` object so variants whose
             // fields are all optional (e.g. `list_jobs`) still deserialize when
@@ -1062,7 +1098,7 @@ impl ToolCall {
 
     pub(crate) fn tool_name(&self) -> &'static str {
         match self {
-            Self::ListTools => "list_tools",
+            Self::ListTools { .. } => "list_tools",
             Self::StartSession { .. } => "start_session",
             Self::StartCodingTask { .. } => "start_coding_task",
             Self::FinishCodingTask { .. } => "finish_coding_task",
@@ -1867,6 +1903,17 @@ impl ToolCall {
                 "category": category,
                 "include_recommended_flows": include_recommended_flows,
                 "include_risk_summary": include_risk_summary,
+            }),
+            Self::ListTools {
+                category,
+                features,
+                summary_only,
+                limit,
+            } => serde_json::json!({
+                "category": category,
+                "features": features,
+                "summary_only": summary_only,
+                "limit": limit,
             }),
             Self::WorkspaceHygieneCheck {
                 project,

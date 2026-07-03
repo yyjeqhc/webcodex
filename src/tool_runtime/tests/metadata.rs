@@ -896,6 +896,77 @@ async fn tool_manifest_hides_run_codex_from_model_facing_surface() {
 }
 
 #[tokio::test]
+async fn bounded_list_tools_hides_schemas_and_finds_artifact_upload_tools() {
+    let runtime = test_runtime();
+    let full = runtime
+        .dispatch(ToolCall::ListTools {
+            category: None,
+            features: None,
+            summary_only: false,
+            limit: None,
+        })
+        .await;
+    assert!(full.success, "{:?}", full.error);
+
+    let bounded = runtime
+        .dispatch(ToolCall::ListTools {
+            category: Some("artifact".to_string()),
+            features: Some("artifact_upload".to_string()),
+            summary_only: true,
+            limit: Some(10),
+        })
+        .await;
+    assert!(bounded.success, "{:?}", bounded.error);
+    assert_eq!(bounded.output["total_count"], full.output["total_count"]);
+    assert!(bounded.output["count"].as_u64().unwrap() > 0);
+    assert_eq!(bounded.output["truncated"], false);
+    let tools = bounded.output["tools"].as_array().unwrap();
+    let names = bounded.output["names"].as_array().unwrap();
+    for tool in [
+        "artifact_upload_begin",
+        "artifact_upload_chunk",
+        "artifact_upload_finish",
+        "artifact_upload_abort",
+    ] {
+        assert!(names.iter().any(|name| name == tool), "missing {tool}");
+    }
+    assert!(
+        !names.iter().any(|name| name == "run_codex"),
+        "bounded list_tools must not expose run_codex: {:?}",
+        names
+    );
+    for tool in tools {
+        assert!(tool["category"].as_str() == Some("artifact"), "{tool:?}");
+        assert!(tool.get("inputSchema").is_none(), "{tool:?}");
+        assert!(tool.get("outputSchema").is_none(), "{tool:?}");
+    }
+
+    let full_json = serde_json::to_string(&full.output).unwrap();
+    let bounded_json = serde_json::to_string(&bounded.output).unwrap();
+    assert!(
+        bounded_json.len() < full_json.len() / 2,
+        "bounded discovery should be substantially smaller than full list"
+    );
+}
+
+#[tokio::test]
+async fn bounded_list_tools_limit_reports_truncation() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ListTools {
+            category: None,
+            features: Some("artifact_upload".to_string()),
+            summary_only: true,
+            limit: Some(2),
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["count"], 2);
+    assert_eq!(result.output["filtered_count"], 4);
+    assert_eq!(result.output["truncated"], true);
+}
+
+#[tokio::test]
 async fn tool_manifest_recommends_default_remote_coding_loop() {
     let runtime = test_runtime();
     let result = runtime

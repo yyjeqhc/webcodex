@@ -1374,3 +1374,29 @@ fn handle_read_project_artifact(
         start,
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn read_upload_state_rejects_requested_path_mismatch() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (_part, sidecar) = upload_paths(tmp.path(), "wc_upload_test_1");
+        write_upload_state(
+            &sidecar,
+            &ArtifactUploadState {
+                path: "artifacts/imports/a.bin".to_string(),
+                expected_bytes: None,
+                expected_sha256: None,
+                mime_type: None,
+                overwrite: false,
+                max_bytes: DEFAULT_MAX_ARTIFACT_BYTES,
+            },
+        )
+        .unwrap();
+
+        let err = read_upload_state(&sidecar, "artifacts/imports/b.bin").unwrap_err();
+        assert_eq!(err, "upload_id does not belong to requested path");
+    }
+}

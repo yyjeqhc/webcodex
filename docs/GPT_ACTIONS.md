@@ -116,10 +116,14 @@ Use `webcodex-cli` for those management tasks.
 
 After deploying a server/agent/runtime build that changes tool schemas, refresh
 the GPT Action schema from `/openapi.json`. Then test discovery and read-only
-runtime calls before any mutation: `listRuntimeTools`, `getRuntimeStatus`,
-`callRuntimeTool` with `tool_manifest` or `list_tools` to confirm
-`start_coding_task` / `finish_coding_task` availability, and read-only
-`show_changes` against a safe test project.
+runtime calls before any mutation: `getRuntimeStatus`, `callRuntimeTool` with
+`tool_manifest`, and read-only `show_changes` against a safe test project. Full
+`listRuntimeTools` includes expanded schemas and may be too large for GPT
+Actions; use it mainly for schema debugging. For focused discovery, call
+`listRuntimeTools` with `summary_only=true` plus `category`, `features`, or
+`limit`, or use `callRuntimeTool` with `tool_manifest`. The current runtime
+scale is roughly 65 tools; the size issue is full schema/metadata expansion,
+not tool system sprawl.
 
 ## Recommended flow
 
@@ -346,7 +350,10 @@ needed.
 
 Each `artifact_upload_chunk` payload is base64 and the decoded chunk must be at
 most 64 KiB. The artifact total limit is currently 10 MiB. `offset` must be
-contiguous with the bytes already received. `expected_bytes` and
+contiguous with the bytes already received. `artifact_upload_chunk`,
+`artifact_upload_finish`, and `artifact_upload_abort` must repeat the exact
+`path` used by `artifact_upload_begin`; this intentionally binds `upload_id` to
+the requested target artifact path. `expected_bytes` and
 `expected_sha256` are optional integrity guards captured at begin time and
 checked before finish commits the upload. `artifact_upload_finish` succeeds only
 after the guard checks pass, then atomically commits the temporary upload to the

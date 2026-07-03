@@ -37,7 +37,8 @@ tests with different cost profiles sharing the same default lane.
 
 ## Current `import_http` Inventory
 
-`src/runtime_http.rs` currently contains four ignored `import_http` tests:
+`src/runtime_http/tests/import_http_tests.rs` currently contains four ignored
+`import_http` tests:
 
 - `import_http_does_not_follow_302_redirect`
 - `import_http_rejects_content_length_over_limit`
@@ -86,3 +87,23 @@ The script is intentionally heuristic. It scans only `src`, `docs`, and `tests`
 when those directories exist, does not access the network, does not modify the
 workspace, and reports counts plus sanitized risk clues. Use
 `bash scripts/test_inventory.sh --details` for a full sanitized file/line list.
+
+## Current Test Layout Notes
+
+Recent structure work moved large test groups out of production roots:
+
+- OAuth HTTP endpoint tests are rooted at `src/oauth_http/tests.rs` and grouped
+  by endpoint/domain under `src/oauth_http/tests/*`.
+- CLI tests are grouped under `src/bin/webcodex_cli/tests/*`.
+- CLI help smoke coverage lives with the CLI test modules and covers common
+  help entry points, so new command help should extend that smoke coverage.
+- Runtime HTTP tests live under `src/runtime_http/tests/*`; the only currently
+  ignored tests tracked by the inventory are the four `import_http` tests listed
+  above.
+- Tool runtime tests live under `src/tool_runtime/tests/*` by domain.
+
+Do not add large ordinary test blocks to production facade files when one of
+these `tests/` module trees already exists. Exact full-suite pass counts should
+come from a fresh `cargo test --bin webcodex` run; recent full-suite scale is
+roughly 1.3k passing tests plus the four ignored `import_http` tests, but this
+document should not be treated as the source of truth for exact counts.

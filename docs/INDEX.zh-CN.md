@@ -3,7 +3,7 @@
 [English](INDEX.md) | [简体中文](INDEX.zh-CN.md)
 
 从 [QUICK_START.zh-CN.md](QUICK_START.zh-CN.md) 和
-[CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md) 开始。README 仍是产品概览；这个索引是 setup、auth、operations 和 validation 文档地图。
+[CONCEPTS.zh-CN.md](CONCEPTS.zh-CN.md) 开始。README 仍是产品概览；这个索引是 setup、architecture、auth、operations 和 validation 文档地图。
 
 ## 从这里开始
 
@@ -34,26 +34,27 @@
 16. [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) / [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) — QUIC、WebSocket、polling、`auto` fallback 和 transport validation。
 17. [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) / [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) — agent auth、identity、protocol 和 redacted policy summaries。
 18. [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) / [SHELL_PROFILES.md](SHELL_PROFILES.md) — prepared shell env snapshots、profile 配置、解析规则和安全边界。
-19. [TOOL_DEFINITION_REGISTRY.md](TOOL_DEFINITION_REGISTRY.md) — developer architecture plan：将手写 runtime tool metadata、schema、scope、visibility 和 policy 逐步迁移到 ToolDefinition registry。
-20. [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) / [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — 部署排障和运维检查清单。
+19. [ARCHITECTURE.md](ARCHITECTURE.md) — runtime HTTP、OAuth/auth/db、shell client、agent、CLI 和 tool runtime 模块的维护边界图。
+20. [TOOL_DEFINITION_REGISTRY.md](TOOL_DEFINITION_REGISTRY.md) — developer architecture plan：将手写 runtime tool metadata、schema、scope、visibility 和 policy 逐步迁移到 ToolDefinition registry。
+21. [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) / [TROUBLESHOOTING.md](TROUBLESHOOTING.md) — 部署排障和运维检查清单。
 
 ## Testing 和 CI
 
-21. [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) / [E2E_VALIDATION.md](E2E_VALIDATION.md) — 本地端到端验证脚本和文档扫描建议。
-22. [TESTING.md](TESTING.md) — test lane definitions、默认测试原则和当前 slow/flaky test inventory notes。
-23. [CI_LANES.md](CI_LANES.md) — static、contract、integration、security、manual 和 smoke validation 的 CI lane 结构提案。
+22. [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) / [E2E_VALIDATION.md](E2E_VALIDATION.md) — 本地端到端验证脚本和文档扫描建议。
+23. [TESTING.md](TESTING.md) — test lane definitions、默认测试原则、当前 test layout 和 slow/flaky test inventory notes。
+24. [CI_LANES.md](CI_LANES.md) — static、contract、integration、security、manual 和 smoke validation 的 CI lane 结构提案。
 
 ## Install、assets 和 release reference
 
-24. [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) / [BUILD_INSTALL.md](BUILD_INSTALL.md) — build/install 命令参考，以及 npm wrapper / artifact 细节。
-25. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) — GPT Actions 和 MCP 设置截图说明。
-26. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) — v0.2.0 release notes、亮点、已知问题和验证清单。
-27. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness、artifact、发布和发布后 smoke checklist。
+25. [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) / [BUILD_INSTALL.md](BUILD_INSTALL.md) — build/install 命令参考，以及 npm wrapper / artifact 细节。
+26. [assets/README.zh-CN.md](assets/README.zh-CN.md) / [assets/README.md](assets/README.md) — GPT Actions 和 MCP 设置截图说明。
+27. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) — v0.2.0 release notes、亮点、已知问题和验证清单。
+28. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness、artifact、发布和发布后 smoke checklist。
 
 ## Strategy 和 future work
 
-28. [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) / [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) — WebCodex 长期 runtime 架构和 provider 方向。
-29. [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) / [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) — 未来 Desktop Session strategy：面向工程工作流的可控、可审计、可回放 computer-use sessions。
+29. [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) / [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) — WebCodex 长期 runtime 架构和 provider 方向。
+30. [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) / [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) — 未来 Desktop Session strategy：面向工程工作流的可控、可审计、可回放 computer-use sessions。
 
 ## 已从公开文档集中移除
 

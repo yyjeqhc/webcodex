@@ -32,8 +32,9 @@ while keeping local integration, security, and smoke coverage visible.
 
 ## `import_http` Lane Proposal
 
-The four ignored `import_http` tests in `src/runtime_http.rs` should eventually
-converge under a serial local integration lane:
+The four ignored `import_http` tests in
+`src/runtime_http/tests/import_http_tests.rs` should eventually converge under a
+serial local integration lane:
 
 ```bash
 cargo test --bin webcodex import_http -- --ignored --nocapture --test-threads=1

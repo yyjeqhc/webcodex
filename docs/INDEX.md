@@ -4,7 +4,7 @@
 
 Start with [QUICK_START.md](QUICK_START.md) and
 [CONCEPTS.md](CONCEPTS.md). The README remains the product overview; this index
-is the map for setup, auth, operations, and validation docs.
+is the map for setup, architecture, auth, operations, and validation docs.
 
 ## Start here
 
@@ -35,26 +35,27 @@ is the map for setup, auth, operations, and validation docs.
 16. [AGENT_TRANSPORTS.md](AGENT_TRANSPORTS.md) / [AGENT_TRANSPORTS.zh-CN.md](AGENT_TRANSPORTS.zh-CN.md) — QUIC, WebSocket, polling, `auto` fallback, and transport validation.
 17. [AGENT_PROTOCOL.md](AGENT_PROTOCOL.md) / [AGENT_PROTOCOL.zh-CN.md](AGENT_PROTOCOL.zh-CN.md) — agent auth, identity, protocol, and redacted policy summaries.
 18. [SHELL_PROFILES.md](SHELL_PROFILES.md) / [SHELL_PROFILES.zh-CN.md](SHELL_PROFILES.zh-CN.md) — prepared shell env snapshots, profile config, resolution rules, and safety boundaries.
-19. [TOOL_DEFINITION_REGISTRY.md](TOOL_DEFINITION_REGISTRY.md) — developer architecture plan for migrating hand-written runtime tool metadata, schemas, scopes, visibility, and policy toward a ToolDefinition registry.
-20. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) / [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) — deployment troubleshooting and operational checklist.
+19. [ARCHITECTURE.md](ARCHITECTURE.md) — maintenance boundary map for runtime HTTP, OAuth/auth/db, shell client, agent, CLI, and tool runtime modules.
+20. [TOOL_DEFINITION_REGISTRY.md](TOOL_DEFINITION_REGISTRY.md) — developer architecture plan for migrating hand-written runtime tool metadata, schemas, scopes, visibility, and policy toward a ToolDefinition registry.
+21. [TROUBLESHOOTING.md](TROUBLESHOOTING.md) / [TROUBLESHOOTING.zh-CN.md](TROUBLESHOOTING.zh-CN.md) — deployment troubleshooting and operational checklist.
 
 ## Testing and CI
 
-21. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — local end-to-end validation scripts and documentation scan guidance.
-22. [TESTING.md](TESTING.md) — test lane definitions, default test principles, and current slow/flaky test inventory notes.
-23. [CI_LANES.md](CI_LANES.md) — proposed CI lane structure for static, contract, integration, security, manual, and smoke validation.
+22. [E2E_VALIDATION.md](E2E_VALIDATION.md) / [E2E_VALIDATION.zh-CN.md](E2E_VALIDATION.zh-CN.md) — local end-to-end validation scripts and documentation scan guidance.
+23. [TESTING.md](TESTING.md) — test lane definitions, default test principles, current test layout, and slow/flaky test inventory notes.
+24. [CI_LANES.md](CI_LANES.md) — proposed CI lane structure for static, contract, integration, security, manual, and smoke validation.
 
 ## Install, assets, and release reference
 
-24. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — build/install command reference and npm wrapper / artifact details.
-25. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
-26. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) — v0.2.0 release notes, highlights, known issues, and validation checklist.
-27. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness, artifact, publishing, and post-release smoke checklist.
+25. [BUILD_INSTALL.md](BUILD_INSTALL.md) / [BUILD_INSTALL.zh-CN.md](BUILD_INSTALL.zh-CN.md) — build/install command reference and npm wrapper / artifact details.
+26. [assets/README.md](assets/README.md) / [assets/README.zh-CN.md](assets/README.zh-CN.md) — documentation screenshots for GPT Actions and MCP setup.
+27. [RELEASE_NOTES_v0.2.0.md](RELEASE_NOTES_v0.2.0.md) — v0.2.0 release notes, highlights, known issues, and validation checklist.
+28. [RELEASE_CHECKLIST_v0.2.0.md](RELEASE_CHECKLIST_v0.2.0.md) — v0.2.0 release readiness, artifact, publishing, and post-release smoke checklist.
 
 ## Strategy and future work
 
-28. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — long-term WebCodex runtime architecture and provider direction.
-29. [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) / [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) — future Desktop Session strategy for controlled, auditable, replayable computer-use sessions.
+29. [AGENT_RUNTIME_ARCHITECTURE.md](AGENT_RUNTIME_ARCHITECTURE.md) / [AGENT_RUNTIME_ARCHITECTURE.zh-CN.md](AGENT_RUNTIME_ARCHITECTURE.zh-CN.md) — long-term WebCodex runtime architecture and provider direction.
+30. [DESKTOP_SESSIONS.md](DESKTOP_SESSIONS.md) / [DESKTOP_SESSIONS.zh-CN.md](DESKTOP_SESSIONS.zh-CN.md) — future Desktop Session strategy for controlled, auditable, replayable computer-use sessions.
 
 ## Removed from the public docs set
 

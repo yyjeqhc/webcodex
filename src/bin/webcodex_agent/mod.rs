@@ -1,4 +1,5 @@
 pub(crate) mod config;
+pub(crate) mod files;
 pub(crate) mod output;
 pub(crate) mod projects;
 pub(crate) mod shell;
@@ -13,6 +14,9 @@ pub(crate) use config::{
     default_quic_alpn, default_quic_connect_timeout_secs, default_quic_keepalive_interval_secs,
     max_concurrent_jobs, QuicClientConfig, ShellProfileConfig, CLIENT_PROFILE_ERROR,
     DEFAULT_MAX_CONCURRENT_JOBS,
+};
+pub(crate) use files::{
+    handle_basic_file_request, is_basic_file_request_kind, resolve_requested_path, sha256_hex_bytes,
 };
 pub(crate) use output::{err_cmd, line_edit_stdout, ok_cmd, CommandResult};
 #[cfg(test)]

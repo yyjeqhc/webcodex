@@ -4,20 +4,23 @@ use crate::shell_protocol::{
     ShellClientCapabilities, ShellClientJobLogRequest, ShellClientJobLogResponse,
     ShellClientJobStatusRequest, ShellClientJobStatusResponse, ShellClientJobStopRequest,
     ShellClientJobStopResponse, ShellClientJobsListRequest, ShellClientJobsListResponse,
-    ShellClientRegisterRequest, ShellClientView, ShellFileOpRequest, ShellFileOpResponse,
-    ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse, ShellRunRequest, ShellRunResponse,
+    ShellFileOpRequest, ShellFileOpResponse, ShellJobInfo, ShellJobOpRequest, ShellJobOpResponse,
+    ShellRunRequest, ShellRunResponse,
 };
 #[cfg(test)]
 use crate::shell_protocol::{
-    ShellAgentPollRequest, ShellAgentResultRequest, ShellJobCodexMetadata,
+    ShellAgentPollRequest, ShellAgentResultRequest, ShellClientRegisterRequest, ShellClientView,
+    ShellJobCodexMetadata,
 };
 use salvo::prelude::*;
 use serde_json::json;
-use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::{Mutex, Notify};
+use tokio::sync::Mutex;
+#[cfg(test)]
+use tokio::sync::Notify;
 use uuid::Uuid;
 
+mod agents;
 mod auth;
 mod handlers;
 mod jobs;
@@ -26,28 +29,26 @@ mod requests;
 mod state;
 mod validation;
 
-use auth::{assert_shell_client_access, shell_client_visible_to_auth, shell_job_visible_to_auth};
+use auth::shell_job_visible_to_auth;
+#[allow(unused_imports)]
+pub(crate) use auth::ShellClientAuthGroup;
 pub(crate) use auth::{
     assert_shell_client_owner, effective_register_owner, enforce_agent_transport,
     enforce_register_owner, requested_by_from_auth, require_agent_transport_scope,
-    ShellClientAuthGroup,
 };
 pub use handlers::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
 };
 use jobs::{
     append_limited, assert_active_instance_locked, command_preview, is_final_job_status, job_view,
-    offline_last_seen, refresh_job_status_locked, replace_limited, select_lines,
+    refresh_job_status_locked, replace_limited, select_lines,
 };
 use requests::{
     enqueue_pending_request_locked, next_request_id, notify_client_locked,
     remove_pending_request_locked,
 };
-use state::{NotifierEntry, ShellClientRecord, ShellClientRegistryInner, ShellJobRecord};
-use validation::{
-    normalize_project_summaries, sha256_hex, trim_string, validate_agent_instance_id, validate_id,
-    validate_optional_field, validate_run_request,
-};
+use state::{ShellClientRegistryInner, ShellJobRecord};
+use validation::{sha256_hex, validate_agent_instance_id, validate_id, validate_run_request};
 #[cfg(test)]
 use validation::{validate_file_request, MAX_COMMAND_LEN, MAX_RUN_STDIN_BYTES};
 
@@ -84,335 +85,6 @@ fn now_ts() -> i64 {
 }
 
 impl ShellClientRegistry {
-    #[allow(dead_code)]
-    pub async fn register(
-        &self,
-        body: ShellClientRegisterRequest,
-    ) -> Result<ShellClientView, String> {
-        self.register_with_auth(body, None).await
-    }
-
-    pub(crate) async fn register_with_auth(
-        &self,
-        body: ShellClientRegisterRequest,
-        auth: Option<&crate::auth::AuthContext>,
-    ) -> Result<ShellClientView, String> {
-        validate_id(&body.client_id, "client_id")?;
-        validate_agent_instance_id(&body.agent_instance_id)?;
-        validate_optional_field(&body.display_name, "display_name")?;
-        validate_optional_field(&body.owner, "owner")?;
-        validate_optional_field(&body.hostname, "hostname")?;
-
-        let client_id = body.client_id.trim().to_string();
-        let agent_instance_id = body.agent_instance_id.trim().to_string();
-        let record = ShellClientRecord {
-            client_id: client_id.clone(),
-            agent_instance_id: agent_instance_id.clone(),
-            display_name: trim_string(body.display_name),
-            owner: trim_string(body.owner),
-            hostname: trim_string(body.hostname),
-            capabilities: body.capabilities.unwrap_or_default(),
-            projects: normalize_project_summaries(body.projects),
-            last_seen: now_ts(),
-            agent_protocol_version: body
-                .agent_protocol_version
-                .map(|v| v.trim().to_string())
-                .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| "unknown".to_string()),
-            transport: TRANSPORT_POLLING.to_string(),
-            policy: body.policy,
-            auth_group: auth.and_then(ShellClientAuthGroup::from_auth),
-        };
-        let mut inner = self.inner.lock().await;
-
-        // Enforce the agent instance lease. `client_id` is the unique active
-        // agent identity: at most one agent process may be online for it at a
-        // time. Rules:
-        //   - no existing client            -> accept (fresh registration)
-        //   - existing client is stale/offline -> accept and replace the
-        //     active instance (lease hand-off to the new process)
-        //   - existing client is online and the same instance id reconnects
-        //     -> accept as a refresh/reconnect
-        //   - existing client is online and a *different* instance id tries to
-        //     register -> reject with a clear error so two processes cannot
-        //     steal each other's requests.
-        if let Some(existing) = inner.clients.get(&client_id) {
-            let online = now_ts().saturating_sub(existing.last_seen) <= CLIENT_ONLINE_WINDOW_SECS;
-            let same_instance = existing.agent_instance_id == agent_instance_id;
-            if online && !same_instance {
-                return Err(format!(
-                    "agent client {} is already online with a different instance",
-                    client_id
-                ));
-            }
-        }
-
-        // When a different instance takes over the lease (stale replacement),
-        // clear any notifier left by the previous instance so the request pump
-        // for the dead process is not re-armed against the new one. A
-        // same-instance refresh keeps its notifier in place.
-        let replaced_instance = inner
-            .clients
-            .get(&client_id)
-            .map(|existing| existing.agent_instance_id != agent_instance_id)
-            .unwrap_or(false);
-        if replaced_instance {
-            inner.notifiers.remove(&client_id);
-        }
-
-        inner.clients.insert(client_id.clone(), record);
-        Ok(Self::client_view_locked(&inner, &client_id).expect("client just inserted"))
-    }
-
-    /// Override the transport label for a registered client. Called by the
-    /// WebSocket handler after a successful register so observability and
-    /// `list_agents` reflect how the agent is actually connected. Polling
-    /// agents keep the default `"polling"` label set during `register`.
-    pub async fn set_transport(&self, client_id: &str, transport: &str) -> Result<(), String> {
-        let mut inner = self.inner.lock().await;
-        let Some(client) = inner.clients.get_mut(client_id) else {
-            return Err(format!("unknown shell client: {}", client_id));
-        };
-        client.transport = transport.to_string();
-        Ok(())
-    }
-
-    /// Refresh `last_seen` for a registered client to "now" without performing
-    /// any business operation. Used by the WebSocket reader so that idle
-    /// keepalive traffic (`Ping`/`Pong`) keeps a connected agent inside the
-    /// `CLIENT_ONLINE_WINDOW_SECS` online window. Without this, a WebSocket
-    /// agent that has no pending requests would age out to `"stale"` after 60s
-    /// even though its socket is still open.
-    ///
-    /// Returns an error (and mutates nothing) for an unknown `client_id` so
-    /// callers can log a clear diagnostic; it is a no-op for the unknown path.
-    /// `register`, `poll`, `complete`, and `update_job` already refresh
-    /// `last_seen` on their own, so this is only needed for keepalive frames.
-    ///
-    /// `agent_instance_id` is required: a stale/replaced instance must not be
-    /// able to refresh the active lease's `last_seen` via Ping/Pong. If the id
-    /// does not match the currently active instance, the touch is rejected
-    /// before mutating any state.
-    pub async fn touch_client(
-        &self,
-        client_id: &str,
-        agent_instance_id: &str,
-    ) -> Result<(), String> {
-        validate_agent_instance_id(agent_instance_id)?;
-        let mut inner = self.inner.lock().await;
-        let Some(client) = inner.clients.get_mut(client_id) else {
-            return Err(format!("unknown shell client: {}", client_id));
-        };
-        if client.agent_instance_id != agent_instance_id {
-            return Err(format!(
-                "agent client {} is no longer the active instance (stale or replaced)",
-                client_id
-            ));
-        }
-        client.last_seen = now_ts();
-        Ok(())
-    }
-
-    /// Test-only hook to force a client's `last_seen` so liveness/stale
-    /// behavior can be exercised without sleeping for the full online window.
-    #[cfg(test)]
-    pub async fn set_last_seen_for_test(&self, client_id: &str, ts: i64) {
-        let mut inner = self.inner.lock().await;
-        if let Some(client) = inner.clients.get_mut(client_id) {
-            client.last_seen = ts;
-        }
-    }
-
-    /// Register a push notifier for a client. The WebSocket handler calls
-    /// this after register; the server's request pump waits on the notifier
-    /// between polls. Calling this replaces any previously registered
-    /// notifier for the client (e.g. after a reconnect).
-    ///
-    /// `agent_instance_id` records which agent process owns the notifier. The
-    /// caller is the instance that just successfully registered, so it is the
-    /// active instance; this always installs/overwrites the notifier entry for
-    /// `client_id` tagged with that instance id.
-    pub async fn register_notifier(
-        &self,
-        client_id: &str,
-        agent_instance_id: &str,
-        notify: Arc<Notify>,
-    ) -> Result<(), String> {
-        validate_agent_instance_id(agent_instance_id)?;
-        let mut inner = self.inner.lock().await;
-        let Some(client) = inner.clients.get(client_id) else {
-            return Err(format!("unknown shell client: {}", client_id));
-        };
-        // Only the currently active instance may install a notifier. A late
-        // notifier registration from a stale instance (e.g. it registered,
-        // then was replaced before reaching this call) must not overwrite the
-        // active instance's notifier.
-        if client.agent_instance_id != agent_instance_id {
-            return Err(format!(
-                "agent client {} is no longer the active instance (stale or replaced)",
-                client_id
-            ));
-        }
-        inner.notifiers.insert(
-            client_id.to_string(),
-            NotifierEntry {
-                notify,
-                agent_instance_id: agent_instance_id.to_string(),
-            },
-        );
-        Ok(())
-    }
-
-    /// Reconcile state after an agent transport disconnects or sends a
-    /// graceful offline notice. Active-instance strategy:
-    ///
-    /// - remove the push notifier so the request pump is not re-armed;
-    /// - mark every non-final, running-like job owned by the client as
-    ///   `"lost"` with a descriptive error, and drop its pending request (the
-    ///   oneshot waiter resolves to a "dropped" error on the caller side);
-    /// - the client record itself is retained so late results/updates can be
-    ///   logged and runtime_status/list_agents keep observability history;
-    /// - `last_seen` is moved just outside the online window so the active
-    ///   lease is released immediately and a restarted agent can register
-    ///   without waiting for the normal 60s timeout.
-    ///
-    /// `agent_instance_id` identifies *which* agent process disconnected. The
-    /// cleanup only fires when that id matches the currently active instance
-    /// for `client_id`; a stale disconnect (e.g. instance A's socket finally
-    /// tearing down after instance B already replaced it) must NOT remove
-    /// B's notifier or mark B's jobs lost.
-    ///
-    /// This is intentionally conservative about jobs: a reconnecting agent that keeps
-    /// running the same job will see the server-side job as `"lost"` (final),
-    /// so its late `job_update`/`result` is ignored by `update_job`/`complete`.
-    /// Operators should treat `"lost"` as "the server no longer tracks this
-    /// job; restart it if needed". A future phase may lift `JobManager` to
-    /// agent-level so reconnects can resume in-flight jobs.
-    pub async fn reconcile_disconnect(&self, client_id: &str, agent_instance_id: &str) {
-        let mut inner = self.inner.lock().await;
-        // Only reconcile when the disconnect belongs to the currently active
-        // instance. A stale disconnect (a previous process whose socket finally
-        // tore down after a newer instance already took over the lease) must
-        // not touch the active instance's notifier or jobs.
-        let is_active = inner
-            .clients
-            .get(client_id)
-            .map(|client| client.agent_instance_id == agent_instance_id)
-            .unwrap_or(false);
-        if !is_active {
-            return;
-        }
-        // Remove the notifier only if it still belongs to this instance.
-        if inner
-            .notifiers
-            .get(client_id)
-            .map(|entry| entry.agent_instance_id == agent_instance_id)
-            .unwrap_or(false)
-        {
-            inner.notifiers.remove(client_id);
-        }
-        let lost_error = "agent transport disconnected".to_string();
-        let now = now_ts();
-        if let Some(client) = inner.clients.get_mut(client_id) {
-            client.last_seen = offline_last_seen(now);
-        }
-        let lost_job_ids: Vec<String> = inner
-            .jobs_by_id
-            .iter()
-            .filter_map(|(job_id, job)| {
-                if job.client_id != client_id {
-                    return None;
-                }
-                if is_final_job_status(&job.status)
-                    || !matches!(
-                        job.status.as_str(),
-                        "queued" | "agent_queued" | "running" | "stop_requested"
-                    )
-                {
-                    return None;
-                }
-                Some(job_id.clone())
-            })
-            .collect();
-        for job_id in lost_job_ids {
-            let request_id = inner
-                .jobs_by_id
-                .get(&job_id)
-                .and_then(|j| j.request_id.clone());
-            if let Some(job) = inner.jobs_by_id.get_mut(&job_id) {
-                job.status = "lost".to_string();
-                job.ended_at = Some(now);
-                job.error = Some(lost_error.clone());
-            }
-            if let Some(request_id) = request_id {
-                inner.pending_by_id.remove(&request_id);
-                inner.request_to_job.remove(&request_id);
-                if let Some(queue) = inner.queues_by_client.get_mut(client_id) {
-                    queue.retain(|id| id != &request_id);
-                }
-            }
-        }
-    }
-
-    pub async fn list_clients(&self) -> Vec<ShellClientView> {
-        let inner = self.inner.lock().await;
-        let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
-        ids.sort();
-        ids.into_iter()
-            .filter_map(|id| Self::client_view_locked(&inner, &id))
-            .collect()
-    }
-
-    pub(crate) async fn list_clients_for_auth(
-        &self,
-        auth: Option<&crate::auth::AuthContext>,
-    ) -> Vec<ShellClientView> {
-        let inner = self.inner.lock().await;
-        let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
-        ids.sort();
-        ids.into_iter()
-            .filter(|id| {
-                inner
-                    .clients
-                    .get(id)
-                    .map(|client| shell_client_visible_to_auth(auth, client))
-                    .unwrap_or(false)
-            })
-            .filter_map(|id| Self::client_view_locked(&inner, &id))
-            .collect()
-    }
-
-    pub async fn get_client_view(&self, client_id: &str) -> Option<ShellClientView> {
-        let inner = self.inner.lock().await;
-        Self::client_view_locked(&inner, client_id)
-    }
-
-    pub(crate) async fn get_client_view_for_auth(
-        &self,
-        client_id: &str,
-        auth: Option<&crate::auth::AuthContext>,
-    ) -> Option<ShellClientView> {
-        let inner = self.inner.lock().await;
-        let client = inner.clients.get(client_id)?;
-        if !shell_client_visible_to_auth(auth, client) {
-            return None;
-        }
-        Self::client_view_locked(&inner, client_id)
-    }
-
-    pub(crate) async fn assert_client_access(
-        &self,
-        auth: Option<&crate::auth::AuthContext>,
-        client_id: &str,
-    ) -> Result<(), String> {
-        let inner = self.inner.lock().await;
-        let client = inner
-            .clients
-            .get(client_id)
-            .ok_or_else(|| format!("unknown shell client: {}", client_id))?;
-        assert_shell_client_access(auth, client)
-    }
-
     /// Return the capabilities advertised by a registered agent client.
     /// Errors with a structured `unknown shell client` message when the
     /// client is not registered.
@@ -843,36 +515,6 @@ impl ShellClientRegistry {
             inner.request_to_job.remove(&request_id);
         }
         Ok(view)
-    }
-
-    fn client_view_locked(
-        inner: &ShellClientRegistryInner,
-        client_id: &str,
-    ) -> Option<ShellClientView> {
-        let client = inner.clients.get(client_id)?;
-        let pending_requests = inner
-            .queues_by_client
-            .get(client_id)
-            .map(VecDeque::len)
-            .unwrap_or(0);
-        let age = now_ts().saturating_sub(client.last_seen);
-        let connected = age <= CLIENT_ONLINE_WINDOW_SECS;
-        Some(ShellClientView {
-            client_id: client.client_id.clone(),
-            agent_instance_id: client.agent_instance_id.clone(),
-            display_name: client.display_name.clone(),
-            owner: client.owner.clone(),
-            hostname: client.hostname.clone(),
-            status: if connected { "online" } else { "stale" }.to_string(),
-            connected,
-            last_seen: client.last_seen,
-            capabilities: client.capabilities.clone(),
-            pending_requests,
-            projects: client.projects.clone(),
-            agent_protocol_version: client.agent_protocol_version.clone(),
-            transport: client.transport.clone(),
-            policy: client.policy.clone(),
-        })
     }
 }
 

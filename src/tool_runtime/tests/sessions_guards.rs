@@ -434,6 +434,7 @@ async fn deny_shell_only_allows_write_tools() {
         None,
         ShellClientCapabilities {
             shell: true,
+            file_write: true,
             ..Default::default()
         },
     )
@@ -490,12 +491,13 @@ async fn deny_shell_only_allows_write_tools() {
     let req = next_patch_agent_request(&runtime, "guard-shell-only")
         .await
         .expect("write_project_file should be allowed when deny_write_tools=false");
+    assert_eq!(req.kind, "file_write_project_file");
     complete_patch_agent_request(
         &runtime,
         "guard-shell-only",
         &req.request_id,
         0,
-        r#"{"path":"allowed.txt","bytes_written":1,"sha256":"abc","changed":true}"#,
+        r#"{"path":"allowed.txt","created":true,"overwritten":false,"bytes_written":1,"sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","warning":null}"#,
         "",
     )
     .await;

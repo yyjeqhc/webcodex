@@ -2928,6 +2928,33 @@ shell_profile = "../rust"
     }
 
     #[test]
+    fn file_replace_in_file_rejects_string_allow_multiple() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "a a a").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_replace_in_file",
+                "target.txt",
+                serde_json::json!({
+                    "old": "a",
+                    "new": "b",
+                    "expected_replacements": 3,
+                    "allow_multiple": "false",
+                }),
+            ),
+        ));
+
+        assert_eq!(out["changed"], false);
+        assert_eq!(out["error"], "allow_multiple must be a boolean");
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "a a a");
+    }
+
+    #[test]
     fn file_write_project_file_creates_parent_dirs_and_reports_hash() {
         let tmp = tempfile::tempdir().unwrap();
         let policy = project_policy(tmp.path());
@@ -2982,6 +3009,33 @@ shell_profile = "../rust"
         assert_eq!(out["created"], false);
         assert_eq!(out["overwritten"], false);
         assert!(out["error"].as_str().unwrap().contains("overwrite"));
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "original");
+    }
+
+    #[test]
+    fn file_write_project_file_rejects_string_overwrite() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let file = tmp.path().join("target.txt");
+        std::fs::write(&file, "original").unwrap();
+
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_write_project_file",
+                "target.txt",
+                serde_json::json!({
+                    "content": "new",
+                    "overwrite": "false",
+                    "expected_sha256": null,
+                    "expected_content_prefix": null,
+                }),
+            ),
+        ));
+
+        assert_eq!(out["created"], false);
+        assert_eq!(out["error"], "overwrite must be a boolean");
         assert_eq!(std::fs::read_to_string(&file).unwrap(), "original");
     }
 

@@ -73,7 +73,7 @@ fn line_edit_text_line_count(text: &str) -> usize {
     }
 }
 
-fn write_file_atomic_with_options(
+fn write_file_atomic_strict(
     path: &Path,
     content: &str,
     create_dirs: bool,
@@ -98,7 +98,10 @@ fn write_file_atomic_with_options(
                     let _ = std::fs::remove_file(&tmp);
                     return Err(e.to_string());
                 }
-                let _ = file.sync_all();
+                if let Err(e) = file.sync_all() {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e.to_string());
+                }
                 drop(file);
                 if let Err(e) = std::fs::rename(&tmp, path) {
                     let _ = std::fs::remove_file(&tmp);
@@ -119,7 +122,7 @@ fn write_file_atomic_with_options(
 }
 
 fn write_file_atomic(path: &Path, content: &str) -> Result<(), String> {
-    write_file_atomic_with_options(path, content, false, ".pd-line")
+    write_file_atomic_strict(path, content, false, ".pd-line")
 }
 
 pub(crate) fn handle_line_edit_file_request(
@@ -539,13 +542,11 @@ fn parse_expected_replacements(payload: &serde_json::Value) -> Result<i64, ()> {
     Err(())
 }
 
-fn parse_bool_like(payload: &serde_json::Value, key: &str) -> bool {
+fn parse_bool_field(payload: &serde_json::Value, key: &str) -> Result<bool, String> {
     match payload.get(key) {
-        None | Some(serde_json::Value::Null) => false,
-        Some(serde_json::Value::Bool(v)) => *v,
-        Some(serde_json::Value::Number(n)) => n.as_i64().unwrap_or(1) != 0,
-        Some(serde_json::Value::String(s)) => !s.is_empty(),
-        Some(_) => true,
+        None | Some(serde_json::Value::Null) => Ok(false),
+        Some(serde_json::Value::Bool(v)) => Ok(*v),
+        Some(_) => Err(format!("{key} must be a boolean")),
     }
 }
 
@@ -599,7 +600,18 @@ pub(crate) fn handle_replace_in_file_request(
             );
         }
     };
-    let allow_multi = parse_bool_like(&payload, "allow_multiple");
+    let allow_multi = match parse_bool_field(&payload, "allow_multiple") {
+        Ok(value) => value,
+        Err(e) => {
+            return line_edit_stdout(
+                serde_json::json!({
+                    "changed": false,
+                    "error": e,
+                }),
+                start,
+            );
+        }
+    };
 
     if old.is_empty() || old.contains('\0') {
         return line_edit_stdout(
@@ -715,7 +727,7 @@ pub(crate) fn handle_replace_in_file_request(
 
     let replacements = if allow_multi { expected as usize } else { 1 };
     let replaced = content.replacen(old, new, replacements);
-    if let Err(e) = write_file_atomic_with_options(resolved, &replaced, false, ".pd-rep") {
+    if let Err(e) = write_file_atomic_strict(resolved, &replaced, false, ".pd-rep") {
         return line_edit_stdout(
             serde_json::json!({
                 "changed": false,
@@ -790,7 +802,12 @@ pub(crate) fn handle_write_project_file_request(
         );
     }
 
-    let overwrite = parse_bool_like(&payload, "overwrite");
+    let overwrite = match parse_bool_field(&payload, "overwrite") {
+        Ok(value) => value,
+        Err(e) => {
+            return line_edit_stdout(write_project_file_error(serde_json::json!(path), e), start);
+        }
+    };
     let exists = std::fs::symlink_metadata(resolved).is_ok();
     if exists && !overwrite {
         return line_edit_stdout(
@@ -863,7 +880,7 @@ pub(crate) fn handle_write_project_file_request(
         }
     }
 
-    if let Err(e) = write_file_atomic_with_options(resolved, content, true, ".pd-write") {
+    if let Err(e) = write_file_atomic_strict(resolved, content, true, ".pd-write") {
         return line_edit_stdout(
             write_project_file_error(serde_json::json!(path), format!("write failed: {}", e)),
             start,

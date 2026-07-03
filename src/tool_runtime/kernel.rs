@@ -341,6 +341,27 @@ fn guard_denial_log_arguments(tool_name: &str, arguments: &Value) -> Value {
                 Value::Bool(obj.contains_key("content_base64")),
             );
         }
+        "artifact_upload_begin" => {
+            copy_keys(
+                obj,
+                &mut out,
+                &["path", "expected_bytes", "mime_type", "overwrite"],
+            );
+            out.insert(
+                "expected_sha256_present".to_string(),
+                Value::Bool(obj.contains_key("expected_sha256")),
+            );
+        }
+        "artifact_upload_chunk" => {
+            copy_keys(obj, &mut out, &["path", "upload_id", "offset"]);
+            out.insert(
+                "content_base64_present".to_string(),
+                Value::Bool(obj.contains_key("content_base64")),
+            );
+        }
+        "artifact_upload_finish" | "artifact_upload_abort" => {
+            copy_keys(obj, &mut out, &["path", "upload_id"]);
+        }
         "apply_patch" | "apply_patch_checked" | "validate_patch" => {
             out.insert(
                 "patch_present".to_string(),

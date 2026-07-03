@@ -2,13 +2,15 @@ use super::files::sha256_hex_bytes;
 use super::output::{line_edit_stdout, CommandResult};
 use crate::shell_protocol::ShellAgentShellRequest;
 use base64::{engine::general_purpose, Engine as _};
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::io::{Read, Write};
-use std::path::{Component, Path};
-use std::time::Instant;
+use std::path::{Component, Path, PathBuf};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_MAX_ARTIFACT_BYTES: usize = 10 * 1024 * 1024;
 const DEFAULT_ARTIFACT_READ_LENGTH: usize = 32 * 1024;
+const DEFAULT_MAX_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 64 * 1024;
 
 pub(crate) fn is_artifact_request_kind(kind: &str) -> bool {
     matches!(
@@ -16,6 +18,10 @@ pub(crate) fn is_artifact_request_kind(kind: &str) -> bool {
         "file_save_project_artifact"
             | "file_read_project_artifact_metadata"
             | "file_read_project_artifact"
+            | "file_artifact_upload_begin"
+            | "file_artifact_upload_chunk"
+            | "file_artifact_upload_finish"
+            | "file_artifact_upload_abort"
     )
 }
 
@@ -85,6 +91,75 @@ fn parse_usize_field(payload: &Value, key: &str, default: usize) -> Result<usize
     }
 }
 
+fn parse_optional_usize_field(payload: &Value, key: &str) -> Result<Option<usize>, String> {
+    match payload.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::Number(number)) => number
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .map(Some)
+            .ok_or_else(|| format!("{key} must be an integer")),
+        Some(Value::String(value)) => value
+            .parse::<usize>()
+            .map(Some)
+            .map_err(|_| format!("{key} must be an integer")),
+        Some(_) => Err(format!("{key} must be an integer")),
+    }
+}
+
+fn parse_optional_clean_string(
+    payload: &Value,
+    key: &str,
+    max_len: usize,
+) -> Result<Option<String>, String> {
+    match payload.get(key) {
+        None | Some(Value::Null) => Ok(None),
+        Some(Value::String(value)) if value.len() <= max_len && !value.contains('\0') => {
+            Ok(Some(value.clone()))
+        }
+        Some(Value::String(_)) => Err(format!("{key} is invalid")),
+        Some(_) => Err(format!("{key} must be a string")),
+    }
+}
+
+fn parse_required_clean_string(
+    payload: &Value,
+    key: &str,
+    max_len: usize,
+) -> Result<String, String> {
+    match payload.get(key) {
+        Some(Value::String(value)) if value.len() <= max_len && !value.contains('\0') => {
+            Ok(value.clone())
+        }
+        Some(Value::String(_)) => Err(format!("{key} is invalid")),
+        Some(_) => Err(format!("{key} must be a string")),
+        None => Err(format!("{key} is required")),
+    }
+}
+
+fn is_hex_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+}
+
+fn validate_upload_id(upload_id: &str) -> Result<(), String> {
+    if !upload_id.starts_with("wc_upload_") {
+        return Err("upload_id must start with wc_upload_".to_string());
+    }
+    if upload_id.len() > 96 {
+        return Err("upload_id too long".to_string());
+    }
+    if !upload_id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err("upload_id contains unsupported characters".to_string());
+    }
+    Ok(())
+}
+
 fn project_root(request: &ShellAgentShellRequest) -> Result<std::path::PathBuf, String> {
     let Some(cwd) = request.cwd.as_deref() else {
         return Err("artifact request missing project root".to_string());
@@ -106,6 +181,17 @@ fn ensure_parent_in_project_root(resolved: &Path, root: &Path) -> Result<(), Str
         .ok_or_else(|| "target path has no parent directory".to_string())?;
     std::fs::create_dir_all(parent).map_err(|e| format!("write failed: {}", e))?;
     let parent = std::fs::canonicalize(parent).map_err(|e| format!("write failed: {}", e))?;
+    if parent != root && !parent.starts_with(root) {
+        return Err("artifact path escapes project root".to_string());
+    }
+    Ok(())
+}
+
+fn ensure_existing_parent_in_project_root(resolved: &Path, root: &Path) -> Result<(), String> {
+    let parent = resolved
+        .parent()
+        .ok_or_else(|| "target path has no parent directory".to_string())?;
+    let parent = std::fs::canonicalize(parent).map_err(|e| format!("upload failed: {}", e))?;
     if parent != root && !parent.starts_with(root) {
         return Err("artifact path escapes project root".to_string());
     }
@@ -152,12 +238,76 @@ fn write_bytes_atomic_strict(path: &Path, data: &[u8]) -> Result<(), String> {
     Err(last_error.unwrap_or_else(|| "could not create temporary artifact file".to_string()))
 }
 
+#[derive(Debug, Deserialize, Serialize)]
+struct ArtifactUploadState {
+    path: String,
+    expected_bytes: Option<usize>,
+    expected_sha256: Option<String>,
+    mime_type: Option<String>,
+    overwrite: bool,
+    max_bytes: usize,
+}
+
+fn upload_paths(parent: &Path, upload_id: &str) -> (PathBuf, PathBuf) {
+    (
+        parent.join(format!(".pd-upload-{upload_id}.part")),
+        parent.join(format!(".pd-upload-{upload_id}.json")),
+    )
+}
+
+fn new_upload_id(attempt: usize) -> String {
+    let nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    format!("wc_upload_{}_{}_{}", std::process::id(), nanos, attempt)
+}
+
+fn write_upload_state(sidecar: &Path, state: &ArtifactUploadState) -> Result<(), String> {
+    let data = serde_json::to_vec(state).map_err(|e| format!("upload state failed: {e}"))?;
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(sidecar)
+        .map_err(|e| format!("upload state failed: {e}"))?;
+    file.write_all(&data)
+        .map_err(|e| format!("upload state failed: {e}"))?;
+    file.sync_all()
+        .map_err(|e| format!("upload state failed: {e}"))?;
+    Ok(())
+}
+
+fn read_upload_state(sidecar: &Path, requested_path: &str) -> Result<ArtifactUploadState, String> {
+    let data = std::fs::read(sidecar).map_err(|e| format!("upload not found: {e}"))?;
+    let state: ArtifactUploadState =
+        serde_json::from_slice(&data).map_err(|e| format!("invalid upload state: {e}"))?;
+    if state.path != requested_path {
+        return Err("upload_id does not belong to requested path".to_string());
+    }
+    Ok(state)
+}
+
 fn save_error(path: Option<&str>, msg: impl Into<String>) -> Value {
     json!({
         "path": path,
         "bytes_written": 0,
         "sha256": Value::Null,
         "mime_type": Value::Null,
+        "error": msg.into(),
+    })
+}
+
+fn upload_error(path: Option<&str>, upload_id: Option<&str>, msg: impl Into<String>) -> Value {
+    json!({
+        "path": path,
+        "upload_id": upload_id,
+        "received_bytes": 0,
+        "expected_bytes": Value::Null,
+        "expected_sha256": Value::Null,
+        "sha256": Value::Null,
+        "mime_type": Value::Null,
+        "committed": false,
+        "aborted": false,
         "error": msg.into(),
     })
 }
@@ -183,6 +333,7 @@ fn read_error(path: Option<&str>, msg: impl Into<String>) -> Value {
         "content_base64": "",
         "next_offset": 0,
         "truncated": false,
+        "eof": false,
         "error": msg.into(),
     })
 }
@@ -352,6 +503,10 @@ pub(crate) fn handle_artifact_file_request(
             handle_read_project_artifact_metadata(request, resolved, start)
         }
         "file_read_project_artifact" => handle_read_project_artifact(request, resolved, start),
+        "file_artifact_upload_begin" => handle_artifact_upload_begin(request, resolved, start),
+        "file_artifact_upload_chunk" => handle_artifact_upload_chunk(request, resolved, start),
+        "file_artifact_upload_finish" => handle_artifact_upload_finish(request, resolved, start),
+        "file_artifact_upload_abort" => handle_artifact_upload_abort(request, resolved, start),
         _ => CommandResult {
             exit_code: None,
             stdout: None,
@@ -460,6 +615,606 @@ fn handle_save_project_artifact(
     )
 }
 
+fn handle_artifact_upload_begin(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let payload = match parse_json_payload(request) {
+        Ok(payload) => payload,
+        Err(e) => return line_edit_stdout(upload_error(None, None, e), start),
+    };
+    if let Err(e) = validate_artifact_agent_path(path) {
+        return line_edit_stdout(upload_error(Some(path), None, e), start);
+    }
+    let root = match project_root(request) {
+        Ok(root) => root,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+    let max_bytes = match parse_usize_field(&payload, "max_bytes", DEFAULT_MAX_ARTIFACT_BYTES) {
+        Ok(value) if value > 0 => value,
+        Ok(_) => {
+            return line_edit_stdout(
+                upload_error(Some(path), None, "max_bytes must be >= 1"),
+                start,
+            )
+        }
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+    let expected_bytes = match parse_optional_usize_field(&payload, "expected_bytes") {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+    if expected_bytes.is_some_and(|bytes| bytes > max_bytes) {
+        return line_edit_stdout(
+            upload_error(Some(path), None, "expected_bytes exceeds max_bytes"),
+            start,
+        );
+    }
+    let expected_sha256 = match parse_optional_clean_string(&payload, "expected_sha256", 64) {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+    if expected_sha256
+        .as_deref()
+        .is_some_and(|sha256| !is_hex_sha256(sha256))
+    {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                None,
+                "expected_sha256 must be a lowercase 64-char hex sha256 digest",
+            ),
+            start,
+        );
+    }
+    let mime_type = match parse_optional_clean_string(&payload, "mime_type", 128) {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+    let overwrite = match parse_bool_field(&payload, "overwrite") {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+
+    let exists = std::fs::symlink_metadata(resolved).is_ok();
+    if exists && !overwrite {
+        return line_edit_stdout(
+            upload_error(Some(path), None, "file exists and overwrite is false"),
+            start,
+        );
+    }
+    if exists
+        && std::fs::symlink_metadata(resolved)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+    {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                None,
+                "refusing to overwrite symlink artifact path",
+            ),
+            start,
+        );
+    }
+    if let Err(e) = ensure_parent_in_project_root(resolved, &root) {
+        return line_edit_stdout(upload_error(Some(path), None, e), start);
+    }
+    if std::fs::symlink_metadata(resolved)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(false)
+    {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                None,
+                "refusing to overwrite symlink artifact path",
+            ),
+            start,
+        );
+    }
+    let parent = match resolved.parent() {
+        Some(parent) => parent,
+        None => {
+            return line_edit_stdout(
+                upload_error(Some(path), None, "target path has no parent directory"),
+                start,
+            )
+        }
+    };
+    let state = ArtifactUploadState {
+        path: path.to_string(),
+        expected_bytes,
+        expected_sha256,
+        mime_type,
+        overwrite,
+        max_bytes,
+    };
+    let mut last_error = None;
+    for attempt in 0..16 {
+        let upload_id = new_upload_id(attempt);
+        let (part, sidecar) = upload_paths(parent, &upload_id);
+        if sidecar.exists() {
+            continue;
+        }
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&part)
+        {
+            Ok(file) => {
+                if let Err(e) = file.sync_all() {
+                    let _ = std::fs::remove_file(&part);
+                    return line_edit_stdout(
+                        upload_error(
+                            Some(path),
+                            Some(&upload_id),
+                            format!("upload begin failed: {e}"),
+                        ),
+                        start,
+                    );
+                }
+                drop(file);
+                if let Err(e) = write_upload_state(&sidecar, &state) {
+                    let _ = std::fs::remove_file(&part);
+                    return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+                }
+                if let Ok(dir) = std::fs::File::open(parent) {
+                    let _ = dir.sync_all();
+                }
+                return line_edit_stdout(
+                    json!({
+                        "upload_id": upload_id,
+                        "path": path,
+                        "received_bytes": 0,
+                        "next_offset": 0,
+                        "expected_bytes": state.expected_bytes,
+                        "expected_sha256": state.expected_sha256,
+                        "max_bytes": state.max_bytes,
+                        "mime_type": state.mime_type,
+                        "overwrite": state.overwrite,
+                        "committed": false,
+                    }),
+                    start,
+                );
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                last_error = Some(e.to_string());
+            }
+            Err(e) => {
+                return line_edit_stdout(
+                    upload_error(Some(path), None, format!("upload begin failed: {e}")),
+                    start,
+                )
+            }
+        }
+    }
+    line_edit_stdout(
+        upload_error(
+            Some(path),
+            None,
+            last_error.unwrap_or_else(|| "could not create upload session".to_string()),
+        ),
+        start,
+    )
+}
+
+fn handle_artifact_upload_chunk(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let payload = match parse_json_payload(request) {
+        Ok(payload) => payload,
+        Err(e) => return line_edit_stdout(upload_error(None, None, e), start),
+    };
+    let upload_id = match parse_required_clean_string(&payload, "upload_id", 96) {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+    if let Err(e) = validate_upload_id(&upload_id) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    if let Err(e) = validate_artifact_agent_path(path) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    let offset = match parse_optional_usize_field(&payload, "offset") {
+        Ok(Some(value)) => value,
+        Ok(None) => {
+            return line_edit_stdout(
+                upload_error(Some(path), Some(&upload_id), "offset is required"),
+                start,
+            )
+        }
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    let max_chunk_bytes = match parse_usize_field(
+        &payload,
+        "max_chunk_bytes",
+        DEFAULT_MAX_ARTIFACT_UPLOAD_CHUNK_BYTES,
+    ) {
+        Ok(value) if value > 0 => value,
+        Ok(_) => {
+            return line_edit_stdout(
+                upload_error(Some(path), Some(&upload_id), "max_chunk_bytes must be >= 1"),
+                start,
+            )
+        }
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    let content_base64 = match payload.get("content_base64").and_then(Value::as_str) {
+        Some(value) if !value.contains('\0') => value,
+        _ => {
+            return line_edit_stdout(
+                upload_error(
+                    Some(path),
+                    Some(&upload_id),
+                    "content_base64 must be a base64 string without NUL",
+                ),
+                start,
+            )
+        }
+    };
+    let data = match general_purpose::STANDARD.decode(content_base64.as_bytes()) {
+        Ok(data) => data,
+        Err(e) => {
+            return line_edit_stdout(
+                upload_error(Some(path), Some(&upload_id), format!("invalid base64: {e}")),
+                start,
+            )
+        }
+    };
+    if data.is_empty() {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                Some(&upload_id),
+                "decoded chunk must contain at least 1 byte",
+            ),
+            start,
+        );
+    }
+    if data.len() > max_chunk_bytes {
+        return line_edit_stdout(
+            upload_error(Some(path), Some(&upload_id), "decoded chunk too large"),
+            start,
+        );
+    }
+    let root = match project_root(request) {
+        Ok(root) => root,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    if let Err(e) = ensure_existing_parent_in_project_root(resolved, &root) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    let parent = match resolved.parent() {
+        Some(parent) => parent,
+        None => {
+            return line_edit_stdout(
+                upload_error(
+                    Some(path),
+                    Some(&upload_id),
+                    "target path has no parent directory",
+                ),
+                start,
+            )
+        }
+    };
+    let (part, sidecar) = upload_paths(parent, &upload_id);
+    let state = match read_upload_state(&sidecar, path) {
+        Ok(state) => state,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    let received_bytes = match std::fs::metadata(&part) {
+        Ok(metadata) => metadata.len() as usize,
+        Err(e) => {
+            return line_edit_stdout(
+                upload_error(
+                    Some(path),
+                    Some(&upload_id),
+                    format!("upload chunk failed: {e}"),
+                ),
+                start,
+            )
+        }
+    };
+    if received_bytes != offset {
+        return line_edit_stdout(
+            json!({
+                "path": path,
+                "upload_id": upload_id,
+                "received_bytes": received_bytes,
+                "next_offset": received_bytes,
+                "expected_bytes": state.expected_bytes,
+                "expected_sha256": state.expected_sha256,
+                "max_bytes": state.max_bytes,
+                "mime_type": state.mime_type,
+                "committed": false,
+                "error": "offset does not match received_bytes",
+            }),
+            start,
+        );
+    }
+    let next_offset = match received_bytes.checked_add(data.len()) {
+        Some(value) => value,
+        None => {
+            return line_edit_stdout(
+                upload_error(Some(path), Some(&upload_id), "upload size overflow"),
+                start,
+            )
+        }
+    };
+    if next_offset > state.max_bytes {
+        return line_edit_stdout(
+            upload_error(Some(path), Some(&upload_id), "upload exceeds max_bytes"),
+            start,
+        );
+    }
+    let mut file = match std::fs::OpenOptions::new().append(true).open(&part) {
+        Ok(file) => file,
+        Err(e) => {
+            return line_edit_stdout(
+                upload_error(
+                    Some(path),
+                    Some(&upload_id),
+                    format!("upload chunk failed: {e}"),
+                ),
+                start,
+            )
+        }
+    };
+    if let Err(e) = file.write_all(&data) {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                Some(&upload_id),
+                format!("upload chunk failed: {e}"),
+            ),
+            start,
+        );
+    }
+    if let Err(e) = file.sync_all() {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                Some(&upload_id),
+                format!("upload chunk failed: {e}"),
+            ),
+            start,
+        );
+    }
+    line_edit_stdout(
+        json!({
+            "path": path,
+            "upload_id": upload_id,
+            "received_bytes": next_offset,
+            "next_offset": next_offset,
+            "expected_bytes": state.expected_bytes,
+            "expected_sha256": state.expected_sha256,
+            "max_bytes": state.max_bytes,
+            "mime_type": state.mime_type,
+            "committed": false,
+        }),
+        start,
+    )
+}
+
+fn handle_artifact_upload_finish(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let payload = match parse_json_payload(request) {
+        Ok(payload) => payload,
+        Err(e) => return line_edit_stdout(upload_error(None, None, e), start),
+    };
+    let upload_id = match parse_required_clean_string(&payload, "upload_id", 96) {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+    if let Err(e) = validate_upload_id(&upload_id) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    if let Err(e) = validate_artifact_agent_path(path) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    let root = match project_root(request) {
+        Ok(root) => root,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    if let Err(e) = ensure_existing_parent_in_project_root(resolved, &root) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    let parent = match resolved.parent() {
+        Some(parent) => parent,
+        None => {
+            return line_edit_stdout(
+                upload_error(
+                    Some(path),
+                    Some(&upload_id),
+                    "target path has no parent directory",
+                ),
+                start,
+            )
+        }
+    };
+    let (part, sidecar) = upload_paths(parent, &upload_id);
+    let state = match read_upload_state(&sidecar, path) {
+        Ok(state) => state,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    let data = match read_limited(&part, state.max_bytes) {
+        Ok(data) => data,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    let bytes = data.len();
+    if state
+        .expected_bytes
+        .is_some_and(|expected| expected != bytes)
+    {
+        return line_edit_stdout(
+            json!({
+                "path": path,
+                "upload_id": upload_id,
+                "received_bytes": bytes,
+                "expected_bytes": state.expected_bytes,
+                "expected_sha256": state.expected_sha256,
+                "sha256": sha256_hex_bytes(&data),
+                "mime_type": state.mime_type,
+                "committed": false,
+                "error": "uploaded byte count does not match expected_bytes",
+            }),
+            start,
+        );
+    }
+    let sha256 = sha256_hex_bytes(&data);
+    if state
+        .expected_sha256
+        .as_deref()
+        .is_some_and(|expected| expected != sha256)
+    {
+        return line_edit_stdout(
+            json!({
+                "path": path,
+                "upload_id": upload_id,
+                "received_bytes": bytes,
+                "expected_bytes": state.expected_bytes,
+                "expected_sha256": state.expected_sha256,
+                "sha256": sha256,
+                "mime_type": state.mime_type,
+                "committed": false,
+                "error": "uploaded sha256 does not match expected_sha256",
+            }),
+            start,
+        );
+    }
+    let exists = std::fs::symlink_metadata(resolved).is_ok();
+    if exists && !state.overwrite {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                Some(&upload_id),
+                "file exists and overwrite is false",
+            ),
+            start,
+        );
+    }
+    if exists
+        && std::fs::symlink_metadata(resolved)
+            .map(|metadata| metadata.file_type().is_symlink())
+            .unwrap_or(false)
+    {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                Some(&upload_id),
+                "refusing to overwrite symlink artifact path",
+            ),
+            start,
+        );
+    }
+    if let Err(e) = std::fs::rename(&part, resolved) {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                Some(&upload_id),
+                format!("upload finish failed: {e}"),
+            ),
+            start,
+        );
+    }
+    if let Ok(dir) = std::fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+    let _ = std::fs::remove_file(&sidecar);
+    line_edit_stdout(
+        json!({
+            "path": path,
+            "upload_id": upload_id,
+            "bytes": bytes,
+            "received_bytes": bytes,
+            "expected_bytes": state.expected_bytes,
+            "expected_sha256": state.expected_sha256,
+            "sha256": sha256,
+            "mime_type": state.mime_type.or_else(|| artifact_mime(path, &data, true)),
+            "committed": true,
+        }),
+        start,
+    )
+}
+
+fn handle_artifact_upload_abort(
+    request: &ShellAgentShellRequest,
+    resolved: &Path,
+    start: Instant,
+) -> CommandResult {
+    let path = request.path.as_deref().unwrap_or_default();
+    let payload = match parse_json_payload(request) {
+        Ok(payload) => payload,
+        Err(e) => return line_edit_stdout(upload_error(None, None, e), start),
+    };
+    let upload_id = match parse_required_clean_string(&payload, "upload_id", 96) {
+        Ok(value) => value,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
+    };
+    if let Err(e) = validate_upload_id(&upload_id) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    if let Err(e) = validate_artifact_agent_path(path) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    let root = match project_root(request) {
+        Ok(root) => root,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    if let Err(e) = ensure_existing_parent_in_project_root(resolved, &root) {
+        return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start);
+    }
+    let parent = match resolved.parent() {
+        Some(parent) => parent,
+        None => {
+            return line_edit_stdout(
+                upload_error(
+                    Some(path),
+                    Some(&upload_id),
+                    "target path has no parent directory",
+                ),
+                start,
+            )
+        }
+    };
+    let (part, sidecar) = upload_paths(parent, &upload_id);
+    let state = match read_upload_state(&sidecar, path) {
+        Ok(state) => state,
+        Err(e) => return line_edit_stdout(upload_error(Some(path), Some(&upload_id), e), start),
+    };
+    let received_bytes = std::fs::metadata(&part)
+        .map(|metadata| metadata.len() as usize)
+        .unwrap_or(0);
+    let _ = std::fs::remove_file(&part);
+    let _ = std::fs::remove_file(&sidecar);
+    if let Ok(dir) = std::fs::File::open(parent) {
+        let _ = dir.sync_all();
+    }
+    line_edit_stdout(
+        json!({
+            "path": path,
+            "upload_id": upload_id,
+            "received_bytes": received_bytes,
+            "expected_bytes": state.expected_bytes,
+            "expected_sha256": state.expected_sha256,
+            "mime_type": state.mime_type,
+            "committed": false,
+            "aborted": true,
+        }),
+        start,
+    )
+}
+
 fn handle_read_project_artifact_metadata(
     request: &ShellAgentShellRequest,
     resolved: &Path,
@@ -495,6 +1250,16 @@ fn handle_read_project_artifact_metadata(
         "sha256": sha256_hex_bytes(&data),
         "mime_type": mime_type,
     });
+    if let Ok(modified) = std::fs::metadata(resolved)
+        .and_then(|metadata| metadata.modified())
+        .and_then(|modified| {
+            modified
+                .duration_since(UNIX_EPOCH)
+                .map_err(std::io::Error::other)
+        })
+    {
+        out["modified_at"] = json!(modified.as_secs());
+    }
     if let Some((width, height)) = image_size(&data) {
         out["width"] = json!(width);
         out["height"] = json!(height);
@@ -588,6 +1353,7 @@ fn handle_read_project_artifact(
             "content_base64": general_purpose::STANDARD.encode(segment),
             "next_offset": next_offset,
             "truncated": truncated,
+            "eof": !truncated,
         }),
         start,
     )

@@ -806,6 +806,141 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 ),
             ),
         ]),
+        "save_project_artifact" => wrapped_output_schema(vec![
+            (
+                "path",
+                schema_type("string", "Project-relative artifact path."),
+            ),
+            (
+                "bytes_written",
+                schema_type("integer", "Bytes written to the artifact path."),
+            ),
+            (
+                "sha256",
+                schema_type("string", "sha256 digest of the written artifact."),
+            ),
+            (
+                "mime_type",
+                nullable_schema("string", "Caller-provided MIME type, when provided."),
+            ),
+        ]),
+        "read_project_artifact_metadata" => wrapped_output_schema(vec![
+            (
+                "path",
+                schema_type("string", "Project-relative artifact path."),
+            ),
+            ("bytes", schema_type("integer", "Artifact size in bytes.")),
+            (
+                "sha256",
+                schema_type("string", "sha256 digest of the full artifact file."),
+            ),
+            (
+                "mime_type",
+                nullable_schema("string", "Detected or inferred MIME type."),
+            ),
+            (
+                "modified_at",
+                schema_type("integer", "File modification time as unix timestamp seconds."),
+            ),
+            ("width", schema_type("integer", "Image width, when cheaply detected.")),
+            (
+                "height",
+                schema_type("integer", "Image height, when cheaply detected."),
+            ),
+            (
+                "archive_entries_count",
+                nullable_schema("integer", "Zip entry count, when cheaply detected."),
+            ),
+        ]),
+        "artifact_upload_begin" | "artifact_upload_chunk" => wrapped_output_schema(vec![
+            (
+                "path",
+                schema_type("string", "Project-relative artifact path."),
+            ),
+            (
+                "upload_id",
+                schema_type("string", "Opaque upload id for later chunks, finish, or abort."),
+            ),
+            (
+                "received_bytes",
+                schema_type("integer", "Bytes currently received for this upload."),
+            ),
+            (
+                "next_offset",
+                schema_type("integer", "Offset to pass with the next chunk."),
+            ),
+            (
+                "expected_bytes",
+                nullable_schema("integer", "Expected final byte count, when provided."),
+            ),
+            (
+                "expected_sha256",
+                nullable_schema("string", "Expected final sha256, when provided."),
+            ),
+            ("max_bytes", schema_type("integer", "Maximum upload size in bytes.")),
+            (
+                "mime_type",
+                nullable_schema("string", "Caller-provided MIME type, when provided."),
+            ),
+            (
+                "committed",
+                schema_type("boolean", "False until artifact_upload_finish succeeds."),
+            ),
+        ]),
+        "artifact_upload_finish" => wrapped_output_schema(vec![
+            (
+                "path",
+                schema_type("string", "Project-relative artifact path."),
+            ),
+            ("upload_id", schema_type("string", "Committed upload id.")),
+            ("bytes", schema_type("integer", "Final artifact size in bytes.")),
+            (
+                "received_bytes",
+                schema_type("integer", "Bytes received before commit."),
+            ),
+            (
+                "expected_bytes",
+                nullable_schema("integer", "Expected final byte count, when provided."),
+            ),
+            (
+                "expected_sha256",
+                nullable_schema("string", "Expected final sha256, when provided."),
+            ),
+            (
+                "sha256",
+                schema_type("string", "sha256 digest of the committed artifact."),
+            ),
+            (
+                "mime_type",
+                nullable_schema("string", "Detected, inferred, or caller-provided MIME type."),
+            ),
+            ("committed", schema_type("boolean", "True when commit completed.")),
+        ]),
+        "artifact_upload_abort" => wrapped_output_schema(vec![
+            (
+                "path",
+                schema_type("string", "Project-relative artifact path."),
+            ),
+            ("upload_id", schema_type("string", "Aborted upload id.")),
+            (
+                "received_bytes",
+                schema_type("integer", "Bytes discarded from the temporary upload."),
+            ),
+            (
+                "expected_bytes",
+                nullable_schema("integer", "Expected final byte count, when provided."),
+            ),
+            (
+                "expected_sha256",
+                nullable_schema("string", "Expected final sha256, when provided."),
+            ),
+            (
+                "mime_type",
+                nullable_schema("string", "Caller-provided MIME type, when provided."),
+            ),
+            ("committed", schema_type("boolean", "False for aborted uploads.")),
+            ("aborted", schema_type("boolean", "True when temporary upload files were removed.")),
+        ]),
         "read_project_artifact" => wrapped_output_schema(vec![
             (
                 "path",
@@ -839,6 +974,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             (
                 "truncated",
                 schema_type("boolean", "True when more bytes remain after this chunk."),
+            ),
+            (
+                "eof",
+                schema_type("boolean", "True when this chunk reaches end of file."),
             ),
         ]),
         "search_project_text" => wrapped_output_schema(vec![

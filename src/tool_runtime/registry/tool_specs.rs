@@ -825,6 +825,55 @@ impl ToolRuntime {
                 annotations: tool_annotations("read_project_artifact"),
             },
             ToolSpec {
+                name: "artifact_upload_begin".to_string(),
+                description: "Begin a bounded chunked binary artifact upload. Creates a project-local temporary upload session; finish commits atomically to the target path.".to_string(),
+                input_schema: object_schema(with_optional_session_id(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative output path.", true),
+                    ("expected_bytes", "integer", "Optional final byte count guard.", false),
+                    ("expected_sha256", "string", "Optional final sha256 guard.", false),
+                    ("mime_type", "string", "Optional MIME type.", false),
+                    ("overwrite", "boolean", "Allow overwriting an existing file at finish (default false).", false),
+                ])),
+                output_schema: output_schema_for_tool("artifact_upload_begin"),
+                annotations: tool_annotations("artifact_upload_begin"),
+            },
+            ToolSpec {
+                name: "artifact_upload_chunk".to_string(),
+                description: "Append one base64 chunk to an active artifact upload. The caller must pass the expected offset; raw chunk content is not recorded in sessions.".to_string(),
+                input_schema: object_schema(with_optional_session_id(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative output path from begin.", true),
+                    ("upload_id", "string", "Opaque wc_upload_* id from artifact_upload_begin.", true),
+                    ("offset", "integer", "Expected current upload byte offset.", true),
+                    ("content_base64", "string", "Base64-encoded chunk; decoded chunk max is 65536 bytes.", true),
+                ])),
+                output_schema: output_schema_for_tool("artifact_upload_chunk"),
+                annotations: tool_annotations("artifact_upload_chunk"),
+            },
+            ToolSpec {
+                name: "artifact_upload_finish".to_string(),
+                description: "Verify expected size/sha256 for an active artifact upload and atomically commit the temporary file to the target artifact path.".to_string(),
+                input_schema: object_schema(with_optional_session_id(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative output path from begin.", true),
+                    ("upload_id", "string", "Opaque wc_upload_* id from artifact_upload_begin.", true),
+                ])),
+                output_schema: output_schema_for_tool("artifact_upload_finish"),
+                annotations: tool_annotations("artifact_upload_finish"),
+            },
+            ToolSpec {
+                name: "artifact_upload_abort".to_string(),
+                description: "Abort an active artifact upload and remove its project-local temporary file and sidecar; does not touch the final target path.".to_string(),
+                input_schema: object_schema(with_optional_session_id(vec![
+                    ("project", "string", "Agent-registered project id.", true),
+                    ("path", "string", "Project-relative output path from begin.", true),
+                    ("upload_id", "string", "Opaque wc_upload_* id from artifact_upload_begin.", true),
+                ])),
+                output_schema: output_schema_for_tool("artifact_upload_abort"),
+                annotations: tool_annotations("artifact_upload_abort"),
+            },
+            ToolSpec {
                 name: "replace_line_range".to_string(),
                 description: "Preferred source-code edit tool for local line changes with clear line numbers. Replaces a 1-based inclusive range; better than write_project_file or run_shell for source edits. Supports sha256/prefix guards.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
@@ -929,7 +978,9 @@ impl ToolRuntime {
                 "replace_in_file", "replace_exact_block",
                 "insert_before_pattern", "insert_after_pattern",
                 "write_project_file", "save_project_artifact",
-                "read_project_artifact_metadata", "read_project_artifact"
+                "read_project_artifact_metadata", "read_project_artifact",
+                "artifact_upload_begin", "artifact_upload_chunk",
+                "artifact_upload_finish", "artifact_upload_abort"
             ]),
             "shell": pick(&["cargo_fmt", "cargo_check", "cargo_test", "run_shell", "run_job"]),
             "jobs": pick(&[

@@ -818,8 +818,14 @@ pub(crate) const DEFAULT_READ_PROJECT_ARTIFACT_LENGTH: usize = 32 * 1024; // 32 
 /// Maximum returned segment size for `read_project_artifact`.
 pub(crate) const MAX_READ_PROJECT_ARTIFACT_LENGTH: usize = 64 * 1024; // 64 KiB
 
+/// Maximum decoded size accepted for one `artifact_upload_chunk` request.
+pub(crate) const MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES: usize = 64 * 1024; // 64 KiB
+
 /// Hard cap for a base64-encoded artifact payload plus JSON overhead.
 pub(crate) const MAX_PROJECT_ARTIFACT_BASE64_BYTES: usize = 14 * 1024 * 1024; // ~10 MiB decoded
+
+/// Hard cap for a base64-encoded chunk plus JSON overhead.
+pub(crate) const MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BASE64_BYTES: usize = 96 * 1024;
 
 /// Validate a project-relative file path for the Phase 4 structured edit
 /// tools (`replace_in_file`, `write_project_file`). Unlike the patch preflight
@@ -909,6 +915,39 @@ fn validate_artifact_mime(mime_type: Option<&str>) -> Result<Option<String>, Str
         "application/octet-stream" => Ok(Some(mime.to_string())),
         _ => Err(format!("unsupported mime_type '{}'; allowed first-pass artifact MIME types are image/png, image/jpeg, image/webp, application/pdf, application/zip, text/plain, text/csv, application/json", mime)),
     }
+}
+
+fn validate_artifact_mime_for_path(
+    path: &str,
+    mime_type: Option<&str>,
+) -> Result<Option<String>, String> {
+    let mime_type = validate_artifact_mime(mime_type)?;
+    if matches!(mime_type.as_deref(), Some("application/octet-stream")) {
+        let lower = path.to_lowercase();
+        let allowed = [
+            ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".zip", ".txt", ".csv", ".json",
+        ];
+        if !allowed.iter().any(|suffix| lower.ends_with(suffix)) {
+            return Err("application/octet-stream requires a safe artifact extension".to_string());
+        }
+    }
+    Ok(mime_type)
+}
+
+fn validate_artifact_upload_id(upload_id: &str) -> Result<(), String> {
+    if !upload_id.starts_with("wc_upload_") {
+        return Err("upload_id must start with wc_upload_".to_string());
+    }
+    if upload_id.len() > 96 {
+        return Err("upload_id too long".to_string());
+    }
+    if !upload_id
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+    {
+        return Err("upload_id contains unsupported characters".to_string());
+    }
+    Ok(())
 }
 
 /// True if `path` contains a sensitive component for the structured edit
@@ -1564,7 +1603,7 @@ impl ToolRuntime {
                 MAX_PROJECT_ARTIFACT_BASE64_BYTES
             ));
         }
-        let mime_type = match validate_artifact_mime(mime_type.as_deref()) {
+        let mime_type = match validate_artifact_mime_for_path(&path, mime_type.as_deref()) {
             Ok(v) => v,
             Err(e) => return ToolResult::err(e),
         };
@@ -1578,18 +1617,6 @@ impl ToolRuntime {
                 MAX_PROJECT_ARTIFACT_BYTES
             ));
         }
-        if matches!(mime_type.as_deref(), Some("application/octet-stream")) {
-            let lower = path.to_lowercase();
-            let allowed = [
-                ".png", ".jpg", ".jpeg", ".webp", ".pdf", ".zip", ".txt", ".csv", ".json",
-            ];
-            if !allowed.iter().any(|suffix| lower.ends_with(suffix)) {
-                return ToolResult::err(
-                    "application/octet-stream requires a safe artifact extension".to_string(),
-                );
-            }
-        }
-
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
             Err(e) => return ToolResult::err(e),
@@ -1767,6 +1794,197 @@ impl ToolRuntime {
             };
         }
         ToolResult::ok(obj)
+    }
+
+    async fn run_project_artifact_write_file_op(
+        &self,
+        project: String,
+        path: String,
+        payload: Value,
+        op: &str,
+        tool_name: &str,
+    ) -> ToolResult {
+        let proj = match self.resolve_project(&project).await {
+            Ok(p) => p,
+            Err(e) => return ToolResult::err(e),
+        };
+        if !proj.is_agent() {
+            return ToolResult::err(format!("{tool_name} requires an agent-registered project"));
+        }
+        let client_id = match proj.agent_client_id() {
+            Ok(id) => id.to_string(),
+            Err(e) => return ToolResult::err(e),
+        };
+        let obj = match self
+            .run_agent_json_file_op(client_id, proj.path.clone(), path, op, payload, tool_name)
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        if let Some(err) = obj
+            .get("error")
+            .and_then(|e| e.as_str())
+            .map(str::to_string)
+        {
+            return ToolResult {
+                success: false,
+                output: obj,
+                error: Some(err),
+            };
+        }
+        ToolResult::ok(obj)
+    }
+
+    pub(crate) async fn artifact_upload_begin(
+        &self,
+        project: String,
+        path: String,
+        expected_bytes: Option<usize>,
+        expected_sha256: Option<String>,
+        mime_type: Option<String>,
+        overwrite: Option<bool>,
+    ) -> ToolResult {
+        if let Err(e) = validate_artifact_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        if let Some(bytes) = expected_bytes {
+            if bytes > MAX_PROJECT_ARTIFACT_BYTES {
+                return ToolResult::err(format!(
+                    "expected_bytes too large; maximum is {} bytes",
+                    MAX_PROJECT_ARTIFACT_BYTES
+                ));
+            }
+        }
+        if let Some(hash) = expected_sha256.as_deref() {
+            if !is_hex_sha256(hash) {
+                return ToolResult::err(
+                    "expected_sha256 must be a lowercase 64-char hex sha256 digest".to_string(),
+                );
+            }
+        }
+        let mime_type = match validate_artifact_mime_for_path(&path, mime_type.as_deref()) {
+            Ok(v) => v,
+            Err(e) => return ToolResult::err(e),
+        };
+        let payload = json!({
+            "path": path.clone(),
+            "expected_bytes": expected_bytes,
+            "expected_sha256": expected_sha256,
+            "mime_type": mime_type,
+            "overwrite": overwrite.unwrap_or(false),
+            "max_bytes": MAX_PROJECT_ARTIFACT_BYTES,
+        });
+        self.run_project_artifact_write_file_op(
+            project,
+            path,
+            payload,
+            "artifact_upload_begin",
+            "artifact_upload_begin",
+        )
+        .await
+    }
+
+    pub(crate) async fn artifact_upload_chunk(
+        &self,
+        project: String,
+        path: String,
+        upload_id: String,
+        offset: usize,
+        content_base64: String,
+    ) -> ToolResult {
+        if let Err(e) = validate_artifact_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        if let Err(e) = validate_artifact_upload_id(&upload_id) {
+            return ToolResult::err(e);
+        }
+        if content_base64.len() > MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BASE64_BYTES {
+            return ToolResult::err(format!(
+                "content_base64 chunk too large; maximum encoded size is {} bytes",
+                MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BASE64_BYTES
+            ));
+        }
+        let decoded = match general_purpose::STANDARD.decode(content_base64.as_bytes()) {
+            Ok(bytes) => bytes,
+            Err(e) => return ToolResult::err(format!("invalid base64: {}", e)),
+        };
+        if decoded.is_empty() {
+            return ToolResult::err("decoded chunk must contain at least 1 byte");
+        }
+        if decoded.len() > MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES {
+            return ToolResult::err(format!(
+                "decoded chunk too large; maximum is {} bytes",
+                MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES
+            ));
+        }
+        let payload = json!({
+            "path": path.clone(),
+            "upload_id": upload_id,
+            "offset": offset,
+            "content_base64": content_base64,
+            "max_chunk_bytes": MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES,
+        });
+        self.run_project_artifact_write_file_op(
+            project,
+            path,
+            payload,
+            "artifact_upload_chunk",
+            "artifact_upload_chunk",
+        )
+        .await
+    }
+
+    pub(crate) async fn artifact_upload_finish(
+        &self,
+        project: String,
+        path: String,
+        upload_id: String,
+    ) -> ToolResult {
+        if let Err(e) = validate_artifact_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        if let Err(e) = validate_artifact_upload_id(&upload_id) {
+            return ToolResult::err(e);
+        }
+        let payload = json!({
+            "path": path.clone(),
+            "upload_id": upload_id,
+        });
+        self.run_project_artifact_write_file_op(
+            project,
+            path,
+            payload,
+            "artifact_upload_finish",
+            "artifact_upload_finish",
+        )
+        .await
+    }
+
+    pub(crate) async fn artifact_upload_abort(
+        &self,
+        project: String,
+        path: String,
+        upload_id: String,
+    ) -> ToolResult {
+        if let Err(e) = validate_artifact_file_path(&path) {
+            return ToolResult::err(e);
+        }
+        if let Err(e) = validate_artifact_upload_id(&upload_id) {
+            return ToolResult::err(e);
+        }
+        let payload = json!({
+            "path": path.clone(),
+            "upload_id": upload_id,
+        });
+        self.run_project_artifact_write_file_op(
+            project,
+            path,
+            payload,
+            "artifact_upload_abort",
+            "artifact_upload_abort",
+        )
+        .await
     }
 
     fn validate_line_edit_common(

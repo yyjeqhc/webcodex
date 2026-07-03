@@ -996,7 +996,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Use listRuntimeTools for all names."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Use listRuntimeTools for all names."
                 },
                 "recording_session_id": {
                     "type": "string",
@@ -1343,6 +1343,14 @@ fn schemas() -> Value {
                 "mime_type": {
                     "type": "string",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
+                },
+                "upload_id": {
+                    "type": "string",
+                    "description": "Flattened artifact_upload_chunk/finish/abort wc_upload_* id. Used only when `params` and `arguments` are absent."
+                },
+                "expected_bytes": {
+                    "type": "integer",
+                    "description": "Flattened artifact_upload_begin final byte count guard. Used only when `params` and `arguments` are absent."
                 },
                 "encoding": {
                     "type": "string",
@@ -2968,6 +2976,8 @@ mod tests {
             "with_line_numbers",
             "content_base64",
             "mime_type",
+            "upload_id",
+            "expected_bytes",
             "encoding",
             "offset",
             "length",

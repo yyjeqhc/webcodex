@@ -512,7 +512,11 @@ fn handle_file_request(policy: &AgentPolicy, request: &ShellAgentShellRequest) -
         "file_apply_text_edits" => handle_apply_text_edits_file_request(request, &resolved, start),
         "file_save_project_artifact"
         | "file_read_project_artifact_metadata"
-        | "file_read_project_artifact" => handle_artifact_file_request(request, &resolved, start),
+        | "file_read_project_artifact"
+        | "file_artifact_upload_begin"
+        | "file_artifact_upload_chunk"
+        | "file_artifact_upload_finish"
+        | "file_artifact_upload_abort" => handle_artifact_file_request(request, &resolved, start),
         "file_checkpoint_create" | "file_checkpoint_restore" => {
             handle_checkpoint_file_request(request, &resolved, start)
         }
@@ -2963,6 +2967,125 @@ shell_profile = "../rust"
             second["content_base64"],
             base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes[4..])
         );
+    }
+
+    #[test]
+    fn file_artifact_upload_chunks_finish_and_abort() {
+        let tmp = tempfile::tempdir().unwrap();
+        let policy = project_policy(tmp.path());
+        let path = "artifacts/imports/upload.bin";
+        let bytes = b"abcdefgh";
+        let expected_sha256 = sha256_hex_bytes(bytes);
+
+        let begin = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_artifact_upload_begin",
+                path,
+                serde_json::json!({
+                    "path": path,
+                    "expected_bytes": bytes.len(),
+                    "expected_sha256": expected_sha256,
+                    "mime_type": "application/octet-stream",
+                    "overwrite": false,
+                    "max_bytes": 1024,
+                }),
+            ),
+        ));
+        let upload_id = begin["upload_id"].as_str().unwrap().to_string();
+        assert!(upload_id.starts_with("wc_upload_"));
+        assert_eq!(begin["received_bytes"], 0);
+        assert!(!tmp.path().join(path).exists());
+
+        let first = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes[..4]);
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_artifact_upload_chunk",
+                path,
+                serde_json::json!({
+                    "path": path,
+                    "upload_id": upload_id.clone(),
+                    "offset": 0,
+                    "content_base64": first,
+                    "max_chunk_bytes": 4,
+                }),
+            ),
+        ));
+        assert_eq!(out["received_bytes"], 4);
+        assert_eq!(out["next_offset"], 4);
+        assert!(!tmp.path().join(path).exists());
+
+        let second =
+            base64::Engine::encode(&base64::engine::general_purpose::STANDARD, &bytes[4..]);
+        let out = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_artifact_upload_chunk",
+                path,
+                serde_json::json!({
+                    "path": path,
+                    "upload_id": upload_id.clone(),
+                    "offset": 4,
+                    "content_base64": second,
+                    "max_chunk_bytes": 4,
+                }),
+            ),
+        ));
+        assert_eq!(out["received_bytes"], bytes.len());
+
+        let finish = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_artifact_upload_finish",
+                path,
+                serde_json::json!({
+                    "path": path,
+                    "upload_id": upload_id,
+                }),
+            ),
+        ));
+        assert_eq!(finish["committed"], true);
+        assert_eq!(finish["bytes"], bytes.len());
+        assert_eq!(finish["sha256"], sha256_hex_bytes(bytes));
+        assert_eq!(std::fs::read(tmp.path().join(path)).unwrap(), bytes);
+
+        let abort_path = "artifacts/imports/abort.bin";
+        let begin_abort = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_artifact_upload_begin",
+                abort_path,
+                serde_json::json!({
+                    "path": abort_path,
+                    "expected_bytes": null,
+                    "expected_sha256": null,
+                    "mime_type": null,
+                    "overwrite": false,
+                    "max_bytes": 1024,
+                }),
+            ),
+        ));
+        let abort_upload_id = begin_abort["upload_id"].as_str().unwrap();
+        let abort = line_edit_json(handle_file_request(
+            &policy,
+            &json_file_op_request(
+                tmp.path(),
+                "file_artifact_upload_abort",
+                abort_path,
+                serde_json::json!({
+                    "path": abort_path,
+                    "upload_id": abort_upload_id,
+                }),
+            ),
+        ));
+        assert_eq!(abort["aborted"], true);
+        assert!(!tmp.path().join(abort_path).exists());
     }
 
     #[cfg(unix)]

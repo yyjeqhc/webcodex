@@ -716,6 +716,52 @@ pub enum ToolCall {
         max_bytes: Option<usize>,
     },
 
+    /// Begin a bounded chunked binary artifact upload. The agent creates a
+    /// project-local temporary upload file and returns an opaque upload id.
+    ArtifactUploadBegin {
+        project: String,
+        path: String,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        expected_bytes: Option<usize>,
+        #[serde(default)]
+        expected_sha256: Option<String>,
+        #[serde(default)]
+        mime_type: Option<String>,
+        #[serde(default)]
+        overwrite: Option<bool>,
+    },
+
+    /// Append one base64-encoded chunk to a bounded artifact upload.
+    ArtifactUploadChunk {
+        project: String,
+        path: String,
+        upload_id: String,
+        offset: usize,
+        content_base64: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Verify and atomically commit a bounded artifact upload.
+    ArtifactUploadFinish {
+        project: String,
+        path: String,
+        upload_id: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
+    /// Abort a bounded artifact upload and remove its temporary files.
+    ArtifactUploadAbort {
+        project: String,
+        path: String,
+        upload_id: String,
+        #[serde(default)]
+        session_id: Option<String>,
+    },
+
     /// Replace a 1-based inclusive line range in a UTF-8 file via the owning
     /// agent. The original range may be guarded by sha256 and/or prefix checks.
     ReplaceLineRange {
@@ -918,6 +964,10 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "save_project_artifact",
     "read_project_artifact_metadata",
     "read_project_artifact",
+    "artifact_upload_begin",
+    "artifact_upload_chunk",
+    "artifact_upload_finish",
+    "artifact_upload_abort",
     "replace_line_range",
     "insert_at_line",
     "delete_line_range",
@@ -1064,6 +1114,10 @@ impl ToolCall {
             Self::SaveProjectArtifact { .. } => "save_project_artifact",
             Self::ReadProjectArtifactMetadata { .. } => "read_project_artifact_metadata",
             Self::ReadProjectArtifact { .. } => "read_project_artifact",
+            Self::ArtifactUploadBegin { .. } => "artifact_upload_begin",
+            Self::ArtifactUploadChunk { .. } => "artifact_upload_chunk",
+            Self::ArtifactUploadFinish { .. } => "artifact_upload_finish",
+            Self::ArtifactUploadAbort { .. } => "artifact_upload_abort",
             Self::ReplaceLineRange { .. } => "replace_line_range",
             Self::InsertAtLine { .. } => "insert_at_line",
             Self::DeleteLineRange { .. } => "delete_line_range",
@@ -1108,6 +1162,10 @@ impl ToolCall {
             | Self::SaveProjectArtifact { session_id, .. }
             | Self::ReadProjectArtifactMetadata { session_id, .. }
             | Self::ReadProjectArtifact { session_id, .. }
+            | Self::ArtifactUploadBegin { session_id, .. }
+            | Self::ArtifactUploadChunk { session_id, .. }
+            | Self::ArtifactUploadFinish { session_id, .. }
+            | Self::ArtifactUploadAbort { session_id, .. }
             | Self::ReplaceLineRange { session_id, .. }
             | Self::InsertAtLine { session_id, .. }
             | Self::DeleteLineRange { session_id, .. }
@@ -1153,6 +1211,10 @@ impl ToolCall {
             | Self::SaveProjectArtifact { session_id, .. }
             | Self::ReadProjectArtifactMetadata { session_id, .. }
             | Self::ReadProjectArtifact { session_id, .. }
+            | Self::ArtifactUploadBegin { session_id, .. }
+            | Self::ArtifactUploadChunk { session_id, .. }
+            | Self::ArtifactUploadFinish { session_id, .. }
+            | Self::ArtifactUploadAbort { session_id, .. }
             | Self::ReplaceLineRange { session_id, .. }
             | Self::InsertAtLine { session_id, .. }
             | Self::DeleteLineRange { session_id, .. }
@@ -1203,6 +1265,10 @@ impl ToolCall {
             | Self::SaveProjectArtifact { project, .. }
             | Self::ReadProjectArtifactMetadata { project, .. }
             | Self::ReadProjectArtifact { project, .. }
+            | Self::ArtifactUploadBegin { project, .. }
+            | Self::ArtifactUploadChunk { project, .. }
+            | Self::ArtifactUploadFinish { project, .. }
+            | Self::ArtifactUploadAbort { project, .. }
             | Self::ReplaceLineRange { project, .. }
             | Self::InsertAtLine { project, .. }
             | Self::DeleteLineRange { project, .. }
@@ -1509,6 +1575,51 @@ impl ToolCall {
                 "offset": offset,
                 "length": length,
                 "max_bytes": max_bytes,
+            }),
+            Self::ArtifactUploadBegin {
+                project,
+                path,
+                expected_bytes,
+                expected_sha256,
+                mime_type,
+                overwrite,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "expected_bytes": expected_bytes,
+                "expected_sha256_present": expected_sha256.as_ref().is_some_and(|v| !v.is_empty()),
+                "mime_type": mime_type,
+                "overwrite": overwrite,
+            }),
+            Self::ArtifactUploadChunk {
+                project,
+                path,
+                upload_id,
+                offset,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "upload_id": upload_id,
+                "offset": offset,
+                "content_base64_present": true,
+            }),
+            Self::ArtifactUploadFinish {
+                project,
+                path,
+                upload_id,
+                ..
+            }
+            | Self::ArtifactUploadAbort {
+                project,
+                path,
+                upload_id,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "path": path,
+                "upload_id": upload_id,
             }),
             Self::ReplaceLineRange {
                 project,

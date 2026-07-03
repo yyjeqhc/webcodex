@@ -677,6 +677,10 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
             (
+                "artifact_upload_finish",
+                OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
+            ),
+            (
                 "replace_line_range",
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
@@ -705,6 +709,7 @@ mod tests {
             "show_changes",
             "read_file",
             "write_project_file",
+            "artifact_upload_finish",
             "apply_patch_checked",
             "run_shell",
             "cargo_test",

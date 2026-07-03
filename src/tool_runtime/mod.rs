@@ -1011,6 +1011,52 @@ impl ToolRuntime {
                     .await
             }
 
+            ToolCall::ArtifactUploadBegin {
+                project,
+                path,
+                session_id: _,
+                expected_bytes,
+                expected_sha256,
+                mime_type,
+                overwrite,
+            } => {
+                self.artifact_upload_begin(
+                    project,
+                    path,
+                    expected_bytes,
+                    expected_sha256,
+                    mime_type,
+                    overwrite,
+                )
+                .await
+            }
+
+            ToolCall::ArtifactUploadChunk {
+                project,
+                path,
+                upload_id,
+                offset,
+                content_base64,
+                session_id: _,
+            } => {
+                self.artifact_upload_chunk(project, path, upload_id, offset, content_base64)
+                    .await
+            }
+
+            ToolCall::ArtifactUploadFinish {
+                project,
+                path,
+                upload_id,
+                session_id: _,
+            } => self.artifact_upload_finish(project, path, upload_id).await,
+
+            ToolCall::ArtifactUploadAbort {
+                project,
+                path,
+                upload_id,
+                session_id: _,
+            } => self.artifact_upload_abort(project, path, upload_id).await,
+
             ToolCall::ReplaceLineRange {
                 project,
                 path,
@@ -1434,9 +1480,13 @@ fn tool_manifest_category(name: &str) -> &'static str {
         // Project management
         "list_projects" | "register_project" | "create_project" => "project",
         // Artifacts
-        "save_project_artifact" | "read_project_artifact_metadata" | "read_project_artifact" => {
-            "artifact"
-        }
+        "save_project_artifact"
+        | "read_project_artifact_metadata"
+        | "read_project_artifact"
+        | "artifact_upload_begin"
+        | "artifact_upload_chunk"
+        | "artifact_upload_finish"
+        | "artifact_upload_abort" => "artifact",
         // Cleanup / destructive
         "delete_project_files"
         | "git_restore_paths"

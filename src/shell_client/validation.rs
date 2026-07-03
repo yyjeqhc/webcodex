@@ -96,11 +96,15 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         | "save_project_artifact"
         | "read_project_artifact_metadata"
         | "read_project_artifact"
+        | "artifact_upload_begin"
+        | "artifact_upload_chunk"
+        | "artifact_upload_finish"
+        | "artifact_upload_abort"
         | "checkpoint_create"
         | "checkpoint_restore" => {}
         _ => {
             return Err(
-                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, replace_in_file, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, checkpoint_create, checkpoint_restore"
+                "op must be one of read, write, list, replace_line_range, insert_at_line, delete_line_range, replace_exact_block, insert_before_pattern, insert_after_pattern, replace_in_file, write_project_file, apply_text_edits, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, checkpoint_create, checkpoint_restore"
                     .to_string(),
             )
         }
@@ -119,7 +123,13 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
         matches!(body.op.as_str(), "replace_in_file" | "write_project_file");
     let artifact_payload = matches!(
         body.op.as_str(),
-        "save_project_artifact" | "read_project_artifact_metadata" | "read_project_artifact"
+        "save_project_artifact"
+            | "read_project_artifact_metadata"
+            | "read_project_artifact"
+            | "artifact_upload_begin"
+            | "artifact_upload_chunk"
+            | "artifact_upload_finish"
+            | "artifact_upload_abort"
     );
     let checkpoint_payload = matches!(body.op.as_str(), "checkpoint_create" | "checkpoint_restore");
 
@@ -340,7 +350,13 @@ pub(super) fn validate_file_request(body: &ShellFileOpRequest) -> Result<(), Str
                 return Err(format!("{} only accepts path/content", body.op));
             }
         }
-        "save_project_artifact" | "read_project_artifact_metadata" | "read_project_artifact" => {
+        "save_project_artifact"
+        | "read_project_artifact_metadata"
+        | "read_project_artifact"
+        | "artifact_upload_begin"
+        | "artifact_upload_chunk"
+        | "artifact_upload_finish"
+        | "artifact_upload_abort" => {
             if body.content.is_none() {
                 return Err(format!("content is required for op={}", body.op));
             }

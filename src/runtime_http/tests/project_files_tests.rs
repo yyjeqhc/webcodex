@@ -494,13 +494,13 @@ async fn http_phase4_edit_endpoints_dispatch_to_runtime() {
 }
 
 // =========================================================================
-// Dedicated writeProjectFile GPT Action - auth gate + dispatch wiring.
-// write_file reuses the existing REST wrapper and is still reachable via
+// Compatibility write_project_file REST wrapper - auth gate + dispatch wiring.
+// write_file remains reachable directly for non-GPT clients and through
 // callRuntimeTool / MCP.
 // =========================================================================
 
 #[tokio::test]
-async fn http_dedicated_write_file_requires_bearer_auth() {
+async fn http_compat_write_file_requires_bearer_auth() {
     let (_tmp, service) = super::phase2_service();
     let resp = TestClient::post("http://localhost/api/projects/write_file")
         .json(&json!({"project": "demo", "path": "x.txt", "content": "a"}))
@@ -511,7 +511,7 @@ async fn http_dedicated_write_file_requires_bearer_auth() {
 }
 
 #[tokio::test]
-async fn http_dedicated_write_file_dispatches_to_runtime() {
+async fn http_compat_write_file_dispatches_to_runtime() {
     // With a correct bearer token the dedicated route reaches the runtime.
     // The project id is not agent-registered, so the runtime returns a
     // structured error (not a 401/404) — proving the request was
@@ -536,7 +536,7 @@ async fn http_dedicated_write_file_dispatches_to_runtime() {
 }
 
 #[tokio::test]
-async fn dedicated_write_project_file_unknown_session_fails_before_mutation() {
+async fn compat_write_project_file_unknown_session_fails_before_mutation() {
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();

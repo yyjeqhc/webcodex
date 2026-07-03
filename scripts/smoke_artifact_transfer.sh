@@ -20,7 +20,7 @@ set -euo pipefail
 DEFAULT_PROJECT_ID="agent:special:webcodex-smoke"
 DEFAULT_ARTIFACT_PATH="artifacts/smoke/webcodex-artifact-transfer.txt"
 DEFAULT_ABORT_PATH="artifacts/smoke/webcodex-artifact-transfer-abort.txt"
-DEFAULT_EXPECTED_OPERATION_COUNT="27"
+DEFAULT_EXPECTED_OPERATION_COUNT="25"
 DEFAULT_MAX_OPERATION_COUNT="30"
 
 print_checklist() {
@@ -57,7 +57,7 @@ Preconditions:
 Checks covered by active mode:
 
   1. GET /openapi.json parses as JSON.
-  2. GPT Action operation_count is <= 30; the current recommended count is 27.
+  2. GPT Action operation_count is <= 30; the current recommended count is 25.
   3. Bounded discovery works through /api/tools/list and tool_manifest.
   4. artifact_upload_begin, artifact_upload_chunk, and artifact_upload_finish.
   5. read_project_artifact_metadata and read_project_artifact.

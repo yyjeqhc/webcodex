@@ -95,11 +95,15 @@ webcodex-cli token create-local \
 The GPT Actions surface is intentionally smaller than the full admin API. It includes runtime, project, git, patch, file, shell/job, artifact, and session operations.
 
 GPT Actions can expose at most 30 operations/tools. The current WebCodex OpenAPI
-surface is intentionally held at 27 operations. New runtime tools should usually
+surface is intentionally held at 25 operations. New runtime tools should usually
 remain reachable through `callRuntimeTool` instead of becoming dedicated
 Actions. Chunked artifact upload tools (`artifact_upload_begin`,
 `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`) are
 not dedicated GPT Action operations; call them through `callRuntimeTool`.
+Compatibility edit tools (`replace_in_file`, `write_project_file`) are also
+runtime-only compatibility paths. Use them through `callRuntimeTool` when
+needed; source editing should prefer `replace_line_range`, `insert_at_line`,
+`delete_line_range`, `apply_text_edits`, or `apply_patch_checked`.
 
 It does not expose user, API-token, agent-token, pairing/enrollment, setup, doctor, npm, server management, or audit endpoints such as:
 
@@ -327,7 +331,8 @@ Do not use shell/base64 as a fallback for large files. Calling
 binary payloads or cases where a trusted base64 string already exists; the
 import Action with `openaiFileIdRefs` is the preferred path for ChatGPT
 conversation files. `save_project_artifact` is not a replacement for
-`writeProjectFile` or the structured source-editing tools.
+`write_project_file` through `callRuntimeTool` or the structured source-editing
+tools.
 
 Artifact runtime tools form the project-local read/write loop:
 

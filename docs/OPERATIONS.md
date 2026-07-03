@@ -607,7 +607,7 @@ if len(ops) > 30:
 PY
 ```
 
-The current recommended GPT Action operation count is 27, and it must remain at
+The current recommended GPT Action operation count is 25, and it must remain at
 or below 30.
 
 6. Run deployment smoke checks:

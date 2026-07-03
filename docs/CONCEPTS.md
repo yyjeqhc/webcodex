@@ -100,7 +100,8 @@ For source edits, continue to use `replace_line_range`, `insert_at_line`,
 `delete_line_range`, `apply_text_edits`, and `apply_patch_checked`. Do not treat
 `save_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`,
 `artifact_upload_finish`, or `artifact_upload_abort` as replacements for
-source-editing tools or `write_project_file`.
+source-editing tools. Compatibility edit tools such as `write_project_file` and
+`replace_in_file` remain available through `callRuntimeTool`.
 
 ### GPT Actions surface
 
@@ -116,8 +117,9 @@ not expose user creation, PAT creation, agent-token creation, pairing,
 enrollment, setup, server management, or audit endpoints.
 
 GPT Actions must stay below the 30-operation limit. The current WebCodex
-OpenAPI surface is 27 operations, so chunked artifact upload remains available
-through `callRuntimeTool` rather than dedicated GPT Action operations.
+OpenAPI surface is 25 operations, so chunked artifact upload and compatibility
+edit tools remain available through `callRuntimeTool` rather than dedicated GPT
+Action operations.
 
 ### MCP surface
 

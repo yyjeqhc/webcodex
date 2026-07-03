@@ -94,8 +94,8 @@ struct DiscardUntrackedRequest {
 
 /// `POST /api/projects/replace_in_file` — thin REST wrapper over
 /// `ToolCall::ReplaceInFile`. Mutation with side effects: replaces a substring
-/// in a project file via the owning agent's native file-op path. Dedicated GPT Action
-/// (`replaceProjectFileText`); also reachable via callRuntimeTool / MCP.
+/// in a project file via the owning agent's native file-op path. Compatibility
+/// REST path; also reachable via callRuntimeTool / MCP.
 #[derive(Debug, Deserialize)]
 struct ReplaceInFileRequest {
     pub project: String,
@@ -112,9 +112,8 @@ struct ReplaceInFileRequest {
 
 /// `POST /api/projects/write_file` — thin REST wrapper over
 /// `ToolCall::WriteProjectFile`. Mutation with side effects: writes a UTF-8
-/// file via the owning agent with optional overwrite guards. Dedicated GPT
-/// Action (`writeProjectFile`); also reachable via callRuntimeTool / MCP
-/// tools/call.
+/// file via the owning agent with optional overwrite guards. Compatibility
+/// REST path; also reachable via callRuntimeTool / MCP tools/call.
 #[derive(Debug, Deserialize)]
 struct WriteProjectFileRequest {
     pub project: String,
@@ -557,9 +556,8 @@ pub async fn projects_discard_untracked(req: &mut Request, depot: &mut Depot, re
 /// `POST /api/projects/replace_in_file` — thin REST wrapper over
 /// `ToolCall::ReplaceInFile`. Mutation with side effects: replaces a substring
 /// in a project file via the owning agent's native file-op path. Requires Bearer auth
-/// and the agent file_write capability. Dedicated GPT Action
-/// (`replaceProjectFileText`); also reachable via callRuntimeTool / MCP
-/// tools/call.
+/// and the agent file_write capability. Compatibility REST path; also reachable
+/// via callRuntimeTool / MCP tools/call.
 #[handler]
 pub async fn projects_replace_in_file(req: &mut Request, depot: &mut Depot, res: &mut Response) {
     let audit = ActionAudit::start(req, depot, "/api/projects/replace_in_file", "replaceInFile");
@@ -604,11 +602,11 @@ pub async fn projects_replace_in_file(req: &mut Request, depot: &mut Depot, res:
 /// `POST /api/projects/write_file` — thin REST wrapper over
 /// `ToolCall::WriteProjectFile`. Mutation with side effects: writes a UTF-8
 /// file via the owning agent with optional overwrite guards. Requires Bearer
-/// auth and the agent file_write capability. Dedicated GPT Action
-/// (`writeProjectFile`); also reachable via callRuntimeTool / MCP tools/call.
+/// auth and the agent file_write capability. Compatibility REST path; also
+/// reachable via callRuntimeTool / MCP tools/call.
 #[handler]
 pub async fn projects_write_file(req: &mut Request, depot: &mut Depot, res: &mut Response) {
-    let audit = ActionAudit::start(req, depot, "/api/projects/write_file", "writeProjectFile");
+    let audit = ActionAudit::start(req, depot, "/api/projects/write_file", "write_project_file");
     let Some(runtime) = runtime(depot) else {
         res.status_code(StatusCode::INTERNAL_SERVER_ERROR);
         res.render(json_error(

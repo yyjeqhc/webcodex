@@ -713,7 +713,7 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     assert!(!metadata.shell_like);
     assert_eq!(metadata.oauth_scope, Some("runtime:read"));
 
-    // OpenAPI operation count must stay 27 while Codex delegation is hidden.
+    // OpenAPI operation count must stay 25 after demoting compatibility edits.
     let spec = crate::openapi::build_openapi_spec();
     let tool_desc = &spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
         ["description"]
@@ -736,7 +736,7 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         .values()
         .map(|m| m.as_object().unwrap().len())
         .sum();
-    assert_eq!(count, 27, "OpenAPI operation count must remain 27");
+    assert_eq!(count, 25, "OpenAPI operation count must remain 25");
 }
 
 // =========================================================================

@@ -89,9 +89,10 @@ schema/debug 时，再调用 `listRuntimeTools`，并传
 ### GPT Action 仍在使用旧 schema
 
 从已部署的 `/openapi.json` 重新导入 OpenAPI schema，然后检查 operation count。
-当前推荐值是 27，GPT Actions 上限是 30。如果 count 超过 30，不要直接部署该
+当前推荐值是 25，GPT Actions 上限是 30。如果 count 超过 30，不要直接部署该
 schema；artifact upload tools 应继续作为 runtime-only tools 通过
-`callRuntimeTool` 使用，不要新增 dedicated Actions。
+`callRuntimeTool` 使用，不要新增 dedicated Actions。兼容编辑工具也应继续通过
+`callRuntimeTool` 使用。
 
 ### MCP tool list 看起来是旧的
 

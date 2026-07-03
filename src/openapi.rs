@@ -24,17 +24,14 @@ fn public_url() -> String {
 /// 4. project mutation (`validateProjectPatch`, `applyProjectPatch`,
 ///    `applyProjectPatchChecked`, `runProjectShellCommand`,
 ///    `deleteProjectFiles`, `gitRestorePaths`, `discardUntrackedFiles`,
-///    `replaceProjectFileText`, `writeProjectFile`, `startProjectShellJob`)
+///    `startProjectShellJob`)
 /// 5. job inspection (`listRuntimeJobs`, `getRuntimeJobTail`)
 /// 6. advanced/generic entry point (`callRuntimeTool`)
 ///
-/// Phase 3 promotes the core runtime tools to dedicated GPT Actions, Phase 5
-/// promotes the safer structured text replacement action, and this phase
-/// promotes `write_project_file` and `run_job` to dedicated GPT Actions, so a
-/// custom GPT can drive the coding loop without `callRuntimeTool` for common
-/// edits and async command execution. Codex delegation is intentionally hidden
-/// from GPT Actions for now. `callRuntimeTool` remains as an advanced escape
-/// hatch; prefer the dedicated typed actions.
+/// The compatibility edit tools `replace_in_file` and `write_project_file`
+/// remain runtime tools reachable through `callRuntimeTool`; dedicated GPT
+/// Actions should prefer structured line edits, `apply_text_edits`, or
+/// `apply_patch_checked`.
 #[cfg(test)]
 const GPT_ACTION_OPS: &[&str] = &[
     "listRuntimeTools",
@@ -57,8 +54,6 @@ const GPT_ACTION_OPS: &[&str] = &[
     "deleteProjectFiles",
     "gitRestorePaths",
     "discardUntrackedFiles",
-    "replaceProjectFileText",
-    "writeProjectFile",
     "importConversationFilesToProject",
     "startProjectShellJob",
     "listRuntimeJobs",
@@ -97,12 +92,11 @@ const LEGACY_FORBIDDEN_PATHS: &[&str] = &[
     "/api/shell/jobs/stop",
     "/api/jobs/stop",
     "/api/shell/jobs/list",
-    // Phase 5: `replace_in_file` was promoted to a dedicated GPT Action
-    // (`replaceProjectFileText`) so it is no longer forbidden here. This phase
-    // promotes `write_file` (`writeProjectFile`) and `run_job`
-    // (`startProjectShellJob`) to dedicated GPT Actions as well, so they are
-    // no longer forbidden. All three remain reachable via callRuntimeTool /
-    // MCP tools/call too.
+    // Compatibility edit tools remain runtime-only. They are reachable through
+    // callRuntimeTool / MCP tools/call, but must not be promoted to dedicated
+    // GPT Actions.
+    "/api/projects/replace_in_file",
+    "/api/projects/write_file",
     "/api/shell/agent/register",
     "/api/shell/agent/poll",
     "/api/shell/agent/result",
@@ -593,55 +587,6 @@ pub(crate) fn build_openapi_spec() -> Value {
                     })
                 )
             },
-            "/api/projects/replace_in_file": {
-                "post": operation_with_examples(
-                    "replaceProjectFileText",
-                    "Replace text in a project file",
-                    "Mutation with side effects: modifies a project file by replacing a unique substring via the owning agent shell capability. Requires Bearer auth. Fails without writing when old is missing or ambiguous. Rejects sensitive paths.",
-                    "ReplaceInFileRequest",
-                    "ToolResult",
-                    json!({
-                        "byProject": {
-                            "summary": "Replace a unique substring in a project file",
-                            "value": {
-                                "project": "webcodex",
-                                "path": "src/main.rs",
-                                "old": "fn main()",
-                                "new": "fn main() -> Result<(), Box<dyn std::error::Error>>"
-                            }
-                        }
-                    })
-                )
-            },
-            "/api/projects/write_file": {
-                "post": operation_with_examples(
-                    "writeProjectFile",
-                    "Write a project file",
-                    "Writes a UTF-8 project file via the owning agent, creating new files or overwriting existing ones. Mutation with side effects; requires Bearer auth and the agent shell capability. Use expected_sha256 or expected_content_prefix to guard overwrites. Rejects sensitive paths.",
-                    "WriteProjectFileRequest",
-                    "ToolResult",
-                    json!({
-                        "createNew": {
-                            "summary": "Create a new project file",
-                            "value": {
-                                "project": "webcodex",
-                                "path": "src/new_module.rs",
-                                "content": "// new module\n"
-                            }
-                        },
-                        "overwriteWithGuard": {
-                            "summary": "Overwrite an existing file with an expected_sha256 guard",
-                            "value": {
-                                "project": "webcodex",
-                                "path": "src/existing.rs",
-                                "content": "// updated\n",
-                                "overwrite": true,
-                                "expected_sha256": "a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2"
-                            }
-                        }
-                    })
-                )
-            },
             "/api/artifacts/import": {
                 "post": operation_with_examples(
                     "importConversationFilesToProject",
@@ -923,9 +868,7 @@ fn is_consequential_operation(operation_id: &str) -> bool {
 
         "applyProjectPatch"
         | "applyProjectPatchChecked"
-        | "writeProjectFile"
         | "importConversationFilesToProject"
-        | "replaceProjectFileText"
         | "runProjectShellCommand"
         | "startProjectShellJob"
         | "stopRuntimeJob"
@@ -1021,7 +964,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits, replace_in_file, write_project_file. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging."
                 },
                 "recording_session_id": {
                     "type": "string",
@@ -2203,7 +2146,7 @@ mod tests {
                 );
             }
         }
-        assert_eq!(count, 27);
+        assert_eq!(count, 25);
     }
 
     #[test]
@@ -2238,8 +2181,6 @@ mod tests {
         let consequential = [
             "applyProjectPatch",
             "applyProjectPatchChecked",
-            "writeProjectFile",
-            "replaceProjectFileText",
             "runProjectShellCommand",
             "startProjectShellJob",
             "deleteProjectFiles",
@@ -2258,7 +2199,7 @@ mod tests {
         for id in consequential {
             assert_eq!(flags.get(id), Some(&true), "{} should be consequential", id);
         }
-        assert_eq!(flags.len(), 27);
+        assert_eq!(flags.len(), 25);
     }
 
     #[test]
@@ -2327,8 +2268,6 @@ mod tests {
             "/api/projects/delete_files",
             "/api/projects/git_restore_paths",
             "/api/projects/discard_untracked",
-            "/api/projects/replace_in_file",
-            "/api/projects/write_file",
             "/api/projects/run_job",
             "/api/tools/call",
         ] {
@@ -2613,8 +2552,6 @@ mod tests {
             ("/api/projects/delete_files", "deleteProjectFiles"),
             ("/api/projects/git_restore_paths", "gitRestorePaths"),
             ("/api/projects/discard_untracked", "discardUntrackedFiles"),
-            ("/api/projects/replace_in_file", "replaceProjectFileText"),
-            ("/api/projects/write_file", "writeProjectFile"),
             ("/api/projects/run_job", "startProjectShellJob"),
             ("/api/projects/register", "registerProject"),
             ("/api/projects/create", "createProject"),
@@ -2698,14 +2635,6 @@ mod tests {
             "discardUntrackedFiles"
         );
         assert_eq!(
-            spec["paths"]["/api/projects/replace_in_file"]["post"]["operationId"],
-            "replaceProjectFileText"
-        );
-        assert_eq!(
-            spec["paths"]["/api/projects/write_file"]["post"]["operationId"],
-            "writeProjectFile"
-        );
-        assert_eq!(
             spec["paths"]["/api/projects/run_job"]["post"]["operationId"],
             "startProjectShellJob"
         );
@@ -2743,8 +2672,6 @@ mod tests {
             "/api/projects/delete_files",
             "/api/projects/git_restore_paths",
             "/api/projects/discard_untracked",
-            "/api/projects/replace_in_file",
-            "/api/projects/write_file",
             "/api/projects/run_job",
             "/api/projects/register",
             "/api/projects/create",
@@ -2775,8 +2702,6 @@ mod tests {
             "/api/projects/delete_files",
             "/api/projects/git_restore_paths",
             "/api/projects/discard_untracked",
-            "/api/projects/replace_in_file",
-            "/api/projects/write_file",
         ] {
             let desc = spec["paths"][path]["post"]["description"]
                 .as_str()
@@ -3143,7 +3068,7 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 27, "operation count must stay 27");
+        assert_eq!(count, 25, "operation count must stay 25");
     }
 
     #[test]
@@ -3197,7 +3122,7 @@ mod tests {
             .values()
             .map(|m| m.as_object().unwrap().len())
             .sum();
-        assert_eq!(count, 27, "operation count must stay 27");
+        assert_eq!(count, 25, "operation count must stay 25");
     }
 
     #[test]
@@ -3272,6 +3197,8 @@ mod tests {
             "/api/projects/workspace_checkpoint_show",
             "/api/projects/workspace_checkpoint_restore",
             "/api/projects/workspace_checkpoint_delete",
+            "/api/projects/replace_in_file",
+            "/api/projects/write_file",
         ] {
             assert!(
                 !paths.contains_key(forbidden),
@@ -3282,16 +3209,11 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_is_twenty_seven_after_hiding_codex_delegation() {
+    fn openapi_operation_count_is_twenty_five_after_demoting_compatibility_edits() {
         // Phase 3 promoted 10 core runtime tools to dedicated GPT Actions,
-        // bringing the schema from 12 to 22 ops. Phase 5 promotes
-        // replace_in_file to a dedicated GPT Action (replaceProjectFileText),
-        // bringing the count to 23. This phase promotes write_project_file
-        // (writeProjectFile) and run_job (startProjectShellJob) to dedicated
-        // GPT Actions, bringing the count to 25. The project management phase
-        // promotes register_project (registerProject) and create_project
-        // (createProject) to dedicated GPT Actions, bringing the count to 27.
-        // Hiding Codex delegation keeps the current GPT Action count at 27.
+        // then later phases promoted run_job plus project onboarding actions.
+        // Compatibility edit tools are now runtime-only again, so the current
+        // GPT Action count is 25 while Codex delegation remains hidden.
         // The surface must stay <= 30.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
@@ -3301,8 +3223,8 @@ mod tests {
             .map(|m| m.as_object().unwrap().len())
             .sum();
         assert_eq!(
-            count, 27,
-            "GPT Actions schema must be 27 operations while Codex delegation is hidden"
+            count, 25,
+            "GPT Actions schema must be 25 operations after demoting compatibility edits"
         );
         assert!(count <= 30, "GPT Actions schema must stay <= 30 operations");
     }
@@ -3331,7 +3253,7 @@ mod tests {
             );
         }
         let count = ids.len();
-        assert_eq!(count, 27, "GPT Actions operation count must stay 27");
+        assert_eq!(count, 25, "GPT Actions operation count must stay 25");
         assert!(count <= 30, "GPT Actions operation count must stay <= 30");
 
         let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
@@ -3387,37 +3309,49 @@ mod tests {
     }
 
     #[test]
-    fn openapi_write_file_and_run_job_promoted_to_dedicated_actions() {
-        // This phase promotes write_project_file (writeProjectFile) and
-        // run_job (startProjectShellJob) to dedicated GPT Actions. Both are
-        // also still reachable via callRuntimeTool / MCP tools/call.
+    fn openapi_compatibility_edit_tools_remain_runtime_only() {
+        // Compatibility edit tools remain reachable via callRuntimeTool / MCP
+        // tools/call, but should not be promoted to dedicated GPT Actions.
         let spec = build_openapi_spec();
         let paths = spec["paths"].as_object().unwrap();
         assert!(
-            paths.contains_key("/api/projects/write_file"),
-            "write_file must now appear in /openapi.json as a dedicated mutation action"
+            !paths.contains_key("/api/projects/write_file"),
+            "write_file must remain runtime-only through callRuntimeTool"
         );
-        assert_eq!(
-            spec["paths"]["/api/projects/write_file"]["post"]["operationId"],
-            "writeProjectFile"
+        assert!(
+            !paths.contains_key("/api/projects/replace_in_file"),
+            "replace_in_file must remain runtime-only through callRuntimeTool"
         );
         assert!(
             paths.contains_key("/api/projects/run_job"),
-            "run_job must now appear in /openapi.json as a dedicated execution action"
+            "run_job remains a dedicated execution action"
         );
         assert_eq!(
             spec["paths"]["/api/projects/run_job"]["post"]["operationId"],
             "startProjectShellJob"
         );
-        // Neither is forbidden any more; future edits catch accidental demotion.
         assert!(
-            !LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/write_file"),
-            "write_file must be removed from the forbidden guard now that it is a dedicated action"
+            LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/write_file"),
+            "write_file must stay in the forbidden guard"
+        );
+        assert!(
+            LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/replace_in_file"),
+            "replace_in_file must stay in the forbidden guard"
         );
         assert!(
             !LEGACY_FORBIDDEN_PATHS.contains(&"/api/projects/run_job"),
             "run_job must not be in the forbidden guard now that it is a dedicated action"
         );
+        let tool_desc = spec["components"]["schemas"]["ToolCallRequest"]["properties"]["tool"]
+            ["description"]
+            .as_str()
+            .unwrap();
+        for tool in ["write_project_file", "replace_in_file"] {
+            assert!(
+                tool_desc.contains(tool),
+                "callRuntimeTool must document runtime tool {tool}"
+            );
+        }
     }
 
     #[test]
@@ -3511,10 +3445,10 @@ mod tests {
     }
 
     #[test]
-    fn openapi_operation_count_stays_twenty_seven_after_hiding_codex_delegation() {
+    fn openapi_operation_count_stays_twenty_five_after_demoting_compatibility_edits() {
         // Phase 3 adds agent token management endpoints to the REST surface
         // but does NOT add them to /openapi.json. The GPT Actions operation
-        // count must remain 27 while Codex delegation is hidden.
+        // count must remain 25 while compatibility edit tools are runtime-only.
         let spec = build_openapi_spec();
         let count: usize = spec["paths"]
             .as_object()
@@ -3523,8 +3457,8 @@ mod tests {
             .map(|m| m.as_object().unwrap().len())
             .sum();
         assert_eq!(
-            count, 27,
-            "GPT Actions schema must remain 27 operations while Codex delegation is hidden"
+            count, 25,
+            "GPT Actions schema must remain 25 operations after demoting compatibility edits"
         );
     }
 }

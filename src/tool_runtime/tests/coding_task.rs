@@ -68,7 +68,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         .values()
         .map(|methods| methods.as_object().unwrap().len())
         .sum();
-    assert_eq!(operation_count, 27, "no dedicated OpenAPI operations added");
+    assert_eq!(operation_count, 25, "no dedicated OpenAPI operations added");
 }
 
 #[tokio::test]

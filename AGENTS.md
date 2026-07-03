@@ -173,7 +173,7 @@ If adding or renaming a runtime tool, update **all** of:
 - `callRuntimeTool` is advanced/generic; use dedicated Actions only for stable
   common workflows that fit the operation budget.
 - WebCodex GPT Actions must stay below the 30-operation GPT Actions limit. The
-  current OpenAPI surface is 27 operations.
+  current OpenAPI surface is 25 operations.
 - `listRuntimeTools` full detail discovery includes expanded schemas and may be
   too large for GPT Actions. Daily GPT Action discovery should prefer
   `callRuntimeTool(tool="tool_manifest")`; focused `listRuntimeTools` calls

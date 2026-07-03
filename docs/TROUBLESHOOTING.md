@@ -89,7 +89,7 @@ focused schema/debug view, call `listRuntimeTools` with `summary_only=true` plus
 ### GPT Action still uses an old schema
 
 Re-import the OpenAPI schema from the deployed `/openapi.json`, then check the
-operation count. The current recommended count is 27 and the GPT Actions limit
+operation count. The current recommended count is 25 and the GPT Actions limit
 is 30. If the count exceeds 30, do not deploy the schema as-is; artifact upload
 tools should remain runtime-only behind `callRuntimeTool`, not promoted to new
 dedicated Actions.

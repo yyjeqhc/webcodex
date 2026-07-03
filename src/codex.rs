@@ -966,8 +966,8 @@ mod trusted_command_tests {
             operation_ids
         );
         assert!(
-            operation_ids.contains(&"replaceProjectFileText".to_string()),
-            "generated schema should expose the structured text replace action, got: {:?}",
+            !operation_ids.contains(&"replaceProjectFileText".to_string()),
+            "generated schema should keep compatibility text replace runtime-only, got: {:?}",
             operation_ids
         );
         assert!(

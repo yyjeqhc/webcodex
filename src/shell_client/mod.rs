@@ -15,13 +15,14 @@ use salvo::prelude::*;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use tokio::sync::{oneshot, Mutex, Notify};
+use tokio::sync::{Mutex, Notify};
 use uuid::Uuid;
 
 mod auth;
 mod handlers;
 mod jobs;
 mod polling;
+mod requests;
 mod state;
 mod validation;
 
@@ -35,19 +36,20 @@ pub use handlers::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
 };
 use jobs::{
-    append_limited, assert_active_instance_locked, command_preview,
-    ensure_dispatch_supported_locked, ensure_queue_capacity_locked, is_final_job_status, job_view,
+    append_limited, assert_active_instance_locked, command_preview, is_final_job_status, job_view,
     offline_last_seen, refresh_job_status_locked, replace_limited, select_lines,
 };
-use state::{
-    NotifierEntry, PendingShellRequest, ShellClientRecord, ShellClientRegistryInner, ShellJobRecord,
+use requests::{
+    enqueue_pending_request_locked, next_request_id, notify_client_locked,
+    remove_pending_request_locked,
 };
+use state::{NotifierEntry, ShellClientRecord, ShellClientRegistryInner, ShellJobRecord};
 use validation::{
-    normalize_project_summaries, sha256_hex, trim_string, validate_agent_instance_id,
-    validate_file_request, validate_id, validate_optional_field, validate_run_request,
+    normalize_project_summaries, sha256_hex, trim_string, validate_agent_instance_id, validate_id,
+    validate_optional_field, validate_run_request,
 };
 #[cfg(test)]
-use validation::{MAX_COMMAND_LEN, MAX_RUN_STDIN_BYTES};
+use validation::{validate_file_request, MAX_COMMAND_LEN, MAX_RUN_STDIN_BYTES};
 
 const MAX_OUTPUT_BYTES: usize = 256 * 1024;
 const CLIENT_ONLINE_WINDOW_SECS: i64 = 60;
@@ -352,17 +354,6 @@ impl ShellClientRegistry {
         }
     }
 
-    /// Wake the push notifier for a client if one is registered. Called by
-    /// the enqueue paths (`enqueue_run`, `enqueue_file_op`, `start_job`,
-    /// `stop_job`) so the WebSocket pump can immediately push the new
-    /// request to the agent instead of waiting for a poll. Holds no lock of
-    /// its own; callers must already hold `inner`.
-    fn notify_client_locked(inner: &ShellClientRegistryInner, client_id: &str) {
-        if let Some(entry) = inner.notifiers.get(client_id) {
-            entry.notify.notify_one();
-        }
-    }
-
     pub async fn list_clients(&self) -> Vec<ShellClientView> {
         let inner = self.inner.lock().await;
         let mut ids = inner.clients.keys().cloned().collect::<Vec<_>>();
@@ -496,182 +487,6 @@ impl ShellClientRegistry {
         Ok(())
     }
 
-    pub async fn enqueue_file_op(
-        &self,
-        body: ShellFileOpRequest,
-        requested_by: String,
-    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        validate_file_request(&body)?;
-        let request_id = Uuid::new_v4().to_string();
-        let (tx, rx) = oneshot::channel();
-        let kind = format!("file_{}", body.op);
-        let request = ShellAgentShellRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind,
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: Some(body.path.trim().to_string()),
-            content: body.content.clone(),
-            max_bytes: body.max_bytes,
-            old_text: body.old_text.clone(),
-            pattern: body.pattern.clone(),
-            expected_sha256: body.expected_sha256.clone(),
-            expected_prefix: body.expected_prefix.clone(),
-            start_line: body.start_line,
-            end_line: body.end_line,
-            line: body.line,
-            create_dirs: body.create_dirs,
-            command: String::new(),
-            stdin: None,
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-        };
-        let mut inner = self.inner.lock().await;
-        ensure_dispatch_supported_locked(&inner, &body.client_id)?;
-        ensure_queue_capacity_locked(&inner, &body.client_id)?;
-        inner
-            .queues_by_client
-            .entry(body.client_id.clone())
-            .or_default()
-            .push_back(request_id.clone());
-        inner.pending_by_id.insert(
-            request_id.clone(),
-            PendingShellRequest {
-                request,
-                waiter: Some(tx),
-                job_id: None,
-            },
-        );
-        Self::notify_client_locked(&inner, &body.client_id);
-        Ok((request_id, rx))
-    }
-
-    pub async fn enqueue_run(
-        &self,
-        body: ShellRunRequest,
-        requested_by: String,
-    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        validate_run_request(&body)?;
-        let request_id = Uuid::new_v4().to_string();
-        let (tx, rx) = oneshot::channel();
-        let request = ShellAgentShellRequest {
-            request_id: request_id.clone(),
-            client_id: body.client_id.clone(),
-            kind: "run_shell".to_string(),
-            job_id: None,
-            cwd: body.cwd.clone().map(|cwd| cwd.trim().to_string()),
-            path: None,
-            content: None,
-            max_bytes: None,
-            old_text: None,
-            pattern: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            line: None,
-            create_dirs: false,
-            command: body.command.clone(),
-            stdin: body.stdin.clone(),
-            timeout_secs: body.timeout_secs,
-            requested_by,
-            created_at: now_ts(),
-        };
-        let mut inner = self.inner.lock().await;
-        ensure_dispatch_supported_locked(&inner, &body.client_id)?;
-        ensure_queue_capacity_locked(&inner, &body.client_id)?;
-        inner
-            .queues_by_client
-            .entry(body.client_id.clone())
-            .or_default()
-            .push_back(request_id.clone());
-        inner.pending_by_id.insert(
-            request_id.clone(),
-            PendingShellRequest {
-                request,
-                waiter: Some(tx),
-                job_id: None,
-            },
-        );
-        Self::notify_client_locked(&inner, &body.client_id);
-        Ok((request_id, rx))
-    }
-
-    pub async fn cancel_request(&self, request_id: &str) {
-        let mut inner = self.inner.lock().await;
-        inner.pending_by_id.remove(request_id);
-        for queue in inner.queues_by_client.values_mut() {
-            queue.retain(|id| id != request_id);
-        }
-    }
-
-    /// Enqueue a project-management agent request (`register_project` or
-    /// `create_project`). The JSON payload is carried in `stdin` so the
-    /// agent can parse it without shell interpolation. The `command` field is
-    /// empty (unused for these kinds); the agent dispatches on `kind` and
-    /// reads the payload from `stdin`. Returns a oneshot receiver for the
-    /// `ShellRunResponse` (the agent returns structured JSON in `stdout`).
-    pub async fn enqueue_project_op(
-        &self,
-        client_id: String,
-        kind: &str,
-        payload: String,
-        requested_by: String,
-    ) -> Result<(String, oneshot::Receiver<ShellRunResponse>), String> {
-        validate_id(&client_id, "client_id")?;
-        if kind != "register_project" && kind != "create_project" {
-            return Err(format!("unsupported project op kind: {}", kind));
-        }
-        if payload.contains('\0') {
-            return Err("project op payload must not contain NUL".to_string());
-        }
-        let request_id = Uuid::new_v4().to_string();
-        let (tx, rx) = oneshot::channel();
-        let request = ShellAgentShellRequest {
-            request_id: request_id.clone(),
-            client_id: client_id.clone(),
-            kind: kind.to_string(),
-            job_id: None,
-            cwd: None,
-            path: None,
-            content: None,
-            max_bytes: None,
-            old_text: None,
-            pattern: None,
-            expected_sha256: None,
-            expected_prefix: None,
-            start_line: None,
-            end_line: None,
-            line: None,
-            create_dirs: false,
-            command: String::new(),
-            stdin: Some(payload),
-            timeout_secs: 30,
-            requested_by,
-            created_at: now_ts(),
-        };
-        let mut inner = self.inner.lock().await;
-        ensure_dispatch_supported_locked(&inner, &client_id)?;
-        ensure_queue_capacity_locked(&inner, &client_id)?;
-        inner
-            .queues_by_client
-            .entry(client_id.clone())
-            .or_default()
-            .push_back(request_id.clone());
-        inner.pending_by_id.insert(
-            request_id.clone(),
-            PendingShellRequest {
-                request,
-                waiter: Some(tx),
-                job_id: None,
-            },
-        );
-        Self::notify_client_locked(&inner, &client_id);
-        Ok((request_id, rx))
-    }
-
     pub async fn start_job(
         &self,
         body: ShellJobOpRequest,
@@ -694,7 +509,7 @@ impl ShellClientRegistry {
             wait_timeout_secs: 0,
         };
         validate_run_request(&run)?;
-        let request_id = Uuid::new_v4().to_string();
+        let request_id = next_request_id();
         let job_id = Uuid::new_v4().to_string();
         let created_at = now_ts();
         let request = ShellAgentShellRequest {
@@ -724,19 +539,20 @@ impl ShellClientRegistry {
         let Some(client) = inner.clients.get(&client_id) else {
             return Err(format!("unknown shell client: {}", client_id));
         };
-        ensure_dispatch_supported_locked(&inner, &client_id)?;
         if !(client.capabilities.async_jobs || client.capabilities.async_shell_jobs) {
             return Err(format!(
                 "agent client {} does not support async shell jobs",
                 client_id
             ));
         }
-        ensure_queue_capacity_locked(&inner, &client_id)?;
-        inner
-            .queues_by_client
-            .entry(client_id.clone())
-            .or_default()
-            .push_back(request_id.clone());
+        enqueue_pending_request_locked(
+            &mut inner,
+            &client_id,
+            request_id.clone(),
+            request,
+            None,
+            Some(job_id.clone()),
+        )?;
         let job = ShellJobRecord {
             job_id: job_id.clone(),
             request_id: Some(request_id.clone()),
@@ -756,17 +572,9 @@ impl ShellClientRegistry {
             error: None,
             codex: body.codex.clone(),
         };
-        inner.pending_by_id.insert(
-            request_id.clone(),
-            PendingShellRequest {
-                request,
-                waiter: None,
-                job_id: Some(job_id.clone()),
-            },
-        );
         inner.request_to_job.insert(request_id, job_id.clone());
         inner.jobs_by_id.insert(job_id.clone(), job);
-        Self::notify_client_locked(&inner, &client_id);
+        notify_client_locked(&inner, &client_id);
         Ok(job_view(
             inner.jobs_by_id.get(&job_id).expect("job just inserted"),
         ))
@@ -910,11 +718,8 @@ impl ShellClientRegistry {
         match job.status.as_str() {
             "queued" => {
                 if let Some(request_id) = &job.request_id {
-                    inner.pending_by_id.remove(request_id);
+                    remove_pending_request_locked(&mut inner, request_id);
                     inner.request_to_job.remove(request_id);
-                    for queue in inner.queues_by_client.values_mut() {
-                        queue.retain(|id| id != request_id);
-                    }
                 }
                 let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
                 job.status = "stopped".to_string();
@@ -923,7 +728,7 @@ impl ShellClientRegistry {
                 Ok(job_view(job))
             }
             "agent_queued" | "running" | "stop_requested" => {
-                let stop_request_id = Uuid::new_v4().to_string();
+                let stop_request_id = next_request_id();
                 let client_id = job.client_id.clone();
                 let request = ShellAgentShellRequest {
                     request_id: stop_request_id.clone(),
@@ -948,26 +753,19 @@ impl ShellClientRegistry {
                     requested_by,
                     created_at: now_ts(),
                 };
-                ensure_dispatch_supported_locked(&inner, &client_id)?;
-                ensure_queue_capacity_locked(&inner, &client_id)?;
-                inner
-                    .queues_by_client
-                    .entry(client_id)
-                    .or_default()
-                    .push_back(stop_request_id.clone());
-                inner.pending_by_id.insert(
+                enqueue_pending_request_locked(
+                    &mut inner,
+                    &client_id,
                     stop_request_id,
-                    PendingShellRequest {
-                        request,
-                        waiter: None,
-                        job_id: Some(job_id.to_string()),
-                    },
-                );
+                    request,
+                    None,
+                    Some(job_id.to_string()),
+                )?;
                 let job = inner.jobs_by_id.get_mut(job_id).expect("job exists");
                 job.status = "stop_requested".to_string();
                 job.error = Some("stop requested".to_string());
                 let notify_client_id = job.client_id.clone();
-                Self::notify_client_locked(&inner, &notify_client_id);
+                notify_client_locked(&inner, &notify_client_id);
                 Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists")))
             }
             _ => Ok(job_view(inner.jobs_by_id.get(job_id).expect("job exists"))),

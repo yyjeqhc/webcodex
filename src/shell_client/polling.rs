@@ -1,4 +1,5 @@
 use super::jobs::{assert_active_instance_locked, command_preview, truncate_output};
+use super::requests::take_pending_request_locked;
 use super::validation::{normalize_project_summaries, validate_agent_instance_id, validate_id};
 use super::{now_ts, ShellClientRegistry};
 use crate::shell_protocol::{
@@ -73,7 +74,7 @@ impl ShellClientRegistry {
         if let Some(client) = inner.clients.get_mut(&body.client_id) {
             client.last_seen = now_ts();
         }
-        let Some(mut pending) = inner.pending_by_id.remove(&body.request_id) else {
+        let Some(mut pending) = take_pending_request_locked(&mut inner, &body.request_id) else {
             return Err(format!(
                 "unknown or expired shell request: {}",
                 body.request_id

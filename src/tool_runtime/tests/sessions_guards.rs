@@ -264,6 +264,122 @@ async fn read_only_session_rejects_write_project_file_before_mutation() {
 }
 
 #[tokio::test]
+async fn read_only_session_rejects_all_artifact_upload_tools_without_base64_leak() {
+    let runtime = runtime_with_agent_project("guard-artifact-upload");
+    register_agent(
+        &runtime,
+        "guard-artifact-upload",
+        None,
+        ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("guard-artifact-upload");
+    let session = runtime.sessions.start_session_with_guards(
+        Some(project.clone()),
+        Some("read only artifacts".to_string()),
+        SessionMode::ReadOnly,
+        sessions::SessionGuards::default(),
+    );
+    let content_base64 = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        "SECRET_UPLOAD_CHUNK_DO_NOT_LOG",
+    );
+    let bootstrap = auth_context(None, true);
+
+    let calls = vec![
+        ToolCall::ArtifactUploadBegin {
+            project: project.clone(),
+            path: "artifacts/imports/blocked.txt".to_string(),
+            session_id: Some(session.session_id.clone()),
+            expected_bytes: Some(3),
+            expected_sha256: None,
+            mime_type: Some("text/plain".to_string()),
+            overwrite: None,
+        },
+        ToolCall::ArtifactUploadChunk {
+            project: project.clone(),
+            path: "artifacts/imports/blocked.txt".to_string(),
+            upload_id: "wc_upload_test_1".to_string(),
+            offset: 0,
+            content_base64: content_base64.clone(),
+            session_id: Some(session.session_id.clone()),
+        },
+        ToolCall::ArtifactUploadFinish {
+            project: project.clone(),
+            path: "artifacts/imports/blocked.txt".to_string(),
+            upload_id: "wc_upload_test_1".to_string(),
+            session_id: Some(session.session_id.clone()),
+        },
+        ToolCall::ArtifactUploadAbort {
+            project,
+            path: "artifacts/imports/blocked.txt".to_string(),
+            upload_id: "wc_upload_test_1".to_string(),
+            session_id: Some(session.session_id.clone()),
+        },
+    ];
+
+    for call in calls {
+        let tool_name = call.tool_name().to_string();
+        let result = runtime.dispatch_with_auth(call, Some(&bootstrap)).await;
+        assert!(!result.success, "{tool_name}");
+        assert_eq!(result.output["error_kind"], "session_guard_denied");
+        assert_eq!(result.output["guard"], "deny_write_tools");
+        assert_eq!(result.output["mode"], "read_only");
+        assert_eq!(result.output["session_recorded"], true);
+    }
+    assert!(
+        next_patch_agent_request(&runtime, "guard-artifact-upload")
+            .await
+            .is_none(),
+        "artifact upload guard denial must not enqueue an agent request"
+    );
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    assert_eq!(summary.counts.failed, 4);
+    assert_eq!(summary.counts.write_like, 4);
+    for tool_name in [
+        "artifact_upload_begin",
+        "artifact_upload_chunk",
+        "artifact_upload_finish",
+        "artifact_upload_abort",
+    ] {
+        let event = finished_event(&summary, tool_name);
+        assert_eq!(event.status.as_deref(), Some("failed"), "{tool_name}");
+        assert_eq!(
+            event.error_kind.as_deref(),
+            Some("session_guard_denied"),
+            "{tool_name}"
+        );
+    }
+
+    let started = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| {
+            event.kind == "tool_call_started" && event.tool_name == "artifact_upload_chunk"
+        })
+        .expect("started event for artifact_upload_chunk");
+    let input_summary = started.input_summary.as_ref().unwrap();
+    assert_eq!(input_summary["path"], "artifacts/imports/blocked.txt");
+    assert_eq!(input_summary["upload_id"], "wc_upload_test_1");
+    assert_eq!(input_summary["offset"], 0);
+    assert_eq!(input_summary["content_base64_present"], true);
+    assert!(input_summary.get("content_base64").is_none());
+    let serialized = serde_json::to_string(&summary.events).unwrap();
+    assert!(
+        !serialized.contains(&content_base64) && !serialized.contains("SECRET_UPLOAD_CHUNK"),
+        "guard denial event leaked artifact chunk content: {serialized}"
+    );
+}
+
+#[tokio::test]
 async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
     let runtime = runtime_with_agent_project("guard-shell");
     register_agent(

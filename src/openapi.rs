@@ -3193,6 +3193,67 @@ mod tests {
     }
 
     #[test]
+    fn openapi_artifact_upload_tools_remain_generic_and_under_action_limit() {
+        let spec = build_openapi_spec();
+        let paths = spec["paths"].as_object().unwrap();
+        for path in [
+            "/api/projects/artifact_upload_begin",
+            "/api/projects/artifact_upload_chunk",
+            "/api/projects/artifact_upload_finish",
+            "/api/projects/artifact_upload_abort",
+        ] {
+            assert!(
+                !paths.contains_key(path),
+                "{path} must remain runtime-only via callRuntimeTool"
+            );
+        }
+
+        let ids = operation_ids(&spec);
+        for id in &ids {
+            assert!(
+                !id.contains("ArtifactUpload") && !id.contains("artifactUpload"),
+                "artifact upload must not be promoted to a dedicated GPT Action: {id}"
+            );
+        }
+        let count = ids.len();
+        assert_eq!(count, 27, "GPT Actions operation count must stay 27");
+        assert!(count <= 30, "GPT Actions operation count must stay <= 30");
+
+        let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
+        let tool_desc = tool_call["properties"]["tool"]["description"]
+            .as_str()
+            .unwrap();
+        for tool in [
+            "artifact_upload_begin",
+            "artifact_upload_chunk",
+            "artifact_upload_finish",
+            "artifact_upload_abort",
+        ] {
+            assert!(
+                tool_desc.contains(tool),
+                "callRuntimeTool must document runtime tool {tool}"
+            );
+        }
+        let properties = tool_call["properties"].as_object().unwrap();
+        for field in [
+            "project",
+            "path",
+            "content_base64",
+            "upload_id",
+            "offset",
+            "expected_bytes",
+            "expected_sha256",
+            "mime_type",
+            "overwrite",
+        ] {
+            assert!(
+                properties.contains_key(field),
+                "ToolCallRequest.properties.{field} must exist for flattened artifact upload calls"
+            );
+        }
+    }
+
+    #[test]
     fn openapi_write_file_and_run_job_promoted_to_dedicated_actions() {
         // This phase promotes write_project_file (writeProjectFile) and
         // run_job (startProjectShellJob) to dedicated GPT Actions. Both are

@@ -204,7 +204,7 @@ fn write_bytes_atomic_strict(path: &Path, data: &[u8]) -> Result<(), String> {
         .ok_or_else(|| "target path has no parent directory".to_string())?;
     let mut last_error = None;
     for attempt in 0..16 {
-        let tmp = parent.join(format!(".pd-artifact-{}-{}", std::process::id(), attempt));
+        let tmp = parent.join(format!(".wc-artifact-{}-{}", std::process::id(), attempt));
         match std::fs::OpenOptions::new()
             .write(true)
             .create_new(true)
@@ -250,8 +250,8 @@ struct ArtifactUploadState {
 
 fn upload_paths(parent: &Path, upload_id: &str) -> (PathBuf, PathBuf) {
     (
-        parent.join(format!(".pd-upload-{upload_id}.part")),
-        parent.join(format!(".pd-upload-{upload_id}.json")),
+        parent.join(format!(".wc-upload-{upload_id}.part")),
+        parent.join(format!(".wc-upload-{upload_id}.json")),
     )
 }
 
@@ -375,6 +375,10 @@ fn extension_mime(path: &str) -> Option<&'static str> {
     } else {
         None
     }
+}
+
+fn has_safe_artifact_extension(path: &str) -> bool {
+    extension_mime(path).is_some()
 }
 
 fn artifact_mime(path: &str, data: &[u8], sniff_json: bool) -> Option<String> {
@@ -673,6 +677,18 @@ fn handle_artifact_upload_begin(
         Ok(value) => value,
         Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),
     };
+    if matches!(mime_type.as_deref(), Some("application/octet-stream"))
+        && !has_safe_artifact_extension(path)
+    {
+        return line_edit_stdout(
+            upload_error(
+                Some(path),
+                None,
+                "application/octet-stream requires a safe artifact extension",
+            ),
+            start,
+        );
+    }
     let overwrite = match parse_bool_field(&payload, "overwrite") {
         Ok(value) => value,
         Err(e) => return line_edit_stdout(upload_error(Some(path), None, e), start),

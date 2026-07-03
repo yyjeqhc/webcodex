@@ -174,7 +174,7 @@ async fn read_project_artifact_routes_to_agent_file_op() {
         "artifact-read",
         &req.request_id,
         0,
-        r#"{"path":"data.bin","mime_type":null,"file_bytes":12,"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","offset":5,"bytes_returned":7,"content_base64":"ZmdoaWprbA==","next_offset":12,"truncated":false}"#,
+        r#"{"path":"data.bin","mime_type":null,"file_bytes":12,"sha256":"cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc","offset":5,"bytes_returned":7,"content_base64":"ZmdoaWprbA==","next_offset":12,"truncated":false,"eof":true}"#,
         "",
     )
     .await;
@@ -183,6 +183,7 @@ async fn read_project_artifact_routes_to_agent_file_op() {
     assert_eq!(result.output["offset"], 5);
     assert_eq!(result.output["bytes_returned"], 7);
     assert_eq!(result.output["content_base64"], "ZmdoaWprbA==");
+    assert_eq!(result.output["eof"], true);
 }
 
 #[tokio::test]

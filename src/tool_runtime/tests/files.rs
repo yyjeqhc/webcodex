@@ -80,6 +80,94 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
 }
 
 #[tokio::test]
+async fn artifact_upload_chunk_session_log_arguments_do_not_store_base64() {
+    let runtime = runtime_with_agent_project("telemetry-artifact-chunk");
+    register_agent(
+        &runtime,
+        "telemetry-artifact-chunk",
+        None,
+        ShellClientCapabilities {
+            file_write: true,
+            ..Default::default()
+        },
+    )
+    .await;
+    let project = agent_test_project_id("telemetry-artifact-chunk");
+    let session = runtime.sessions.start_session(None, None);
+    let raw_marker = "SECRET_CHUNK_CONTENT_SHOULD_NOT_BE_LOGGED";
+    let content_base64 =
+        base64::Engine::encode(&base64::engine::general_purpose::STANDARD, raw_marker);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session.session_id.clone();
+        let content_base64 = content_base64.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ArtifactUploadChunk {
+                        project,
+                        path: "artifacts/imports/chunk.txt".to_string(),
+                        upload_id: "wc_upload_test_1".to_string(),
+                        offset: 7,
+                        content_base64,
+                        session_id: Some(session_id),
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+
+    let req = next_patch_agent_request(&runtime, "telemetry-artifact-chunk")
+        .await
+        .expect("artifact_upload_chunk should enqueue a native file-op request");
+    let payload: serde_json::Value =
+        serde_json::from_str(req.content.as_deref().expect("file-op payload")).unwrap();
+    assert_eq!(payload["content_base64"], content_base64);
+    complete_patch_agent_request(
+        &runtime,
+        "telemetry-artifact-chunk",
+        &req.request_id,
+        0,
+        r#"{"path":"artifacts/imports/chunk.txt","upload_id":"wc_upload_test_1","received_bytes":12,"next_offset":12,"expected_bytes":null,"expected_sha256":null,"max_bytes":10485760,"mime_type":null,"committed":false}"#,
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+    assert!(result.success, "{:?}", result.error);
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let started = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| {
+            event.kind == "tool_call_started" && event.tool_name == "artifact_upload_chunk"
+        })
+        .expect("started event for artifact_upload_chunk");
+    let input_summary = started
+        .input_summary
+        .as_ref()
+        .expect("input_summary present on started event");
+    assert_eq!(input_summary["path"], "artifacts/imports/chunk.txt");
+    assert_eq!(input_summary["upload_id"], "wc_upload_test_1");
+    assert_eq!(input_summary["offset"], 7);
+    assert_eq!(input_summary["content_base64_present"], true);
+    assert!(input_summary.get("content_base64").is_none());
+    let serialized = serde_json::to_string(&summary.events).unwrap();
+    assert!(
+        !serialized.contains(&content_base64) && !serialized.contains(raw_marker),
+        "session event leaked base64 chunk content: {serialized}"
+    );
+}
+
+#[tokio::test]
 async fn validate_patch_never_enqueues_mutating_apply_command() {
     let runtime = runtime_with_agent_project("patcher");
     let mut caps = ShellClientCapabilities::default();
@@ -1036,4 +1124,140 @@ async fn read_project_artifact_rejects_invalid_length_before_resolving_project()
         .await;
     assert!(!out.success);
     assert!(out.error.unwrap().contains("length too large"));
+}
+
+#[tokio::test]
+async fn artifact_upload_begin_rejects_invalid_inputs_before_resolving_project() {
+    let runtime = test_runtime();
+    let missing_project = "agent:missing:missing".to_string();
+    let cases = [
+        (
+            ".env",
+            Some(1),
+            Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+            Some("text/plain"),
+            "sensitive artifact path",
+        ),
+        (
+            "artifacts/imports/bad-hash.txt",
+            Some(1),
+            Some("not-a-sha"),
+            Some("text/plain"),
+            "expected_sha256 must be a lowercase 64-char hex sha256 digest",
+        ),
+        (
+            "artifacts/imports/too-large.txt",
+            Some(MAX_PROJECT_ARTIFACT_BYTES + 1),
+            None,
+            Some("text/plain"),
+            "expected_bytes too large",
+        ),
+        (
+            "artifacts/imports/raw.bin",
+            Some(1),
+            None,
+            Some("application/octet-stream"),
+            "application/octet-stream requires a safe artifact extension",
+        ),
+    ];
+
+    for (path, expected_bytes, expected_sha256, mime_type, expected_error) in cases {
+        let out = runtime
+            .artifact_upload_begin(
+                missing_project.clone(),
+                path.to_string(),
+                expected_bytes,
+                expected_sha256.map(str::to_string),
+                mime_type.map(str::to_string),
+                Some(false),
+            )
+            .await;
+        assert!(!out.success, "{path}");
+        assert!(
+            out.error.as_deref().unwrap().contains(expected_error),
+            "{path}: {:?}",
+            out.error
+        );
+    }
+}
+
+#[tokio::test]
+async fn artifact_upload_chunk_rejects_invalid_inputs_before_resolving_project() {
+    let runtime = test_runtime();
+    let missing_project = "agent:missing:missing".to_string();
+    let path = "artifacts/imports/chunk.txt".to_string();
+
+    let invalid_id = runtime
+        .artifact_upload_chunk(
+            missing_project.clone(),
+            path.clone(),
+            "bad-upload-id".to_string(),
+            0,
+            "YQ==".to_string(),
+        )
+        .await;
+    assert!(!invalid_id.success);
+    assert!(invalid_id.error.unwrap().contains("upload_id must start"));
+
+    let invalid_base64 = runtime
+        .artifact_upload_chunk(
+            missing_project.clone(),
+            path.clone(),
+            "wc_upload_test_1".to_string(),
+            0,
+            "not valid base64!".to_string(),
+        )
+        .await;
+    assert!(!invalid_base64.success);
+    assert!(invalid_base64.error.unwrap().contains("invalid base64"));
+
+    let empty = runtime
+        .artifact_upload_chunk(
+            missing_project.clone(),
+            path.clone(),
+            "wc_upload_test_1".to_string(),
+            0,
+            "".to_string(),
+        )
+        .await;
+    assert!(!empty.success);
+    assert!(empty
+        .error
+        .unwrap()
+        .contains("decoded chunk must contain at least 1 byte"));
+
+    let oversized = base64::Engine::encode(
+        &base64::engine::general_purpose::STANDARD,
+        vec![b'x'; MAX_PROJECT_ARTIFACT_UPLOAD_CHUNK_BYTES + 1],
+    );
+    let oversized = runtime
+        .artifact_upload_chunk(
+            missing_project,
+            path,
+            "wc_upload_test_1".to_string(),
+            0,
+            oversized,
+        )
+        .await;
+    assert!(!oversized.success);
+    assert!(oversized.error.unwrap().contains("decoded chunk too large"));
+}
+
+#[tokio::test]
+async fn artifact_upload_finish_and_abort_reject_invalid_upload_id_before_resolving_project() {
+    let runtime = test_runtime();
+    let missing_project = "agent:missing:missing".to_string();
+    let path = "artifacts/imports/file.txt".to_string();
+
+    let finish = runtime
+        .artifact_upload_finish(missing_project.clone(), path.clone(), "bad".to_string())
+        .await;
+    assert!(!finish.success);
+    assert!(finish.error.unwrap().contains("upload_id must start"));
+
+    let abort = runtime
+        .artifact_upload_abort(missing_project, path, "bad".to_string())
+        .await;
+    assert!(!abort.success);
+    assert!(abort.error.unwrap().contains("upload_id must start"));
 }

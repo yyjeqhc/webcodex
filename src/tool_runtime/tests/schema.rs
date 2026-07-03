@@ -419,6 +419,67 @@ fn key_tool_output_schemas_include_expected_fields() {
             "job_log missing {field}"
         );
     }
+    for field in ["path", "bytes", "sha256", "mime_type", "modified_at"] {
+        assert!(
+            has_output_field("read_project_artifact_metadata", field),
+            "read_project_artifact_metadata missing {field}"
+        );
+    }
+    for field in [
+        "path",
+        "file_bytes",
+        "offset",
+        "bytes_returned",
+        "content_base64",
+        "next_offset",
+        "truncated",
+        "eof",
+    ] {
+        assert!(
+            has_output_field("read_project_artifact", field),
+            "read_project_artifact missing {field}"
+        );
+    }
+    let upload_progress_fields = [
+        "path",
+        "upload_id",
+        "received_bytes",
+        "next_offset",
+        "expected_bytes",
+        "expected_sha256",
+        "committed",
+    ];
+    for field in upload_progress_fields {
+        assert!(
+            has_output_field("artifact_upload_begin", field),
+            "artifact_upload_begin missing {field}"
+        );
+        assert!(
+            has_output_field("artifact_upload_chunk", field),
+            "artifact_upload_chunk missing {field}"
+        );
+    }
+    for field in [
+        "path",
+        "upload_id",
+        "bytes",
+        "received_bytes",
+        "expected_bytes",
+        "expected_sha256",
+        "sha256",
+        "committed",
+    ] {
+        assert!(
+            has_output_field("artifact_upload_finish", field),
+            "artifact_upload_finish missing {field}"
+        );
+    }
+    for field in ["path", "upload_id", "received_bytes", "aborted"] {
+        assert!(
+            has_output_field("artifact_upload_abort", field),
+            "artifact_upload_abort missing {field}"
+        );
+    }
     for field in [
         "service",
         "version",

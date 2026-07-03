@@ -9,8 +9,9 @@
 //! never read.
 
 use serde_json::{json, Value};
+use std::collections::{HashMap, HashSet};
 
-use super::helpers::shell_escape_simple;
+use super::helpers::{shell_escape_simple, validate_project_relative_path};
 use super::types::ToolResult;
 use super::ToolRuntime;
 
@@ -19,6 +20,8 @@ const MAX_MAX_FINDINGS: usize = 200;
 const LARGE_UNTRACKED_BYTES: u64 = 5 * 1024 * 1024; // 5 MiB
 const HYGIENE_SCRIPT_TIMEOUT_SECS: u64 = 30;
 const HYGIENE_MAX_SCRIPT_ENTRIES: usize = 500;
+const HYGIENE_DIAGNOSTIC_SENTINEL: &str = "@@WEBCODEX_HYGIENE_STATUS@@";
+const HYGIENE_MAX_SIZE_PROBE_COMMAND_LEN: usize = 7_000;
 
 /// Kind of hygiene risk identified for a path or the worktree.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -403,71 +406,203 @@ pub(crate) fn build_hygiene_summary(
 }
 
 // =========================================================================
-// Fixed read-only diagnostic script
+// Fixed read-only diagnostic commands
 // =========================================================================
-//
-// Runs `git status --porcelain=v1` via Python's subprocess, parses entries,
-// and stats untracked file sizes (metadata only — never reads contents).
-// Always exits 0 and prints valid JSON. On any error (non-git, timeout,
-// etc.) outputs `{"git_available": false, "entries": []}`.
-//
-// The script avoids single-quote characters so `shell_escape_simple` can
-// wrap it cleanly.
 
-const HYGIENE_DIAGNOSTIC_SCRIPT: &str = r#"
-import sys, os, json, subprocess
-result = {"git_available": False, "entries": []}
-try:
-    proc = subprocess.run(["git", "status", "--porcelain=v1"], capture_output=True, text=True, timeout=15)
-    if proc.returncode != 0:
-        sys.stdout.write(json.dumps(result))
-        sys.exit(0)
-    result["git_available"] = True
-    entries = []
-    seen_paths = set()
-    q = chr(34)
-    bs = chr(92)
-    for line in proc.stdout.split("\n"):
-        if len(entries) >= 500:
-            break
-        if len(line) < 4:
-            continue
-        x, y = line[0], line[1]
-        path = line[3:]
-        if " -> " in path:
-            path = path.split(" -> ", 1)[1]
-        if len(path) >= 2 and path[0] == q and path[-1] == q:
-            path = path[1:-1]
-            path = path.replace(bs + q, q)
-            path = path.replace(bs + bs, bs)
-        tracked_status = "untracked" if (x == "?" and y == "?") else "tracked"
-        size_bytes = None
-        if tracked_status == "untracked":
-            try:
-                if os.path.isfile(path):
-                    size_bytes = os.path.getsize(path)
-            except OSError:
-                pass
-        entries.append({"path": path, "x": x, "y": y, "tracked_status": tracked_status, "size_bytes": size_bytes})
-        seen_paths.add(path)
-    try:
-        ls_proc = subprocess.run(["git", "ls-files"], capture_output=True, text=True, timeout=15)
-        if ls_proc.returncode == 0:
-            for line in ls_proc.stdout.split("\n"):
-                if len(entries) >= 1000:
-                    break
-                path = line.strip()
-                if not path or path in seen_paths:
-                    continue
-                entries.append({"path": path, "x": " ", "y": " ", "tracked_status": "tracked", "size_bytes": None})
-                seen_paths.add(path)
-    except Exception:
-        pass
-    result["entries"] = entries
-except Exception:
-    pass
-sys.stdout.write(json.dumps(result))
-"#;
+pub(crate) fn hygiene_diagnostic_command() -> String {
+    format!(
+        "git status --porcelain=v1 2>/dev/null; \
+         status=$?; \
+         printf '\\n{sentinel}%s\\n' \"$status\"; \
+         if [ \"$status\" -eq 0 ]; then git ls-files 2>/dev/null; fi; \
+         exit 0",
+        sentinel = HYGIENE_DIAGNOSTIC_SENTINEL,
+    )
+}
+
+fn decode_hygiene_porcelain_path(path: &str) -> String {
+    let path = path.trim();
+    if path.len() >= 2 && path.starts_with('"') && path.ends_with('"') {
+        path[1..path.len() - 1]
+            .replace("\\\"", "\"")
+            .replace("\\\\", "\\")
+    } else {
+        path.to_string()
+    }
+}
+
+fn hygiene_path_is_metadata_safe(path: &str) -> bool {
+    let trimmed = path.trim();
+    !trimmed.is_empty()
+        && trimmed != "."
+        && validate_project_relative_path(trimmed).is_ok()
+        && !trimmed.split('/').any(|part| part.is_empty())
+}
+
+fn parse_hygiene_diagnostic_stdout(stdout: &str) -> (bool, Vec<Value>) {
+    let Some((status_stdout, rest)) = stdout.split_once(HYGIENE_DIAGNOSTIC_SENTINEL) else {
+        return (false, Vec::new());
+    };
+    let mut rest_lines = rest.lines();
+    let git_available = rest_lines
+        .next()
+        .and_then(|line| line.trim().parse::<i32>().ok())
+        == Some(0);
+    if !git_available {
+        return (false, Vec::new());
+    }
+
+    let mut entries = Vec::new();
+    let mut seen_paths: HashSet<String> = HashSet::new();
+    for line in status_stdout.lines() {
+        if entries.len() >= HYGIENE_MAX_SCRIPT_ENTRIES {
+            break;
+        }
+        if line.len() < 4 {
+            continue;
+        }
+        let x = &line[0..1];
+        let y = &line[1..2];
+        let path_part = line[3..]
+            .split_once(" -> ")
+            .map(|(_, dst)| dst)
+            .unwrap_or(&line[3..]);
+        let path = decode_hygiene_porcelain_path(path_part);
+        if path.is_empty() {
+            continue;
+        }
+        let tracked_status = if x == "?" && y == "?" {
+            "untracked"
+        } else {
+            "tracked"
+        };
+        entries.push(json!({
+            "path": path,
+            "x": x,
+            "y": y,
+            "tracked_status": tracked_status,
+            "size_bytes": null,
+        }));
+        seen_paths.insert(path);
+    }
+
+    for line in rest_lines {
+        if entries.len() >= HYGIENE_MAX_SCRIPT_ENTRIES.saturating_mul(2) {
+            break;
+        }
+        let path = line.trim();
+        if path.is_empty() || seen_paths.contains(path) {
+            continue;
+        }
+        entries.push(json!({
+            "path": path,
+            "x": " ",
+            "y": " ",
+            "tracked_status": "tracked",
+            "size_bytes": null,
+        }));
+        seen_paths.insert(path.to_string());
+    }
+
+    (true, entries)
+}
+
+fn collect_local_untracked_sizes(
+    root: &std::path::Path,
+    entries: &[Value],
+) -> HashMap<String, u64> {
+    let canonical_root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return HashMap::new(),
+    };
+    let mut sizes = HashMap::new();
+    for entry in entries {
+        if entry.get("tracked_status").and_then(Value::as_str) != Some("untracked") {
+            continue;
+        }
+        let Some(path) = entry.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        if !hygiene_path_is_metadata_safe(path) {
+            continue;
+        }
+        let full_path = root.join(path);
+        let Ok(metadata) = std::fs::symlink_metadata(&full_path) else {
+            continue;
+        };
+        if metadata.file_type().is_symlink() || !metadata.is_file() {
+            continue;
+        }
+        let Ok(canonical) = full_path.canonicalize() else {
+            continue;
+        };
+        if canonical.starts_with(&canonical_root) {
+            sizes.insert(path.to_string(), metadata.len());
+        }
+    }
+    sizes
+}
+
+fn hygiene_size_probe_command(paths: &[String]) -> String {
+    let mut command = String::new();
+    for path in paths {
+        command.push_str("p=");
+        command.push_str(&shell_escape_simple(path));
+        command.push_str(
+            "; if [ -f \"$p\" ] && [ ! -L \"$p\" ]; then \
+                 bytes=$(wc -c < \"$p\" 2>/dev/null | tr -d '[:space:]'); \
+                 case \"$bytes\" in ''|*[!0-9]*) ;; *) printf '%s\\t%s\\n' \"$bytes\" \"$p\" ;; esac; \
+               fi\n",
+        );
+    }
+    command
+}
+
+fn parse_hygiene_size_probe_stdout(stdout: &str) -> HashMap<String, u64> {
+    let mut sizes = HashMap::new();
+    for line in stdout.lines() {
+        let Some((size, path)) = line.split_once('\t') else {
+            continue;
+        };
+        let Ok(size) = size.parse::<u64>() else {
+            continue;
+        };
+        if hygiene_path_is_metadata_safe(path) {
+            sizes.insert(path.to_string(), size);
+        }
+    }
+    sizes
+}
+
+fn hygiene_size_probe_batches(entries: &[Value]) -> Vec<Vec<String>> {
+    let mut batches: Vec<Vec<String>> = Vec::new();
+    let mut current: Vec<String> = Vec::new();
+    let mut current_len = 0usize;
+    for entry in entries.iter().take(HYGIENE_MAX_SCRIPT_ENTRIES) {
+        if entry.get("tracked_status").and_then(Value::as_str) != Some("untracked") {
+            continue;
+        }
+        let Some(path) = entry.get("path").and_then(Value::as_str) else {
+            continue;
+        };
+        if !hygiene_path_is_metadata_safe(path) {
+            continue;
+        }
+        let escaped_len = shell_escape_simple(path).len().saturating_add(180);
+        if !current.is_empty()
+            && current_len.saturating_add(escaped_len) > HYGIENE_MAX_SIZE_PROBE_COMMAND_LEN
+        {
+            batches.push(std::mem::take(&mut current));
+            current_len = 0;
+        }
+        current.push(path.to_string());
+        current_len = current_len.saturating_add(escaped_len);
+    }
+    if !current.is_empty() {
+        batches.push(current);
+    }
+    batches
+}
 
 // =========================================================================
 // Runtime method
@@ -496,13 +631,10 @@ impl ToolRuntime {
         };
         let resolved_project = resolved.resolved_id.clone();
 
-        // Run the fixed read-only diagnostic script. The `2>/dev/null ||
-        // printf` fallback ensures we always get parseable JSON even if
-        // python3 is unavailable on the agent host.
-        let command = format!(
-            "python3 -c {} 2>/dev/null || printf '{{\"git_available\": false, \"entries\": []}}\\n'",
-            shell_escape_simple(HYGIENE_DIAGNOSTIC_SCRIPT),
-        );
+        // Run fixed read-only git diagnostics. The command always exits 0 and
+        // carries the git status code in-band so non-git projects degrade to a
+        // structured hygiene response.
+        let command = hygiene_diagnostic_command();
         let output = match self
             .run_project_command_capture(&project, command, HYGIENE_SCRIPT_TIMEOUT_SECS, None)
             .await
@@ -511,18 +643,33 @@ impl ToolRuntime {
             Err(e) => return ToolResult::err(e),
         };
 
-        // Parse the JSON output from the script.
-        let parsed: Value = serde_json::from_str(output.stdout.trim())
-            .unwrap_or_else(|_| json!({"git_available": false, "entries": []}));
-        let git_available = parsed
-            .get("git_available")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let entries = parsed
-            .get("entries")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
+        let (git_available, entries) = parse_hygiene_diagnostic_stdout(&output.stdout);
+        let size_bytes_by_path = if git_available {
+            match self.resolve_project(&project).await {
+                Ok(proj) if proj.is_agent() => {
+                    let mut sizes = HashMap::new();
+                    for batch in hygiene_size_probe_batches(&entries) {
+                        let command = hygiene_size_probe_command(&batch);
+                        if let Ok(output) = self
+                            .run_project_command_capture(
+                                &project,
+                                command,
+                                HYGIENE_SCRIPT_TIMEOUT_SECS,
+                                None,
+                            )
+                            .await
+                        {
+                            sizes.extend(parse_hygiene_size_probe_stdout(&output.stdout));
+                        }
+                    }
+                    sizes
+                }
+                Ok(proj) => collect_local_untracked_sizes(&proj.root(), &entries),
+                Err(_) => HashMap::new(),
+            }
+        } else {
+            HashMap::new()
+        };
 
         // Build findings from the entries.
         let mut findings: Vec<HygieneFinding> = Vec::new();
@@ -534,7 +681,10 @@ impl ToolRuntime {
                 .get("tracked_status")
                 .and_then(Value::as_str)
                 .unwrap_or("untracked");
-            let size_bytes = entry.get("size_bytes").and_then(Value::as_u64);
+            let size_bytes = entry
+                .get("size_bytes")
+                .and_then(Value::as_u64)
+                .or_else(|| size_bytes_by_path.get(path).copied());
             let x = entry.get("x").and_then(Value::as_str).unwrap_or(" ");
             let y = entry.get("y").and_then(Value::as_str).unwrap_or(" ");
 

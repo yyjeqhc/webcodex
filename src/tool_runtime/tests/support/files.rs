@@ -1,7 +1,7 @@
 use super::runtime::runtime_with_project;
 use crate::tool_runtime::git::{
-    apply_show_changes_untracked_previews, git_log_command, parse_show_changes_output,
-    show_changes_command, split_show_changes_stdout,
+    collect_show_changes_untracked_previews_for_root, git_log_command, parse_porcelain_summary,
+    parse_show_changes_output, show_changes_command, split_show_changes_stdout,
 };
 use crate::tool_runtime::helpers::{run_command_sync, shell_escape_simple};
 use crate::tool_runtime::types::{LocalJobKiller, TerminateOutcome};
@@ -68,7 +68,7 @@ pub(in crate::tool_runtime::tests) fn show_changes_output_from_command(
         exit_code, 0,
         "show_changes command failed\nstdout:\n{stdout}\nstderr:\n{stderr}"
     );
-    let (status_stdout, head_stdout, diff_stat, diff_stdout, untracked_preview_stdout) =
+    let (status_stdout, head_stdout, diff_stat, diff_stdout, _untracked_preview_stdout) =
         split_show_changes_stdout(&stdout, include_diff);
     let mut output = parse_show_changes_output(
         "demo",
@@ -82,7 +82,11 @@ pub(in crate::tool_runtime::tests) fn show_changes_output_from_command(
         &stderr,
     );
     if include_diff {
-        apply_show_changes_untracked_previews(&mut output, &untracked_preview_stdout);
+        let untracked_paths = parse_porcelain_summary(&status_stdout).untracked_files;
+        let (previews, truncated) =
+            collect_show_changes_untracked_previews_for_root(root, &untracked_paths);
+        output["untracked_previews"] = json!(previews);
+        output["untracked_previews_truncated"] = json!(truncated);
     }
     output
 }

@@ -12,8 +12,7 @@ use tempfile::TempDir;
 // =========================================================================
 
 /// Dispatch `workspace_hygiene_check` against an agent-registered project and
-/// complete the internal agent shell request by running the fixed diagnostic
-/// script locally.
+/// complete its internal read-only agent shell requests locally.
 async fn dispatch_hygiene_with_agent(
     runtime: &ToolRuntime,
     client_id: &str,
@@ -38,12 +37,26 @@ async fn dispatch_hygiene_with_agent(
             .await
     });
 
-    // The hygiene check enqueues an agent shell request (python3 -c ...).
-    // Complete it by running the command locally in the project directory.
-    let req = next_patch_agent_request(runtime, client_id)
-        .await
-        .expect("hygiene check should enqueue an agent shell request");
-    complete_agent_request_by_running_locally(runtime, client_id, req).await;
+    let forbidden = ["python3", "-c"].join(" ");
+    for _ in 0..200 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
+            assert!(
+                !req.command.contains(&forbidden),
+                "hygiene diagnostics must not enqueue a Python helper: {}",
+                req.command
+            );
+            complete_agent_request_by_running_locally(runtime, client_id, req).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "hygiene check did not finish after read-only agent requests"
+    );
 
     task.await.unwrap()
 }
@@ -159,6 +172,43 @@ async fn workspace_hygiene_check_detects_untracked_smoke_temp_file() {
         .unwrap_or_else(|| panic!("expected temporary_file finding: {findings:?}"));
     assert_eq!(smoke_finding["tracked_status"], "untracked");
     assert_eq!(smoke_finding["path"], ".webcodex-smoke-acceptance.txt");
+}
+
+#[tokio::test]
+async fn workspace_hygiene_check_detects_dirty_untracked_and_suspicious_paths() {
+    let runtime = test_runtime();
+    let (tmp, project) = setup_clean_git_repo(&runtime, "hyc-mixed", "demo").await;
+
+    fs::write(tmp.path().join("README.md"), "changed\n").unwrap();
+    fs::write(tmp.path().join("scratch_probe.txt"), "temporary\n").unwrap();
+    fs::write(tmp.path().join(".env.local"), "DO_NOT_LEAK=this-value\n").unwrap();
+
+    let result =
+        dispatch_hygiene_with_agent(&runtime, "hyc-mixed", project, None, None, None).await;
+
+    assert!(result.success, "{:?}", result.error);
+    let findings = result.output["findings"].as_array().unwrap();
+    assert!(
+        findings.iter().any(|f| f["kind"] == "dirty_worktree"),
+        "expected dirty_worktree finding: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["kind"] == "temporary_file" && f["path"] == "scratch_probe.txt"),
+        "expected temporary_file finding: {findings:?}"
+    );
+    assert!(
+        findings
+            .iter()
+            .any(|f| f["kind"] == "secret_like_path" && f["path"] == ".env.local"),
+        "expected secret_like_path finding: {findings:?}"
+    );
+    let output_str = serde_json::to_string(&result.output).unwrap();
+    assert!(
+        !output_str.contains("DO_NOT_LEAK=this-value"),
+        "output must not contain secret-like file contents"
+    );
 }
 
 // =========================================================================

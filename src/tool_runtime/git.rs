@@ -1,4 +1,6 @@
+use base64::{engine::general_purpose, Engine as _};
 use serde_json::{json, Value};
+use std::path::Path;
 use std::time::Duration;
 
 use super::helpers::{
@@ -30,124 +32,9 @@ const MAX_GIT_LOG_LIMIT: usize = 100;
 const MAX_GIT_LOG_SKIP: usize = 10_000;
 const GIT_LOG_RECORD_SEP: char = '\u{1e}';
 const GIT_LOG_UNIT_SEP: char = '\u{1f}';
-
-const SHOW_CHANGES_UNTRACKED_PREVIEW_SCRIPT: &str = r#"
-import json, os, stat, subprocess, sys
-MAX_FILES = 5
-MAX_BYTES = 8192
-MAX_LINES = 40
-
-def emit(obj):
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False))
-
-def skipped(path, reason, byte_count=None):
-    obj = {"path": path, "kind": "skipped", "reason": reason}
-    if byte_count is not None:
-        obj["byte_count"] = byte_count
-    return obj
-
-def decode_path(raw):
-    try:
-        return raw.decode("utf-8")
-    except UnicodeDecodeError:
-        return raw.decode("utf-8", "backslashreplace")
-
-def path_is_sensitive(path):
-    parts = [part.lower() for part in path.replace("\\", "/").split("/") if part and part != "."]
-    for part in parts:
-        if part in [".git", "target", "node_modules", "projects.d", "agent.toml", "webcodex.env", ".env", "secrets", "tokens"]:
-            return True
-        if part.startswith(".env") or part.startswith("agent.toml") or part.startswith("webcodex.env"):
-            return True
-        if part in ["id_rsa", "id_ed25519"] or part.endswith(".pem") or part.endswith(".key"):
-            return True
-    return False
-
-def path_is_invalid(path):
-    if not path or "\x00" in path or os.path.isabs(path):
-        return True
-    parts = [part for part in path.replace("\\", "/").split("/") if part]
-    return any(part == ".." for part in parts)
-
-try:
-    status = subprocess.check_output(["git", "status", "--porcelain=v1", "-z"], stderr=subprocess.DEVNULL)
-except Exception:
-    emit({"previews": [], "truncated": False})
-    sys.exit(0)
-
-raw_paths = []
-for entry in status.split(b"\x00"):
-    if entry.startswith(b"?? "):
-        raw_paths.append(entry[3:])
-
-root = os.path.realpath(".")
-previews = []
-for raw_path in raw_paths[:MAX_FILES]:
-    try:
-        path = raw_path.decode("utf-8")
-    except UnicodeDecodeError:
-        previews.append(skipped(decode_path(raw_path), "binary_or_non_utf8"))
-        continue
-    if path_is_invalid(path) or path_is_sensitive(path):
-        previews.append(skipped(path, "sensitive_or_excluded_path"))
-        continue
-    full_path = os.path.abspath(os.path.join(root, path))
-    if full_path != root and not full_path.startswith(root + os.sep):
-        previews.append(skipped(path, "sensitive_or_excluded_path"))
-        continue
-    try:
-        real_path = os.path.realpath(full_path)
-    except OSError:
-        previews.append(skipped(path, "sensitive_or_excluded_path"))
-        continue
-    if real_path != root and not real_path.startswith(root + os.sep):
-        previews.append(skipped(path, "sensitive_or_excluded_path"))
-        continue
-    try:
-        st = os.lstat(full_path)
-    except OSError:
-        previews.append(skipped(path, "not_found"))
-        continue
-    if stat.S_ISLNK(st.st_mode):
-        previews.append(skipped(path, "sensitive_or_excluded_path"))
-        continue
-    if not stat.S_ISREG(st.st_mode):
-        previews.append(skipped(path, "not_regular_file"))
-        continue
-    byte_count = int(st.st_size)
-    if byte_count > MAX_BYTES:
-        previews.append(skipped(path, "too_large", byte_count))
-        continue
-    try:
-        with open(full_path, "rb") as f:
-            data = f.read(MAX_BYTES + 1)
-    except OSError:
-        previews.append(skipped(path, "read_error"))
-        continue
-    if len(data) > MAX_BYTES:
-        previews.append(skipped(path, "too_large", max(byte_count, len(data))))
-        continue
-    if b"\x00" in data or any(byte < 32 and byte not in (9, 10, 13) for byte in data):
-        previews.append(skipped(path, "binary_or_non_utf8", len(data)))
-        continue
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        previews.append(skipped(path, "binary_or_non_utf8", len(data)))
-        continue
-    all_lines = text.splitlines()
-    shown_lines = all_lines[:MAX_LINES]
-    previews.append({
-        "path": path,
-        "kind": "text",
-        "line_count": len(all_lines),
-        "byte_count": len(data),
-        "truncated": len(all_lines) > MAX_LINES,
-        "lines": [{"line": index + 1, "text": line} for index, line in enumerate(shown_lines)],
-    })
-
-emit({"previews": previews, "truncated": len(raw_paths) > MAX_FILES, "limit": MAX_FILES})
-"#;
+const SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_FILES: usize = 5;
+const SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_BYTES: u64 = 8192;
+const SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_LINES: usize = 40;
 
 /// Build the read-only `git_diff_summary` command. Runs `git status
 /// --porcelain` and `git diff --stat` separated by a unique sentinel. No
@@ -305,19 +192,10 @@ pub(crate) fn non_git_show_changes_payload(
 /// diff is only emitted when the caller asks for bounded hunks.
 pub(crate) fn show_changes_command(include_diff: bool) -> String {
     let diff_part = if include_diff {
-        let preview_command = format!(
-            "python3 -c {} 2>/dev/null || printf '[]\\n'",
-            shell_escape_simple(SHOW_CHANGES_UNTRACKED_PREVIEW_SCRIPT),
-        );
         format!(
             "; printf '\\n{sentinel}\\n'; \
-             git diff --unified=80; \
-             show_changes_status=$?; \
-             printf '\\n{sentinel}\\n'; \
-             {preview_command}; \
-             exit $show_changes_status",
+             git diff --unified=80",
             sentinel = SHOW_CHANGES_SENTINEL,
-            preview_command = preview_command,
         )
     } else {
         String::new()
@@ -626,6 +504,239 @@ pub(crate) fn apply_show_changes_untracked_previews(output: &mut Value, preview_
                 }));
             }
         }
+    }
+}
+
+fn skipped_untracked_preview(path: &str, reason: &str, byte_count: Option<u64>) -> Value {
+    let mut object = serde_json::Map::new();
+    object.insert("path".to_string(), json!(path));
+    object.insert("kind".to_string(), json!("skipped"));
+    object.insert("reason".to_string(), json!(reason));
+    if let Some(byte_count) = byte_count {
+        object.insert("byte_count".to_string(), json!(byte_count));
+    }
+    Value::Object(object)
+}
+
+fn untracked_preview_path_is_invalid(path: &str) -> bool {
+    let trimmed = path.trim();
+    trimmed.is_empty()
+        || trimmed == "."
+        || validate_project_relative_path(trimmed).is_err()
+        || trimmed.split('/').any(|part| part.is_empty())
+}
+
+fn untracked_preview_path_is_sensitive(path: &str) -> bool {
+    let normalized = path.replace('\\', "/").to_ascii_lowercase();
+    normalized
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .any(|part| {
+            matches!(
+                part,
+                ".git"
+                    | "target"
+                    | "node_modules"
+                    | "projects.d"
+                    | "agent.toml"
+                    | "webcodex.env"
+                    | ".env"
+                    | "secrets"
+                    | "tokens"
+                    | "id_rsa"
+                    | "id_ed25519"
+            ) || part.starts_with(".env")
+                || part.starts_with("agent.toml")
+                || part.starts_with("webcodex.env")
+                || part.ends_with(".pem")
+                || part.ends_with(".key")
+        })
+}
+
+fn untracked_preview_from_bytes(
+    path: &str,
+    data: &[u8],
+    declared_byte_count: Option<u64>,
+) -> Value {
+    let byte_count = declared_byte_count.unwrap_or(data.len() as u64);
+    if data.len() as u64 > SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_BYTES {
+        return skipped_untracked_preview(
+            path,
+            "too_large",
+            Some(byte_count.max(data.len() as u64)),
+        );
+    }
+    if data
+        .iter()
+        .any(|byte| *byte == 0 || (*byte < 32 && !matches!(*byte, b'\t' | b'\n' | b'\r')))
+    {
+        return skipped_untracked_preview(path, "binary_or_non_utf8", Some(data.len() as u64));
+    }
+    let text = match std::str::from_utf8(data) {
+        Ok(text) => text,
+        Err(_) => {
+            return skipped_untracked_preview(path, "binary_or_non_utf8", Some(data.len() as u64))
+        }
+    };
+    let all_lines: Vec<&str> = text.lines().collect();
+    let shown_lines: Vec<Value> = all_lines
+        .iter()
+        .take(SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_LINES)
+        .enumerate()
+        .map(|(index, line)| {
+            json!({
+                "line": index + 1,
+                "text": line,
+            })
+        })
+        .collect();
+    json!({
+        "path": path,
+        "kind": "text",
+        "line_count": all_lines.len(),
+        "byte_count": byte_count,
+        "truncated": all_lines.len() > SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_LINES,
+        "lines": shown_lines,
+    })
+}
+
+pub(crate) fn collect_show_changes_untracked_previews_for_root(
+    root: &Path,
+    untracked_paths: &[String],
+) -> (Vec<Value>, bool) {
+    let truncated = untracked_paths.len() > SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_FILES;
+    let canonical_root = match root.canonicalize() {
+        Ok(root) => root,
+        Err(_) => return (Vec::new(), truncated),
+    };
+    let mut previews = Vec::new();
+    for path in untracked_paths
+        .iter()
+        .take(SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_FILES)
+    {
+        if untracked_preview_path_is_invalid(path) || untracked_preview_path_is_sensitive(path) {
+            previews.push(skipped_untracked_preview(
+                path,
+                "sensitive_or_excluded_path",
+                None,
+            ));
+            continue;
+        }
+        let full_path = root.join(path);
+        let metadata = match std::fs::symlink_metadata(&full_path) {
+            Ok(metadata) => metadata,
+            Err(_) => {
+                previews.push(skipped_untracked_preview(path, "not_found", None));
+                continue;
+            }
+        };
+        if metadata.file_type().is_symlink() {
+            previews.push(skipped_untracked_preview(
+                path,
+                "sensitive_or_excluded_path",
+                None,
+            ));
+            continue;
+        }
+        if !metadata.is_file() {
+            previews.push(skipped_untracked_preview(path, "not_regular_file", None));
+            continue;
+        }
+        let canonical = match full_path.canonicalize() {
+            Ok(canonical) => canonical,
+            Err(_) => {
+                previews.push(skipped_untracked_preview(
+                    path,
+                    "sensitive_or_excluded_path",
+                    None,
+                ));
+                continue;
+            }
+        };
+        if !canonical.starts_with(&canonical_root) {
+            previews.push(skipped_untracked_preview(
+                path,
+                "sensitive_or_excluded_path",
+                None,
+            ));
+            continue;
+        }
+        let byte_count = metadata.len();
+        if byte_count > SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_BYTES {
+            previews.push(skipped_untracked_preview(
+                path,
+                "too_large",
+                Some(byte_count),
+            ));
+            continue;
+        }
+        match std::fs::read(&full_path) {
+            Ok(data) => previews.push(untracked_preview_from_bytes(path, &data, Some(byte_count))),
+            Err(_) => previews.push(skipped_untracked_preview(path, "read_error", None)),
+        }
+    }
+    (previews, truncated)
+}
+
+fn show_changes_untracked_paths(output: &Value) -> Vec<String> {
+    output["files"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter(|file| file["kind"] == "untracked")
+        .filter_map(|file| file["path"].as_str().map(str::to_string))
+        .collect()
+}
+
+fn show_changes_untracked_preview_probe_command(path: &str) -> String {
+    format!(
+        "p={path}; \
+         if [ -L \"$p\" ]; then printf 'SKIP\\tsensitive_or_excluded_path\\n'; \
+         elif [ ! -e \"$p\" ]; then printf 'SKIP\\tnot_found\\n'; \
+         elif [ ! -f \"$p\" ]; then printf 'SKIP\\tnot_regular_file\\n'; \
+         else bytes=$(wc -c < \"$p\" 2>/dev/null | tr -d '[:space:]'); \
+           case \"$bytes\" in \
+             ''|*[!0-9]*) printf 'SKIP\\tread_error\\n' ;; \
+             *) if [ \"$bytes\" -gt {max_bytes} ]; then printf 'SKIP\\ttoo_large\\t%s\\n' \"$bytes\"; \
+                else printf 'DATA\\t%s\\n' \"$bytes\"; base64 < \"$p\" 2>/dev/null; fi ;; \
+           esac; \
+         fi",
+        path = shell_escape_simple(path),
+        max_bytes = SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_BYTES,
+    )
+}
+
+fn parse_show_changes_agent_preview_probe(
+    path: &str,
+    stdout: &str,
+    exit_code: Option<i32>,
+) -> Value {
+    let mut lines = stdout.lines();
+    let Some(header) = lines.next() else {
+        return skipped_untracked_preview(path, "read_error", None);
+    };
+    let parts: Vec<&str> = header.split('\t').collect();
+    match parts.as_slice() {
+        ["SKIP", reason] => skipped_untracked_preview(path, reason, None),
+        ["SKIP", reason, byte_count] => {
+            skipped_untracked_preview(path, reason, byte_count.parse::<u64>().ok())
+        }
+        ["DATA", byte_count] => {
+            if exit_code != Some(0) {
+                return skipped_untracked_preview(
+                    path,
+                    "read_error",
+                    byte_count.parse::<u64>().ok(),
+                );
+            }
+            let encoded = lines.collect::<Vec<_>>().join("");
+            let data = match general_purpose::STANDARD.decode(encoded.as_bytes()) {
+                Ok(data) => data,
+                Err(_) => return skipped_untracked_preview(path, "read_error", None),
+            };
+            untracked_preview_from_bytes(path, &data, byte_count.parse::<u64>().ok())
+        }
+        _ => skipped_untracked_preview(path, "read_error", None),
     }
 }
 
@@ -1073,6 +1184,48 @@ pub(crate) fn parse_porcelain_files(porcelain: &str) -> Vec<String> {
 }
 
 impl ToolRuntime {
+    async fn collect_show_changes_untracked_previews(
+        &self,
+        project: &str,
+        untracked_paths: &[String],
+    ) -> (Vec<Value>, bool) {
+        let truncated = untracked_paths.len() > SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_FILES;
+        let proj = match self.resolve_project(project).await {
+            Ok(proj) => proj,
+            Err(_) => return (Vec::new(), truncated),
+        };
+        if !proj.is_agent() {
+            return collect_show_changes_untracked_previews_for_root(&proj.root(), untracked_paths);
+        }
+        let mut previews = Vec::new();
+        for path in untracked_paths
+            .iter()
+            .take(SHOW_CHANGES_UNTRACKED_PREVIEW_MAX_FILES)
+        {
+            if untracked_preview_path_is_invalid(path) || untracked_preview_path_is_sensitive(path)
+            {
+                previews.push(skipped_untracked_preview(
+                    path,
+                    "sensitive_or_excluded_path",
+                    None,
+                ));
+                continue;
+            }
+            let command = show_changes_untracked_preview_probe_command(path);
+            let preview = match self
+                .run_project_command_capture(project, command, 10, None)
+                .await
+            {
+                Ok(output) => {
+                    parse_show_changes_agent_preview_probe(path, &output.stdout, output.exit_code)
+                }
+                Err(_) => skipped_untracked_preview(path, "read_error", None),
+            };
+            previews.push(preview);
+        }
+        (previews, truncated)
+    }
+
     pub(crate) async fn git_restore_paths(
         &self,
         project: String,
@@ -1477,7 +1630,15 @@ impl ToolRuntime {
             &output.stderr,
         );
         if include_diff {
-            apply_show_changes_untracked_previews(&mut payload, &untracked_preview_stdout);
+            let untracked_paths = show_changes_untracked_paths(&payload);
+            let (previews, truncated) = self
+                .collect_show_changes_untracked_previews(&project, &untracked_paths)
+                .await;
+            payload["untracked_previews"] = json!(previews);
+            payload["untracked_previews_truncated"] = json!(truncated);
+            if !untracked_preview_stdout.trim().is_empty() {
+                apply_show_changes_untracked_previews(&mut payload, &untracked_preview_stdout);
+            }
         }
         let session_summary = session_id
             .as_deref()

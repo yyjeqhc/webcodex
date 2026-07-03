@@ -119,6 +119,11 @@ fn show_changes_command_is_read_only() {
         assert!(cmd.contains("git status --porcelain=v1 -b"));
         assert!(cmd.contains("git log -1"));
         assert!(cmd.contains("git diff --stat"));
+        let forbidden = ["python3", "-c"].join(" ");
+        assert!(
+            !cmd.contains(&forbidden),
+            "show_changes command must not invoke a Python helper: {cmd}"
+        );
         for forbidden in [
             " clean",
             " restore",
@@ -140,6 +145,51 @@ fn show_changes_command_is_read_only() {
             );
         }
     }
+}
+
+#[tokio::test]
+async fn show_changes_include_diff_agent_command_does_not_enqueue_python_helper() {
+    let runtime = runtime_with_agent_project("show-native");
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    register_agent(&runtime, "show-native", None, caps).await;
+    let project = agent_test_project_id("show-native");
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ShowChanges {
+                        project,
+                        session_id: None,
+                        include_diff: Some(true),
+                        max_hunks: None,
+                        max_hunk_lines: None,
+                        session_event_limit: None,
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "show-native")
+        .await
+        .expect("show_changes should enqueue an agent shell request");
+    let forbidden = ["python3", "-c"].join(" ");
+    assert!(
+        !req.command.contains(&forbidden),
+        "show_changes include_diff must not enqueue a Python helper: {}",
+        req.command
+    );
+    assert!(req.command.contains("git diff --unified=80"));
+    let stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0head\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+    complete_patch_agent_request(&runtime, "show-native", &req.request_id, 0, stdout, "").await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["untracked_previews"], json!([]));
 }
 
 #[test]

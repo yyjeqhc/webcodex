@@ -8,6 +8,7 @@ use super::support::*;
 use crate::shell_protocol::{
     ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,
 };
+use serde_json::json;
 
 #[tokio::test]
 async fn write_project_file_with_session_id_records_changed_path_without_content() {
@@ -309,6 +310,9 @@ fn search_project_text_command_excludes_sensitive_dirs_and_bounds_output() {
     assert!(cmd.contains("--exclude-dir=.git"));
     assert!(cmd.contains("--exclude-dir=target"));
     assert!(cmd.contains("--exclude-dir=node_modules"));
+    assert!(cmd.contains("--exclude-dir=secrets"));
+    assert!(cmd.contains("--exclude=.env"));
+    assert!(cmd.contains("--exclude=*.key"));
     assert!(cmd.contains("head -n 26"));
     assert!(cmd.contains("grep -rnI"));
 }
@@ -362,6 +366,65 @@ async fn search_project_text_requires_shell_capability() {
     assert!(
         result.error.unwrap().contains("shell"),
         "search_project_text should require shell capability"
+    );
+}
+
+#[tokio::test]
+async fn search_project_text_context_does_not_enqueue_python_helper() {
+    let runtime = test_runtime();
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(
+        tmp.path().join("notes.txt"),
+        "before\nneedle appears here\nafter\n",
+    )
+    .unwrap();
+    let project =
+        register_agent_project_at_path(&runtime, "search-native", "demo", tmp.path()).await;
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::SearchProjectText {
+                        project,
+                        pattern: "needle".to_string(),
+                        session_id: None,
+                        path: None,
+                        limit: Some(5),
+                        context_before: Some(1),
+                        context_after: Some(1),
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "search-native")
+        .await
+        .expect("search_project_text should enqueue an agent search request");
+    let forbidden = ["python3", "-c"].join(" ");
+    assert!(
+        !req.command.contains(&forbidden),
+        "search context must not enqueue a Python helper: {}",
+        req.command
+    );
+    assert!(req.command.contains("grep -rnI --null"));
+    complete_agent_request_by_running_locally(&runtime, "search-native", req).await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    let first = &result.output["matches"][0];
+    assert_eq!(first["path"], "notes.txt");
+    assert_eq!(first["line"], 2);
+    assert_eq!(
+        first["context_before"][0],
+        json!({"line": 1, "text": "before"})
+    );
+    assert_eq!(
+        first["context_after"][0],
+        json!({"line": 3, "text": "after"})
     );
 }
 

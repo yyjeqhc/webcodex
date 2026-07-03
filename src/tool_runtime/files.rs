@@ -271,10 +271,28 @@ pub(crate) fn parse_file_list_entries(
     (all, truncated)
 }
 
+const SEARCH_PROJECT_TEXT_EXCLUDES: &[&str] = &[
+    "--exclude-dir=.git",
+    "--exclude-dir=target",
+    "--exclude-dir=node_modules",
+    "--exclude-dir=secrets",
+    "--exclude-dir=tokens",
+    "--exclude=.env",
+    "--exclude=.env.*",
+    "--exclude=agent.toml",
+    "--exclude=webcodex.env",
+    "--exclude=*.pem",
+    "--exclude=*.key",
+];
+
+fn search_project_text_exclude_args() -> String {
+    SEARCH_PROJECT_TEXT_EXCLUDES.join(" ")
+}
+
 /// Build a bounded `grep -rnI` command for `search_project_text`. Excludes
-/// sensitive/build directories (`.git`, `target`, `node_modules`) by default
-/// and caps output with `head -n (max_matches + 1)` so the runtime can detect
-/// truncation without requesting an unbounded stream.
+/// sensitive/build directories and secret-like files by default and caps output
+/// with `head -n (max_matches + 1)` so the runtime can detect truncation without
+/// requesting an unbounded stream.
 pub(crate) fn search_project_text_command(
     pattern: &str,
     rel_path: &str,
@@ -285,7 +303,8 @@ pub(crate) fn search_project_text_command(
     // head -n N+1: one extra line lets the parser flag truncation.
     let head = max_matches.saturating_add(1);
     format!(
-        "grep -rnI --exclude-dir=.git --exclude-dir=target --exclude-dir=node_modules -e {pattern} {target} 2>/dev/null | head -n {head}",
+        "grep -rnI {excludes} -e {pattern} {target} 2>/dev/null | head -n {head}",
+        excludes = search_project_text_exclude_args(),
         pattern = escaped_pattern,
         target = escaped_target,
         head = head,
@@ -293,65 +312,6 @@ pub(crate) fn search_project_text_command(
 }
 
 pub(crate) const MAX_SEARCH_CONTEXT_LINES: usize = 20;
-
-const SEARCH_PROJECT_TEXT_CONTEXT_HELPER: &str = r#"
-import json
-import os
-import sys
-
-pattern = sys.argv[1]
-root_arg = sys.argv[2]
-max_matches = int(sys.argv[3])
-context_before = int(sys.argv[4])
-context_after = int(sys.argv[5])
-excluded_dirs = {'.git', 'target', 'node_modules'}
-
-def emit(obj):
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + '\n')
-
-def iter_files(root):
-    if os.path.isfile(root):
-        yield root
-        return
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in excluded_dirs)
-        for filename in sorted(filenames):
-            yield os.path.join(dirpath, filename)
-
-matches = 0
-truncated = False
-for path in iter_files(root_arg):
-    rel = os.path.relpath(path, '.')
-    try:
-        with open(path, 'r', encoding='utf-8') as f:
-            lines = f.read().splitlines()
-    except (UnicodeDecodeError, OSError):
-        continue
-    for idx, text in enumerate(lines):
-        if pattern not in text:
-            continue
-        if matches >= max_matches:
-            truncated = True
-            emit({'truncated': True})
-            sys.exit(0)
-        before_start = max(0, idx - context_before)
-        after_end = min(len(lines), idx + context_after + 1)
-        emit({
-            'path': rel[2:] if rel.startswith('./') else rel,
-            'line': idx + 1,
-            'preview': text,
-            'context_before': [
-                {'line': n + 1, 'text': lines[n]}
-                for n in range(before_start, idx)
-            ],
-            'context_after': [
-                {'line': n + 1, 'text': lines[n]}
-                for n in range(idx + 1, after_end)
-            ],
-        })
-        matches += 1
-emit({'truncated': truncated})
-"#;
 
 pub(crate) fn effective_search_context(
     context_before: Option<usize>,
@@ -370,14 +330,21 @@ pub(crate) fn search_project_text_context_command(
     context_before: usize,
     context_after: usize,
 ) -> String {
+    let context_line_budget = context_before
+        .saturating_add(context_after)
+        .saturating_add(1);
+    let match_budget = max_matches.saturating_add(1);
+    let head = match_budget
+        .saturating_mul(context_line_budget.saturating_add(1))
+        .saturating_add(1);
     format!(
-        "python3 -c {helper} {pattern} {target} {max_matches} {before} {after}",
-        helper = shell_escape_simple(SEARCH_PROJECT_TEXT_CONTEXT_HELPER),
+        "grep -rnI --null {excludes} -B {before} -A {after} -e {pattern} {target} 2>/dev/null | head -n {head}",
+        excludes = search_project_text_exclude_args(),
         pattern = shell_escape_simple(pattern),
         target = shell_escape_simple(rel_path),
-        max_matches = max_matches,
         before = context_before,
         after = context_after,
+        head = head,
     )
 }
 
@@ -411,11 +378,28 @@ pub(crate) fn parse_search_matches(stdout: &str, max_matches: usize) -> (Vec<Val
     (matches, truncated)
 }
 
-pub(crate) fn parse_search_context_matches(stdout: &str, max_matches: usize) -> (Vec<Value>, bool) {
+#[derive(Debug, Clone)]
+struct GrepContextLine {
+    path: String,
+    line: u64,
+    text: String,
+    is_match: bool,
+}
+
+pub(crate) fn parse_search_context_matches(
+    stdout: &str,
+    max_matches: usize,
+    context_before: usize,
+    context_after: usize,
+) -> (Vec<Value>, bool) {
+    let mut grep_lines = Vec::new();
     let mut matches: Vec<Value> = Vec::new();
     let mut truncated = false;
     for line in stdout.lines() {
         let Ok(value) = serde_json::from_str::<Value>(line) else {
+            if let Some(record) = parse_grep_context_line(line) {
+                grep_lines.push(record);
+            }
             continue;
         };
         if value
@@ -445,6 +429,101 @@ pub(crate) fn parse_search_context_matches(stdout: &str, max_matches: usize) -> 
             "path": path,
             "line": line_no,
             "preview": preview,
+            "context_before": context_before,
+            "context_after": context_after,
+        }));
+    }
+    if !grep_lines.is_empty() {
+        return search_context_matches_from_grep_lines(
+            &grep_lines,
+            max_matches,
+            context_before,
+            context_after,
+        );
+    }
+    (matches, truncated)
+}
+
+fn parse_grep_context_line(line: &str) -> Option<GrepContextLine> {
+    let (path, rest) = line.split_once('\0')?;
+    let mut digits_end = 0usize;
+    for (idx, ch) in rest.char_indices() {
+        if ch.is_ascii_digit() {
+            digits_end = idx + ch.len_utf8();
+            continue;
+        }
+        break;
+    }
+    if digits_end == 0 || digits_end >= rest.len() {
+        return None;
+    }
+    let separator = rest[digits_end..].chars().next()?;
+    if separator != ':' && separator != '-' {
+        return None;
+    }
+    let text_start = digits_end + separator.len_utf8();
+    let line_no = rest[..digits_end].parse::<u64>().ok()?;
+    let clean_path = path.strip_prefix("./").unwrap_or(path).to_string();
+    Some(GrepContextLine {
+        path: clean_path,
+        line: line_no,
+        text: rest[text_start..].to_string(),
+        is_match: separator == ':',
+    })
+}
+
+fn search_context_matches_from_grep_lines(
+    lines: &[GrepContextLine],
+    max_matches: usize,
+    context_before: usize,
+    context_after: usize,
+) -> (Vec<Value>, bool) {
+    let mut matches = Vec::new();
+    let mut truncated = false;
+    for (idx, record) in lines.iter().enumerate() {
+        if !record.is_match {
+            continue;
+        }
+        if matches.len() >= max_matches {
+            truncated = true;
+            break;
+        }
+        let before_floor = record.line.saturating_sub(context_before as u64);
+        let after_ceiling = record.line.saturating_add(context_after as u64);
+        let context_before = lines
+            .iter()
+            .take(idx)
+            .filter(|candidate| {
+                candidate.path.as_str() == record.path.as_str()
+                    && candidate.line >= before_floor
+                    && candidate.line < record.line
+            })
+            .map(|candidate| {
+                json!({
+                    "line": candidate.line,
+                    "text": candidate.text.as_str(),
+                })
+            })
+            .collect::<Vec<_>>();
+        let context_after = lines
+            .iter()
+            .skip(idx + 1)
+            .filter(|candidate| {
+                candidate.path.as_str() == record.path.as_str()
+                    && candidate.line > record.line
+                    && candidate.line <= after_ceiling
+            })
+            .map(|candidate| {
+                json!({
+                    "line": candidate.line,
+                    "text": candidate.text.as_str(),
+                })
+            })
+            .collect::<Vec<_>>();
+        matches.push(json!({
+            "path": record.path.as_str(),
+            "line": record.line,
+            "preview": record.text.as_str(),
             "context_before": context_before,
             "context_after": context_after,
         }));
@@ -2602,7 +2681,12 @@ impl ToolRuntime {
                 Ok(Ok(resp)) => {
                     let stdout = resp.stdout.unwrap_or_default();
                     let (matches, truncated) = if include_context {
-                        parse_search_context_matches(&stdout, max_matches)
+                        parse_search_context_matches(
+                            &stdout,
+                            max_matches,
+                            context_before,
+                            context_after,
+                        )
                     } else {
                         parse_search_matches(&stdout, max_matches)
                     };
@@ -2636,7 +2720,12 @@ impl ToolRuntime {
         match result {
             Ok((exit_code, stdout, _stderr, _)) => {
                 let (matches, truncated) = if include_context {
-                    parse_search_context_matches(&stdout, max_matches)
+                    parse_search_context_matches(
+                        &stdout,
+                        max_matches,
+                        context_before,
+                        context_after,
+                    )
                 } else {
                     parse_search_matches(&stdout, max_matches)
                 };
@@ -2882,7 +2971,7 @@ mod tests {
             + &serde_json::json!({"truncated": false}).to_string()
             + "\n";
 
-        let (matches, truncated) = parse_search_context_matches(&stdout, 10);
+        let (matches, truncated) = parse_search_context_matches(&stdout, 10, 2, 2);
 
         assert!(!truncated);
         assert_eq!(matches.len(), 1);
@@ -2906,7 +2995,7 @@ mod tests {
     }
 
     #[test]
-    fn search_context_helper_bounds_file_start_and_end() {
+    fn search_context_command_bounds_file_start_and_end() {
         let root = unique_temp_dir("search-context");
         std::fs::write(
             root.join("sample.txt"),
@@ -2917,7 +3006,7 @@ mod tests {
         let (exit_code, stdout, stderr, _) = run_command_sync(&cmd, &root, 10);
 
         assert_eq!(exit_code, 0, "stderr: {stderr}");
-        let (matches, truncated) = parse_search_context_matches(&stdout, 10);
+        let (matches, truncated) = parse_search_context_matches(&stdout, 10, 3, 3);
         assert!(!truncated);
         assert_eq!(matches.len(), 2);
         assert_eq!(matches[0]["line"], 1);

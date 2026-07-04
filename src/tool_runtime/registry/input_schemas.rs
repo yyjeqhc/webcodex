@@ -943,6 +943,90 @@ fn artifact_upload_followup_input_schema() -> Value {
     ]))
 }
 
+pub(super) fn replace_line_range_input_schema() -> Value {
+    object_schema(with_optional_session_id(vec![
+        ("project", "string", "Agent-registered project id.", true),
+        ("path", "string", "Project-relative file path.", true),
+        (
+            "start_line",
+            "integer",
+            "1-based inclusive start line.",
+            true,
+        ),
+        ("end_line", "integer", "1-based inclusive end line.", true),
+        (
+            "new_text",
+            "string",
+            "Replacement text; empty deletes the range.",
+            true,
+        ),
+        (
+            "expected_old_sha256",
+            "string",
+            "Optional sha256 guard for the original range text.",
+            false,
+        ),
+        (
+            "expected_old_prefix",
+            "string",
+            "Optional prefix guard for the original range text.",
+            false,
+        ),
+    ]))
+}
+
+pub(super) fn insert_at_line_input_schema() -> Value {
+    object_schema(with_optional_session_id(vec![
+        ("project", "string", "Agent-registered project id.", true),
+        ("path", "string", "Project-relative file path.", true),
+        (
+            "line",
+            "integer",
+            "1-based insertion line; total_lines+1 appends at EOF.",
+            true,
+        ),
+        ("text", "string", "Text to insert.", true),
+        (
+            "expected_anchor_sha256",
+            "string",
+            "Optional sha256 guard for anchor line or empty EOF anchor.",
+            false,
+        ),
+        (
+            "expected_anchor_prefix",
+            "string",
+            "Optional prefix guard for anchor line or empty EOF anchor.",
+            false,
+        ),
+    ]))
+}
+
+pub(super) fn delete_line_range_input_schema() -> Value {
+    object_schema(with_optional_session_id(vec![
+        ("project", "string", "Agent-registered project id.", true),
+        ("path", "string", "Project-relative file path.", true),
+        (
+            "start_line",
+            "integer",
+            "1-based inclusive start line.",
+            true,
+        ),
+        ("end_line", "integer", "1-based inclusive end line.", true),
+        (
+            "expected_old_sha256",
+            "string",
+            "Optional sha256 guard for the original range text.",
+            false,
+        ),
+        (
+            "expected_old_prefix",
+            "string",
+            "Optional prefix guard for the original range text.",
+            false,
+        ),
+    ]))
+}
+
 pub(super) fn apply_text_edits_input_schema() -> Value {
     json!({
         "type": "object",

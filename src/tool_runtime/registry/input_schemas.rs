@@ -53,6 +53,54 @@ pub(super) fn with_optional_session_id(
     fields
 }
 
+pub(super) fn list_tools_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "description": "Optional tool_manifest category filter such as artifact, edit, session, git, or runtime."
+            },
+            "features": {
+                "type": "string",
+                "description": "Optional loose feature filter such as artifact_upload, upload, read, edit, session, git, or validation."
+            },
+            "summary_only": {
+                "type": "boolean",
+                "description": "When true, omit full input/output schemas and return compact tool summaries."
+            },
+            "limit": {
+                "type": "integer",
+                "description": "Maximum returned tools for focused discovery; capped at 100."
+            }
+        },
+        "required": [],
+        "additionalProperties": false,
+    })
+}
+
+pub(super) fn tool_manifest_input_schema() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "category": {
+                "type": "string",
+                "description": "Optional category filter (e.g. session, edit, git, checkpoint, runtime, job, validation)."
+            },
+            "include_recommended_flows": {
+                "type": "boolean",
+                "description": "Include recommended_flows in the output (default true)."
+            },
+            "include_risk_summary": {
+                "type": "boolean",
+                "description": "Include risk_summary in the output (default true)."
+            }
+        },
+        "required": [],
+        "additionalProperties": false,
+    })
+}
+
 pub(super) fn apply_text_edits_input_schema() -> Value {
     json!({
         "type": "object",

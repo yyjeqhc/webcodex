@@ -1,4 +1,4 @@
-use serde_json::{json, Value};
+use serde_json::Value;
 
 use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_definitions};
 use super::super::tool_spec::ToolSpec;
@@ -6,11 +6,11 @@ use super::super::ToolRuntime;
 use super::input_schemas::{
     apply_text_edits_input_schema, checkpoint_create_input_schema, checkpoint_project_input_schema,
     current_session_input_schema, finish_coding_task_input_schema,
-    list_session_messages_input_schema, post_session_message_input_schema,
+    list_session_messages_input_schema, list_tools_input_schema, post_session_message_input_schema,
     resolve_session_message_input_schema, session_discussion_summary_input_schema,
     session_handoff_summary_input_schema, start_coding_task_input_schema,
-    start_session_input_schema, with_common_testing_metadata, with_optional_session_id,
-    workspace_hygiene_check_input_schema, PATCH_FIELD_DESCRIPTION,
+    start_session_input_schema, tool_manifest_input_schema, with_common_testing_metadata,
+    with_optional_session_id, workspace_hygiene_check_input_schema, PATCH_FIELD_DESCRIPTION,
 };
 use super::{object_schema, output_schema_for_tool, tool_annotations};
 
@@ -20,29 +20,7 @@ impl ToolRuntime {
             tool_spec(
                 "list_tools",
                 "List runtime tools. Full output includes schemas and may be large; use summary_only with category, features, or limit for bounded GPT Action discovery.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "category": {
-                            "type": "string",
-                            "description": "Optional tool_manifest category filter such as artifact, edit, session, git, or runtime."
-                        },
-                        "features": {
-                            "type": "string",
-                            "description": "Optional loose feature filter such as artifact_upload, upload, read, edit, session, git, or validation."
-                        },
-                        "summary_only": {
-                            "type": "boolean",
-                            "description": "When true, omit full input/output schemas and return compact tool summaries."
-                        },
-                        "limit": {
-                            "type": "integer",
-                            "description": "Maximum returned tools for focused discovery; capped at 100."
-                        }
-                    },
-                    "required": [],
-                    "additionalProperties": false,
-                }),
+                list_tools_input_schema(),
             ),
             tool_spec(
                 "start_session",
@@ -213,25 +191,7 @@ impl ToolRuntime {
                     .to_string()
                     + "summary, and recommended flows. Lightweight alternative to list_tools for "
                     + "long tasks. Read-only; never exposes schemas, tokens, or internal paths.",
-                json!({
-                    "type": "object",
-                    "properties": {
-                        "category": {
-                            "type": "string",
-                            "description": "Optional category filter (e.g. session, edit, git, checkpoint, runtime, job, validation)."
-                        },
-                        "include_recommended_flows": {
-                            "type": "boolean",
-                            "description": "Include recommended_flows in the output (default true)."
-                        },
-                        "include_risk_summary": {
-                            "type": "boolean",
-                            "description": "Include risk_summary in the output (default true)."
-                        }
-                    },
-                    "required": [],
-                    "additionalProperties": false,
-                }),
+                tool_manifest_input_schema(),
             ),
             tool_spec(
                 "run_shell",

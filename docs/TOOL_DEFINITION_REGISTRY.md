@@ -18,7 +18,8 @@ into smaller modules:
 - `src/tool_runtime/registry/tool_specs.rs`
 - `src/tool_runtime/tool_call.rs`
 - `src/tool_runtime/tool_definition.rs`
-- `src/tool_runtime/tool_names.rs`
+- `src/tool_runtime/tool_catalog.rs`
+- `src/tool_runtime/tool_policy.rs`
 - `src/tool_runtime/tool_inputs.rs`
 - `src/tool_runtime/tool_result.rs`
 - `src/tool_runtime/tool_spec.rs`
@@ -29,9 +30,9 @@ That split reduces file size and localizes schema/spec/surface/dispatch helpers.
 `tool_definition.rs` now declares known runtime tool names, model-facing
 visibility, manifest category, runtime metadata, and agent capability.
 Agent capability lookup, model-facing hidden checks, manifest category lookup,
-runtime OAuth tool scope lookup, MCP annotations, manifest summaries,
-permission/session policy, and session ledger classification are now
-definition-backed. `metadata.rs` now holds the `ToolMetadata` value type,
+known-tool checks, MCP annotations, manifest summaries, permission/session
+policy, and session ledger classification are now definition-backed.
+`metadata.rs` now holds the `ToolMetadata` value type,
 unknown-tool fallback, and explicit compatibility metadata for non-runtime route
 names such as `delete_files`; runtime tool metadata is declared on
 `ToolDefinition`. Missing capability definitions fail closed. Schemas, output
@@ -40,9 +41,10 @@ across hand-written structures and kept aligned by contract tests.
 Public `ToolSpec` rows are still hand-written for descriptions and input
 schemas, but a shared constructor now derives each row's `output_schema` and MCP
 `annotations` fields from the canonical spec name. `ToolDefinition` order is
-canonical for known-tool and model-facing discovery order; `tool_specs()` emits
-model-visible specs by iterating that canonical definition order and looking up
-the hand-written description/input-schema declaration.
+canonical for known-tool and model-facing discovery order; `known_tool_names()`
+and model-hidden name discovery derive directly from the definitions, and
+`tool_specs()` emits model-visible specs by iterating that canonical definition
+order and looking up the hand-written description/input-schema declaration.
 The full-schema `list_tools` category map now formats model-visible discovery
 groups declared beside `ToolDefinition`, so registry code no longer owns a
 separate category membership table or needs the full `ToolSpec` list to build
@@ -59,9 +61,8 @@ the caller's current-session binding.
 
 ## Current problems
 
-- Tool names are repeated in `ToolCall`, `KNOWN_TOOL_NAMES`, `tool_name()`,
-  parser paths, hidden-tool filters, OpenAPI descriptions, MCP discovery,
-  `tool_manifest`, and tests.
+- Tool names are still repeated in `ToolCall`, `tool_name()`, parser paths,
+  OpenAPI descriptions, MCP discovery, `tool_manifest`, and tests.
 - Input and output schemas are still hand-written separately from the execution
   IR and from GPT Action flattened fields.
 - `ToolMetadata`, registry `ToolSpec`, OAuth runtime scope policy, OpenAPI
@@ -169,15 +170,17 @@ structures while routing low-risk runtime behavior through the definitions.
 Started: `src/tool_runtime/tool_definition.rs` contains the first explicit
 declaration for known tool names, model-facing visibility, manifest category,
 runtime metadata, and agent capability. Agent capability lookup,
-model-facing hidden checks, manifest category lookup, and known-tool OAuth
-scope lookup now read from the declaration/facade. MCP annotations, permission
-decisions, session guard classification, and session ledger classification also
-read metadata through that facade. The old runtime metadata table has been
+model-facing hidden checks, known-tool checks, and manifest category lookup now
+read from the declaration/facade. OAuth runtime tool scope policy reads the same
+metadata facade so legacy non-runtime route metadata remains covered. MCP
+annotations, permission decisions, session guard classification, and session
+ledger classification also read metadata through that facade. The old runtime
+metadata table has been
 removed; `lookup_tool_metadata()` now returns definition metadata for runtime
 tools and falls back only for non-runtime route metadata. The current tests
-verify parity with `KNOWN_TOOL_NAMES`, public `ToolSpec` exposure, metadata
-facade behavior, compatibility hidden-tool constants, OAuth scope policy, and
-the expected capability policy. `tool_specs()` also builds each public spec
+verify definition-derived known-tool and hidden-tool discovery, public
+`ToolSpec` exposure, metadata facade behavior, OAuth scope policy, and the
+expected capability policy. `tool_specs()` also builds each public spec
 through a shared constructor that derives output schema and MCP annotations from
 the canonical tool name, then emits public specs in model-visible
 `ToolDefinition` order to avoid local string/order drift while the hand-written
@@ -186,8 +189,8 @@ spec table is reduced.
 directly, then only formats the JSON response. Recommended-flow summaries and
 structured manifest flows now share a definition-layer declaration. Public
 `tool_names()` derives from model-visible `ToolDefinition` order, and contract
-tests verify that the compatibility known-name list and public `ToolSpec` order
-match the canonical definition order. Session guard, ledger classification,
+tests verify that definition-derived known-name iteration and public `ToolSpec`
+order match the canonical definition order. Session guard, ledger classification,
 validation-output capture, cross-project session escape, and permission-risk
 decisions now also read definition-layer semantic helpers/facades, with
 contract tests covering the metadata-derived rules and the remaining explicit
@@ -201,8 +204,8 @@ Expected checks:
   tools such as `run_codex`;
 - definition risk/scope/project/session flags drive `ToolMetadata` facade
   behavior and existing helper behavior;
-- `KNOWN_TOOL_NAMES`, public `ToolSpec` order, and public `tool_names()` mirror
-  canonical `ToolDefinition` order;
+- definition-derived known-tool iteration, public `ToolSpec` order, and public
+  `tool_names()` mirror canonical `ToolDefinition` order;
 - public `ToolSpec` output schemas and MCP annotations derive from the
   canonical spec name;
 - `list_tools` category groups derive from definition-layer discovery groups;
@@ -251,8 +254,6 @@ When adding a runtime tool today, expect to update or verify:
 
 - `src/tool_runtime/tool_call.rs`: add the `ToolCall` variant, parser handling,
   `tool_name()`, `session_id()`, and `project()` behavior.
-- `src/tool_runtime/tool_names.rs`: update `KNOWN_TOOL_NAMES` and any explicit
-  model-facing hidden-tool behavior.
 - `src/tool_runtime/mod.rs` or a domain module under `src/tool_runtime/`: add
   runtime handler logic and any `tool_manifest` category/recommended-flow
   changes.
@@ -263,8 +264,10 @@ When adding a runtime tool today, expect to update or verify:
   and flattened-argument discovery behavior when applicable.
 - `src/tool_runtime/tool_definition.rs`: add `ToolMetadata` risk, OAuth scope,
   project requirement, path hint, read-only/destructive/shell-like
-  classification, manifest category, list-tools discovery group membership,
-  visibility, and agent capability.
+  classification, manifest category, visibility, and agent capability.
+- `src/tool_runtime/tool_catalog.rs`: add or update discovery group and
+  recommended-flow placement when the tool should appear in those model-facing
+  summaries.
 - `src/tool_runtime/metadata.rs`: update only for non-runtime compatibility
   route metadata such as legacy dedicated HTTP routes.
 - `src/tool_runtime/registry/input_schemas.rs`: add or extend input schema
@@ -276,7 +279,7 @@ When adding a runtime tool today, expect to update or verify:
 - `src/tool_runtime/registry/tool_specs.rs`: add or intentionally hide the
   `ToolSpec`; keep `run_codex`-style hidden behavior explicit.
 - `src/auth/scopes.rs`: verify OAuth runtime tool policy still resolves from
-  `ToolDefinition` metadata and fails closed for unknown tools.
+  the metadata facade and fails closed for unknown tools.
 - `src/openapi.rs`: update dedicated GPT Action operations or
   `ToolCallRequest` accepted-name/flattened-field descriptions when applicable.
 - `src/mcp.rs`: verify `tools/list` and `tools/call` behavior needs no protocol

@@ -2,8 +2,8 @@
 //!
 //! This module is the central declaration point for runtime tool names,
 //! model-facing visibility, manifest category, runtime metadata, and agent
-//! capability. Compatibility snapshots and non-runtime route metadata fallbacks
-//! remain while the registry migration proceeds in small steps.
+//! capability. Non-runtime route metadata fallbacks remain in `metadata.rs`
+//! while the registry migration proceeds in small steps.
 
 #![allow(dead_code)]
 

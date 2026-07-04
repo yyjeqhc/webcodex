@@ -36,6 +36,7 @@ mod tool_catalog;
 pub(crate) mod tool_definition;
 mod tool_inputs;
 mod tool_names;
+mod tool_policy;
 mod tool_result;
 mod tool_spec;
 mod validation_events;

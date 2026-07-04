@@ -8,10 +8,24 @@
 #![allow(dead_code)]
 
 use super::metadata::{
-    metadata as make_tool_metadata, tool_metadata as fallback_tool_metadata, ToolMetadata,
-    ToolPathHint, ToolRisk, JOB_RUN, PROJECT_READ, PROJECT_WRITE, RUNTIME_READ,
+    metadata as make_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk, JOB_RUN, PROJECT_READ,
+    PROJECT_WRITE, RUNTIME_READ,
 };
 pub(crate) use super::tool_catalog::{TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS};
+pub use super::tool_policy::is_known_tool_name;
+#[allow(unused_imports)]
+pub(crate) use super::tool_policy::{
+    is_model_hidden_tool_name, is_model_visible_tool_name, lookup_tool_definition,
+    model_visible_tool_definitions, model_visible_tool_names_csv,
+    runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
+    runtime_tool_category, runtime_tool_creates_or_binds_session,
+    runtime_tool_is_change_summary_like, runtime_tool_is_current_session_control,
+    runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+    runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_oauth_scope,
+    runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
+    runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
+    runtime_tool_session_risk_class,
+};
 
 /// Capability an agent-backed tool requires before dispatch can reach an
 /// agent-backed project.
@@ -101,117 +115,6 @@ pub(crate) struct ToolRecommendedFlow {
     pub(crate) summary: &'static str,
     pub(crate) manifest_purpose: &'static str,
     pub(crate) tools: &'static [&'static str],
-}
-
-impl ToolDefinition {
-    pub(crate) fn metadata(self) -> ToolMetadata {
-        self.metadata
-    }
-
-    pub(crate) fn oauth_scope(self) -> Option<&'static str> {
-        self.metadata.oauth_scope
-    }
-
-    pub(crate) fn session_risk_class(self) -> &'static str {
-        self.metadata.risk.session_risk_class()
-    }
-
-    pub(crate) fn is_read_like(self) -> bool {
-        self.metadata.read_only
-    }
-
-    pub(crate) fn is_write_like(self) -> bool {
-        self.metadata.risk == ToolRisk::ProjectWrite
-    }
-
-    pub(crate) fn is_shell_like(self) -> bool {
-        self.metadata.shell_like || self.metadata.risk == ToolRisk::JobRun
-    }
-
-    pub(crate) fn is_git_like(self) -> bool {
-        tool_is_in_discovery_group(self.name, "git")
-    }
-
-    pub(crate) fn is_change_summary_like(self) -> bool {
-        matches!(
-            self.name,
-            "show_changes" | "git_diff_summary" | "git_diff_hunks"
-        )
-    }
-
-    pub(crate) fn captures_validation_output(self) -> bool {
-        matches!(self.name, "cargo_fmt" | "cargo_check" | "cargo_test")
-    }
-
-    pub(crate) fn is_current_session_control(self) -> bool {
-        matches!(
-            self.name,
-            "bind_current_session" | "current_session" | "unbind_current_session"
-        )
-    }
-
-    pub(crate) fn requires_explicit_business_session(self) -> bool {
-        matches!(
-            self.name,
-            "finish_coding_task"
-                | "session_summary"
-                | "post_session_message"
-                | "list_session_messages"
-                | "resolve_session_message"
-                | "session_discussion_summary"
-                | "session_handoff_summary"
-        )
-    }
-
-    pub(crate) fn creates_or_binds_session(self) -> bool {
-        matches!(
-            self.name,
-            "start_session" | "start_coding_task" | "bind_current_session"
-        )
-    }
-
-    pub(crate) fn allows_current_session_fallback(self) -> bool {
-        self.metadata.requires_project
-            && !self.is_current_session_control()
-            && !self.requires_explicit_business_session()
-            && !self.creates_or_binds_session()
-    }
-
-    pub(crate) fn requires_session_project_escape(self) -> bool {
-        !self.metadata.read_only || self.metadata.destructive || self.metadata.shell_like
-    }
-
-    pub(crate) fn requires_permission(self) -> bool {
-        !self.metadata.read_only || self.metadata.destructive || self.metadata.shell_like
-    }
-
-    pub(crate) fn permission_risk(self) -> &'static str {
-        if self.captures_validation_output() {
-            return "validation";
-        }
-        if matches!(self.name, "run_job" | "stop_job" | "run_codex") {
-            return "job";
-        }
-        if self.metadata.shell_like {
-            return "shell";
-        }
-        if self.metadata.destructive {
-            return "destructive";
-        }
-        if self.metadata.path_hint == ToolPathHint::Artifact {
-            return "artifact_write";
-        }
-        if self.metadata.path_hint == ToolPathHint::Patch || self.name.contains("patch") {
-            return "patch";
-        }
-        if matches!(
-            self.metadata.risk,
-            ToolRisk::ProjectWrite | ToolRisk::AccountManage
-        ) {
-            return "write";
-        }
-        "write"
-    }
 }
 
 const fn def(
@@ -1123,161 +1026,3 @@ pub(crate) const TOOL_DEFINITIONS: &[ToolDefinition] = &[
         false,
     ),
 ];
-
-pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefinition> {
-    TOOL_DEFINITIONS
-        .iter()
-        .find(|definition| definition.name == name)
-}
-
-/// Returns `true` if `name` is a recognized runtime tool name. Public so the
-/// HTTP/MCP adapters can decide whether to emit the rich "unknown tool" error.
-pub fn is_known_tool_name(name: &str) -> bool {
-    lookup_tool_definition(name).is_some()
-}
-
-pub(crate) fn runtime_tool_oauth_scope(name: &str) -> Option<&'static str> {
-    lookup_tool_definition(name).and_then(|definition| definition.oauth_scope())
-}
-
-pub(crate) fn runtime_tool_metadata(name: &str) -> ToolMetadata {
-    lookup_tool_definition(name)
-        .map(|definition| definition.metadata())
-        .unwrap_or_else(|| fallback_tool_metadata(name))
-}
-
-pub(crate) fn runtime_tool_category(name: &str) -> &'static str {
-    lookup_tool_definition(name)
-        .map(|definition| definition.category)
-        .unwrap_or("other")
-}
-
-pub(crate) fn runtime_tool_session_risk_class(name: &str) -> &'static str {
-    lookup_tool_definition(name)
-        .map(|definition| definition.session_risk_class())
-        .unwrap_or_else(|| fallback_tool_metadata(name).risk.session_risk_class())
-}
-
-pub(crate) fn runtime_tool_is_read_like(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.is_read_like())
-        .unwrap_or_else(|| fallback_tool_metadata(name).read_only)
-}
-
-pub(crate) fn runtime_tool_is_write_like(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.is_write_like())
-        .unwrap_or_else(|| fallback_tool_metadata(name).risk == ToolRisk::ProjectWrite)
-}
-
-pub(crate) fn runtime_tool_is_shell_like(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.is_shell_like())
-        .unwrap_or_else(|| {
-            let metadata = fallback_tool_metadata(name);
-            metadata.shell_like || metadata.risk == ToolRisk::JobRun
-        })
-}
-
-pub(crate) fn runtime_tool_is_git_like(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.is_git_like())
-}
-
-pub(crate) fn runtime_tool_is_change_summary_like(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.is_change_summary_like())
-}
-
-pub(crate) fn runtime_tool_captures_validation_output(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.captures_validation_output())
-}
-
-pub(crate) fn runtime_tool_is_current_session_control(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.is_current_session_control())
-}
-
-pub(crate) fn runtime_tool_requires_explicit_business_session(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .is_some_and(|definition| definition.requires_explicit_business_session())
-}
-
-pub(crate) fn runtime_tool_creates_or_binds_session(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.creates_or_binds_session())
-}
-
-pub(crate) fn runtime_tool_allows_current_session_fallback(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .is_some_and(|definition| definition.allows_current_session_fallback())
-}
-
-pub(crate) fn runtime_tool_requires_session_project_escape(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.requires_session_project_escape())
-        .unwrap_or_else(|| {
-            let metadata = fallback_tool_metadata(name);
-            !metadata.read_only || metadata.destructive || metadata.shell_like
-        })
-}
-
-pub(crate) fn runtime_tool_requires_permission(name: &str) -> bool {
-    lookup_tool_definition(name)
-        .map(|definition| definition.requires_permission())
-        .unwrap_or_else(|| {
-            let metadata = fallback_tool_metadata(name);
-            !metadata.read_only || metadata.destructive || metadata.shell_like
-        })
-}
-
-pub(crate) fn runtime_tool_permission_risk(name: &str) -> &'static str {
-    lookup_tool_definition(name)
-        .map(|definition| definition.permission_risk())
-        .unwrap_or_else(|| {
-            let metadata = fallback_tool_metadata(name);
-            if metadata.shell_like {
-                return "shell";
-            }
-            if metadata.destructive {
-                return "destructive";
-            }
-            if metadata.path_hint == ToolPathHint::Artifact {
-                return "artifact_write";
-            }
-            if metadata.path_hint == ToolPathHint::Patch || name.contains("patch") {
-                return "patch";
-            }
-            if matches!(
-                metadata.risk,
-                ToolRisk::ProjectWrite | ToolRisk::AccountManage
-            ) {
-                return "write";
-            }
-            "write"
-        })
-}
-
-pub(crate) fn is_model_visible_tool_name(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_visible())
-}
-
-pub(crate) fn is_model_hidden_tool_name(name: &str) -> bool {
-    lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_hidden())
-}
-
-pub(crate) fn model_visible_tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
-    TOOL_DEFINITIONS
-        .iter()
-        .filter(|definition| definition.visibility.is_model_visible())
-}
-
-pub(super) fn model_visible_tool_names_csv() -> String {
-    model_visible_tool_definitions()
-        .map(|definition| definition.name)
-        .collect::<Vec<_>>()
-        .join(", ")
-}
-
-fn tool_is_in_discovery_group(tool_name: &str, group_name: &str) -> bool {
-    TOOL_DISCOVERY_GROUPS
-        .iter()
-        .find(|group| group.name == group_name)
-        .is_some_and(|group| group.tools.contains(&tool_name))
-}

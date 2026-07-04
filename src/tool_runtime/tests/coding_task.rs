@@ -47,6 +47,14 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         .as_object()
         .unwrap()
         .contains_key("tool_manifest_limit"));
+    let start_output = crate::tool_runtime::registry::output_schema_for_tool("start_coding_task");
+    assert!(
+        start_output["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("permissions"),
+        "start_coding_task output schema should include permissions"
+    );
     let finish = spec_named(&specs, "finish_coding_task");
     assert_eq!(required_fields(finish), vec!["project", "session_id"]);
 
@@ -191,6 +199,12 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
     assert_eq!(
         result.output["session"]["current_binding"]["process_local_in_memory"],
         true
+    );
+    assert_eq!(result.output["permissions"]["policy"], "dev_auto_approve");
+    assert_eq!(result.output["permissions"]["auto_approve"], true);
+    assert_eq!(
+        result.output["permissions"]["human_approval_required"],
+        false
     );
 
     let current = runtime
@@ -479,6 +493,13 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     assert_eq!(validation["source"], "session_ledger");
     assert_eq!(validation["events_total"], 0);
     assert!(validation["events"].as_array().unwrap().is_empty());
+    assert_eq!(result.output["permissions"]["policy"], "dev_auto_approve");
+    assert_eq!(result.output["permissions"]["required_count"], 0);
+    assert_eq!(result.output["permissions"]["auto_approved_count"], 0);
+    assert!(result.output["permissions"]["recent"]
+        .as_array()
+        .unwrap()
+        .is_empty());
     assert_eq!(validation["parser"]["available"], false);
     assert_eq!(
         validation["parser"]["reason"],

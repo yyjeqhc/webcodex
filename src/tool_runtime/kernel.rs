@@ -239,7 +239,7 @@ impl ToolRuntime {
 
         let session_log_arguments =
             guard_denial_log_arguments(&request.tool_name, &request.arguments);
-        let session_event = self.sessions.record_tool_call_started(
+        let mut session_event = self.sessions.record_tool_call_started(
             context.session_id,
             context.transport.into(),
             &request.tool_name,
@@ -292,6 +292,8 @@ impl ToolRuntime {
         };
 
         let project = tool_project(&call);
+        let permission =
+            super::permissions::permission_decision_for_tool(call.tool_name(), project.as_deref());
         let mut result = self
             .dispatch_with_auth_transport_options(
                 call,
@@ -301,6 +303,16 @@ impl ToolRuntime {
                 allow_cross_project_session,
             )
             .await;
+        let permission = permission.filter(|_| {
+            !super::permissions::is_hard_denied_output(&result.output, result.error.as_deref())
+        });
+        if let Some(permission) = permission.as_ref() {
+            if let Some(start) = session_event.as_mut() {
+                self.sessions
+                    .record_permission_decision(start, permission.clone());
+            }
+            super::permissions::add_permission_to_result(&mut result, permission);
+        }
         if let Some(mismatch) = recording_session_project_mismatch.as_ref() {
             session_context::add_session_project_mismatch_warning(
                 &mut result,

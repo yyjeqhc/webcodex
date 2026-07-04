@@ -52,6 +52,10 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     let ok = ok_task.await.unwrap();
     assert!(ok.success, "{:?}", ok.error);
     assert_eq!(ok.output["session_recorded"], true);
+    assert_eq!(ok.output["permission"]["required"], true);
+    assert_eq!(ok.output["permission"]["policy"], "dev_auto_approve");
+    assert_eq!(ok.output["permission"]["status"], "auto_approved");
+    assert_eq!(ok.output["permission"]["risk"], "shell");
 
     let fail_task = tokio::spawn({
         let runtime = runtime.clone();
@@ -90,6 +94,7 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     assert!(!fail.success);
     assert_eq!(fail.output["failure_kind"], "command_exit_nonzero");
     assert_eq!(fail.output["session_recorded"], true);
+    assert_eq!(fail.output["permission"]["status"], "auto_approved");
 
     let summary = runtime
         .sessions
@@ -99,6 +104,12 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     assert_eq!(summary.counts.succeeded, 1);
     assert_eq!(summary.counts.failed, 1);
     assert_eq!(summary.counts.shell_like, 2);
+    let permission_summary = crate::tool_runtime::permissions::permission_summary_from_events(
+        &summary.events,
+        crate::tool_runtime::permissions::DEFAULT_PERMISSION_RECENT_LIMIT,
+    );
+    assert_eq!(permission_summary["required_count"], 2);
+    assert_eq!(permission_summary["auto_approved_count"], 2);
     let failed = summary
         .events
         .iter()
@@ -112,6 +123,9 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     assert_eq!(failed.exit_code, Some(7));
     assert_eq!(failed.failure_kind.as_deref(), Some("command_exit_nonzero"));
     assert_eq!(failed.error_kind.as_deref(), Some("command_exit_nonzero"));
+    let permission = failed.permission.as_ref().expect("permission metadata");
+    assert_eq!(permission.status, "auto_approved");
+    assert_eq!(permission.risk, "shell");
     let serialized = serde_json::to_string(&summary.events).unwrap();
     for leaked in [
         "shell-secret-out",

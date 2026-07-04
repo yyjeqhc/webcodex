@@ -1233,6 +1233,13 @@ async fn runtime_status_with_no_projects_returns_configured_false() {
     assert!(out["build"].get("built_at").is_some());
     assert!(out["server_time"].is_i64());
     assert!(out["pid"].is_i64());
+    assert_eq!(out["permissions"]["policy"], "dev_auto_approve");
+    assert_eq!(out["permissions"]["auto_approve"], true);
+    assert_eq!(out["permissions"]["human_approval_required"], false);
+    assert_eq!(
+        out["permissions"]["release_recommended_policy"],
+        "require_approval"
+    );
     // No projects.toml -> configured false, load_error present.
     assert_eq!(out["projects"]["configured"], false);
     assert_eq!(out["projects"]["count"], 0);

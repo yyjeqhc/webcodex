@@ -38,6 +38,48 @@ fn open_object_schema(description: &str) -> Value {
     })
 }
 
+fn permission_profile_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": false,
+        "properties": {
+            "policy": {
+                "type": "string",
+                "enum": ["dev_auto_approve", "require_approval", "disabled", "off"],
+                "description": "Current permission policy/profile."
+            },
+            "human_approval_required": {
+                "type": "boolean",
+                "description": "False for the self-hosted development dev_auto_approve profile."
+            },
+            "auto_approve": {
+                "type": "boolean",
+                "description": "True when high-risk tools are automatically approved after hard safety checks pass."
+            },
+            "release_recommended_policy": {
+                "type": "string",
+                "enum": ["require_approval"],
+                "description": "Recommended future release policy."
+            }
+        },
+        "required": [
+            "policy",
+            "human_approval_required",
+            "auto_approve",
+            "release_recommended_policy"
+        ]
+    })
+}
+
+fn permission_summary_schema(description: &str) -> Value {
+    open_object_schema(description)
+}
+
+fn permission_decision_schema() -> Value {
+    open_object_schema("Permission decision metadata for high-risk tools after hard safety checks pass. Never includes stdout, stderr, env, tokens, secrets, or raw input content.")
+}
+
 fn search_context_line_schema() -> Value {
     json!({
         "type": "object",
@@ -150,6 +192,7 @@ fn wrapped_output_schema(output_properties: Vec<(&str, Value)>) -> Value {
             ),
         ),
         ("session_hint", session_hint_schema()),
+        ("permission", permission_decision_schema()),
     ]);
     let properties = output_properties
         .into_iter()
@@ -316,6 +359,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 open_object_schema("Runtime tool counts and names."),
             ),
             (
+                "permissions",
+                permission_profile_schema("Current permission/approval profile. dev_auto_approve is the self-hosted development default and does not bypass hard safety checks."),
+            ),
+            (
                 "quic",
                 open_object_schema("QUIC transport status, when enabled."),
             ),
@@ -450,6 +497,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 nullable_schema("object", "runtime_status output when requested; null otherwise."),
             ),
             (
+                "permissions",
+                permission_profile_schema("Current permission/approval profile for this task."),
+            ),
+            (
                 "rules",
                 nullable_schema("object", "Deterministic project instruction source summary when requested; null otherwise."),
             ),
@@ -488,6 +539,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             (
                 "validation",
                 open_object_schema("Ledger-based validation-like tool-call summary with status/reason: not_run, passed, failed, mixed, or unknown. Does not include stdout/stderr bodies. Minimal diagnostics, when available, are parsed only from bounded tails or safe result metadata and never infer root cause."),
+            ),
+            (
+                "permissions",
+                permission_summary_schema("Deterministic bounded permission decision summary from the session ledger. Counts high-risk auto-approved tools only; never includes stdout/stderr, env, tokens, secrets, or raw input content."),
             ),
             (
                 "hygiene",
@@ -675,6 +730,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             (
                 "recent_failed_tools",
                 array_schema(open_object_schema("Bounded failed tool call summary: tool_name, error_kind, failure_kind, created_at, write_like, job_like."), "Bounded newest-first recent failed tool calls. Never includes raw input payloads."),
+            ),
+            (
+                "permissions",
+                permission_summary_schema("Deterministic bounded permission decision summary from the session ledger. Counts high-risk auto-approved tools only; never includes stdout/stderr, env, tokens, secrets, or raw input content."),
             ),
             (
                 "workspace",

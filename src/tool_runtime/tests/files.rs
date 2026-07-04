@@ -17,6 +17,8 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     let runtime = runtime_with_agent_project("telemetry-write");
     let mut caps = ShellClientCapabilities::default();
     caps.file_write = true;
+    caps.shell = true;
+    caps.git = true;
     register_agent(&runtime, "telemetry-write", None, caps).await;
     let project = agent_test_project_id("telemetry-write");
     let session = runtime.sessions.start_session(None, None);
@@ -64,6 +66,11 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     let result = task.await.unwrap();
 
     assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["permission"]["required"], true);
+    assert_eq!(result.output["permission"]["policy"], "dev_auto_approve");
+    assert_eq!(result.output["permission"]["status"], "auto_approved");
+    assert_eq!(result.output["permission"]["reason"], "dev_auto_approve");
+    assert_eq!(result.output["permission"]["risk"], "write");
     let summary = runtime
         .sessions
         .summary(&session.session_id, Some(20))
@@ -72,11 +79,74 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     let event = finished_event(&summary, "write_project_file");
     assert!(event.write_like);
     assert_eq!(event.changed_paths, vec!["src/new.txt".to_string()]);
+    let permission = event.permission.as_ref().expect("permission metadata");
+    assert!(permission.required);
+    assert_eq!(permission.policy, "dev_auto_approve");
+    assert_eq!(permission.status, "auto_approved");
+    assert_eq!(permission.tool_name, "write_project_file");
+    assert_eq!(permission.risk, "write");
     let serialized = serde_json::to_string(&summary.events).unwrap();
     assert!(
         !serialized.contains("do-not-log-this-content"),
         "session event leaked write content: {serialized}"
     );
+
+    let handoff = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: session.session_id.clone(),
+            project: None,
+            include_workspace: Some(false),
+            include_checkpoints: Some(false),
+            include_validation: Some(false),
+            limit: None,
+        })
+        .await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["permissions"]["required_count"], 1);
+    assert_eq!(handoff.output["permissions"]["auto_approved_count"], 1);
+    assert_eq!(
+        handoff.output["permissions"]["recent"][0]["tool_name"],
+        "write_project_file"
+    );
+
+    let finish_task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session.session_id.clone();
+        async move {
+            let bootstrap = auth_context(None, true);
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        include_diff: Some(false),
+                        include_hygiene: Some(false),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(false),
+                    },
+                    Some(&bootstrap),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "telemetry-write")
+        .await
+        .expect("finish_coding_task should inspect changes");
+    assert!(req.command.contains("git status --porcelain=v1 -b"));
+    complete_patch_agent_request(
+        &runtime,
+        "telemetry-write",
+        &req.request_id,
+        0,
+        "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0write\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n",
+        "",
+    )
+    .await;
+    let finish = finish_task.await.unwrap();
+    assert!(finish.success, "{:?}", finish.error);
+    assert_eq!(finish.output["permissions"]["required_count"], 1);
+    assert_eq!(finish.output["permissions"]["auto_approved_count"], 1);
 }
 
 #[tokio::test]
@@ -313,6 +383,7 @@ async fn artifact_upload_begin_policy_rejection_is_classified() {
         .await;
 
     assert!(!result.success);
+    assert!(result.output.get("permission").is_none());
     assert_eq!(result.output["failure_kind"], "policy_rejected");
     assert_eq!(result.output["error_kind"], "policy_rejected");
     let error = result.error.as_deref().unwrap();
@@ -333,6 +404,7 @@ async fn artifact_upload_begin_policy_rejection_is_classified() {
     let event = finished_event(&summary, "artifact_upload_begin");
     assert_eq!(event.failure_kind.as_deref(), Some("policy_rejected"));
     assert_eq!(event.error_kind.as_deref(), Some("policy_rejected"));
+    assert!(event.permission.is_none());
 }
 
 #[tokio::test]

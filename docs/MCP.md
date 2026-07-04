@@ -68,6 +68,14 @@ and MCP client constraints. GPT Actions are different: the dedicated operation
 surface must stay below the 30-operation limit, so artifact upload remains
 available there through `callRuntimeTool` rather than dedicated operations.
 
+`runtime_status` exposes the current permission profile as
+`output.permissions`. The current self-hosted development profile is
+`dev_auto_approve`: high-risk tools are automatically approved only after hard
+safety checks pass. It never bypasses authentication, OAuth scopes, read-only
+session guards, `deny_write_tools`, `deny_shell_tools`, project/session mismatch
+guards, path safety, sensitive-path denial, or agent policy. Future
+release-oriented deployments should use a `require_approval` policy.
+
 Runtime tool discovery includes annotations derived from `ToolMetadata`, a
 lightweight precursor to ToolProvider. The metadata centralizes risk, OAuth
 scope, read-only/destructive/open-world hints, project requirement, and path
@@ -219,6 +227,14 @@ root-cause inference, fix suggestions, LSP/tree-sitter, or LLM summarization.
 Validation includes `status` and `reason`: no validation events yields
 `not_run` with `no_validation_tool_invoked`; all-success/all-failure/mixed
 ledgers yield `passed`, `failed`, or `mixed`.
+
+The session ledger also stores minimal permission decision metadata for
+high-risk tools: `required=true`, policy, request id, `status=auto_approved`,
+reason, risk, tool name, and project id. Read-only tools do not create noisy
+permission events. `finish_coding_task.permissions` and
+`session_handoff_summary.permissions` return deterministic counts and a bounded
+recent list; they never include stdout/stderr, command bodies, patches, file
+contents, env, tokens, secrets, or excerpts.
 
 `runtime_status.projects` separates `server_static`, `agent_registered`, and
 `effective`. A missing `projects.toml` should not be treated as an overall

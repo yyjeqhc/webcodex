@@ -12,6 +12,7 @@
 
 use serde_json::{json, Value};
 
+use super::permissions::permission_summary_from_events;
 use super::session_context::{
     session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
 };
@@ -147,6 +148,7 @@ impl ToolRuntime {
             "created_at": summary.created_at,
             "updated_at": summary.updated_at,
             "counts": counts,
+            "permissions": permission_summary_from_events(&summary.events, DEFAULT_HANDOFF_LIMIT),
             "open_todos": open_todos,
             "open_risks": open_risks,
             "open_questions": open_questions,

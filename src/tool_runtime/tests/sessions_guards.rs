@@ -51,6 +51,7 @@ async fn unknown_session_id_fails_before_execution_or_mutation() {
     assert!(!read.success);
     assert_eq!(read.output["error_kind"], "unknown_session_id");
     assert_eq!(read.output["session_id"], "wc_sess_missing");
+    assert!(read.output.get("permission").is_none());
     assert!(read
         .error
         .as_deref()
@@ -70,6 +71,7 @@ async fn unknown_session_id_fails_before_execution_or_mutation() {
         .await;
     assert!(!write.success);
     assert_eq!(write.output["error_kind"], "unknown_session_id");
+    assert!(write.output.get("permission").is_none());
     assert!(!root.join("should-not-exist.txt").exists());
 }
 
@@ -218,6 +220,8 @@ async fn mutation_cross_project_session_fails_before_write() {
     assert_eq!(result.output["session_project"], alpha);
     assert_eq!(result.output["request_project"], bravo);
     assert_eq!(result.output["allow_cross_project_session_required"], true);
+    assert_eq!(result.output["command_started"], false);
+    assert!(result.output.get("permission").is_none());
     assert!(!tmp_b.path().join("blocked.txt").exists());
 
     let summary = runtime
@@ -233,6 +237,7 @@ async fn mutation_cross_project_session_fails_before_write() {
         event.error_kind.as_deref(),
         Some("session_project_mismatch")
     );
+    assert!(event.permission.is_none());
 }
 
 #[tokio::test]
@@ -336,6 +341,8 @@ async fn recording_session_id_obeys_project_boundary() {
     assert!(!outcome.success);
     let result = outcome.result.unwrap();
     assert_eq!(result.output["failure_kind"], "session_project_mismatch");
+    assert_eq!(result.output["command_started"], false);
+    assert!(result.output.get("permission").is_none());
     assert!(!tmp_b.path().join("recording-blocked.txt").exists());
     let summary = runtime
         .sessions
@@ -347,6 +354,7 @@ async fn recording_session_id_obeys_project_boundary() {
         Some("session_project_mismatch")
     );
     assert_eq!(event.request_project.as_deref(), Some(bravo.as_str()));
+    assert!(event.permission.is_none());
 }
 
 #[tokio::test]
@@ -545,6 +553,7 @@ async fn read_only_session_allows_read_file_and_records_success() {
 
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["session_recorded"], true);
+    assert!(result.output.get("permission").is_none());
     let summary = runtime
         .sessions
         .summary(&session.session_id, Some(20))
@@ -555,6 +564,21 @@ async fn read_only_session_allows_read_file_and_records_success() {
         finished_event(&summary, "read_file").status.as_deref(),
         Some("succeeded")
     );
+    assert!(finished_event(&summary, "read_file").permission.is_none());
+
+    let handoff = runtime
+        .dispatch(ToolCall::SessionHandoffSummary {
+            session_id: session.session_id.clone(),
+            project: None,
+            include_workspace: Some(false),
+            include_checkpoints: Some(false),
+            include_validation: Some(false),
+            limit: None,
+        })
+        .await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["permissions"]["required_count"], 0);
+    assert_eq!(handoff.output["permissions"]["auto_approved_count"], 0);
 }
 
 #[tokio::test]
@@ -596,6 +620,7 @@ async fn read_only_session_rejects_write_project_file_before_mutation() {
     assert_eq!(result.output["error_kind"], "session_guard_denied");
     assert_eq!(result.output["guard"], "deny_write_tools");
     assert_eq!(result.output["mode"], "read_only");
+    assert!(result.output.get("permission").is_none());
     assert_eq!(result.output["session_recorded"], true);
     assert!(result.output["session_event_id"].as_str().is_some());
     assert_eq!(result.output["session_hint"]["has_open_messages"], true);
@@ -616,6 +641,7 @@ async fn read_only_session_rejects_write_project_file_before_mutation() {
     let event = finished_event(&summary, "write_project_file");
     assert_eq!(event.status.as_deref(), Some("failed"));
     assert_eq!(event.error_kind.as_deref(), Some("session_guard_denied"));
+    assert!(event.permission.is_none());
 }
 
 #[tokio::test]
@@ -774,6 +800,7 @@ async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
     assert_eq!(result.output["error_kind"], "session_guard_denied");
     assert_eq!(result.output["guard"], "deny_shell_tools");
     assert_eq!(result.output["command_started"], false);
+    assert!(result.output.get("permission").is_none());
     assert_eq!(result.output["session_recorded"], true);
     assert!(
         next_patch_agent_request(&runtime, "guard-shell")
@@ -789,6 +816,7 @@ async fn read_only_session_rejects_run_shell_before_agent_enqueue() {
     assert_eq!(summary.counts.shell_like, 1);
     let event = finished_event(&summary, "run_shell");
     assert_eq!(event.error_kind.as_deref(), Some("session_guard_denied"));
+    assert!(event.permission.is_none());
 }
 
 #[tokio::test]

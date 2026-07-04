@@ -262,6 +262,12 @@ async fn session_handoff_summary_read_only_session_allowed() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["session_id"], sid);
     assert_eq!(result.output["mode"], "read_only");
+    assert_eq!(result.output["permissions"]["required_count"], 0);
+    assert_eq!(result.output["permissions"]["auto_approved_count"], 0);
+    assert!(result.output["permissions"]["recent"]
+        .as_array()
+        .unwrap()
+        .is_empty());
 }
 
 // =========================================================================
@@ -695,6 +701,10 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     assert!(
         output_props.contains_key("validation"),
         "session_handoff_summary output schema should expose validation"
+    );
+    assert!(
+        output_props.contains_key("permissions"),
+        "session_handoff_summary output schema should expose permissions"
     );
     let description = spec.description.to_lowercase();
     for phrase in [

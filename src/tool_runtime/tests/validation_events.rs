@@ -497,6 +497,9 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
     complete_patch_agent_request(&runtime, "validation-finish", &req.request_id, 0, "", "").await;
     let check = check_task.await.unwrap();
     assert!(check.success, "{:?}", check.error);
+    assert_eq!(check.output["permission"]["required"], true);
+    assert_eq!(check.output["permission"]["status"], "auto_approved");
+    assert_eq!(check.output["permission"]["risk"], "validation");
 
     let test_task = tokio::spawn({
         let runtime = runtime.clone();

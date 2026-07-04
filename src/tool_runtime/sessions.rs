@@ -1,4 +1,5 @@
 use super::metadata::{tool_metadata, ToolPathHint, ToolRisk};
+use super::permissions::PermissionDecision;
 use super::project_instructions::{
     ProjectInstructionsSnapshot, ProjectInstructionsSummarySnapshot,
 };
@@ -147,6 +148,7 @@ pub(crate) struct SessionGuardDenial {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolCallStart {
+    pub(crate) event_id: String,
     pub(crate) session_id: String,
     pub(crate) transport: SessionTransport,
     pub(crate) tool_name: String,
@@ -161,6 +163,7 @@ pub(crate) struct ToolCallStart {
     pub(crate) changed_paths: Vec<String>,
     pub(crate) started_at: i64,
     pub(crate) started_instant: Instant,
+    pub(crate) permission: Option<PermissionDecision>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -217,6 +220,8 @@ pub(crate) struct SessionEvent {
     pub(crate) input_summary: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) validation_output_summary: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) permission: Option<PermissionDecision>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -632,6 +637,7 @@ impl SessionStore {
         let changed_paths = changed_paths_for_tool(tool_name, arguments);
         let input_summary = Some(redact_and_bound_value(arguments));
         let start = ToolCallStart {
+            event_id: event_id.clone(),
             session_id: session_id.to_string(),
             transport,
             tool_name: tool_name.to_string(),
@@ -646,6 +652,7 @@ impl SessionStore {
             changed_paths: changed_paths.clone(),
             started_at: now,
             started_instant: Instant::now(),
+            permission: None,
         };
         self.push_event(SessionEvent {
             event_id,
@@ -679,8 +686,37 @@ impl SessionStore {
             job_id: None,
             input_summary,
             validation_output_summary: None,
+            permission: None,
         });
         Some(start)
+    }
+
+    pub(crate) fn record_permission_decision(
+        &self,
+        start: &mut ToolCallStart,
+        permission: PermissionDecision,
+    ) {
+        start.permission = Some(permission.clone());
+        let persisted = {
+            let mut inner = self.inner.lock().expect("session store mutex poisoned");
+            let Some(record) = inner.sessions.get_mut(&start.session_id) else {
+                return;
+            };
+            if let Some(event) = record
+                .events
+                .iter_mut()
+                .rev()
+                .find(|event| event.event_id == start.event_id)
+            {
+                event.permission = Some(permission);
+                true
+            } else {
+                false
+            }
+        };
+        if persisted {
+            self.persist_after_mutation();
+        }
     }
 
     pub(crate) fn record_tool_call_finished(
@@ -762,6 +798,7 @@ impl SessionStore {
             job_id: extract_job_id(output),
             input_summary: None,
             validation_output_summary,
+            permission: start.permission,
         });
         Some(event_id)
     }

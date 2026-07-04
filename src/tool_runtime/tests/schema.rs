@@ -604,6 +604,7 @@ fn key_tool_output_schemas_include_expected_fields() {
         "projects",
         "jobs",
         "tools",
+        "permissions",
         "quic",
     ] {
         assert!(
@@ -1149,6 +1150,13 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
 #[test]
 fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
     let schema = crate::tool_runtime::registry::output_schema_for_tool("finish_coding_task");
+    assert!(
+        schema["properties"]["output"]["properties"]
+            .as_object()
+            .unwrap()
+            .contains_key("permissions"),
+        "finish_coding_task output schema should include permissions"
+    );
     let description = schema["properties"]["output"]["properties"]["validation"]["description"]
         .as_str()
         .unwrap();
@@ -1188,6 +1196,10 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     assert!(
         output_props.contains_key("validation"),
         "session_handoff_summary output schema should include validation"
+    );
+    assert!(
+        output_props.contains_key("permissions"),
+        "session_handoff_summary output schema should include permissions"
     );
     let description = output_props["validation"]["description"]
         .as_str()

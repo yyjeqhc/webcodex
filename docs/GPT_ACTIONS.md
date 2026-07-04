@@ -141,6 +141,14 @@ full input/output schemas. `tool_manifest` itself accepts flattened top-level
 `list_tools` accepts flattened `summary_only`, `category`, `features`, and
 `limit`.
 
+`runtime_status` exposes the current permission profile in `output.permissions`.
+The self-hosted development default is `policy="dev_auto_approve"`,
+`auto_approve=true`, and `human_approval_required=false`. This only auto-approves
+high-risk tools after hard checks have passed; it does not bypass auth, OAuth
+scope policy, session guards, project/session mismatch checks, path safety,
+sensitive-path denial, or agent/project policy. A future release-oriented profile
+should switch to `require_approval` for human approval.
+
 For smoke project selection, call `listProjects` and prefer projects whose
 `capabilities.recommended_for_smoke` is `true` inside `output.projects`. The
 response shape is `{count, projects, recommended_for_smoke}`. For git smoke,
@@ -297,6 +305,16 @@ It does not implicitly use the current-session binding. Its optional
 `validation` section is ledger-derived and does not expose raw stdout/stderr,
 excerpt fields, or `validation_output_summary`. It accepts flattened
 `include_validation`, `include_workspace`, `include_checkpoints`, and `limit`.
+
+For tools that are not read-only, are destructive, or are shell/job-like, the
+session ledger records bounded permission decision metadata after hard safety
+checks pass. Under `dev_auto_approve`, those entries have
+`status="auto_approved"` and include policy, request id, risk class, tool name,
+and project id only. Read-only tools do not create permission events.
+`finish_coding_task.permissions` and `session_handoff_summary.permissions`
+summarize these events with deterministic counts and a bounded `recent` list,
+and never include stdout/stderr, environment, tokens, secrets, raw command text,
+patches, file contents, or excerpts.
 
 ## Validation summaries
 

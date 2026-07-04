@@ -7,6 +7,7 @@
 
 use serde_json::{json, Value};
 
+use super::permissions::{permission_profile_payload, permission_summary_from_events};
 use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSnapshot};
 use super::project_resolution::ResolvedProject;
 use super::session_context::{
@@ -162,6 +163,7 @@ impl ToolRuntime {
                 "current_binding": current_binding,
             },
             "runtime_status": runtime_status,
+            "permissions": permission_profile_payload(),
             "rules": rules_summary(project_instructions.as_ref()),
             "git": git,
             "recommended_flow": recommended_flow_payload(),
@@ -250,6 +252,10 @@ impl ToolRuntime {
         } else {
             skipped_validation_summary()
         };
+        let permissions = permission_summary_from_events(
+            &session_summary.events,
+            super::permissions::DEFAULT_PERMISSION_RECENT_LIMIT,
+        );
 
         let hygiene = if include_hygiene {
             let result = self
@@ -307,6 +313,7 @@ impl ToolRuntime {
                     .unwrap_or(false),
             },
             "validation": validation,
+            "permissions": permissions,
             "hygiene": hygiene,
             "handoff": handoff,
             "deterministic": true,

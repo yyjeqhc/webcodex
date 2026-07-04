@@ -381,6 +381,11 @@ For bounded startup context, keep `include_tool_manifest=true` but pass
 "artifact","cleanup"]` and optionally `tool_manifest_limit`; the runtime clamps
 the limit to 1..100 and reports whether the compact manifest was truncated.
 
+The response also includes `output.permissions`. The current self-hosted
+development profile is `policy=dev_auto_approve`, `auto_approve=true`, and
+`human_approval_required=false`; future release profiles should prefer
+`require_approval`.
+
 ### 2. Discover and inspect
 
 ```json
@@ -484,6 +489,17 @@ include `status` and `reason`: `events_total=0` yields `status=not_run` and
 `reason=no_validation_tool_invoked`; all-success, all-failure, and mixed ledgers
 yield `passed`, `failed`, and `mixed`.
 
+`finish_coding_task.permissions` and `session_handoff_summary.permissions`
+summarize high-risk permission decisions from the session ledger. A high-risk
+tool is one that is not read-only, is destructive, or is shell/job-like according
+to runtime metadata. Under `dev_auto_approve`, those tools record
+`status=auto_approved` after hard safety checks pass. Auto approval does not
+bypass auth, OAuth scopes, read-only sessions, explicit deny guards,
+cross-project session mismatch denial, path safety, sensitive path denial, or
+agent policy. The permission summaries are bounded metadata only and must not
+contain stdout/stderr, command bodies, patches, file contents, env, tokens,
+secrets, or excerpts.
+
 ### Session id semantics
 
 **REST / GPT Action:**
@@ -516,6 +532,10 @@ Assumes a registered project `agent:workstation:my-repo`.
 ```json
 {"tool": "runtime_status", "params": {}}
 ```
+
+Confirm `output.permissions.policy` is the expected profile. For development
+builds this is normally `dev_auto_approve`; release deployments should plan to
+use `require_approval`.
 
 ```json
 {"tool": "list_agents", "params": {}}

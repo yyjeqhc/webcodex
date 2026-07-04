@@ -1456,7 +1456,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         // ---- Input validation (before project resolution) ----
         if let Err(e) = validate_edit_file_path(&path) {
-            return ToolResult::err(e);
+            return super::permissions::edit_path_policy_rejected_result(&path, e);
         }
         if old.is_empty() {
             return ToolResult::err("old must be non-empty");
@@ -1541,7 +1541,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         // ---- Input validation (before project resolution) ----
         if let Err(e) = validate_edit_file_path(&path) {
-            return ToolResult::err(e);
+            return super::permissions::edit_path_policy_rejected_result(&path, e);
         }
         if content.contains('\0') {
             return ToolResult::err("content cannot contain NUL bytes");
@@ -1620,7 +1620,7 @@ impl ToolRuntime {
         overwrite: Option<bool>,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
-            return ToolResult::err(e);
+            return artifact_policy_rejected_result(&path, e);
         }
         if content_base64.len() > MAX_PROJECT_ARTIFACT_BASE64_BYTES {
             return ToolResult::err(format!(
@@ -1696,7 +1696,7 @@ impl ToolRuntime {
         allow_missing: Option<bool>,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
-            return ToolResult::err(e);
+            return artifact_policy_rejected_result(&path, e);
         }
         let proj = match self.resolve_project(&project).await {
             Ok(p) => p,
@@ -1754,7 +1754,7 @@ impl ToolRuntime {
         max_bytes: Option<usize>,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
-            return ToolResult::err(e);
+            return artifact_policy_rejected_result(&path, e);
         }
         let encoding = encoding.unwrap_or_else(|| "base64".to_string());
         if encoding != "base64" {
@@ -1873,7 +1873,7 @@ impl ToolRuntime {
         overwrite: Option<bool>,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
-            return ToolResult::err(e);
+            return artifact_policy_rejected_result(&path, e);
         }
         if let Some(bytes) = expected_bytes {
             if bytes > MAX_PROJECT_ARTIFACT_BYTES {
@@ -1921,7 +1921,7 @@ impl ToolRuntime {
         content_base64: String,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
-            return ToolResult::err(e);
+            return artifact_policy_rejected_result(&path, e);
         }
         if let Err(e) = validate_artifact_upload_id(&upload_id) {
             return ToolResult::err(e);
@@ -1969,7 +1969,7 @@ impl ToolRuntime {
         upload_id: String,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
-            return ToolResult::err(e);
+            return artifact_policy_rejected_result(&path, e);
         }
         if let Err(e) = validate_artifact_upload_id(&upload_id) {
             return ToolResult::err(e);
@@ -1995,7 +1995,7 @@ impl ToolRuntime {
         upload_id: String,
     ) -> ToolResult {
         if let Err(e) = validate_artifact_file_path(&path) {
-            return ToolResult::err(e);
+            return artifact_policy_rejected_result(&path, e);
         }
         if let Err(e) = validate_artifact_upload_id(&upload_id) {
             return ToolResult::err(e);
@@ -2283,6 +2283,9 @@ impl ToolRuntime {
         new_text: String,
         expected_old_sha256: Option<String>,
     ) -> ToolResult {
+        if let Err(e) = validate_edit_file_path(&path) {
+            return super::permissions::edit_path_policy_rejected_result(&path, e);
+        }
         if let Err(e) = Self::validate_anchor_edit_common(&path, &new_text) {
             return ToolResult::err(e);
         }
@@ -2325,6 +2328,9 @@ impl ToolRuntime {
         text: String,
         op: &str,
     ) -> ToolResult {
+        if let Err(e) = validate_edit_file_path(&path) {
+            return super::permissions::edit_path_policy_rejected_result(&path, e);
+        }
         if let Err(e) = Self::validate_anchor_edit_common(&path, &text) {
             return ToolResult::err(e);
         }
@@ -2358,6 +2364,9 @@ impl ToolRuntime {
     ) -> ToolResult {
         if start_line == 0 || end_line < start_line {
             return ToolResult::err("invalid line range");
+        }
+        if let Err(e) = validate_edit_file_path(&path) {
+            return super::permissions::edit_path_policy_rejected_result(&path, e);
         }
         if let Err(e) = Self::validate_line_edit_common(
             &path,
@@ -2393,6 +2402,9 @@ impl ToolRuntime {
         if line == 0 {
             return ToolResult::err("line out of range");
         }
+        if let Err(e) = validate_edit_file_path(&path) {
+            return super::permissions::edit_path_policy_rejected_result(&path, e);
+        }
         if let Err(e) = Self::validate_line_edit_common(
             &path,
             &text,
@@ -2426,6 +2438,9 @@ impl ToolRuntime {
     ) -> ToolResult {
         if start_line == 0 || end_line < start_line {
             return ToolResult::err("invalid line range");
+        }
+        if let Err(e) = validate_edit_file_path(&path) {
+            return super::permissions::edit_path_policy_rejected_result(&path, e);
         }
         if let Err(e) = Self::validate_line_edit_common(
             &path,
@@ -2467,7 +2482,7 @@ impl ToolRuntime {
     ) -> ToolResult {
         use super::types::ApplyTextEditKind;
         if let Err(e) = validate_edit_file_path(&path) {
-            return ToolResult::err(e);
+            return super::permissions::edit_path_policy_rejected_result(&path, e);
         }
         if edits.is_empty() {
             return ToolResult::err("edits must contain at least one edit");

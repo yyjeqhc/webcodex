@@ -17,6 +17,7 @@ mod jobs;
 pub(crate) mod kernel;
 pub(crate) mod metadata;
 mod patch;
+mod permissions;
 pub(crate) mod project_instructions;
 mod project_resolution;
 mod projects;
@@ -228,15 +229,15 @@ impl ToolRuntime {
                 return result;
             }
         }
-        let session_start = if session_id.is_some() {
+        let mut session_start = if session_id.is_some() {
             let resolved_project = resolved_project.take().map(|resolved| resolved.resolved_id);
-            Some(self.sessions.record_tool_call_started_with_options(
+            self.sessions.record_tool_call_started_with_options(
                 session_id.as_deref(),
                 transport,
                 call.tool_name(),
                 &call.session_log_arguments(),
                 resolved_project,
-            ))
+            )
         } else {
             None
         };
@@ -244,7 +245,7 @@ impl ToolRuntime {
             let mut err = err;
             if let Some(session_id) = session_id.as_deref() {
                 let event_id = self.sessions.record_tool_call_finished(
-                    session_start.flatten(),
+                    session_start,
                     false,
                     &err.output,
                     err.error.as_deref(),
@@ -254,7 +255,19 @@ impl ToolRuntime {
             }
             return err;
         }
+        let permission =
+            permissions::permission_decision_for_tool(call.tool_name(), call.project());
         let mut result = self.dispatch_authorized_inner(call, auth, transport).await;
+        let permission = permission.filter(|_| {
+            !permissions::is_hard_denied_output(&result.output, result.error.as_deref())
+        });
+        if let Some(permission) = permission.as_ref() {
+            if let Some(start) = session_start.as_mut() {
+                self.sessions
+                    .record_permission_decision(start, permission.clone());
+            }
+            permissions::add_permission_to_result(&mut result, permission);
+        }
         if let Some(session_id) = session_id.as_deref() {
             if let Some(mismatch) = session_project_mismatch.as_ref() {
                 add_session_project_mismatch_warning(
@@ -264,7 +277,7 @@ impl ToolRuntime {
                 );
             }
             let event_id = self.sessions.record_tool_call_finished(
-                session_start.flatten(),
+                session_start,
                 result.success,
                 &result.output,
                 result.error.as_deref(),
@@ -1488,6 +1501,7 @@ impl ToolRuntime {
             "agents": agents,
             "jobs": jobs,
             "tools": tools,
+            "permissions": permissions::permission_profile_payload(),
             "session_store": self.sessions.status(),
         });
         if let Some(quic) = quic {

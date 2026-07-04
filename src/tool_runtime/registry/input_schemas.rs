@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 
 mod common;
 mod discovery;
+mod files;
 mod jobs;
 mod projects;
 
@@ -15,75 +16,14 @@ pub(crate) use discovery::accepted_flattened_args_for_spec;
 pub(super) use discovery::{
     empty_input_schema, list_tools_input_schema, tool_manifest_input_schema,
 };
+pub(super) use files::{
+    list_project_files_input_schema, read_file_input_schema, search_project_text_input_schema,
+};
 pub(super) use jobs::{
     job_log_input_schema, job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
     run_codex_input_schema, run_job_input_schema, run_shell_input_schema, stop_job_input_schema,
 };
 pub(super) use projects::{create_project_input_schema, register_project_input_schema};
-
-pub(super) fn list_project_files_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        (
-            "path",
-            "string",
-            "Optional project-relative directory to list (default: project root).",
-            false,
-        ),
-        (
-            "limit",
-            "integer",
-            "Maximum number of entries to return.",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn search_project_text_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        ("pattern", "string", "Text pattern to search for.", true),
-        (
-            "path",
-            "string",
-            "Optional project-relative directory to scope the search (default: project root).",
-            false,
-        ),
-        (
-            "limit",
-            "integer",
-            "Maximum number of matches to return.",
-            false,
-        ),
-        (
-            "context_before",
-            "integer",
-            "Optional number of context lines before each match (clamped to 20).",
-            false,
-        ),
-        (
-            "context_after",
-            "integer",
-            "Optional number of context lines after each match (clamped to 20).",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn read_file_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Configured project id.", true),
-        ("path", "string", "Project-relative file path.", true),
-        ("start_line", "integer", "1-based line offset.", false),
-        ("limit", "integer", "Maximum line count.", false),
-        (
-            "with_line_numbers",
-            "boolean",
-            "When true, include numbered_text and lines with 1-based line numbers.",
-            false,
-        ),
-    ]))
-}
 
 pub(super) fn git_diff_summary_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![(

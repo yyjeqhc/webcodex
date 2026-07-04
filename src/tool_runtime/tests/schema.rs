@@ -8,7 +8,8 @@ use std::collections::BTreeSet;
 #[test]
 fn tool_definitions_cover_known_names_and_public_specs() {
     use crate::tool_runtime::tool_definition::{
-        lookup_tool_definition, model_visible_tool_definitions, TOOL_DEFINITIONS,
+        lookup_tool_definition, model_hidden_tool_names, model_visible_tool_definitions,
+        TOOL_DEFINITIONS,
     };
 
     let definition_names = TOOL_DEFINITIONS
@@ -19,17 +20,14 @@ fn tool_definitions_cover_known_names_and_public_specs() {
         .iter()
         .map(|definition| definition.name)
         .collect::<Vec<_>>();
-    let known_names = KNOWN_TOOL_NAMES.iter().copied().collect::<BTreeSet<_>>();
-    let hidden_names = MODEL_HIDDEN_TOOL_NAMES
-        .iter()
-        .copied()
-        .collect::<BTreeSet<_>>();
+    let known_names = known_tool_names().collect::<BTreeSet<_>>();
+    let hidden_names = model_hidden_tool_names().collect::<BTreeSet<_>>();
     let definition_hidden_names = TOOL_DEFINITIONS
         .iter()
         .filter(|definition| definition.visibility.is_model_hidden())
         .map(|definition| definition.name)
         .collect::<BTreeSet<_>>();
-    for name in KNOWN_TOOL_NAMES {
+    for name in known_tool_names() {
         assert!(
             lookup_tool_definition(name).is_some(),
             "{name} missing ToolDefinition lookup"
@@ -41,12 +39,12 @@ fn tool_definitions_cover_known_names_and_public_specs() {
     );
     assert_eq!(
         definition_order,
-        KNOWN_TOOL_NAMES.to_vec(),
-        "known-tool compatibility list must mirror canonical ToolDefinition order"
+        known_tool_names().collect::<Vec<_>>(),
+        "known-tool iterator must mirror canonical ToolDefinition order"
     );
     assert_eq!(
         hidden_names, definition_hidden_names,
-        "compatibility hidden-name list must match ToolDefinition visibility"
+        "hidden-name iterator must match ToolDefinition visibility"
     );
 
     let runtime = test_runtime();
@@ -2251,7 +2249,7 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
     // list_tools runtime tool and MCP tools/list (parity is enforced by
     // mcp_tools_list_parity_with_rest_tools_list), so checking specs covers
     // both surfaces.
-    assert!(KNOWN_TOOL_NAMES.contains(&"apply_text_edits"));
+    assert!(is_known_tool_name("apply_text_edits"));
     let specs = runtime.tool_specs();
     assert!(
         specs.iter().any(|s| s.name == "apply_text_edits"),
@@ -2259,13 +2257,13 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
     );
     for spec in &specs {
         assert!(
-            KNOWN_TOOL_NAMES.contains(&spec.name.as_str()),
+            is_known_tool_name(&spec.name),
             "{} must be recognized by ToolCall",
             spec.name
         );
     }
     assert!(
-        specs.len() < KNOWN_TOOL_NAMES.len(),
+        specs.len() < known_tool_names().count(),
         "hidden implemented tools should make public specs a strict subset"
     );
     assert!(crate::tool_runtime::metadata::lookup_tool_metadata("apply_text_edits").is_some());

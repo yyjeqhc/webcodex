@@ -124,6 +124,10 @@ pub fn is_known_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some()
 }
 
+pub(crate) fn known_tool_names() -> impl Iterator<Item = &'static str> {
+    TOOL_DEFINITIONS.iter().map(|definition| definition.name)
+}
+
 pub(crate) fn runtime_tool_metadata(name: &str) -> ToolMetadata {
     lookup_tool_definition(name)
         .map(|definition| definition.metadata())
@@ -244,6 +248,13 @@ pub(crate) fn is_model_visible_tool_name(name: &str) -> bool {
 
 pub(crate) fn is_model_hidden_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_hidden())
+}
+
+pub(crate) fn model_hidden_tool_names() -> impl Iterator<Item = &'static str> {
+    TOOL_DEFINITIONS
+        .iter()
+        .filter(|definition| definition.visibility.is_model_hidden())
+        .map(|definition| definition.name)
 }
 
 pub(crate) fn model_visible_tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {

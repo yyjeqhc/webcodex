@@ -11,7 +11,7 @@ use std::fs;
 
 #[test]
 fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
-    assert!(KNOWN_TOOL_NAMES.contains(&"git_diff_hunks"));
+    assert!(is_known_tool_name("git_diff_hunks"));
     let call = ToolCall::from_tool_name(
         "git_diff_hunks",
         json!({
@@ -46,7 +46,7 @@ fn git_diff_hunks_tool_is_known_and_schema_is_bounded() {
 
 #[test]
 fn show_changes_tool_is_known_and_parses() {
-    assert!(KNOWN_TOOL_NAMES.contains(&"show_changes"));
+    assert!(is_known_tool_name("show_changes"));
     let call = ToolCall::from_tool_name(
         "show_changes",
         json!({

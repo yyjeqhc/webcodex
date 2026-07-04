@@ -35,7 +35,6 @@ mod tool_call;
 mod tool_catalog;
 pub(crate) mod tool_definition;
 mod tool_inputs;
-mod tool_names;
 mod tool_policy;
 mod tool_result;
 mod tool_spec;
@@ -63,12 +62,12 @@ pub(crate) use tool_definition::runtime_tool_category as tool_manifest_category;
 #[allow(unused_imports)]
 pub(crate) use tool_definition::AgentCapability;
 #[allow(unused_imports)]
+pub(crate) use tool_definition::{known_tool_names, model_hidden_tool_names};
+#[allow(unused_imports)]
 pub use tool_inputs::{
     default_true, ApplyTextEditInput, ApplyTextEditKind, CheckpointValidationInput,
     ListToolsOptions, SessionMode,
 };
-#[allow(unused_imports)]
-pub use tool_names::{KNOWN_TOOL_NAMES, MODEL_HIDDEN_TOOL_NAMES};
 #[allow(unused_imports)]
 pub use tool_result::ToolResult;
 #[allow(unused_imports)]

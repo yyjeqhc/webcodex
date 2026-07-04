@@ -491,7 +491,7 @@ fn known_tool_names_matches_spec_count() {
     let specs = runtime.tool_specs();
     for spec in &specs {
         assert!(
-            KNOWN_TOOL_NAMES.contains(&spec.name.as_str()),
+            is_known_tool_name(&spec.name),
             "{} spec must be known to ToolCall",
             spec.name
         );
@@ -502,14 +502,14 @@ fn known_tool_names_matches_spec_count() {
         );
     }
     assert!(
-        specs.len() < KNOWN_TOOL_NAMES.len(),
+        specs.len() < known_tool_names().count(),
         "tool_specs() should be a public subset while hidden tools remain implemented"
     );
     // Every known name must be recognized (i.e. must NOT yield the
     // "unknown tool" error). Unit tools parse with null args; non-unit
     // tools fail with a missing-field error, which is still a recognition
     // success (the variant matched).
-    for name in KNOWN_TOOL_NAMES {
+    for name in known_tool_names() {
         assert!(
             is_known_tool_name(name),
             "known name '{}' not recognized by is_known_tool_name",

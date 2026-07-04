@@ -16,7 +16,7 @@ use serde_json::{json, Value};
 
 #[tokio::test]
 async fn session_handoff_summary_is_known_and_in_specs() {
-    assert!(KNOWN_TOOL_NAMES.contains(&"session_handoff_summary"));
+    assert!(is_known_tool_name("session_handoff_summary"));
     let runtime = test_runtime();
     let specs = runtime.tool_specs();
     assert!(
@@ -24,9 +24,7 @@ async fn session_handoff_summary_is_known_and_in_specs() {
         "session_handoff_summary must appear in tool_specs"
     );
     assert!(
-        specs
-            .iter()
-            .all(|spec| KNOWN_TOOL_NAMES.contains(&spec.name.as_str())),
+        specs.iter().all(|spec| is_known_tool_name(&spec.name)),
         "tool_specs must remain a subset of known parser names"
     );
     assert!(

@@ -352,7 +352,7 @@ fn normalize_route_path(path: &str) -> String {
 mod tests {
     use super::*;
     use crate::tool_runtime::metadata::lookup_tool_metadata;
-    use crate::tool_runtime::KNOWN_TOOL_NAMES;
+    use crate::tool_runtime::tool_definition::{is_known_tool_name, known_tool_names};
 
     #[test]
     fn scopes_include_with_admin_wildcard() {
@@ -760,7 +760,7 @@ mod tests {
 
     #[test]
     fn oauth_route_policy_tool_scope_policy_covers_metadata_for_known_tools() {
-        for tool in KNOWN_TOOL_NAMES {
+        for tool in known_tool_names() {
             let metadata = lookup_tool_metadata(tool).unwrap();
             assert_eq!(
                 oauth_scope_policy_for_runtime_tool(tool),
@@ -772,7 +772,7 @@ mod tests {
 
     #[test]
     fn oauth_route_policy_preserves_legacy_non_runtime_metadata_scope() {
-        assert!(!KNOWN_TOOL_NAMES.contains(&"delete_files"));
+        assert!(!is_known_tool_name("delete_files"));
         assert_eq!(
             oauth_scope_policy_for_runtime_tool("delete_files"),
             OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE)

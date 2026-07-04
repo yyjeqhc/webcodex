@@ -16,7 +16,7 @@ use std::sync::Arc;
 #[test]
 fn cargo_runtime_tools_are_known_and_parse() {
     for name in ["cargo_fmt", "cargo_check", "cargo_test"] {
-        assert!(KNOWN_TOOL_NAMES.contains(&name), "{name} missing");
+        assert!(is_known_tool_name(name), "{name} missing");
     }
     assert!(matches!(
         ToolCall::from_tool_name(

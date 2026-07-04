@@ -79,7 +79,7 @@ async fn setup_clean_git_repo(
 
 #[test]
 fn workspace_hygiene_check_is_known_and_in_specs() {
-    assert!(KNOWN_TOOL_NAMES.contains(&"workspace_hygiene_check"));
+    assert!(is_known_tool_name("workspace_hygiene_check"));
 
     let runtime = test_runtime();
     let specs = runtime.tool_specs();
@@ -541,7 +541,7 @@ async fn workspace_hygiene_check_input_summary_is_bounded() {
 
 #[test]
 fn workspace_hygiene_check_tool_is_known_and_parses() {
-    assert!(KNOWN_TOOL_NAMES.contains(&"workspace_hygiene_check"));
+    assert!(is_known_tool_name("workspace_hygiene_check"));
     let call = ToolCall::from_tool_name(
         "workspace_hygiene_check",
         json!({

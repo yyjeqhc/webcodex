@@ -2,7 +2,7 @@ use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
 use crate::tool_runtime::validation_parser::VALIDATION_OUTPUT_METADATA_ABSENT_REASON;
-use crate::tool_runtime::{SessionMode, ToolCall, KNOWN_TOOL_NAMES};
+use crate::tool_runtime::{is_known_tool_name, SessionMode, ToolCall};
 use serde_json::{json, Value};
 use std::fs;
 
@@ -13,10 +13,7 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
     let names: Vec<&str> = specs.iter().map(|spec| spec.name.as_str()).collect();
 
     for name in ["start_coding_task", "finish_coding_task"] {
-        assert!(
-            KNOWN_TOOL_NAMES.contains(&name),
-            "{name} missing from known names"
-        );
+        assert!(is_known_tool_name(name), "{name} missing from known names");
         assert!(names.contains(&name), "{name} missing from tool specs");
 
         let metadata = lookup_tool_metadata(name).expect("metadata");

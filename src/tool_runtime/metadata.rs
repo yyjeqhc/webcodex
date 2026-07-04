@@ -120,11 +120,11 @@ mod tests {
     use crate::auth::scopes::{
         SCOPE_JOB_RUN, SCOPE_PROJECT_READ, SCOPE_PROJECT_WRITE, SCOPE_RUNTIME_READ,
     };
-    use crate::tool_runtime::KNOWN_TOOL_NAMES;
+    use crate::tool_runtime::{is_known_tool_name, known_tool_names};
 
     #[test]
     fn tool_metadata_covers_all_known_tools() {
-        for name in KNOWN_TOOL_NAMES {
+        for name in known_tool_names() {
             assert!(
                 lookup_tool_metadata(name).is_some(),
                 "{name} missing tool metadata"
@@ -134,9 +134,7 @@ mod tests {
 
     #[test]
     fn runtime_tool_metadata_oauth_scopes_are_known_to_scope_policy() {
-        for metadata in
-            iter_tool_metadata().filter(|metadata| KNOWN_TOOL_NAMES.contains(&metadata.name))
-        {
+        for metadata in iter_tool_metadata().filter(|metadata| is_known_tool_name(metadata.name)) {
             let Some(scope) = metadata.oauth_scope else {
                 continue;
             };
@@ -162,7 +160,7 @@ mod tests {
 
     #[test]
     fn tool_metadata_preserves_legacy_delete_files_route() {
-        assert!(!KNOWN_TOOL_NAMES.contains(&"delete_files"));
+        assert!(!is_known_tool_name("delete_files"));
         let metadata = lookup_tool_metadata("delete_files").unwrap();
         assert_eq!(metadata.provider_id, "agent");
         assert_eq!(metadata.risk, ToolRisk::ProjectWrite);

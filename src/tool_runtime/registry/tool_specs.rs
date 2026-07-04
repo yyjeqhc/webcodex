@@ -1,5 +1,7 @@
 use serde_json::Value;
 
+mod discovery;
+
 use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_definitions};
 use super::super::tool_spec::ToolSpec;
 use super::super::ToolRuntime;
@@ -9,36 +11,31 @@ use super::input_schemas::{
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
     checkpoint_create_input_schema, checkpoint_delete_input_schema, checkpoint_list_input_schema,
-    checkpoint_restore_input_schema, checkpoint_show_input_schema, create_project_input_schema,
-    current_session_input_schema, delete_line_range_input_schema,
-    delete_project_files_input_schema, discard_untracked_input_schema, empty_input_schema,
-    finish_coding_task_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
-    git_diff_summary_input_schema, git_log_input_schema, git_restore_paths_input_schema,
-    git_status_input_schema, insert_after_pattern_input_schema, insert_at_line_input_schema,
-    insert_before_pattern_input_schema, job_log_input_schema, job_status_input_schema,
-    job_tail_input_schema, list_jobs_input_schema, list_project_files_input_schema,
-    list_session_messages_input_schema, list_tools_input_schema, post_session_message_input_schema,
-    read_file_input_schema, read_project_artifact_input_schema,
-    read_project_artifact_metadata_input_schema, register_project_input_schema,
-    replace_exact_block_input_schema, replace_in_file_input_schema,
-    replace_line_range_input_schema, resolve_session_message_input_schema, run_codex_input_schema,
-    run_job_input_schema, run_shell_input_schema, save_project_artifact_input_schema,
-    search_project_text_input_schema, session_discussion_summary_input_schema,
-    session_handoff_summary_input_schema, session_summary_input_schema, show_changes_input_schema,
-    start_coding_task_input_schema, start_session_input_schema, stop_job_input_schema,
-    tool_manifest_input_schema, validate_patch_input_schema, with_common_testing_metadata,
-    workspace_hygiene_check_input_schema, write_project_file_input_schema,
+    checkpoint_restore_input_schema, checkpoint_show_input_schema, current_session_input_schema,
+    delete_line_range_input_schema, delete_project_files_input_schema,
+    discard_untracked_input_schema, finish_coding_task_input_schema, git_diff_hunks_input_schema,
+    git_diff_input_schema, git_diff_summary_input_schema, git_log_input_schema,
+    git_restore_paths_input_schema, git_status_input_schema, insert_after_pattern_input_schema,
+    insert_at_line_input_schema, insert_before_pattern_input_schema, job_log_input_schema,
+    job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
+    list_project_files_input_schema, list_session_messages_input_schema,
+    post_session_message_input_schema, read_file_input_schema, read_project_artifact_input_schema,
+    read_project_artifact_metadata_input_schema, replace_exact_block_input_schema,
+    replace_in_file_input_schema, replace_line_range_input_schema,
+    resolve_session_message_input_schema, run_codex_input_schema, run_job_input_schema,
+    run_shell_input_schema, save_project_artifact_input_schema, search_project_text_input_schema,
+    session_discussion_summary_input_schema, session_handoff_summary_input_schema,
+    session_summary_input_schema, show_changes_input_schema, start_coding_task_input_schema,
+    start_session_input_schema, stop_job_input_schema, validate_patch_input_schema,
+    with_common_testing_metadata, workspace_hygiene_check_input_schema,
+    write_project_file_input_schema,
 };
 use super::{output_schema_for_tool, tool_annotations};
 
 impl ToolRuntime {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
-        let declarations = vec![
-            tool_spec(
-                "list_tools",
-                "List runtime tools. Full output includes schemas and may be large; use summary_only with category, features, or limit for bounded GPT Action discovery.",
-                list_tools_input_schema(),
-            ),
+        let mut declarations = discovery::tool_specs();
+        declarations.extend(vec![
             tool_spec(
                 "start_session",
                 "Create a bounded task tracking session and return its explicit wc_sess_* session_id. Read-only; records session ledger metadata where persistence is configured, never modifies a project, and does not by itself bind future calls as current.",
@@ -128,50 +125,6 @@ impl ToolRuntime {
                 "workspace_checkpoint_delete",
                 "Delete one checkpoint JSON file after confirm=true. Does not touch the project worktree.",
                 checkpoint_delete_input_schema(),
-            ),
-            tool_spec(
-                "list_projects",
-                "List agent-registered runtime projects, execution mode, and smoke-selection capabilities such as git_available and recommended_for_smoke.",
-                empty_input_schema(),
-            ),
-            tool_spec(
-                "register_project",
-                "Register an existing directory as a WebCodex project on a selected agent. "
-                    .to_string()
-                    + "Mutation with side effects; constrained by agent policy. The agent validates "
-                    + "the path, writes projects_dir/<id>.toml atomically, and refreshes its "
-                    + "project list. Requires Bearer auth.",
-                register_project_input_schema(),
-            ),
-            tool_spec(
-                "create_project",
-                "Create a new directory on the selected agent and register it as a WebCodex "
-                    .to_string()
-                    + "project. Mutation with side effects; constrained by agent policy. Creates "
-                    + "directory, optional template, optional git init, writes projects_dir/<id>.toml "
-                    + "atomically. Requires Bearer auth.",
-                create_project_input_schema(),
-            ),
-            tool_spec(
-                "list_agents",
-                "List connected local/remote execution agents.",
-                empty_input_schema(),
-            ),
-            tool_spec(
-                "runtime_status",
-                "Return a structured runtime health/observability summary (service "
-                    .to_string()
-                    + "metadata, projects config status, agent client summaries, and job counts). "
-                    + "Read-only; never exposes tokens, secrets, full env, or stdout/stderr.",
-                empty_input_schema(),
-            ),
-            tool_spec(
-                "tool_manifest",
-                "Return a compact, bounded tool manifest with categories, accepted flattened args, risk "
-                    .to_string()
-                    + "summary, and recommended flows. Lightweight alternative to list_tools for "
-                    + "long tasks. Read-only; never exposes schemas, tokens, or internal paths.",
-                tool_manifest_input_schema(),
             ),
             tool_spec(
                 "run_shell",
@@ -393,7 +346,7 @@ impl ToolRuntime {
                 "Preferred batch text edit tool for coordinated source changes in one UTF-8 file. Applies bounded exact replace/insert/delete edits atomically only when all matches validate as unique/non-overlapping. Supports dry_run and sha256 guard.",
                 apply_text_edits_input_schema(),
             ),
-        ];
+        ]);
         model_visible_tool_definitions()
             .map(|definition| {
                 declarations
@@ -420,7 +373,11 @@ impl ToolRuntime {
     }
 }
 
-fn tool_spec(name: &'static str, description: impl Into<String>, input_schema: Value) -> ToolSpec {
+pub(super) fn tool_spec(
+    name: &'static str,
+    description: impl Into<String>,
+    input_schema: Value,
+) -> ToolSpec {
     debug_assert!(
         lookup_tool_definition(name).is_some(),
         "{name} ToolSpec is missing a ToolDefinition"

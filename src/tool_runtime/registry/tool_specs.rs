@@ -1,6 +1,7 @@
 use serde_json::Value;
 
 mod discovery;
+mod jobs;
 mod sessions;
 
 use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_definitions};
@@ -17,14 +18,12 @@ use super::input_schemas::{
     finish_coding_task_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
     git_diff_summary_input_schema, git_log_input_schema, git_restore_paths_input_schema,
     git_status_input_schema, insert_after_pattern_input_schema, insert_at_line_input_schema,
-    insert_before_pattern_input_schema, job_log_input_schema, job_status_input_schema,
-    job_tail_input_schema, list_jobs_input_schema, list_project_files_input_schema,
-    read_file_input_schema, read_project_artifact_input_schema,
-    read_project_artifact_metadata_input_schema, replace_exact_block_input_schema,
-    replace_in_file_input_schema, replace_line_range_input_schema, run_codex_input_schema,
-    run_job_input_schema, run_shell_input_schema, save_project_artifact_input_schema,
+    insert_before_pattern_input_schema, list_project_files_input_schema, read_file_input_schema,
+    read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
+    replace_exact_block_input_schema, replace_in_file_input_schema,
+    replace_line_range_input_schema, save_project_artifact_input_schema,
     search_project_text_input_schema, show_changes_input_schema, start_coding_task_input_schema,
-    stop_job_input_schema, validate_patch_input_schema, with_common_testing_metadata,
+    validate_patch_input_schema, with_common_testing_metadata,
     workspace_hygiene_check_input_schema, write_project_file_input_schema,
 };
 use super::{output_schema_for_tool, tool_annotations};
@@ -33,6 +32,7 @@ impl ToolRuntime {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
         let mut declarations = discovery::tool_specs();
         declarations.extend(sessions::tool_specs());
+        declarations.extend(jobs::tool_specs());
         declarations.extend(vec![
             tool_spec(
                 "start_coding_task",
@@ -75,36 +75,6 @@ impl ToolRuntime {
                 checkpoint_delete_input_schema(),
             ),
             tool_spec(
-                "run_shell",
-                "Bounded command escape hatch for validation, builds, tests, or diagnostics only. Do not use as the primary file editing path; prefer cargo_* / validate_patch for common checks and structured line edit tools for source edits.",
-                run_shell_input_schema(),
-            ),
-            tool_spec(
-                "run_job",
-                "Start an asynchronous shell job inside an agent-registered project.".to_string(),
-                run_job_input_schema(),
-            ),
-            tool_spec(
-                "stop_job",
-                "Stop a bounded runtime job started through WebCodex. Requires confirm=true, obeys project/session ownership, never exposes stdout/stderr, and returns stop_effect/terminal lifecycle fields.",
-                stop_job_input_schema(),
-            ),
-            tool_spec(
-                "run_codex",
-                "Optional Codex CLI delegation as an async project job. Requires Codex CLI installed and configured on the owning agent. Use only when the user explicitly asks to delegate to Codex; otherwise use WebCodex file/git/shell/line-edit tools directly.",
-                run_codex_input_schema(),
-            ),
-            tool_spec(
-                "job_status",
-                "Get bounded lifecycle status for a runtime job. Omits command_preview by default and never returns stdout/stderr bodies.",
-                job_status_input_schema(),
-            ),
-            tool_spec(
-                "job_log",
-                "Read stdout/stderr for a runtime job.",
-                job_log_input_schema(),
-            ),
-            tool_spec(
                 "list_project_files",
                 "List files in an agent-registered project directory (bounded, "
                     .to_string()
@@ -130,19 +100,6 @@ impl ToolRuntime {
                 "show_changes",
                 "Default inspect/review tool before final response. Read-only worktree plus optional session summary; reports status, warnings, next actions, and bounded hunks without modifying files.",
                 show_changes_input_schema(),
-            ),
-            tool_spec(
-                "list_jobs",
-                "List bounded runtime job summaries across agent and local executors. "
-                    .to_string()
-                    + "Never returns stdout/stderr bodies — only metadata (job_id, kind, status, "
-                    + "project, timestamps, exit_code).",
-                list_jobs_input_schema(),
-            ),
-            tool_spec(
-                "job_tail",
-                "Return bounded stdout/stderr tails for a job.",
-                job_tail_input_schema(),
             ),
             tool_spec(
                 "read_file",

@@ -4,7 +4,8 @@ use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_d
 use super::super::tool_spec::ToolSpec;
 use super::super::ToolRuntime;
 use super::input_schemas::{
-    apply_text_edits_input_schema, checkpoint_create_input_schema, checkpoint_project_input_schema,
+    apply_text_edits_input_schema, checkpoint_create_input_schema, checkpoint_delete_input_schema,
+    checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,
     current_session_input_schema, finish_coding_task_input_schema,
     list_session_messages_input_schema, list_tools_input_schema, post_session_message_input_schema,
     resolve_session_message_input_schema, session_discussion_summary_input_schema,
@@ -98,37 +99,22 @@ impl ToolRuntime {
             tool_spec(
                 "workspace_checkpoint_list",
                 "List checkpoint metadata for a project without returning full diffs or saved file content.",
-                checkpoint_project_input_schema(vec![
-                    ("project", "string", "Runtime project id.", true),
-                    ("limit", "integer", "Maximum checkpoints to return (default 20, max 100).", false),
-                ]),
+                checkpoint_list_input_schema(),
             ),
             tool_spec(
                 "workspace_checkpoint_show",
                 "Show bounded checkpoint metadata, file list, skipped files, and optional diff stat. Does not return full diff/content by default.",
-                checkpoint_project_input_schema(vec![
-                    ("project", "string", "Runtime project id.", true),
-                    ("checkpoint_id", "string", "wc_ckpt_* id returned by workspace_checkpoint_create.", true),
-                    ("include_diff_stat", "boolean", "Include tracked/staged diff stat strings (default false).", false),
-                ]),
+                checkpoint_show_input_schema(),
             ),
             tool_spec(
                 "workspace_checkpoint_restore",
                 "Restore a checkpoint after confirm=true. Requires matching HEAD and refuses unsafe current state rather than half-restoring.",
-                checkpoint_project_input_schema(vec![
-                    ("project", "string", "Runtime project id.", true),
-                    ("checkpoint_id", "string", "wc_ckpt_* id to restore.", true),
-                    ("confirm", "boolean", "Must be true to restore.", true),
-                ]),
+                checkpoint_restore_input_schema(),
             ),
             tool_spec(
                 "workspace_checkpoint_delete",
                 "Delete one checkpoint JSON file after confirm=true. Does not touch the project worktree.",
-                checkpoint_project_input_schema(vec![
-                    ("project", "string", "Runtime project id.", true),
-                    ("checkpoint_id", "string", "wc_ckpt_* id to delete.", true),
-                    ("confirm", "boolean", "Must be true to delete.", true),
-                ]),
+                checkpoint_delete_input_schema(),
             ),
             tool_spec(
                 "list_projects",

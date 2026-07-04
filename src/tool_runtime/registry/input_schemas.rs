@@ -531,6 +531,52 @@ pub(super) fn checkpoint_project_input_schema(
     object_schema(with_optional_session_id(fields))
 }
 
+pub(super) fn checkpoint_list_input_schema() -> Value {
+    checkpoint_project_input_schema(vec![
+        ("project", "string", "Runtime project id.", true),
+        (
+            "limit",
+            "integer",
+            "Maximum checkpoints to return (default 20, max 100).",
+            false,
+        ),
+    ])
+}
+
+pub(super) fn checkpoint_show_input_schema() -> Value {
+    checkpoint_project_input_schema(vec![
+        ("project", "string", "Runtime project id.", true),
+        (
+            "checkpoint_id",
+            "string",
+            "wc_ckpt_* id returned by workspace_checkpoint_create.",
+            true,
+        ),
+        (
+            "include_diff_stat",
+            "boolean",
+            "Include tracked/staged diff stat strings (default false).",
+            false,
+        ),
+    ])
+}
+
+pub(super) fn checkpoint_restore_input_schema() -> Value {
+    checkpoint_project_input_schema(vec![
+        ("project", "string", "Runtime project id.", true),
+        ("checkpoint_id", "string", "wc_ckpt_* id to restore.", true),
+        ("confirm", "boolean", "Must be true to restore.", true),
+    ])
+}
+
+pub(super) fn checkpoint_delete_input_schema() -> Value {
+    checkpoint_project_input_schema(vec![
+        ("project", "string", "Runtime project id.", true),
+        ("checkpoint_id", "string", "wc_ckpt_* id to delete.", true),
+        ("confirm", "boolean", "Must be true to delete.", true),
+    ])
+}
+
 pub(super) fn checkpoint_validation_schema(description: &str) -> Value {
     json!({
         "type": "object",

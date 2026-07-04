@@ -3,7 +3,9 @@
 use super::metadata::{
     tool_metadata as fallback_tool_metadata, ToolMetadata, ToolPathHint, ToolRisk,
 };
-use super::tool_definition::{ToolDefinition, TOOL_DEFINITIONS, TOOL_DISCOVERY_GROUPS};
+use super::tool_definition::{
+    AgentCapability, ToolDefinition, TOOL_DEFINITIONS, TOOL_DISCOVERY_GROUPS,
+};
 
 impl ToolDefinition {
     pub(crate) fn metadata(self) -> ToolMetadata {
@@ -132,6 +134,12 @@ pub(crate) fn runtime_tool_metadata(name: &str) -> ToolMetadata {
     lookup_tool_definition(name)
         .map(|definition| definition.metadata())
         .unwrap_or_else(|| fallback_tool_metadata(name))
+}
+
+pub(crate) fn runtime_tool_agent_capability(name: &str) -> Option<AgentCapability> {
+    lookup_tool_definition(name)
+        .unwrap_or_else(|| panic!("missing ToolDefinition for {name}"))
+        .agent_capability
 }
 
 pub(crate) fn runtime_tool_category(name: &str) -> &'static str {

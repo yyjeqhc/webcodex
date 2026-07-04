@@ -1,4 +1,4 @@
-use super::tool_definition::{lookup_tool_definition, AgentCapability};
+use super::tool_definition::{runtime_tool_agent_capability, AgentCapability};
 use super::{ProjectResolverError, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
@@ -6,9 +6,7 @@ impl ToolRuntime {
     /// The capability an agent-backed tool variant requires from the agent
     /// client. Non-agent tools (and tools without a project) require nothing.
     pub(crate) fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
-        lookup_tool_definition(call.tool_name())
-            .unwrap_or_else(|| panic!("missing ToolDefinition for {}", call.tool_name()))
-            .agent_capability
+        runtime_tool_agent_capability(call.tool_name())
     }
 
     /// Enforce the owner boundary and capability requirements for agent-backed

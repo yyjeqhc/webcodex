@@ -9,9 +9,10 @@ use super::input_schemas::{
     current_session_input_schema, finish_coding_task_input_schema,
     list_session_messages_input_schema, list_tools_input_schema, post_session_message_input_schema,
     resolve_session_message_input_schema, session_discussion_summary_input_schema,
-    session_handoff_summary_input_schema, start_coding_task_input_schema,
-    start_session_input_schema, tool_manifest_input_schema, with_common_testing_metadata,
-    with_optional_session_id, workspace_hygiene_check_input_schema, PATCH_FIELD_DESCRIPTION,
+    session_handoff_summary_input_schema, session_summary_input_schema,
+    start_coding_task_input_schema, start_session_input_schema, tool_manifest_input_schema,
+    with_common_testing_metadata, with_optional_session_id, workspace_hygiene_check_input_schema,
+    PATCH_FIELD_DESCRIPTION,
 };
 use super::{object_schema, output_schema_for_tool, tool_annotations};
 
@@ -41,10 +42,7 @@ impl ToolRuntime {
             tool_spec(
                 "session_summary",
                 "Return a bounded structured summary from the session ledger for an explicit session_id: recorded events, message-board summary, task mode, and guards. Uses durable ledger data where session persistence is configured; does not rely on current-session binding.",
-                object_schema(vec![
-                    ("session_id", "string", "Opaque session id returned by start_session.", true),
-                    ("limit", "integer", "Maximum recent events to return, capped by the runtime.", false),
-                ]),
+                session_summary_input_schema(),
             ),
             tool_spec(
                 "post_session_message",

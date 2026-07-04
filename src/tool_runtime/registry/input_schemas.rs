@@ -295,6 +295,23 @@ pub(super) fn resolve_session_message_input_schema() -> Value {
     })
 }
 
+pub(super) fn session_summary_input_schema() -> Value {
+    object_schema(vec![
+        (
+            "session_id",
+            "string",
+            "Opaque session id returned by start_session.",
+            true,
+        ),
+        (
+            "limit",
+            "integer",
+            "Maximum recent events to return, capped by the runtime.",
+            false,
+        ),
+    ])
+}
+
 pub(super) fn session_discussion_summary_input_schema() -> Value {
     json!({
         "type": "object",

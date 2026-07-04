@@ -602,4 +602,63 @@ pub(super) fn with_common_testing_metadata(mut spec: ToolSpec) -> ToolSpec {
     spec
 }
 
+pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
+    const PREFERRED_ORDER: &[&str] = &[
+        "project",
+        "path",
+        "title",
+        "session_id",
+        "bind_current",
+        "include_runtime_status",
+        "include_git",
+        "include_recent_commits",
+        "include_rules",
+        "include_tool_manifest",
+        "tool_manifest_categories",
+        "tool_manifest_limit",
+        "include_diff",
+        "include_hygiene",
+        "include_handoff",
+        "include_validation_summary",
+        "include_validation",
+        "include_workspace",
+        "include_checkpoints",
+        "category",
+        "features",
+        "summary_only",
+        "limit",
+        "allow_missing",
+        "upload_id",
+        "allow_cross_project_session",
+        "offset",
+        "content_base64",
+        "expected_bytes",
+        "expected_sha256",
+        "mime_type",
+        "overwrite",
+    ];
+
+    let Some(properties) = spec.input_schema["properties"].as_object() else {
+        return vec!["recording_session_id".to_string()];
+    };
+    let mut names = Vec::new();
+    for field in PREFERRED_ORDER {
+        if properties.contains_key(*field) {
+            names.push((*field).to_string());
+        }
+    }
+    let mut remaining: Vec<&str> = properties
+        .keys()
+        .map(String::as_str)
+        .filter(|field| !PREFERRED_ORDER.contains(field))
+        .collect();
+    remaining.sort_unstable();
+    names.extend(remaining.into_iter().map(str::to_string));
+    if spec.name == "start_coding_task" && !names.iter().any(|field| field == "session_id") {
+        names.push("session_id".to_string());
+    }
+    names.push("recording_session_id".to_string());
+    names
+}
+
 pub(super) const PATCH_FIELD_DESCRIPTION: &str = "raw standard unified diff only. Do not include Codex apply_patch wrapper syntax, shell heredocs, \"*** Begin Patch\", \"*** Update File\", or \"*** End Patch\". The first non-empty line should be \"diff --git ...\", \"--- ...\", or another git-apply-compatible unified diff header.";

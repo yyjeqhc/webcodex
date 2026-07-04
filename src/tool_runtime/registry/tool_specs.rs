@@ -7,16 +7,18 @@ use super::input_schemas::{
     apply_text_edits_input_schema, checkpoint_create_input_schema, checkpoint_delete_input_schema,
     checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,
     create_project_input_schema, current_session_input_schema, empty_input_schema,
-    finish_coding_task_input_schema, job_log_input_schema, job_status_input_schema,
-    job_tail_input_schema, list_jobs_input_schema, list_project_files_input_schema,
-    list_session_messages_input_schema, list_tools_input_schema, post_session_message_input_schema,
-    read_file_input_schema, register_project_input_schema, resolve_session_message_input_schema,
-    run_codex_input_schema, run_job_input_schema, run_shell_input_schema,
-    search_project_text_input_schema, session_discussion_summary_input_schema,
-    session_handoff_summary_input_schema, session_summary_input_schema,
-    start_coding_task_input_schema, start_session_input_schema, stop_job_input_schema,
-    tool_manifest_input_schema, with_common_testing_metadata, with_optional_session_id,
-    workspace_hygiene_check_input_schema, PATCH_FIELD_DESCRIPTION,
+    finish_coding_task_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
+    git_diff_summary_input_schema, git_log_input_schema, git_status_input_schema,
+    job_log_input_schema, job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
+    list_project_files_input_schema, list_session_messages_input_schema, list_tools_input_schema,
+    post_session_message_input_schema, read_file_input_schema, register_project_input_schema,
+    resolve_session_message_input_schema, run_codex_input_schema, run_job_input_schema,
+    run_shell_input_schema, search_project_text_input_schema,
+    session_discussion_summary_input_schema, session_handoff_summary_input_schema,
+    session_summary_input_schema, show_changes_input_schema, start_coding_task_input_schema,
+    start_session_input_schema, stop_job_input_schema, tool_manifest_input_schema,
+    with_common_testing_metadata, with_optional_session_id, workspace_hygiene_check_input_schema,
+    PATCH_FIELD_DESCRIPTION,
 };
 use super::{object_schema, output_schema_for_tool, tool_annotations};
 
@@ -212,24 +214,12 @@ impl ToolRuntime {
                     .to_string()
                     + "`git diff --stat`, and a parsed changed-file list. Does not modify the "
                     + "worktree.",
-                object_schema(with_optional_session_id(vec![(
-                    "project",
-                    "string",
-                    "Agent-registered project id.",
-                    true,
-                )])),
+                git_diff_summary_input_schema(),
             ),
             tool_spec(
                 "show_changes",
                 "Default inspect/review tool before final response. Read-only worktree plus optional session summary; reports status, warnings, next actions, and bounded hunks without modifying files.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("session_id", "string", "Optional wc_sess_* id to summarize with the git changes.", false),
-                    ("include_diff", "boolean", "Include bounded diff hunks (default false).", false),
-                    ("max_hunks", "integer", "Maximum hunks to return when include_diff=true (clamped).", false),
-                    ("max_hunk_lines", "integer", "Maximum lines per hunk when include_diff=true (clamped).", false),
-                    ("session_event_limit", "integer", "Maximum recent session events to include (clamped).", false),
-                ])),
+                show_changes_input_schema(),
             ),
             tool_spec(
                 "list_jobs",
@@ -252,40 +242,22 @@ impl ToolRuntime {
             tool_spec(
                 "git_status",
                 "Run git status --porcelain for a project.",
-                object_schema(with_optional_session_id(vec![(
-                    "project",
-                    "string",
-                    "Configured project id.",
-                    true,
-                )])),
+                git_status_input_schema(),
             ),
             tool_spec(
                 "git_diff",
                 "Run git diff for a project, optionally scoped to paths.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Configured project id.", true),
-                    ("args", "array", "Optional path list.", false),
-                ])),
+                git_diff_input_schema(),
             ),
             tool_spec(
                 "git_diff_hunks",
                 "Return bounded structured git diff hunks for review. Supports optional paths and cached diff; does not modify the worktree.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("paths", "array", "Optional project-relative paths to scope diff.", false),
-                    ("max_hunks", "integer", "Maximum hunks to return (clamped).", false),
-                    ("max_hunk_lines", "integer", "Maximum lines per hunk (clamped).", false),
-                    ("cached", "boolean", "Use staged diff via git diff --cached.", false),
-                ])),
+                git_diff_hunks_input_schema(),
             ),
             tool_spec(
                 "git_log",
                 "Return bounded structured recent git commit history for a project. Does not return commit bodies or modify the worktree.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("limit", "integer", "Maximum commits to return (default 20, clamped to 1..100).", false),
-                    ("skip", "integer", "Number of recent commits to skip (default 0, clamped to 0..10000).", false),
-                ])),
+                git_log_input_schema(),
             ),
             tool_spec(
                 "cargo_fmt",

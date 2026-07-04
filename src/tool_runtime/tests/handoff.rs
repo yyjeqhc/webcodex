@@ -3,7 +3,9 @@
 use super::super::types::*;
 use super::super::*;
 use super::support::*;
+use crate::auth::AuthContext;
 use crate::shell_protocol::ShellClientCapabilities;
+use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use crate::tool_runtime::sessions::SessionTransport;
 use crate::tool_runtime::validation_events::validation_summary_for_session;
 use crate::tool_runtime::validation_parser::VALIDATION_OUTPUT_METADATA_ABSENT_REASON;
@@ -76,6 +78,7 @@ async fn session_handoff_summary_returns_message_board_state() {
             include_workspace: None,
             include_checkpoints: None,
             include_validation: None,
+            summary_only: false,
             limit: None,
         })
         .await;
@@ -189,6 +192,7 @@ async fn session_handoff_summary_includes_recent_failed_tools() {
             include_workspace: None,
             include_checkpoints: None,
             include_validation: None,
+            summary_only: false,
             limit: None,
         })
         .await;
@@ -208,6 +212,298 @@ async fn session_handoff_summary_includes_recent_failed_tools() {
         !serialized.contains("definitely_does_not_exist.md"),
         "raw input path must not leak: {serialized}"
     );
+}
+
+#[tokio::test]
+async fn expected_stop_job_failures_are_classified_without_permission_noise() {
+    let runtime = test_runtime();
+    let auth = open_auth_context();
+    register_agent_projects_for_auth(
+        &runtime,
+        "expected-stop",
+        &auth,
+        ShellClientCapabilities::default(),
+        vec![
+            registered_project("alpha", "/tmp/expected-stop-alpha"),
+            registered_project("beta", "/tmp/expected-stop-beta"),
+        ],
+    )
+    .await;
+    let session_project = "agent:expected-stop:alpha".to_string();
+    let request_project = "agent:expected-stop:beta".to_string();
+    let session = runtime.sessions.start_session(
+        Some(session_project),
+        Some("expected stop failures".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    let wrong_project = call_recorded_tool(
+        &runtime,
+        &sid,
+        "stop_job",
+        json!({
+            "project": request_project,
+            "job_id": "job-negative",
+            "confirm": true,
+            "expected_failure": true,
+            "expected_failure_kind": "session_project_mismatch",
+            "assertion_name": "wrong-project stop_job negative path"
+        }),
+        Some(&auth),
+    )
+    .await;
+    assert!(!wrong_project.success);
+    assert_eq!(
+        wrong_project.output["failure_kind"],
+        "session_project_mismatch"
+    );
+    assert_eq!(wrong_project.output["command_started"], false);
+    assert!(wrong_project.output.get("permission").is_none());
+
+    let confirm_required = call_recorded_tool(
+        &runtime,
+        &sid,
+        "stop_job",
+        json!({
+            "project": "agent:expected-stop:alpha",
+            "job_id": "job-negative",
+            "confirm": false,
+            "expected_failure": true,
+            "expected_failure_kind": "confirmation_required",
+            "assertion_name": "stop_job requires confirm=true"
+        }),
+        Some(&auth),
+    )
+    .await;
+    assert!(!confirm_required.success);
+    assert_eq!(
+        confirm_required.output["failure_kind"],
+        "confirmation_required"
+    );
+    assert_eq!(confirm_required.output["command_started"], false);
+    assert!(confirm_required.output.get("permission").is_none());
+
+    let summary = runtime.sessions.summary(&sid, Some(20)).unwrap();
+    let finished: Vec<_> = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "tool_call_finished" && event.tool_name == "stop_job")
+        .collect();
+    assert_eq!(finished.len(), 2);
+    assert!(finished
+        .iter()
+        .all(|event| event.expected_failure == Some(true)));
+    assert!(finished.iter().all(
+        |event| event.failure_expectation_result.as_deref() == Some("matched_expected_failure")
+    ));
+
+    let handoff = handoff_summary(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 2);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(
+        handoff.output["tool_failures"]["expectation_mismatch_count"],
+        0
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["unexpected_success_count"],
+        0
+    );
+    assert_eq!(
+        handoff.output["expected_failed_tool_calls"][0]["assertion_name"],
+        "stop_job requires confirm=true"
+    );
+    let actions = handoff.output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions
+        .iter()
+        .any(|action| action == "expected failure assertions matched"));
+    assert!(!actions.iter().any(|action| action
+        .as_str()
+        .unwrap_or("")
+        .contains("review unexpected failed tool calls")));
+    assert!(!actions.iter().any(|action| action
+        .as_str()
+        .unwrap_or("")
+        .contains("review recent failed tool calls")));
+}
+
+#[tokio::test]
+async fn unexpected_failure_remains_actionable_in_handoff() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("unexpected failure".to_string()));
+    let sid = session.session_id.clone();
+
+    let result = call_recorded_tool(
+        &runtime,
+        &sid,
+        "job_status",
+        json!({"job_id": "missing-job"}),
+        None,
+    )
+    .await;
+    assert!(!result.success);
+
+    let handoff = handoff_summary(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        handoff.output["unexpected_failed_tool_calls"][0]["tool_name"],
+        "job_status"
+    );
+    let actions = handoff.output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions.iter().any(|action| {
+        action.as_str().unwrap_or("") == "review unexpected failed tool calls before proceeding"
+    }));
+}
+
+#[tokio::test]
+async fn expectation_mismatch_and_unexpected_success_are_visible() {
+    let runtime = test_runtime();
+    let auth = open_auth_context();
+    register_agent_projects_for_auth(
+        &runtime,
+        "expect-mismatch",
+        &auth,
+        ShellClientCapabilities::default(),
+        vec![registered_project("demo", "/tmp/expect-mismatch-demo")],
+    )
+    .await;
+    let project = "agent:expect-mismatch:demo".to_string();
+
+    let mismatch_session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("mismatch".to_string()));
+    let mismatch_sid = mismatch_session.session_id.clone();
+    let mismatch = call_recorded_tool(
+        &runtime,
+        &mismatch_sid,
+        "stop_job",
+        json!({
+            "project": project,
+            "job_id": "job-negative",
+            "confirm": false,
+            "expected_failure": true,
+            "expected_failure_kind": "session_project_mismatch",
+            "assertion_name": "wrong expected failure kind"
+        }),
+        Some(&auth),
+    )
+    .await;
+    assert!(!mismatch.success);
+    assert_eq!(mismatch.output["failure_kind"], "confirmation_required");
+    let handoff = handoff_summary(&runtime, &mismatch_sid).await;
+    assert_eq!(
+        handoff.output["tool_failures"]["expectation_mismatch_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["expectation_mismatches"][0]["actual_failure_kind"],
+        "confirmation_required"
+    );
+    assert!(handoff.output["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str().unwrap_or("")
+            == "review expected failure mismatches before proceeding"));
+
+    let success_session = runtime
+        .sessions
+        .start_session(None, Some("unexpected success".to_string()));
+    let success_sid = success_session.session_id.clone();
+    let success = call_recorded_tool(
+        &runtime,
+        &success_sid,
+        "list_projects",
+        json!({
+            "expected_failure": true,
+            "assertion_name": "list_projects should not fail"
+        }),
+        None,
+    )
+    .await;
+    assert!(success.success, "{:?}", success.error);
+    let handoff = handoff_summary(&runtime, &success_sid).await;
+    assert_eq!(
+        handoff.output["tool_failures"]["unexpected_success_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["unexpected_success_tool_calls"][0]["tool_name"],
+        "list_projects"
+    );
+    assert!(handoff.output["suggested_next_actions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|action| action.as_str().unwrap_or("")
+            == "review expected-failure assertions that unexpectedly succeeded"));
+}
+
+#[tokio::test]
+async fn session_handoff_summary_only_is_compact() {
+    let runtime = test_runtime();
+    let session = runtime
+        .sessions
+        .start_session(None, Some("compact handoff".to_string()));
+    let sid = session.session_id.clone();
+    let _ = call_recorded_tool(
+        &runtime,
+        &sid,
+        "job_status",
+        json!({
+            "job_id": "missing-job",
+            "expected_failure": true,
+            "expected_failure_kind": "job_not_found",
+            "assertion_name": "missing job status"
+        }),
+        None,
+    )
+    .await;
+
+    let result = runtime
+        .dispatch(
+            ToolCall::from_tool_name(
+                "session_handoff_summary",
+                json!({
+                    "session_id": sid,
+                    "summary_only": true,
+                    "include_workspace": false,
+                    "include_checkpoints": false
+                }),
+            )
+            .unwrap(),
+        )
+        .await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["summary_only"], true);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["jobs"]["blocking_active_count"], 0);
+    assert_eq!(result.output["permissions"]["total_approved_count"], 0);
+    assert_eq!(result.output["tool_failures"]["expected_count"], 1);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(result.output["validation"]["status"], "not_run");
+    assert_eq!(
+        result.output["validation"]["reason"],
+        "no_validation_tool_invoked"
+    );
+    let serialized = serde_json::to_string(&result.output).unwrap();
+    for forbidden in [
+        "recent_events",
+        "recent_failed_tools",
+        "stdout",
+        "stderr",
+        "tail",
+        "excerpt",
+        "command",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "summary_only handoff leaked {forbidden}: {serialized}"
+        );
+    }
 }
 
 // =========================================================================
@@ -256,6 +552,7 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
                 include_workspace: Some(false),
                 include_checkpoints: Some(false),
                 include_validation: Some(false),
+                summary_only: false,
                 limit: Some(20),
             },
             Some(&auth),
@@ -299,6 +596,7 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
                 include_workspace: Some(false),
                 include_checkpoints: Some(false),
                 include_validation: Some(false),
+                summary_only: false,
                 limit: Some(20),
             },
             Some(&auth),
@@ -376,6 +674,7 @@ async fn session_handoff_summary_treats_stop_requested_as_nonblocking() {
                 include_workspace: Some(false),
                 include_checkpoints: Some(false),
                 include_validation: Some(false),
+                summary_only: false,
                 limit: Some(20),
             },
             Some(&auth),
@@ -415,6 +714,7 @@ async fn session_handoff_summary_unknown_session() {
             include_workspace: None,
             include_checkpoints: None,
             include_validation: None,
+            summary_only: false,
             limit: None,
         })
         .await;
@@ -446,6 +746,7 @@ async fn session_handoff_summary_read_only_session_allowed() {
             include_workspace: None,
             include_checkpoints: None,
             include_validation: None,
+            summary_only: false,
             limit: None,
         })
         .await;
@@ -503,6 +804,7 @@ async fn session_handoff_summary_includes_validation_by_default_from_session_led
             include_workspace: None,
             include_checkpoints: None,
             include_validation: None,
+            summary_only: false,
             limit: None,
         })
         .await;
@@ -557,6 +859,7 @@ async fn session_handoff_summary_can_omit_validation() {
             include_workspace: None,
             include_checkpoints: None,
             include_validation: Some(false),
+            summary_only: false,
             limit: None,
         })
         .await;
@@ -588,6 +891,7 @@ async fn session_handoff_summary_validation_unavailable_without_validation_event
             include_workspace: None,
             include_checkpoints: None,
             include_validation: None,
+            summary_only: false,
             limit: None,
         })
         .await;
@@ -828,6 +1132,7 @@ async fn session_handoff_summary_output_is_bounded() {
             include_workspace: None,
             include_checkpoints: None,
             include_validation: None,
+            summary_only: false,
             limit: Some(5),
         })
         .await;
@@ -889,6 +1194,10 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         input_props.contains_key("include_validation"),
         "session_handoff_summary input schema should expose include_validation"
     );
+    assert!(
+        input_props.contains_key("summary_only"),
+        "session_handoff_summary input schema should expose summary_only"
+    );
     let output_props = spec.output_schema["properties"]["output"]["properties"]
         .as_object()
         .expect("handoff output properties");
@@ -899,6 +1208,10 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
     assert!(
         output_props.contains_key("permissions"),
         "session_handoff_summary output schema should expose permissions"
+    );
+    assert!(
+        output_props.contains_key("tool_failures"),
+        "session_handoff_summary output schema should expose tool_failures"
     );
     let description = spec.description.to_lowercase();
     for phrase in [
@@ -946,6 +1259,17 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         tool_props.contains_key("include_checkpoints"),
         "OpenAPI ToolCallRequest should expose flattened include_checkpoints"
     );
+    for field in [
+        "summary_only",
+        "expected_failure",
+        "expected_failure_kind",
+        "assertion_name",
+    ] {
+        assert!(
+            tool_props.contains_key(field),
+            "OpenAPI ToolCallRequest should expose flattened {field}"
+        );
+    }
     let count: usize = spec["paths"]
         .as_object()
         .unwrap()
@@ -1066,6 +1390,49 @@ fn assert_no_raw_validation_output_fields(value: &Value, context: &str) {
     }
 }
 
+async fn call_recorded_tool(
+    runtime: &ToolRuntime,
+    session_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    auth: Option<&AuthContext>,
+) -> ToolResult {
+    let outcome = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: tool_name.to_string(),
+                arguments,
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: Some(session_id),
+                auth,
+                record_oauth_scope_denials: true,
+            },
+        )
+        .await;
+    outcome.result.unwrap_or_else(|| {
+        let detail = outcome.error_status.map(|status| format!("{status:?}"));
+        ToolResult::err(detail.unwrap_or_else(|| "tool returned no result".to_string()))
+    })
+}
+
+async fn handoff_summary(runtime: &ToolRuntime, session_id: &str) -> ToolResult {
+    runtime
+        .dispatch(
+            ToolCall::from_tool_name(
+                "session_handoff_summary",
+                json!({
+                    "session_id": session_id,
+                    "include_workspace": false,
+                    "include_checkpoints": false
+                }),
+            )
+            .unwrap(),
+        )
+        .await
+}
+
 /// Dispatch `session_handoff_summary` through the agent path, completing any
 /// agent shell requests (from the internal `show_changes` call) locally.
 async fn dispatch_handoff_with_agent(
@@ -1085,6 +1452,7 @@ async fn dispatch_handoff_with_agent(
                 include_workspace: Some(include_workspace),
                 include_checkpoints: Some(include_checkpoints),
                 include_validation: Some(true),
+                summary_only: false,
                 limit: None,
             })
             .await

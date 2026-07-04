@@ -16,6 +16,7 @@ use super::permissions::permission_summary_from_events;
 use super::session_context::{
     session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
 };
+use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{SessionDiscussionCounts, SessionDiscussionSummary, SessionMessage};
 use super::types::ToolResult;
 use super::validation_events::validation_summary_for_session;
@@ -40,6 +41,7 @@ impl ToolRuntime {
         include_workspace: Option<bool>,
         include_checkpoints: Option<bool>,
         include_validation: Option<bool>,
+        summary_only: bool,
         limit: Option<usize>,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
@@ -107,6 +109,13 @@ impl ToolRuntime {
             .collect();
 
         let failed_tool_calls = recent_failed_tools.len();
+        let tool_failures =
+            tool_failure_summary_from_events(&summary.events, MAX_RECENT_FAILED_TOOLS);
+        let expected_failed_tool_calls = output_recent(&tool_failures, "recent_expected");
+        let unexpected_failed_tool_calls = output_recent(&tool_failures, "recent_unexpected");
+        let expectation_mismatches = output_recent(&tool_failures, "recent_mismatches");
+        let unexpected_success_tool_calls =
+            output_recent(&tool_failures, "recent_unexpected_successes");
 
         let open_todos = bound_messages(&discussion.open_todos, MAX_OPEN_ITEMS);
         let open_risks = bound_messages(&discussion.open_risks, MAX_OPEN_ITEMS);
@@ -177,6 +186,11 @@ impl ToolRuntime {
             "recent_progress": recent_progress,
             "recent_decisions": recent_decisions,
             "recent_failed_tools": recent_failed_tools,
+            "tool_failures": tool_failures,
+            "expected_failed_tool_calls": expected_failed_tool_calls,
+            "unexpected_failed_tool_calls": unexpected_failed_tool_calls,
+            "expectation_mismatches": expectation_mismatches,
+            "unexpected_success_tool_calls": unexpected_success_tool_calls,
             "jobs": jobs,
             "warnings": warnings,
         });
@@ -217,8 +231,11 @@ impl ToolRuntime {
         }
 
         // --- bounded suggested next actions ---
-        output["suggested_next_actions"] =
-            json!(handoff_suggested_next_actions(&output, failed_tool_calls));
+        output["suggested_next_actions"] = json!(handoff_suggested_next_actions(&output));
+
+        if summary_only {
+            return ToolResult::ok(compact_handoff_output(&output));
+        }
 
         ToolResult::ok(output)
     }
@@ -432,8 +449,69 @@ fn bound_chars(value: &str, max_chars: usize) -> String {
     out
 }
 
+fn output_recent(tool_failures: &Value, key: &str) -> Value {
+    tool_failures.get(key).cloned().unwrap_or_else(|| json!([]))
+}
+
+fn compact_handoff_output(output: &Value) -> Value {
+    let workspace_clean = output
+        .get("workspace")
+        .and_then(|workspace| workspace.get("clean"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    json!({
+        "summary_only": true,
+        "project": output.get("project").cloned().unwrap_or(Value::Null),
+        "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+        "workspace_clean": workspace_clean,
+        "hygiene_clean": true,
+        "jobs": compact_jobs(output.get("jobs").unwrap_or(&Value::Null)),
+        "permissions": compact_permissions(output.get("permissions").unwrap_or(&Value::Null)),
+        "tool_failures": compact_tool_failures(output.get("tool_failures").unwrap_or(&Value::Null)),
+        "validation": compact_validation(output.get("validation").unwrap_or(&Value::Null)),
+        "warnings": output.get("warnings").cloned().unwrap_or_else(|| json!([])),
+        "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
+    })
+}
+
+pub(crate) fn compact_jobs(jobs: &Value) -> Value {
+    json!({
+        "active_count": jobs.get("active_count").and_then(Value::as_u64).unwrap_or(0),
+        "blocking_active_count": jobs.get("blocking_active_count").and_then(Value::as_u64).unwrap_or(0),
+        "nonblocking_active_count": jobs.get("nonblocking_active_count").and_then(Value::as_u64).unwrap_or(0),
+        "terminal_pending_count": jobs.get("terminal_pending_count").and_then(Value::as_u64).unwrap_or(0),
+        "warnings": jobs.get("warnings").cloned().unwrap_or_else(|| json!([])),
+    })
+}
+
+pub(crate) fn compact_permissions(permissions: &Value) -> Value {
+    json!({
+        "required_count": permissions.get("required_count").and_then(Value::as_u64).unwrap_or(0),
+        "manual_approved_count": permissions.get("manual_approved_count").and_then(Value::as_u64).unwrap_or(0),
+        "auto_approved_count": permissions.get("auto_approved_count").and_then(Value::as_u64).unwrap_or(0),
+        "total_approved_count": permissions.get("total_approved_count").and_then(Value::as_u64).unwrap_or(0),
+        "hard_denied_count": permissions.get("hard_denied_count").and_then(Value::as_u64).unwrap_or(0),
+    })
+}
+
+pub(crate) fn compact_tool_failures(tool_failures: &Value) -> Value {
+    json!({
+        "expected_count": tool_failures.get("expected_count").and_then(Value::as_u64).unwrap_or(0),
+        "unexpected_count": tool_failures.get("unexpected_count").and_then(Value::as_u64).unwrap_or(0),
+        "expectation_mismatch_count": tool_failures.get("expectation_mismatch_count").and_then(Value::as_u64).unwrap_or(0),
+        "unexpected_success_count": tool_failures.get("unexpected_success_count").and_then(Value::as_u64).unwrap_or(0),
+    })
+}
+
+pub(crate) fn compact_validation(validation: &Value) -> Value {
+    json!({
+        "status": validation.get("status").cloned().unwrap_or_else(|| json!("not_run")),
+        "reason": validation.get("reason").cloned().unwrap_or_else(|| json!("no_validation_tool_invoked")),
+    })
+}
+
 /// Build a bounded list of suggested next actions based on the handoff state.
-fn handoff_suggested_next_actions(output: &Value, failed_tool_calls: usize) -> Vec<String> {
+fn handoff_suggested_next_actions(output: &Value) -> Vec<String> {
     let mut actions = Vec::new();
     let push = |actions: &mut Vec<String>, action: &str| {
         if !actions.iter().any(|existing| existing == action) {
@@ -441,11 +519,47 @@ fn handoff_suggested_next_actions(output: &Value, failed_tool_calls: usize) -> V
         }
     };
 
-    if failed_tool_calls > 0 {
+    let tool_failures = output.get("tool_failures").unwrap_or(&Value::Null);
+    let unexpected_count = tool_failures
+        .get("unexpected_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let expectation_mismatch_count = tool_failures
+        .get("expectation_mismatch_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let unexpected_success_count = tool_failures
+        .get("unexpected_success_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let expected_count = tool_failures
+        .get("expected_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    if unexpected_count > 0 {
         push(
             &mut actions,
-            "review recent failed tool calls before proceeding",
+            "review unexpected failed tool calls before proceeding",
         );
+    }
+    if expectation_mismatch_count > 0 {
+        push(
+            &mut actions,
+            "review expected failure mismatches before proceeding",
+        );
+    }
+    if unexpected_success_count > 0 {
+        push(
+            &mut actions,
+            "review expected-failure assertions that unexpectedly succeeded",
+        );
+    }
+    if expected_count > 0
+        && unexpected_count == 0
+        && expectation_mismatch_count == 0
+        && unexpected_success_count == 0
+    {
+        push(&mut actions, "expected failure assertions matched");
     }
     let open_todos = output["counts"]["open_todos"].as_u64().unwrap_or(0);
     if open_todos > 0 {

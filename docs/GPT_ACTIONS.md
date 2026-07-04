@@ -191,7 +191,8 @@ calling `callRuntimeTool`.
    `workspace_hygiene_check`.
 8. Finish with `callRuntimeTool` using `finish_coding_task`; for cross-client or
    multi-step handoff, call `session_handoff_summary` with the explicit
-   `session_id`.
+   `session_id`. Pass flattened `summary_only=true` for compact smoke verdicts
+   that omit recent events, command text, stdout/stderr, tails, and excerpts.
 
 `finish_coding_task` and `session_handoff_summary` keep `active_count` for
 compatibility and also return `blocking_active_count`,
@@ -321,7 +322,18 @@ failed tool call.
 It does not implicitly use the current-session binding. Its optional
 `validation` section is ledger-derived and does not expose raw stdout/stderr,
 excerpt fields, or `validation_output_summary`. It accepts flattened
-`include_validation`, `include_workspace`, `include_checkpoints`, and `limit`.
+`include_validation`, `include_workspace`, `include_checkpoints`,
+`summary_only`, and `limit`.
+
+For smoke and acceptance tests, `callRuntimeTool` accepts flattened testing
+metadata: `expected_failure`, `expected_failure_kind`,
+`test_expect_failure_kind`, and `assertion_name`. These fields are recorded in
+the session ledger and stripped before concrete runtime tool dispatch. They do
+not change authorization, permission decisions, hard guards, execution,
+`command_started`, or immediate success/error output. `finish_coding_task` and
+`session_handoff_summary` classify matching negative-path failures as expected
+while keeping unexpected failures, expectation mismatches, and unexpected
+successes visible in `tool_failures` and `suggested_next_actions`.
 
 For tools that are not read-only, are destructive, or are shell/job-like, the
 session ledger records bounded permission decision metadata after hard safety

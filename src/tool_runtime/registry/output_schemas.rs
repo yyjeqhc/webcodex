@@ -656,12 +656,24 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
         ]),
         "finish_coding_task" => wrapped_output_schema(vec![
+            (
+                "summary_only",
+                schema_type("boolean", "True only for compact summary_only output."),
+            ),
             ("project", schema_type("string", "Original project input.")),
             (
                 "resolved_project",
                 open_object_schema("Resolved project id, path, executor, and safe project metadata."),
             ),
             ("session_id", schema_type("string", "Explicit task session id.")),
+            (
+                "workspace_clean",
+                schema_type("boolean", "Compact summary_only workspace cleanliness verdict."),
+            ),
+            (
+                "hygiene_clean",
+                schema_type("boolean", "Compact summary_only hygiene cleanliness verdict."),
+            ),
             (
                 "workspace",
                 open_object_schema("Workspace cleanliness, changed file count, and warnings."),
@@ -679,6 +691,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 permission_summary_schema("Deterministic bounded permission decision summary from the session ledger. Counts high-risk auto-approved tools only; never includes stdout/stderr, env, tokens, secrets, or raw input content."),
             ),
             (
+                "tool_failures",
+                open_object_schema("Expected/unexpected tool failure classification from the session ledger. Counts expected failures, unexpected failures, expectation mismatches, and expected-failure calls that unexpectedly succeeded. Compact output includes counts only."),
+            ),
+            (
                 "hygiene",
                 nullable_schema("object", "workspace_hygiene_check output when requested; null otherwise."),
             ),
@@ -693,6 +709,14 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             (
                 "final_warnings",
                 array_schema(open_object_schema("Finish warning."), "Bounded finish warnings."),
+            ),
+            (
+                "warnings",
+                array_schema(open_object_schema("Compact finish warning."), "Bounded compact summary_only warnings."),
+            ),
+            (
+                "suggested_next_actions",
+                array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions based on unexpected failures, workspace, and jobs."),
             ),
         ]),
         "start_session" => wrapped_output_schema(vec![
@@ -833,8 +857,20 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
         ]),
         "session_handoff_summary" => wrapped_output_schema(vec![
+            (
+                "summary_only",
+                schema_type("boolean", "True only for compact summary_only output."),
+            ),
             ("session_id", schema_type("string", "Business session id being handed off.")),
             ("project", nullable_schema("string", "Optional runtime project id, when provided.")),
+            (
+                "workspace_clean",
+                schema_type("boolean", "Compact summary_only workspace cleanliness verdict."),
+            ),
+            (
+                "hygiene_clean",
+                schema_type("boolean", "Compact summary_only hygiene cleanliness verdict."),
+            ),
             ("title", nullable_schema("string", "Optional session title.")),
             ("mode", session_mode_schema("Session mode.")),
             ("guards", session_guards_schema("Effective session guards.")),
@@ -868,6 +904,26 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             (
                 "recent_failed_tools",
                 array_schema(open_object_schema("Bounded failed tool call summary: tool_name, error_kind, failure_kind, created_at, write_like, job_like."), "Bounded newest-first recent failed tool calls. Never includes raw input payloads."),
+            ),
+            (
+                "tool_failures",
+                open_object_schema("Expected/unexpected tool failure classification from the session ledger. Counts expected failures, unexpected failures, expectation mismatches, and expected-failure calls that unexpectedly succeeded. Never includes raw input payloads, command text, stdout/stderr, tails, or excerpts."),
+            ),
+            (
+                "expected_failed_tool_calls",
+                array_schema(open_object_schema("Bounded expected failed tool call summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."), "Expected failed tool calls whose expectation matched."),
+            ),
+            (
+                "unexpected_failed_tool_calls",
+                array_schema(open_object_schema("Bounded unexpected failed tool call summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."), "Unexpected failed tool calls requiring review."),
+            ),
+            (
+                "expectation_mismatches",
+                array_schema(open_object_schema("Bounded expectation mismatch summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."), "Expected failures whose actual failure kind did not match."),
+            ),
+            (
+                "unexpected_success_tool_calls",
+                array_schema(open_object_schema("Bounded unexpected success summary: event_id, tool_name, project, assertion_name, expected_failure_kind, actual_failure_kind, status, success, created_at."), "Calls marked expected_failure=true that succeeded."),
             ),
             (
                 "permissions",

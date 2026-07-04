@@ -98,6 +98,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
             include_workspace: Some(false),
             include_checkpoints: Some(false),
             include_validation: Some(false),
+            summary_only: false,
             limit: None,
         })
         .await;
@@ -123,6 +124,7 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
                     ToolCall::FinishCodingTask {
                         project,
                         session_id,
+                        summary_only: false,
                         include_diff: Some(false),
                         include_hygiene: Some(false),
                         include_handoff: Some(false),

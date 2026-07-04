@@ -554,6 +554,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                     ToolCall::FinishCodingTask {
                         project,
                         session_id,
+                        summary_only: false,
                         include_diff: Some(false),
                         include_hygiene: Some(false),
                         include_handoff: Some(false),
@@ -619,6 +620,7 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
             include_workspace: Some(false),
             include_checkpoints: Some(false),
             include_validation: Some(true),
+            summary_only: false,
             limit: None,
         })
         .await;

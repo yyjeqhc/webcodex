@@ -1008,6 +1008,25 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     for field in ["summary_only", "category", "features", "limit"] {
         assert!(accepted("list_tools").contains(&field.to_string()));
     }
+    for tool in [
+        "stop_job",
+        "job_status",
+        "session_handoff_summary",
+        "finish_coding_task",
+    ] {
+        let accepted = accepted(tool);
+        for field in [
+            "expected_failure",
+            "expected_failure_kind",
+            "test_expect_failure_kind",
+            "assertion_name",
+        ] {
+            assert!(
+                accepted.contains(&field.to_string()),
+                "{tool} missing testing metadata flattened arg {field}: {accepted:?}"
+            );
+        }
+    }
     for field in [
         "project",
         "title",
@@ -1029,9 +1048,21 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "include_validation",
         "include_workspace",
         "include_checkpoints",
+        "summary_only",
         "limit",
     ] {
         assert!(accepted("session_handoff_summary").contains(&field.to_string()));
+    }
+    for field in [
+        "project",
+        "session_id",
+        "include_diff",
+        "include_hygiene",
+        "include_handoff",
+        "include_validation_summary",
+        "summary_only",
+    ] {
+        assert!(accepted("finish_coding_task").contains(&field.to_string()));
     }
     for field in [
         "project",

@@ -35,6 +35,11 @@ pub(crate) const MAX_MESSAGE_TAG_CHARS: usize = 64;
 pub(crate) const MAX_MESSAGE_RESOLUTION_CHARS: usize = 8000;
 const MAX_MESSAGE_SUMMARY_CHARS: usize = 240;
 const SUMMARY_MESSAGE_GROUP_LIMIT: usize = 5;
+pub(crate) const TOOL_EXPECTATION_RESULT_NONE: &str = "none";
+pub(crate) const TOOL_EXPECTATION_RESULT_MATCHED: &str = "matched_expected_failure";
+pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE: &str = "unexpected_failure";
+pub(crate) const TOOL_EXPECTATION_RESULT_MISMATCH: &str = "expectation_mismatch";
+pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS: &str = "unexpected_success";
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionStore {
@@ -164,6 +169,14 @@ pub(crate) struct ToolCallStart {
     pub(crate) started_at: i64,
     pub(crate) started_instant: Instant,
     pub(crate) permission: Option<PermissionDecision>,
+    pub(crate) expectation: ToolCallExpectation,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub(crate) struct ToolCallExpectation {
+    pub(crate) expected_failure: bool,
+    pub(crate) expected_failure_kind: Option<String>,
+    pub(crate) assertion_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -204,6 +217,16 @@ pub(crate) struct SessionEvent {
     pub(crate) exit_code: Option<i64>,
     pub(crate) failure_kind: Option<String>,
     pub(crate) error_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expected_failure: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) expected_failure_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) assertion_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) actual_failure_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) failure_expectation_result: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) warning_kind: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -636,6 +659,7 @@ impl SessionStore {
         let change_summary_like = is_change_summary_like_tool(tool_name);
         let changed_paths = changed_paths_for_tool(tool_name, arguments);
         let input_summary = Some(redact_and_bound_value(arguments));
+        let expectation = tool_call_expectation_from_arguments(arguments);
         let start = ToolCallStart {
             event_id: event_id.clone(),
             session_id: session_id.to_string(),
@@ -653,6 +677,7 @@ impl SessionStore {
             started_at: now,
             started_instant: Instant::now(),
             permission: None,
+            expectation: expectation.clone(),
         };
         self.push_event(SessionEvent {
             event_id,
@@ -676,6 +701,11 @@ impl SessionStore {
             exit_code: None,
             failure_kind: None,
             error_kind: None,
+            expected_failure: expectation.expected_failure.then_some(true),
+            expected_failure_kind: expectation.expected_failure_kind.clone(),
+            assertion_name: expectation.assertion_name.clone(),
+            actual_failure_kind: None,
+            failure_expectation_result: None,
             warning_kind: None,
             session_project: None,
             request_project: None,
@@ -744,6 +774,12 @@ impl SessionStore {
         let error_kind = error_kind
             .or_else(|| error.and_then(|_| output.get("failure_kind").and_then(Value::as_str)))
             .or_else(|| error.map(|_| "runtime_error"));
+        let actual_failure_kind = actual_failure_kind_for_tool_result(output, error, error_kind);
+        let failure_expectation_result = classify_failure_expectation(
+            success,
+            &start.expectation,
+            actual_failure_kind.as_deref(),
+        );
         let warning_kind = output
             .get("warning_kind")
             .and_then(Value::as_str)
@@ -788,6 +824,11 @@ impl SessionStore {
             exit_code: output.get("exit_code").and_then(Value::as_i64),
             failure_kind,
             error_kind: error.map(|_| error_kind.unwrap_or("runtime_error").to_string()),
+            expected_failure: start.expectation.expected_failure.then_some(true),
+            expected_failure_kind: start.expectation.expected_failure_kind,
+            assertion_name: start.expectation.assertion_name,
+            actual_failure_kind,
+            failure_expectation_result: Some(failure_expectation_result.to_string()),
             warning_kind,
             session_project,
             request_project,
@@ -1249,6 +1290,21 @@ fn sanitize_persisted_event(mut event: SessionEvent, session_id: &str) -> Option
     event.error_kind = event
         .error_kind
         .map(|value| bound_summary_string(value.trim()));
+    event.expected_failure_kind = event
+        .expected_failure_kind
+        .map(|value| bound_summary_string(value.trim()))
+        .filter(|value| !value.is_empty());
+    event.assertion_name = event
+        .assertion_name
+        .map(|value| bound_summary_string(value.trim()))
+        .filter(|value| !value.is_empty());
+    event.actual_failure_kind = event
+        .actual_failure_kind
+        .map(|value| bound_summary_string(value.trim()))
+        .filter(|value| !value.is_empty());
+    event.failure_expectation_result = event
+        .failure_expectation_result
+        .map(|value| sanitize_failure_expectation_result(value.trim()));
     event.warning_kind = event
         .warning_kind
         .map(|value| bound_summary_string(value.trim()));
@@ -1530,6 +1586,229 @@ pub(crate) fn extract_project(value: &Value) -> Option<String> {
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string)
+}
+
+pub(crate) fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCallExpectation {
+    let Some(obj) = arguments.as_object() else {
+        return ToolCallExpectation::default();
+    };
+    let expected_failure = obj
+        .get("expected_failure")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let expected_failure_kind = obj
+        .get("expected_failure_kind")
+        .or_else(|| obj.get("test_expect_failure_kind"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(bound_summary_string);
+    let assertion_name = obj
+        .get("assertion_name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(bound_summary_string);
+
+    ToolCallExpectation {
+        expected_failure,
+        expected_failure_kind,
+        assertion_name,
+    }
+}
+
+pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
+    let Value::Object(mut obj) = arguments else {
+        return arguments;
+    };
+    for key in [
+        "expected_failure",
+        "expected_failure_kind",
+        "test_expect_failure_kind",
+        "assertion_name",
+    ] {
+        obj.remove(key);
+    }
+    Value::Object(obj)
+}
+
+pub(crate) fn copy_tool_call_expectation_metadata(
+    source: &serde_json::Map<String, Value>,
+    target: &mut serde_json::Map<String, Value>,
+) {
+    for key in [
+        "expected_failure",
+        "expected_failure_kind",
+        "test_expect_failure_kind",
+        "assertion_name",
+    ] {
+        if let Some(value) = source.get(key).cloned() {
+            target.insert(key.to_string(), value);
+        }
+    }
+}
+
+pub(crate) fn tool_failure_summary_from_events(events: &[SessionEvent], limit: usize) -> Value {
+    let limit = limit.min(20);
+    let mut expected_count = 0usize;
+    let mut unexpected_count = 0usize;
+    let mut expectation_mismatch_count = 0usize;
+    let mut unexpected_success_count = 0usize;
+    let mut recent_expected = Vec::new();
+    let mut recent_unexpected = Vec::new();
+    let mut recent_mismatches = Vec::new();
+    let mut recent_unexpected_successes = Vec::new();
+
+    for event in events
+        .iter()
+        .rev()
+        .filter(|event| event.kind == "tool_call_finished")
+    {
+        match event
+            .failure_expectation_result
+            .as_deref()
+            .unwrap_or_else(|| legacy_failure_expectation_result(event))
+        {
+            TOOL_EXPECTATION_RESULT_MATCHED => {
+                expected_count += 1;
+                if recent_expected.len() < limit {
+                    recent_expected.push(tool_failure_event_summary(event));
+                }
+            }
+            TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE => {
+                unexpected_count += 1;
+                if recent_unexpected.len() < limit {
+                    recent_unexpected.push(tool_failure_event_summary(event));
+                }
+            }
+            TOOL_EXPECTATION_RESULT_MISMATCH => {
+                expectation_mismatch_count += 1;
+                if recent_mismatches.len() < limit {
+                    recent_mismatches.push(tool_failure_event_summary(event));
+                }
+            }
+            TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS => {
+                unexpected_success_count += 1;
+                if recent_unexpected_successes.len() < limit {
+                    recent_unexpected_successes.push(tool_failure_event_summary(event));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    json!({
+        "expected_count": expected_count,
+        "unexpected_count": unexpected_count,
+        "expectation_mismatch_count": expectation_mismatch_count,
+        "unexpected_success_count": unexpected_success_count,
+        "recent_expected": recent_expected,
+        "recent_unexpected": recent_unexpected,
+        "recent_mismatches": recent_mismatches,
+        "recent_unexpected_successes": recent_unexpected_successes,
+    })
+}
+
+fn actual_failure_kind_for_tool_result(
+    output: &Value,
+    error: Option<&str>,
+    error_kind: Option<&str>,
+) -> Option<String> {
+    let structured_kind = output
+        .get("failure_kind")
+        .and_then(Value::as_str)
+        .or_else(|| output.get("error_kind").and_then(Value::as_str))
+        .or_else(|| error_kind.filter(|kind| *kind != "runtime_error"))
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(bound_summary_string);
+    structured_kind
+        .or_else(|| error.map(classify_error_message))
+        .or_else(|| error_kind.map(bound_summary_string))
+}
+
+fn classify_failure_expectation(
+    success: bool,
+    expectation: &ToolCallExpectation,
+    actual_failure_kind: Option<&str>,
+) -> &'static str {
+    if expectation.expected_failure {
+        if success {
+            return TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS;
+        }
+        let Some(expected_kind) = expectation.expected_failure_kind.as_deref() else {
+            return TOOL_EXPECTATION_RESULT_MATCHED;
+        };
+        if Some(expected_kind) == actual_failure_kind {
+            TOOL_EXPECTATION_RESULT_MATCHED
+        } else {
+            TOOL_EXPECTATION_RESULT_MISMATCH
+        }
+    } else if success {
+        TOOL_EXPECTATION_RESULT_NONE
+    } else {
+        TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
+    }
+}
+
+fn classify_error_message(message: &str) -> String {
+    let lower = message.to_ascii_lowercase();
+    let kind = if lower.contains("session_project_mismatch") {
+        "session_project_mismatch"
+    } else if lower.contains("unknown_session_id") {
+        "unknown_session_id"
+    } else if lower.contains("confirmation_required")
+        || (lower.contains("confirm") && lower.contains("required"))
+    {
+        "confirmation_required"
+    } else if lower.contains("invalid arguments") || lower.contains("missing field") {
+        "invalid_arguments"
+    } else if lower.contains("insufficient scope") || lower.contains("missing required scope") {
+        "insufficient_scope"
+    } else if lower.contains("policy_rejected") || lower.contains("policy rejected") {
+        "policy_rejected"
+    } else if lower.contains("job_not_found")
+        || lower.contains("unknown job")
+        || (lower.contains("job") && lower.contains("not found"))
+    {
+        "job_not_found"
+    } else {
+        "runtime_error"
+    };
+    kind.to_string()
+}
+
+fn sanitize_failure_expectation_result(value: &str) -> String {
+    match value {
+        TOOL_EXPECTATION_RESULT_MATCHED
+        | TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE
+        | TOOL_EXPECTATION_RESULT_MISMATCH
+        | TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS
+        | TOOL_EXPECTATION_RESULT_NONE => value.to_string(),
+        _ => TOOL_EXPECTATION_RESULT_NONE.to_string(),
+    }
+}
+
+fn legacy_failure_expectation_result(event: &SessionEvent) -> &'static str {
+    match event.status.as_deref() {
+        Some("failed") => TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE,
+        _ => TOOL_EXPECTATION_RESULT_NONE,
+    }
+}
+
+fn tool_failure_event_summary(event: &SessionEvent) -> Value {
+    let success = event.status.as_deref() == Some("succeeded");
+    json!({
+        "event_id": event.event_id.clone(),
+        "tool_name": event.tool_name.clone(),
+        "project": event.resolved_project.as_ref().or(event.project.as_ref()).cloned(),
+        "assertion_name": event.assertion_name.clone(),
+        "expected_failure_kind": event.expected_failure_kind.clone(),
+        "actual_failure_kind": event.actual_failure_kind.clone(),
+        "status": event.status.clone(),
+        "success": success,
+        "created_at": event.timestamp,
+    })
 }
 
 pub(crate) fn risk_class_for_tool(tool_name: &str) -> &'static str {

@@ -401,6 +401,7 @@ impl ToolRuntime {
             ToolCall::FinishCodingTask {
                 project,
                 session_id,
+                summary_only,
                 include_diff,
                 include_hygiene,
                 include_handoff,
@@ -409,6 +410,7 @@ impl ToolRuntime {
                 self.finish_coding_task(
                     project,
                     session_id,
+                    summary_only,
                     include_diff,
                     include_hygiene,
                     include_handoff,
@@ -515,6 +517,7 @@ impl ToolRuntime {
                 include_workspace,
                 include_checkpoints,
                 include_validation,
+                summary_only,
                 limit,
             } => {
                 self.session_handoff_summary(
@@ -523,6 +526,7 @@ impl ToolRuntime {
                     include_workspace,
                     include_checkpoints,
                     include_validation,
+                    summary_only,
                     limit,
                     auth,
                 )
@@ -1821,6 +1825,10 @@ fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
         "allow_missing",
         "upload_id",
         "allow_cross_project_session",
+        "expected_failure",
+        "expected_failure_kind",
+        "test_expect_failure_kind",
+        "assertion_name",
         "offset",
         "content_base64",
         "expected_bytes",

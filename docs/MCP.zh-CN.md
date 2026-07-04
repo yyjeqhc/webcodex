@@ -71,6 +71,22 @@ Codex delegation（`run_codex`）当前已从 MCP `tools/list` 和模型可见 r
 
 已知目标行号时，优先使用 structured line edit tools。多文件修改使用 patch tools。把 `run_shell` 和 `run_job` 当作 diagnostics/build/test fallback，而不是首选源码编辑方式。`stop_job` 保留兼容字段 `stopped`，但模型应优先读取 `stop_effect`、`terminal`、`terminal_pending`。handoff/finish jobs summary 保留 `active_count`，并新增 `blocking_active_count`、`nonblocking_active_count`；`queued`、`running`、`started`、`agent_queued` 会阻塞收口，`stop_requested` 是非阻塞 terminal-pending 状态，只会产生 `blocking=false` 的 `jobs_terminal_pending`。
 
+Smoke / acceptance 测试可以在任意 MCP tool arguments 中附加
+`expected_failure`、`expected_failure_kind`、
+`test_expect_failure_kind`、`assertion_name`。这些字段只用于测试记录：
+WebCodex 会把它们写入 session ledger，并在具体 tool dispatch 前移除。
+它们不会改变 authorization、permission、hard guards、执行行为、
+`command_started` 或 immediate success/error result。handoff/finish summary
+会把匹配的预期失败计入 expected failures；unexpected failures、kind 不匹配
+和标记为 expected_failure 但实际成功的调用仍会作为需要处理的问题显示。
+
+`session_handoff_summary` 和 `finish_coding_task` 支持
+`summary_only=true`。该模式返回紧凑 verdict 字段，例如
+`workspace_clean`、`hygiene_clean`、compact `jobs`、`permissions`、
+`tool_failures`、`validation`、`warnings`、`suggested_next_actions`，并省略
+recent events、stdout/stderr、tail/excerpt 和 command text。普通模式保持兼容的
+完整有界输出。
+
 Agent-backed project ids 形如：
 
 ```text

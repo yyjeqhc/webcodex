@@ -1,4 +1,7 @@
-use super::sessions::{SessionMessageKind, SessionMessagePriority, SessionMessageStatus};
+use super::sessions::{
+    strip_tool_call_expectation_metadata, SessionMessageKind, SessionMessagePriority,
+    SessionMessageStatus,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
@@ -182,6 +185,8 @@ pub enum ToolCall {
         project: String,
         session_id: String,
         #[serde(default)]
+        summary_only: bool,
+        #[serde(default)]
         include_diff: Option<bool>,
         #[serde(default)]
         include_hygiene: Option<bool>,
@@ -257,6 +262,8 @@ pub enum ToolCall {
         include_checkpoints: Option<bool>,
         #[serde(default)]
         include_validation: Option<bool>,
+        #[serde(default)]
+        summary_only: bool,
         #[serde(default)]
         limit: Option<usize>,
     },
@@ -1081,6 +1088,7 @@ impl ToolCall {
                 model_visible_tool_names_csv()
             ));
         }
+        let arguments = strip_tool_call_expectation_metadata(arguments);
         let mut wrapped = serde_json::Map::new();
         wrapped.insert("tool".to_string(), Value::String(name.to_string()));
         if matches!(
@@ -1891,6 +1899,7 @@ impl ToolCall {
                 include_workspace,
                 include_checkpoints,
                 include_validation,
+                summary_only,
                 limit,
             } => serde_json::json!({
                 "session_id": session_id,
@@ -1898,6 +1907,7 @@ impl ToolCall {
                 "include_workspace": include_workspace,
                 "include_checkpoints": include_checkpoints,
                 "include_validation": include_validation,
+                "summary_only": summary_only,
                 "limit": limit,
             }),
             Self::StartCodingTask {
@@ -1932,6 +1942,7 @@ impl ToolCall {
             Self::FinishCodingTask {
                 project,
                 session_id,
+                summary_only,
                 include_diff,
                 include_hygiene,
                 include_handoff,
@@ -1939,6 +1950,7 @@ impl ToolCall {
             } => serde_json::json!({
                 "project": project,
                 "session_id": session_id,
+                "summary_only": summary_only,
                 "include_diff": include_diff,
                 "include_hygiene": include_hygiene,
                 "include_handoff": include_handoff,

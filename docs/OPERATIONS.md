@@ -469,7 +469,8 @@ should prefer `stop_effect`, `terminal`, `terminal_pending`, and `final_status`.
     "project": "agent:workstation:my-repo",
     "session_id": "wc_sess_example",
     "include_handoff": true,
-    "include_validation_summary": true
+    "include_validation_summary": true,
+    "summary_only": true
   }
 }
 ```
@@ -494,10 +495,41 @@ For a read-only handoff without finish aggregation:
   "params": {
     "session_id": "wc_sess_example",
     "project": "agent:workstation:my-repo",
-    "include_validation": true
+    "include_validation": true,
+    "summary_only": true
   }
 }
 ```
+
+Smoke and acceptance tests can mark intentional negative paths with runtime
+testing metadata:
+
+```json
+{
+  "tool": "stop_job",
+  "params": {
+    "project": "agent:workstation:my-repo",
+    "session_id": "wc_sess_example",
+    "job_id": "missing-job",
+    "confirm": false,
+    "expected_failure": true,
+    "expected_failure_kind": "confirmation_required",
+    "assertion_name": "stop_job requires confirm=true"
+  }
+}
+```
+
+`expected_failure`, `expected_failure_kind`, `test_expect_failure_kind`, and
+`assertion_name` are ledger metadata only. They do not change authorization,
+permission decisions, hard guards, execution, `command_started`, or the
+immediate success/error result. `finish_coding_task` and
+`session_handoff_summary` classify matching expected failures separately from
+unexpected failures. They surface `expectation_mismatch_count` when the actual
+`failure_kind` / `error_kind` differs, and `unexpected_success_count` when a
+call marked `expected_failure=true` succeeds. Only unexpected failures,
+mismatches, or unexpected successes should trigger "review failed tool calls"
+style next actions; matched expected failures may produce an informational
+`expected failure assertions matched` action.
 
 `finish_coding_task.validation` and `session_handoff_summary.validation` are
 ledger-derived summaries. They do not expose raw stdout/stderr, excerpt fields,

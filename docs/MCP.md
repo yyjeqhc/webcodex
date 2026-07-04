@@ -219,6 +219,16 @@ the request before a write. A missing artifact result from
 `read_project_artifact_metadata` with `allow_missing=true` is a successful
 negative assertion, not a failed tool call.
 
+Smoke and acceptance tests may add optional testing metadata to any MCP tool
+call arguments: `expected_failure`, `expected_failure_kind`,
+`test_expect_failure_kind`, and `assertion_name`. WebCodex records these fields
+in the session ledger and strips them before concrete tool dispatch. They do
+not change authorization, permission decisions, hard guards, execution,
+`command_started`, or the immediate success/error result. In handoff/finish
+summaries, failed calls whose expected failure kind matches are counted as
+expected failures; mismatches, unexpected failures, and expected-failure calls
+that unexpectedly succeed remain action-worthy.
+
 For `show_changes`, distinguish two session fields:
 
 - `arguments._session_id` is MCP reserved tracking metadata for recording this
@@ -229,14 +239,18 @@ For `show_changes`, distinguish two session fields:
 They can be the same id or different ids.
 
 `session_handoff_summary` requires explicit `arguments.session_id`; it does not
-implicitly use the current-session binding. Its `jobs` section reports bounded
-active job counts, recent metadata, and warnings without stdout/stderr, tails,
-excerpts, or command text. Its `validation` section is
-ledger-derived from validation-like tools (`cargo_fmt`, `cargo_check`,
-`cargo_test`, `validate_patch`, and `apply_patch_checked`). It does not expose
-raw stdout/stderr, excerpt fields, or `validation_output_summary`, and the
-minimal parser extracts only stable facts from safe bounded metadata without
-root-cause inference, fix suggestions, LSP/tree-sitter, or LLM summarization.
+implicitly use the current-session binding. Pass `summary_only=true` for compact
+smoke verdict output containing `workspace_clean`, `hygiene_clean`, compact
+`jobs`, `permissions`, `tool_failures`, `validation`, `warnings`, and
+`suggested_next_actions` only. Full mode keeps bounded handoff detail. Its
+`jobs` section reports bounded active job counts, recent metadata, and warnings
+without stdout/stderr, tails, excerpts, or command text. Its `validation`
+section is ledger-derived from validation-like tools (`cargo_fmt`,
+`cargo_check`, `cargo_test`, `validate_patch`, and `apply_patch_checked`). It
+does not expose raw stdout/stderr, excerpt fields, or
+`validation_output_summary`, and the minimal parser extracts only stable facts
+from safe bounded metadata without root-cause inference, fix suggestions,
+LSP/tree-sitter, or LLM summarization.
 Validation includes `status` and `reason`: no validation events yields
 `not_run` with `no_validation_tool_invoked`; all-success/all-failure/mixed
 ledgers yield `passed`, `failed`, or `mixed`.

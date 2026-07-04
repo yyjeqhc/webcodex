@@ -1,4 +1,6 @@
-use super::sessions::SessionTransport;
+use super::sessions::{
+    copy_tool_call_expectation_metadata, strip_tool_call_expectation_metadata, SessionTransport,
+};
 use super::types::{is_checkpoint_kind, is_checkpoint_validation_status};
 use super::{
     run_codex_disabled_result, session_context, session_guard_denied_result,
@@ -272,7 +274,8 @@ impl ToolRuntime {
             }
         }
 
-        let call = match ToolCall::from_tool_name(&request.tool_name, request.arguments) {
+        let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments);
+        let call = match ToolCall::from_tool_name(&request.tool_name, concrete_arguments) {
             Ok(call) => call,
             Err(message) => {
                 self.sessions.record_tool_call_finished(
@@ -622,6 +625,7 @@ fn guard_denial_log_arguments(tool_name: &str, arguments: &Value) -> Value {
         }
         _ => return arguments.clone(),
     }
+    copy_tool_call_expectation_metadata(obj, &mut out);
     Value::Object(out)
 }
 

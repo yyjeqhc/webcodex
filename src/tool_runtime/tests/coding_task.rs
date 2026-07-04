@@ -80,6 +80,10 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "include_handoff",
         "include_validation_summary",
         "include_validation",
+        "summary_only",
+        "expected_failure",
+        "expected_failure_kind",
+        "assertion_name",
     ] {
         assert!(
             properties.contains_key(field),
@@ -454,6 +458,7 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
                     ToolCall::FinishCodingTask {
                         project,
                         session_id,
+                        summary_only: false,
                         include_diff: Some(false),
                         include_hygiene: Some(false),
                         include_handoff: Some(false),
@@ -518,6 +523,95 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
         .unwrap()
         .iter()
         .any(|warning| warning["kind"] == "dirty_worktree"));
+}
+
+#[tokio::test]
+async fn finish_coding_task_summary_only_is_compact_for_clean_project() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-finish-compact", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("compact finish".to_string()));
+    let session_id = session.session_id.clone();
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        summary_only: true,
+                        include_diff: Some(false),
+                        include_hygiene: Some(true),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(true),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+
+    for _ in 0..200 {
+        if task.is_finished() {
+            break;
+        }
+        if let Some(req) = next_patch_agent_request(&runtime, "coding-finish-compact").await {
+            complete_agent_request_by_running_locally(&runtime, "coding-finish-compact", req).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "finish_coding_task summary_only did not finish after read-only agent requests"
+    );
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["summary_only"], true);
+    assert_eq!(result.output["project"], project);
+    assert_eq!(result.output["session_id"], session_id);
+    assert_eq!(result.output["workspace_clean"], true);
+    assert_eq!(result.output["hygiene_clean"], true);
+    assert_eq!(result.output["jobs"]["active_count"], 0);
+    assert_eq!(result.output["jobs"]["blocking_active_count"], 0);
+    assert_eq!(result.output["permissions"]["total_approved_count"], 0);
+    assert_eq!(result.output["tool_failures"]["expected_count"], 0);
+    assert_eq!(result.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(result.output["validation"]["status"], "not_run");
+    assert_eq!(
+        result.output["validation"]["reason"],
+        "no_validation_tool_invoked"
+    );
+    assert!(result.output["warnings"].as_array().unwrap().is_empty());
+
+    let serialized = serde_json::to_string(&result.output).unwrap();
+    for forbidden in [
+        "recent_events",
+        "show_changes",
+        "recent_failed_tools",
+        "stdout",
+        "stderr",
+        "tail",
+        "excerpt",
+        "command",
+    ] {
+        assert!(
+            !serialized.contains(forbidden),
+            "summary_only finish leaked {forbidden}: {serialized}"
+        );
+    }
 }
 
 #[tokio::test]
@@ -596,6 +690,7 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
                     ToolCall::FinishCodingTask {
                         project,
                         session_id,
+                        summary_only: false,
                         include_diff: Some(false),
                         include_hygiene: Some(false),
                         include_handoff: Some(false),
@@ -739,6 +834,7 @@ async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
                     ToolCall::FinishCodingTask {
                         project,
                         session_id,
+                        summary_only: false,
                         include_diff: Some(false),
                         include_hygiene: Some(false),
                         include_handoff: Some(false),

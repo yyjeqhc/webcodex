@@ -62,6 +62,28 @@ fn from_tool_name_parses_bounded_list_tools_options() {
 }
 
 #[test]
+fn from_tool_name_strips_testing_metadata_before_parsing() {
+    let call = ToolCall::from_tool_name(
+        "job_status",
+        json!({
+            "job_id": "abc",
+            "expected_failure": true,
+            "expected_failure_kind": "job_not_found",
+            "test_expect_failure_kind": "job_not_found",
+            "assertion_name": "missing job negative path"
+        }),
+    )
+    .unwrap();
+    assert!(matches!(
+        call,
+        ToolCall::JobStatus {
+            ref job_id,
+            include_command_preview: false,
+        } if job_id == "abc"
+    ));
+}
+
+#[test]
 fn artifact_upload_followup_tools_missing_path_error_is_actionable() {
     for name in [
         "artifact_upload_chunk",

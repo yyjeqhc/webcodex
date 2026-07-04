@@ -309,6 +309,42 @@ fn tool_specs_input_schemas_are_objects() {
 }
 
 #[test]
+fn tool_specs_expose_common_testing_metadata() {
+    let runtime = test_runtime();
+    for spec in runtime.tool_specs() {
+        let props = spec.input_schema["properties"]
+            .as_object()
+            .unwrap_or_else(|| panic!("{} input schema properties", spec.name));
+        for field in [
+            "expected_failure",
+            "expected_failure_kind",
+            "test_expect_failure_kind",
+            "assertion_name",
+        ] {
+            assert!(
+                props.contains_key(field),
+                "{} input schema should expose common testing metadata field {field}",
+                spec.name
+            );
+            let desc = props[field]["description"]
+                .as_str()
+                .unwrap_or("")
+                .to_lowercase();
+            assert!(
+                desc.contains("testing") || desc.contains("smoke"),
+                "{}.{field} should be documented as testing/smoke metadata: {desc}",
+                spec.name
+            );
+            assert!(
+                desc.contains("does not change"),
+                "{}.{field} should document that behavior is unchanged: {desc}",
+                spec.name
+            );
+        }
+    }
+}
+
+#[test]
 fn list_tools_schema_exposes_bounded_discovery_fields() {
     let runtime = test_runtime();
     let specs = runtime.tool_specs();
@@ -1209,6 +1245,14 @@ fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
         output_props.contains_key("permissions"),
         "finish_coding_task output schema should include permissions"
     );
+    assert!(
+        output_props.contains_key("tool_failures"),
+        "finish_coding_task output schema should include classified tool failures"
+    );
+    assert!(
+        output_props.contains_key("summary_only"),
+        "finish_coding_task output schema should include summary_only for compact output"
+    );
     assert_permission_summary_schema_fields(&output_props["permissions"]);
     assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);
     let description = schema["properties"]["output"]["properties"]["validation"]["description"]
@@ -1242,6 +1286,10 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         input_props.contains_key("include_validation"),
         "session_handoff_summary input schema should include include_validation"
     );
+    assert!(
+        input_props.contains_key("summary_only"),
+        "session_handoff_summary input schema should include summary_only"
+    );
 
     let schema = crate::tool_runtime::registry::output_schema_for_tool("session_handoff_summary");
     let output_props = schema["properties"]["output"]["properties"]
@@ -1254,6 +1302,22 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
     assert!(
         output_props.contains_key("permissions"),
         "session_handoff_summary output schema should include permissions"
+    );
+    assert!(
+        output_props.contains_key("tool_failures"),
+        "session_handoff_summary output schema should include classified tool failures"
+    );
+    assert!(
+        output_props.contains_key("expected_failed_tool_calls"),
+        "session_handoff_summary output schema should include expected failed tool calls"
+    );
+    assert!(
+        output_props.contains_key("unexpected_failed_tool_calls"),
+        "session_handoff_summary output schema should include unexpected failed tool calls"
+    );
+    assert!(
+        output_props.contains_key("expectation_mismatches"),
+        "session_handoff_summary output schema should include expectation mismatches"
     );
     assert_permission_summary_schema_fields(&output_props["permissions"]);
     assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);

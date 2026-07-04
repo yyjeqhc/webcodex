@@ -974,6 +974,22 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Advanced/debug escape hatch for callRuntimeTool. When true, allow recording a project tool call into a session whose associated project differs from the request project; session_project_mismatch warning metadata is still returned. Used only when `params` and `arguments` are absent, or inside params/arguments for non-Action clients."
                 },
+                "expected_failure": {
+                    "type": "boolean",
+                    "description": "Flattened testing/smoke metadata only. When true, a failed runtime tool call is classified as an expected failure in session_handoff_summary/finish_coding_task. Does not change authorization, permission decisions, execution, hard guards, command_started, or the immediate success/error result."
+                },
+                "expected_failure_kind": {
+                    "type": "string",
+                    "description": "Flattened testing/smoke metadata only. Expected structured failure_kind or error_kind when expected_failure=true. Mismatches are surfaced in handoff/finish summaries and do not change tool behavior."
+                },
+                "test_expect_failure_kind": {
+                    "type": "string",
+                    "description": "Flattened testing/smoke alias for expected_failure_kind. Matches structured failure_kind or error_kind and does not change authorization, permissions, execution, or immediate output."
+                },
+                "assertion_name": {
+                    "type": "string",
+                    "description": "Flattened testing/smoke assertion label recorded in the session ledger. Does not change tool behavior or safety decisions."
+                },
                 "session_id": {
                     "type": "string",
                     "description": "Flattened tool-specific argument. For session_summary and message-board tools this is the required business session id to read or update in the session ledger; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
@@ -1279,7 +1295,7 @@ fn schemas() -> Value {
                 },
                 "summary_only": {
                     "type": "boolean",
-                    "description": "Flattened list_tools flag. When true, returns compact summaries without full schemas. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened list_tools/session_handoff_summary/finish_coding_task flag. For list_tools, returns compact tool summaries without full schemas. For handoff/finish, returns compact verdict fields and omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts. Used only when `params` and `arguments` are absent."
                 },
                 "package": {
                     "type": "string",
@@ -3006,6 +3022,10 @@ mod tests {
             "session_id",
             "recording_session_id",
             "allow_cross_project_session",
+            "expected_failure",
+            "expected_failure_kind",
+            "test_expect_failure_kind",
+            "assertion_name",
             "mode",
             "deny_write_tools",
             "deny_shell_tools",
@@ -3031,6 +3051,7 @@ mod tests {
             "include_validation",
             "include_workspace",
             "include_checkpoints",
+            "summary_only",
             "include_recommended_flows",
             "include_risk_summary",
             "context_before",
@@ -3066,6 +3087,9 @@ mod tests {
         assert!(properties.contains_key("params"));
         assert!(properties.contains_key("arguments"));
         assert_eq!(properties["allow_cross_project_session"]["type"], "boolean");
+        assert_eq!(properties["expected_failure"]["type"], "boolean");
+        assert_eq!(properties["expected_failure_kind"]["type"], "string");
+        assert_eq!(properties["assertion_name"]["type"], "string");
         let required = tool_call["required"].as_array().unwrap();
         assert_eq!(required, &vec![json!("tool")]);
         assert_eq!(tool_call["additionalProperties"], false);

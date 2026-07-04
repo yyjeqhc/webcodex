@@ -289,6 +289,10 @@ pub(super) fn session_handoff_summary_input_schema() -> Value {
                 "type": "boolean",
                 "description": "Include ledger-derived validation summary. Defaults to true. Minimal diagnostics require bounded tails or safe result metadata; parser.available remains false when session ledger events lack those fields."
             },
+            "summary_only": {
+                "type": "boolean",
+                "description": "When true, return compact verdict fields only: workspace/jobs/permissions/tool_failures/validation/warnings/suggested_next_actions. Omits recent_events, long ledger details, command text, stdout/stderr, tails, and excerpts."
+            },
             "limit": {
                 "type": "integer",
                 "minimum": 1,
@@ -443,6 +447,10 @@ pub(super) fn finish_coding_task_input_schema() -> Value {
             "include_validation_summary": {
                 "type": "boolean",
                 "description": "Include deterministic validation-like session ledger event summary when available. Defaults to true; minimal diagnostics require bounded tails or safe result metadata."
+            },
+            "summary_only": {
+                "type": "boolean",
+                "description": "When true, return compact verdict fields only: workspace_clean, hygiene_clean, jobs, permissions, tool_failures, validation, warnings, and suggested_next_actions. Omits show_changes payloads, handoff details, command text, stdout/stderr, tails, and excerpts."
             }
         },
         "required": ["project", "session_id"],

@@ -7,12 +7,16 @@
 
 use serde_json::{json, Value};
 
+use super::handoff::{
+    compact_jobs, compact_permissions, compact_tool_failures, compact_validation,
+};
 use super::permissions::{permission_profile_payload, permission_summary_from_events};
 use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSnapshot};
 use super::project_resolution::ResolvedProject;
 use super::session_context::{
     session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
 };
+use super::sessions::tool_failure_summary_from_events;
 use super::sessions::{self, SessionTransport};
 use super::types::{SessionMode, ToolResult};
 use super::validation_events::{skipped_validation_summary, validation_summary_for_session};
@@ -185,6 +189,7 @@ impl ToolRuntime {
         &self,
         project: String,
         session_id: String,
+        summary_only: bool,
         include_diff: Option<bool>,
         include_hygiene: Option<bool>,
         include_handoff: Option<bool>,
@@ -293,6 +298,7 @@ impl ToolRuntime {
                     Some(true),
                     Some(true),
                     Some(include_validation_summary),
+                    summary_only,
                     Some(20),
                     auth,
                 )
@@ -322,6 +328,7 @@ impl ToolRuntime {
             },
             "validation": validation,
             "permissions": permissions,
+            "tool_failures": tool_failure_summary_from_events(&session_summary.events, 10),
             "hygiene": hygiene,
             "handoff": handoff,
             "jobs": jobs,
@@ -335,6 +342,10 @@ impl ToolRuntime {
             output["request_project"] = json!(mismatch.request_project);
             output["allow_cross_project_session_required"] = json!(true);
             output["allow_cross_project_session"] = json!(false);
+        }
+        output["suggested_next_actions"] = json!(finish_suggested_next_actions(&output));
+        if summary_only {
+            return ToolResult::ok(compact_finish_output(&output));
         }
         ToolResult::ok(output)
     }
@@ -535,6 +546,102 @@ fn workspace_payload_from_show_changes(show_changes: &Value) -> Value {
             .cloned()
             .unwrap_or_else(|| json!([])),
     })
+}
+
+fn compact_finish_output(output: &Value) -> Value {
+    let workspace_clean = output
+        .get("workspace")
+        .and_then(|workspace| workspace.get("clean"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let hygiene_clean = output
+        .get("hygiene")
+        .and_then(|hygiene| hygiene.get("clean"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    json!({
+        "summary_only": true,
+        "project": output.get("project").cloned().unwrap_or(Value::Null),
+        "session_id": output.get("session_id").cloned().unwrap_or(Value::Null),
+        "workspace_clean": workspace_clean,
+        "hygiene_clean": hygiene_clean,
+        "jobs": compact_jobs(output.get("jobs").unwrap_or(&Value::Null)),
+        "permissions": compact_permissions(output.get("permissions").unwrap_or(&Value::Null)),
+        "tool_failures": compact_tool_failures(output.get("tool_failures").unwrap_or(&Value::Null)),
+        "validation": compact_validation(output.get("validation").unwrap_or(&Value::Null)),
+        "warnings": output.get("final_warnings").cloned().unwrap_or_else(|| json!([])),
+        "suggested_next_actions": output.get("suggested_next_actions").cloned().unwrap_or_else(|| json!([])),
+    })
+}
+
+fn finish_suggested_next_actions(output: &Value) -> Vec<String> {
+    let mut actions = Vec::new();
+    let push = |actions: &mut Vec<String>, action: &str| {
+        if !actions.iter().any(|existing| existing == action) {
+            actions.push(action.to_string());
+        }
+    };
+    let tool_failures = output.get("tool_failures").unwrap_or(&Value::Null);
+    let unexpected_count = tool_failures
+        .get("unexpected_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let expectation_mismatch_count = tool_failures
+        .get("expectation_mismatch_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let unexpected_success_count = tool_failures
+        .get("unexpected_success_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+    let expected_count = tool_failures
+        .get("expected_count")
+        .and_then(Value::as_u64)
+        .unwrap_or(0);
+
+    if unexpected_count > 0 {
+        push(
+            &mut actions,
+            "review unexpected failed tool calls before proceeding",
+        );
+    }
+    if expectation_mismatch_count > 0 {
+        push(
+            &mut actions,
+            "review expected failure mismatches before proceeding",
+        );
+    }
+    if unexpected_success_count > 0 {
+        push(
+            &mut actions,
+            "review expected-failure assertions that unexpectedly succeeded",
+        );
+    }
+    if expected_count > 0
+        && unexpected_count == 0
+        && expectation_mismatch_count == 0
+        && unexpected_success_count == 0
+    {
+        push(&mut actions, "expected failure assertions matched");
+    }
+    if output
+        .get("workspace")
+        .and_then(|workspace| workspace.get("clean"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        push(&mut actions, "review workspace changes with show_changes");
+    }
+    if output
+        .get("jobs")
+        .and_then(|jobs| jobs.get("blocking_active_count"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        > 0
+    {
+        push(&mut actions, "stop or await blocking active jobs");
+    }
+    actions
 }
 
 fn changed_files_count_from_counts(counts: &Value) -> u64 {

@@ -573,6 +573,7 @@ async fn read_only_session_allows_read_file_and_records_success() {
             include_workspace: Some(false),
             include_checkpoints: Some(false),
             include_validation: Some(false),
+            summary_only: false,
             limit: None,
         })
         .await;

@@ -792,6 +792,44 @@ mod tests {
     }
 
     #[test]
+    fn extract_tool_call_collects_flattened_session_handoff_flags() {
+        let body = json!({
+            "tool": "session_handoff_summary",
+            "project": "agent:special:test-mcp",
+            "session_id": "wc_sess_test",
+            "include_validation": true,
+            "include_workspace": true,
+            "include_checkpoints": true,
+            "limit": 20,
+            "recording_session_id": "wc_sess_recorder"
+        });
+        let (tool, params) = extract_tool_call(&body).unwrap();
+
+        assert_eq!(tool, "session_handoff_summary");
+        assert_eq!(
+            params,
+            json!({
+                "project": "agent:special:test-mcp",
+                "session_id": "wc_sess_test",
+                "include_validation": true,
+                "include_workspace": true,
+                "include_checkpoints": true,
+                "limit": 20
+            })
+        );
+        assert!(
+            params
+                .as_object()
+                .is_some_and(|m| !m.contains_key("recording_session_id")),
+            "recording_session_id must not leak into concrete params"
+        );
+        assert_eq!(
+            extract_recording_session_id(&body),
+            Some("wc_sess_recorder".to_string())
+        );
+    }
+
+    #[test]
     fn extract_tool_call_collects_flattened_line_edit_fields() {
         let (tool, params) = extract_tool_call(&json!({
             "tool": "replace_line_range",

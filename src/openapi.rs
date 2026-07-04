@@ -1216,6 +1216,14 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened session_handoff_summary flag. Defaults to true; validation is ledger-derived and parser.available is true only when safe bounded metadata is present. Used only when `params` and `arguments` are absent."
                 },
+                "include_workspace": {
+                    "type": "boolean",
+                    "description": "Flattened session_handoff_summary flag. Include a bounded workspace/git status summary when project is provided. Used only when params and arguments are absent."
+                },
+                "include_checkpoints": {
+                    "type": "boolean",
+                    "description": "Flattened session_handoff_summary flag. Include bounded checkpoint candidates when project is provided. Used only when params and arguments are absent."
+                },
                 "max_hunks": {
                     "type": "integer",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
@@ -3001,6 +3009,8 @@ mod tests {
             "include_handoff",
             "include_validation_summary",
             "include_validation",
+            "include_workspace",
+            "include_checkpoints",
             "include_recommended_flows",
             "include_risk_summary",
             "context_before",
@@ -3043,6 +3053,41 @@ mod tests {
             desc_blob.contains("top-level fields") && desc_blob.contains("params/arguments"),
             "ToolCallRequest must document flattened GPT Action compatibility"
         );
+    }
+
+    #[test]
+    fn openapi_tool_call_request_exposes_handoff_flattened_flags() {
+        let spec = build_openapi_spec();
+        let tool_call = &spec["components"]["schemas"]["ToolCallRequest"];
+        let properties = tool_call["properties"].as_object().unwrap();
+
+        for field in [
+            "include_validation",
+            "include_workspace",
+            "include_checkpoints",
+            "include_tool_manifest",
+            "include_recommended_flows",
+            "include_risk_summary",
+        ] {
+            assert!(
+                properties.contains_key(field),
+                "ToolCallRequest.properties.{field} must exist for flattened GPT Action calls"
+            );
+        }
+
+        assert_eq!(properties["include_validation"]["type"], "boolean");
+        assert_eq!(properties["include_workspace"]["type"], "boolean");
+        assert_eq!(properties["include_checkpoints"]["type"], "boolean");
+        assert_eq!(properties["include_tool_manifest"]["type"], "boolean");
+        assert_eq!(properties["include_recommended_flows"]["type"], "boolean");
+        assert_eq!(properties["include_risk_summary"]["type"], "boolean");
+        assert_eq!(
+            tool_call["additionalProperties"], false,
+            "ToolCallRequest must keep explicit flattened fields with additionalProperties=false"
+        );
+
+        let count = operation_ids(&spec).len();
+        assert_eq!(count, 25, "GPT Actions operation count must stay 25");
     }
 
     #[test]

@@ -734,6 +734,14 @@ fn session_handoff_summary_metadata_mcp_openapi_consistency() {
         tool_props.contains_key("include_validation"),
         "OpenAPI ToolCallRequest should expose flattened include_validation"
     );
+    assert!(
+        tool_props.contains_key("include_workspace"),
+        "OpenAPI ToolCallRequest should expose flattened include_workspace"
+    );
+    assert!(
+        tool_props.contains_key("include_checkpoints"),
+        "OpenAPI ToolCallRequest should expose flattened include_checkpoints"
+    );
     let count: usize = spec["paths"]
         .as_object()
         .unwrap()

@@ -51,13 +51,13 @@ pub use runtime::ToolRuntime;
 #[allow(unused_imports)]
 pub use runtime_info::RuntimeInfo;
 #[allow(unused_imports)]
-pub(crate) use surface::tool_manifest_category;
-#[allow(unused_imports)]
 pub use tool_call::ToolCall;
 #[allow(unused_imports)]
 pub use tool_definition::is_known_tool_name;
 #[allow(unused_imports)]
 pub(crate) use tool_definition::is_model_hidden_tool_name;
+#[allow(unused_imports)]
+pub(crate) use tool_definition::runtime_tool_category as tool_manifest_category;
 #[allow(unused_imports)]
 pub(crate) use tool_definition::AgentCapability;
 #[allow(unused_imports)]

@@ -1337,6 +1337,12 @@ pub(crate) fn runtime_tool_metadata(name: &str) -> ToolMetadata {
         .unwrap_or_else(|| fallback_tool_metadata(name))
 }
 
+pub(crate) fn runtime_tool_category(name: &str) -> &'static str {
+    lookup_tool_definition(name)
+        .map(|definition| definition.category)
+        .unwrap_or("other")
+}
+
 pub(crate) fn runtime_tool_session_risk_class(name: &str) -> &'static str {
     lookup_tool_definition(name)
         .map(|definition| definition.session_risk_class())

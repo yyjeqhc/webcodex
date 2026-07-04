@@ -7,7 +7,7 @@
 use super::metadata::ToolPathHint;
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
-    lookup_tool_definition, runtime_tool_metadata, TOOL_RECOMMENDED_FLOWS,
+    runtime_tool_category, runtime_tool_metadata, TOOL_RECOMMENDED_FLOWS,
 };
 use super::tool_inputs::ListToolsOptions;
 use super::tool_result::ToolResult;
@@ -158,7 +158,7 @@ impl ToolRuntime {
                 let m = runtime_tool_metadata(name);
                 json!({
                     "name": name,
-                    "category": tool_manifest_category(name),
+                    "category": runtime_tool_category(name),
                     "accepted_flattened_args": accepted_flattened_args_for_spec(spec),
                     "deprecated_or_unsupported_args": [],
                     "provider": m.provider_id,
@@ -237,7 +237,7 @@ pub(super) fn list_tools_filtered_indexes(
             options
                 .category
                 .as_deref()
-                .map(|category| tool_manifest_category(name) == category)
+                .map(|category| runtime_tool_category(name) == category)
                 .unwrap_or(true)
                 && options
                     .features
@@ -272,7 +272,7 @@ pub(super) fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value>
             json!({
                 "name": name,
                 "description": spec.description,
-                "category": tool_manifest_category(name),
+                "category": runtime_tool_category(name),
                 "risk": m.risk.session_risk_class(),
                 "read_only": m.read_only,
                 "requires_project": m.requires_project,
@@ -358,7 +358,7 @@ fn normalize_feature(feature: &str) -> Option<String> {
 }
 
 fn list_tool_matches_feature(name: &str, feature: &str) -> bool {
-    let category = tool_manifest_category(name);
+    let category = runtime_tool_category(name);
     if category == feature {
         return true;
     }
@@ -377,14 +377,6 @@ fn list_tool_matches_feature(name: &str, feature: &str) -> bool {
         "runtime" => category == "runtime",
         other => name.contains(other),
     }
-}
-
-/// Map a tool name to its primary manifest category from the ToolDefinition
-/// mirror. Unknown names stay in the legacy "other" bucket.
-pub(crate) fn tool_manifest_category(name: &str) -> &'static str {
-    lookup_tool_definition(name)
-        .map(|definition| definition.category)
-        .unwrap_or("other")
 }
 
 /// String representation of a `ToolPathHint` for the compact manifest.

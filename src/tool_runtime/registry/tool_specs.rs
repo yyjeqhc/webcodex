@@ -4,7 +4,8 @@ use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_d
 use super::super::tool_spec::ToolSpec;
 use super::super::ToolRuntime;
 use super::input_schemas::{
-    apply_text_edits_input_schema, checkpoint_create_input_schema, checkpoint_delete_input_schema,
+    apply_text_edits_input_schema, cargo_check_input_schema, cargo_fmt_input_schema,
+    cargo_test_input_schema, checkpoint_create_input_schema, checkpoint_delete_input_schema,
     checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,
     create_project_input_schema, current_session_input_schema, empty_input_schema,
     finish_coding_task_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
@@ -17,8 +18,8 @@ use super::input_schemas::{
     session_discussion_summary_input_schema, session_handoff_summary_input_schema,
     session_summary_input_schema, show_changes_input_schema, start_coding_task_input_schema,
     start_session_input_schema, stop_job_input_schema, tool_manifest_input_schema,
-    with_common_testing_metadata, with_optional_session_id, workspace_hygiene_check_input_schema,
-    PATCH_FIELD_DESCRIPTION,
+    validate_patch_input_schema, with_common_testing_metadata, with_optional_session_id,
+    workspace_hygiene_check_input_schema, PATCH_FIELD_DESCRIPTION,
 };
 use super::{object_schema, output_schema_for_tool, tool_annotations};
 
@@ -262,42 +263,17 @@ impl ToolRuntime {
             tool_spec(
                 "cargo_fmt",
                 "Run cargo fmt in an agent-registered project. Use check=true for cargo fmt -- --check before broader validation.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("cwd", "string", "Optional project-relative working directory.", false),
-                    ("check", "boolean", "Run cargo fmt -- --check instead of formatting.", false),
-                    ("timeout_secs", "integer", "Command timeout in seconds.", false),
-                ])),
+                cargo_fmt_input_schema(),
             ),
             tool_spec(
                 "cargo_check",
                 "Preferred structured Rust validation for cargo check. Defaults to --all-targets and supports features/package/cwd/timeout without shell interpolation; use before raw run_shell when applicable.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("cwd", "string", "Optional project-relative working directory.", false),
-                    ("all_targets", "boolean", "Include --all-targets (default true).", false),
-                    ("all_features", "boolean", "Include --all-features.", false),
-                    ("no_default_features", "boolean", "Include --no-default-features.", false),
-                    ("features", "string", "Feature list passed to --features.", false),
-                    ("package", "string", "Package passed to -p.", false),
-                    ("timeout_secs", "integer", "Command timeout in seconds.", false),
-                ])),
+                cargo_check_input_schema(),
             ),
             tool_spec(
                 "cargo_test",
                 "Preferred structured Rust test runner. Supports filter, feature flags, package, --no-run, timeout, and bounded output tails; use before raw run_shell when applicable.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("cwd", "string", "Optional project-relative working directory.", false),
-                    ("filter", "string", "Optional cargo test filter.", false),
-                    ("all_targets", "boolean", "Include --all-targets.", false),
-                    ("all_features", "boolean", "Include --all-features.", false),
-                    ("no_default_features", "boolean", "Include --no-default-features.", false),
-                    ("features", "string", "Feature list passed to --features.", false),
-                    ("package", "string", "Package passed to -p.", false),
-                    ("no_run", "boolean", "Include --no-run.", false),
-                    ("timeout_secs", "integer", "Command timeout in seconds.", false),
-                ])),
+                cargo_test_input_schema(),
             ),
             tool_spec(
                 "apply_patch",
@@ -343,11 +319,7 @@ impl ToolRuntime {
             tool_spec(
                 "validate_patch",
                 "Dry-run a unified diff with git apply --check/--stat through the owning agent; never writes files.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
-                    ("deny_sensitive_paths", "boolean", "Block sensitive path warnings.", false),
-                ])),
+                validate_patch_input_schema(),
             ),
             tool_spec(
                 "replace_in_file",

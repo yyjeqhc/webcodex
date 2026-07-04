@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+mod artifacts;
 mod cleanup;
 mod common;
 mod discovery;
@@ -13,6 +14,12 @@ mod validation;
 
 use super::super::tool_inputs::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
 use super::super::tool_spec::ToolSpec;
+pub(super) use artifacts::{
+    artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
+    artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
+    read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
+    save_project_artifact_input_schema,
+};
 pub(super) use cleanup::{
     delete_project_files_input_schema, discard_untracked_input_schema,
     git_restore_paths_input_schema,
@@ -44,147 +51,6 @@ pub(super) use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
     validate_patch_input_schema,
 };
-
-pub(super) fn save_project_artifact_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        ("path", "string", "Project-relative output path.", true),
-        (
-            "content_base64",
-            "string",
-            "Base64-encoded binary content.",
-            true,
-        ),
-        ("mime_type", "string", "Optional MIME type.", false),
-        (
-            "overwrite",
-            "boolean",
-            "Allow overwriting an existing file (default false).",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn read_project_artifact_metadata_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        ("path", "string", "Project-relative artifact path.", true),
-        (
-            "allow_missing",
-            "boolean",
-            "When true, a missing artifact returns exists=false instead of an error.",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn read_project_artifact_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        ("path", "string", "Project-relative artifact path.", true),
-        (
-            "encoding",
-            "string",
-            "Optional encoding; only base64 is supported (default base64).",
-            false,
-        ),
-        (
-            "offset",
-            "integer",
-            "Optional byte offset to start reading from; defaults to 0.",
-            false,
-        ),
-        (
-            "length",
-            "integer",
-            "Optional chunk length in bytes; defaults to 32768 and cannot exceed 65536.",
-            false,
-        ),
-        (
-            "max_bytes",
-            "integer",
-            "Compatibility alias/upper bound for length; cannot exceed 65536.",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn artifact_upload_begin_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        ("path", "string", "Project-relative output path.", true),
-        (
-            "expected_bytes",
-            "integer",
-            "Optional final byte count guard.",
-            false,
-        ),
-        (
-            "expected_sha256",
-            "string",
-            "Optional final sha256 guard.",
-            false,
-        ),
-        ("mime_type", "string", "Optional MIME type.", false),
-        (
-            "overwrite",
-            "boolean",
-            "Allow overwriting an existing file at finish (default false).",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn artifact_upload_chunk_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        (
-            "path",
-            "string",
-            "Required project-relative path; must exactly match the path used in artifact_upload_begin to bind upload_id to the target.",
-            true,
-        ),
-        (
-            "upload_id",
-            "string",
-            "Opaque wc_upload_* id from artifact_upload_begin.",
-            true,
-        ),
-        ("offset", "integer", "Expected current upload byte offset.", true),
-        (
-            "content_base64",
-            "string",
-            "Base64-encoded chunk; decoded chunk max is 65536 bytes.",
-            true,
-        ),
-    ]))
-}
-
-pub(super) fn artifact_upload_finish_input_schema() -> Value {
-    artifact_upload_followup_input_schema()
-}
-
-pub(super) fn artifact_upload_abort_input_schema() -> Value {
-    artifact_upload_followup_input_schema()
-}
-
-fn artifact_upload_followup_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        (
-            "path",
-            "string",
-            "Required project-relative path; must exactly match the path used in artifact_upload_begin to bind upload_id to the target.",
-            true,
-        ),
-        (
-            "upload_id",
-            "string",
-            "Opaque wc_upload_* id from artifact_upload_begin.",
-            true,
-        ),
-    ]))
-}
 
 pub(super) fn replace_line_range_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![

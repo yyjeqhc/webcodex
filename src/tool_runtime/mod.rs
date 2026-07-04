@@ -115,11 +115,31 @@ impl ToolRuntime {
 
     pub(crate) async fn dispatch_with_auth_transport_options(
         &self,
+        call: ToolCall,
+        auth: Option<&AuthContext>,
+        transport: sessions::SessionTransport,
+        use_current_session: bool,
+        allow_cross_project_session: bool,
+    ) -> ToolResult {
+        self.dispatch_with_auth_transport_options_and_metadata(
+            call,
+            auth,
+            transport,
+            use_current_session,
+            allow_cross_project_session,
+            sessions::ToolCallRecorderMetadata::default(),
+        )
+        .await
+    }
+
+    pub(crate) async fn dispatch_with_auth_transport_options_and_metadata(
+        &self,
         mut call: ToolCall,
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         use_current_session: bool,
         allow_cross_project_session: bool,
+        recorder_metadata: sessions::ToolCallRecorderMetadata,
     ) -> ToolResult {
         let mut resolved_project = match call.project() {
             Some(project) => self
@@ -169,12 +189,13 @@ impl ToolRuntime {
             if !allow_cross_project_session
                 && session_project_mismatch_requires_escape(call.tool_name())
             {
-                let session_start = self.sessions.record_tool_call_started_with_options(
+                let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
                     transport,
                     call.tool_name(),
                     &call.session_log_arguments(),
                     Some(mismatch.request_project.clone()),
+                    recorder_metadata.clone(),
                 );
                 let mut result =
                     session_project_mismatch_result(session_id, call.tool_name(), mismatch);
@@ -192,11 +213,13 @@ impl ToolRuntime {
         if matches!(&call, ToolCall::RunCodex { .. }) {
             let mut result = run_codex_disabled_result();
             if let Some(session_id) = session_id.as_deref() {
-                let session_start = self.sessions.record_tool_call_started(
+                let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
                     transport,
                     call.tool_name(),
                     &call.session_log_arguments(),
+                    None,
+                    recorder_metadata.clone(),
                 );
                 let event_id = self.sessions.record_tool_call_finished(
                     session_start,
@@ -211,11 +234,13 @@ impl ToolRuntime {
         }
         if let Some(session_id) = session_id.as_deref() {
             if let Some(denial) = self.sessions.guard_denial(session_id, call.tool_name()) {
-                let session_start = self.sessions.record_tool_call_started(
+                let session_start = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
                     transport,
                     call.tool_name(),
                     &call.session_log_arguments(),
+                    None,
+                    recorder_metadata.clone(),
                 );
                 let mut result = session_guard_denied_result(session_id, call.tool_name(), denial);
                 let event_id = self.sessions.record_tool_call_finished(
@@ -231,12 +256,13 @@ impl ToolRuntime {
         }
         let mut session_start = if session_id.is_some() {
             let resolved_project = resolved_project.take().map(|resolved| resolved.resolved_id);
-            self.sessions.record_tool_call_started_with_options(
+            self.sessions.record_tool_call_started_with_metadata(
                 session_id.as_deref(),
                 transport,
                 call.tool_name(),
                 &call.session_log_arguments(),
                 resolved_project,
+                recorder_metadata,
             )
         } else {
             None

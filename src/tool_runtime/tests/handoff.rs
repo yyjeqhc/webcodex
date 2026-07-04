@@ -443,6 +443,570 @@ async fn expectation_mismatch_and_unexpected_success_are_visible() {
 }
 
 #[tokio::test]
+async fn direct_typed_dispatch_preserves_failure_expectation_metadata() {
+    let runtime = test_runtime();
+    let auth = open_auth_context();
+    register_agent_projects_for_auth(
+        &runtime,
+        "direct-expected-stop",
+        &auth,
+        ShellClientCapabilities::default(),
+        vec![
+            registered_project("alpha", "/tmp/direct-expected-stop-alpha"),
+            registered_project("beta", "/tmp/direct-expected-stop-beta"),
+        ],
+    )
+    .await;
+    let session_project = "agent:direct-expected-stop:alpha".to_string();
+    let request_project = "agent:direct-expected-stop:beta".to_string();
+    let session = runtime
+        .sessions
+        .start_session(Some(session_project), Some("direct expected".to_string()));
+    let sid = session.session_id.clone();
+
+    let wrong_project = call_typed_tool_with_metadata(
+        &runtime,
+        "stop_job",
+        json!({
+            "project": request_project,
+            "job_id": "job-negative",
+            "session_id": &sid,
+            "confirm": true,
+            "expected_failure": true,
+            "expected_failure_kind": "session_project_mismatch",
+            "assertion_name": "direct wrong-project stop_job"
+        }),
+        Some(&auth),
+    )
+    .await;
+    assert!(!wrong_project.success);
+    assert_eq!(
+        wrong_project.output["failure_kind"],
+        "session_project_mismatch"
+    );
+    assert_eq!(wrong_project.output["command_started"], false);
+    assert!(wrong_project.output.get("permission").is_none());
+
+    let confirm_required = call_typed_tool_with_metadata(
+        &runtime,
+        "stop_job",
+        json!({
+            "project": "agent:direct-expected-stop:alpha",
+            "job_id": "job-negative",
+            "session_id": &sid,
+            "confirm": false,
+            "expected_failure": true,
+            "test_expect_failure_kind": "confirmation_required",
+            "assertion_name": "direct stop_job confirm gate"
+        }),
+        Some(&auth),
+    )
+    .await;
+    assert!(!confirm_required.success);
+    assert_eq!(
+        confirm_required.output["failure_kind"],
+        "confirmation_required"
+    );
+    assert_eq!(confirm_required.output["command_started"], false);
+    assert!(confirm_required.output.get("permission").is_none());
+
+    let summary = runtime.sessions.summary(&sid, Some(20)).unwrap();
+    let started: Vec<_> = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "tool_call_started" && event.tool_name == "stop_job")
+        .collect();
+    assert_eq!(started.len(), 2);
+    assert!(started
+        .iter()
+        .all(|event| event.expected_failure == Some(true)));
+    assert!(started
+        .iter()
+        .any(|event| event.assertion_name.as_deref() == Some("direct wrong-project stop_job")));
+    assert!(started
+        .iter()
+        .any(|event| event.assertion_name.as_deref() == Some("direct stop_job confirm gate")));
+
+    let finished: Vec<_> = summary
+        .events
+        .iter()
+        .filter(|event| event.kind == "tool_call_finished" && event.tool_name == "stop_job")
+        .collect();
+    assert_eq!(finished.len(), 2);
+    assert!(finished
+        .iter()
+        .all(|event| event.expected_failure == Some(true)));
+    assert!(finished.iter().all(
+        |event| event.failure_expectation_result.as_deref() == Some("matched_expected_failure")
+    ));
+    assert!(finished.iter().any(|event| {
+        event.expected_failure_kind.as_deref() == Some("session_project_mismatch")
+            && event.actual_failure_kind.as_deref() == Some("session_project_mismatch")
+    }));
+    assert!(finished.iter().any(|event| {
+        event.expected_failure_kind.as_deref() == Some("confirmation_required")
+            && event.actual_failure_kind.as_deref() == Some("confirmation_required")
+    }));
+
+    let handoff = handoff_summary_only(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 2);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(
+        handoff.output["tool_failures"]["expectation_mismatch_count"],
+        0
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["unexpected_success_count"],
+        0
+    );
+    let actions = handoff.output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions
+        .iter()
+        .any(|action| action == "expected failure assertions matched"));
+    assert!(!actions.iter().any(|action| action
+        .as_str()
+        .unwrap_or("")
+        .contains("review unexpected failed tool calls")));
+
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "direct-mixed", "demo", tmp.path()).await;
+    let auth = bootstrap_auth_context();
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("direct mixed".to_string()));
+    let sid = session.session_id.clone();
+
+    let mismatch = call_typed_tool_with_metadata(
+        &runtime,
+        "stop_job",
+        json!({
+            "project": &project,
+            "job_id": "job-negative",
+            "session_id": &sid,
+            "confirm": false,
+            "expected_failure": true,
+            "expected_failure_kind": "session_project_mismatch",
+            "assertion_name": "direct wrong expected kind"
+        }),
+        Some(&auth),
+    )
+    .await;
+    assert!(!mismatch.success);
+    assert_eq!(mismatch.output["failure_kind"], "confirmation_required");
+
+    let unexpected_success = call_typed_tool_with_metadata_and_agent(
+        &runtime,
+        "direct-mixed",
+        "show_changes",
+        json!({
+            "project": &project,
+            "session_id": &sid,
+            "include_diff": false,
+            "expected_failure": true,
+            "assertion_name": "direct show_changes expected failure"
+        }),
+        Some(auth.clone()),
+    )
+    .await;
+    assert!(unexpected_success.success, "{:?}", unexpected_success.error);
+
+    let unexpected = call_typed_tool_with_metadata(
+        &runtime,
+        "stop_job",
+        json!({
+            "project": &project,
+            "job_id": "job-missing",
+            "session_id": &sid,
+            "confirm": true
+        }),
+        Some(&auth),
+    )
+    .await;
+    assert!(!unexpected.success);
+    assert_eq!(unexpected.output["failure_kind"], "job_not_found");
+
+    let summary = runtime.sessions.summary(&sid, Some(30)).unwrap();
+    let mismatch_event = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.assertion_name.as_deref() == Some("direct wrong expected kind")
+        })
+        .expect("mismatch finished event");
+    assert_eq!(
+        mismatch_event.actual_failure_kind.as_deref(),
+        Some("confirmation_required")
+    );
+    assert_eq!(
+        mismatch_event.failure_expectation_result.as_deref(),
+        Some("expectation_mismatch")
+    );
+    let success_event = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.assertion_name.as_deref() == Some("direct show_changes expected failure")
+        })
+        .expect("unexpected success finished event");
+    assert_eq!(success_event.status.as_deref(), Some("succeeded"));
+    assert_eq!(
+        success_event.failure_expectation_result.as_deref(),
+        Some("unexpected_success")
+    );
+
+    let handoff = handoff_summary_only(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 0);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 1);
+    assert_eq!(
+        handoff.output["tool_failures"]["expectation_mismatch_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["unexpected_success_count"],
+        1
+    );
+    let actions = handoff.output["suggested_next_actions"].as_array().unwrap();
+    assert!(actions.iter().any(|action| {
+        action.as_str().unwrap_or("") == "review unexpected failed tool calls before proceeding"
+    }));
+    assert!(actions.iter().any(|action| {
+        action.as_str().unwrap_or("") == "review expected failure mismatches before proceeding"
+    }));
+    assert!(actions.iter().any(|action| {
+        action.as_str().unwrap_or("")
+            == "review expected-failure assertions that unexpectedly succeeded"
+    }));
+}
+
+#[tokio::test]
+async fn generic_call_runtime_tool_preserves_flattened_failure_expectations() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "generic-expect", "demo", tmp.path()).await;
+    let auth = bootstrap_auth_context();
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("generic expectations".to_string()),
+    );
+    let sid = session.session_id.clone();
+
+    let matched = call_kernel_tool(
+        &runtime,
+        "stop_job",
+        json!({
+            "project": &project,
+            "job_id": "job-negative",
+            "session_id": &sid,
+            "confirm": false,
+            "expected_failure": true,
+            "expected_failure_kind": "confirmation_required",
+            "assertion_name": "generic matched confirmation"
+        }),
+        None,
+        Some(&auth),
+    )
+    .await;
+    assert!(!matched.success);
+    assert_eq!(matched.output["failure_kind"], "confirmation_required");
+
+    let mismatch = call_kernel_tool(
+        &runtime,
+        "stop_job",
+        json!({
+            "project": &project,
+            "job_id": "job-negative",
+            "session_id": &sid,
+            "confirm": false,
+            "expected_failure": true,
+            "expected_failure_kind": "session_project_mismatch",
+            "assertion_name": "generic mismatch confirmation"
+        }),
+        None,
+        Some(&auth),
+    )
+    .await;
+    assert!(!mismatch.success);
+    assert_eq!(mismatch.output["failure_kind"], "confirmation_required");
+
+    let unexpected_success = call_kernel_tool_with_agent(
+        &runtime,
+        "generic-expect",
+        "show_changes",
+        json!({
+            "project": &project,
+            "session_id": &sid,
+            "include_diff": false,
+            "expected_failure": true,
+            "assertion_name": "generic show_changes expected failure"
+        }),
+        None,
+        Some(auth.clone()),
+    )
+    .await;
+    assert!(unexpected_success.success, "{:?}", unexpected_success.error);
+
+    let summary = runtime.sessions.summary(&sid, Some(30)).unwrap();
+    let matched_started = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_started"
+                && event.assertion_name.as_deref() == Some("generic matched confirmation")
+        })
+        .expect("matched started event");
+    assert_eq!(matched_started.expected_failure, Some(true));
+    let matched_finished = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.assertion_name.as_deref() == Some("generic matched confirmation")
+        })
+        .expect("matched finished event");
+    assert_eq!(
+        matched_finished.expected_failure_kind.as_deref(),
+        Some("confirmation_required")
+    );
+    assert_eq!(
+        matched_finished.actual_failure_kind.as_deref(),
+        Some("confirmation_required")
+    );
+    assert_eq!(
+        matched_finished.failure_expectation_result.as_deref(),
+        Some("matched_expected_failure")
+    );
+    let mismatch_finished = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.assertion_name.as_deref() == Some("generic mismatch confirmation")
+        })
+        .expect("mismatch finished event");
+    assert_eq!(
+        mismatch_finished.actual_failure_kind.as_deref(),
+        Some("confirmation_required")
+    );
+    assert_eq!(
+        mismatch_finished.failure_expectation_result.as_deref(),
+        Some("expectation_mismatch")
+    );
+    let success_finished = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.assertion_name.as_deref() == Some("generic show_changes expected failure")
+        })
+        .expect("unexpected success finished event");
+    assert_eq!(success_finished.status.as_deref(), Some("succeeded"));
+    assert_eq!(
+        success_finished.failure_expectation_result.as_deref(),
+        Some("unexpected_success")
+    );
+
+    let handoff = handoff_summary_only(&runtime, &sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 1);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(
+        handoff.output["tool_failures"]["expectation_mismatch_count"],
+        1
+    );
+    assert_eq!(
+        handoff.output["tool_failures"]["unexpected_success_count"],
+        1
+    );
+
+    let finish = finish_coding_task_summary_only_no_hygiene(
+        &runtime,
+        "generic-expect",
+        project.clone(),
+        &sid,
+    )
+    .await;
+    assert!(finish.success, "{:?}", finish.error);
+    assert_eq!(finish.output["tool_failures"]["expected_count"], 1);
+    assert_eq!(finish.output["tool_failures"]["unexpected_count"], 0);
+    assert_eq!(
+        finish.output["tool_failures"]["expectation_mismatch_count"],
+        1
+    );
+    assert_eq!(
+        finish.output["tool_failures"]["unexpected_success_count"],
+        1
+    );
+}
+
+#[tokio::test]
+async fn generic_call_runtime_tool_recording_session_preserves_failure_expectations() {
+    let tmp = tempfile::tempdir().unwrap();
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "generic-recording", "demo", tmp.path()).await;
+    let auth = bootstrap_auth_context();
+    let business_session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("business session".to_string()));
+    let tracking_session = runtime
+        .sessions
+        .start_session(None, Some("tracking session".to_string()));
+    let business_sid = business_session.session_id.clone();
+    let tracking_sid = tracking_session.session_id.clone();
+
+    let result = call_kernel_tool(
+        &runtime,
+        "stop_job",
+        json!({
+            "project": &project,
+            "job_id": "job-negative",
+            "session_id": &business_sid,
+            "confirm": false,
+            "expected_failure": true,
+            "expected_failure_kind": "confirmation_required",
+            "assertion_name": "recording wrapper confirmation"
+        }),
+        Some(&tracking_sid),
+        Some(&auth),
+    )
+    .await;
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "confirmation_required");
+    assert_eq!(result.output["command_started"], false);
+    assert!(result.output.get("permission").is_none());
+
+    for sid in [&tracking_sid, &business_sid] {
+        let summary = runtime.sessions.summary(sid, Some(20)).unwrap();
+        let event = summary
+            .events
+            .iter()
+            .find(|event| {
+                event.kind == "tool_call_finished"
+                    && event.assertion_name.as_deref() == Some("recording wrapper confirmation")
+            })
+            .expect("finished event");
+        assert_eq!(event.expected_failure, Some(true));
+        assert_eq!(
+            event.expected_failure_kind.as_deref(),
+            Some("confirmation_required")
+        );
+        assert_eq!(
+            event.actual_failure_kind.as_deref(),
+            Some("confirmation_required")
+        );
+        assert_eq!(
+            event.failure_expectation_result.as_deref(),
+            Some("matched_expected_failure")
+        );
+    }
+
+    let handoff = handoff_summary_only(&runtime, &business_sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 1);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 0);
+}
+
+#[tokio::test]
+async fn early_failure_paths_preserve_failure_expectation_metadata() {
+    let runtime = test_runtime();
+    let invalid_session = runtime
+        .sessions
+        .start_session(None, Some("invalid arguments expected".to_string()));
+    let invalid_sid = invalid_session.session_id.clone();
+
+    let invalid = call_kernel_tool(
+        &runtime,
+        "read_file",
+        json!({
+            "project": "demo",
+            "session_id": &invalid_sid,
+            "expected_failure": true,
+            "expected_failure_kind": "invalid_arguments",
+            "assertion_name": "missing read_file path"
+        }),
+        Some(&invalid_sid),
+        None,
+    )
+    .await;
+    assert!(!invalid.success);
+
+    let summary = runtime.sessions.summary(&invalid_sid, Some(20)).unwrap();
+    let event = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.assertion_name.as_deref() == Some("missing read_file path")
+        })
+        .expect("invalid arguments finished event");
+    assert_eq!(event.expected_failure, Some(true));
+    assert_eq!(
+        event.actual_failure_kind.as_deref(),
+        Some("invalid_arguments")
+    );
+    assert_eq!(
+        event.failure_expectation_result.as_deref(),
+        Some("matched_expected_failure")
+    );
+
+    let guard_session = runtime.sessions.start_session_with_guards(
+        None,
+        Some("guard expected".to_string()),
+        SessionMode::ReadOnly,
+        crate::tool_runtime::sessions::SessionGuards::default(),
+    );
+    let guard_sid = guard_session.session_id.clone();
+    let guard = call_typed_tool_with_metadata(
+        &runtime,
+        "stop_job",
+        json!({
+            "project": "demo",
+            "job_id": "job-negative",
+            "session_id": &guard_sid,
+            "confirm": true,
+            "expected_failure": true,
+            "expected_failure_kind": "session_guard_denied",
+            "assertion_name": "read-only stop_job guard"
+        }),
+        None,
+    )
+    .await;
+    assert!(!guard.success);
+    assert_eq!(guard.output["error_kind"], "session_guard_denied");
+
+    let summary = runtime.sessions.summary(&guard_sid, Some(20)).unwrap();
+    let event = summary
+        .events
+        .iter()
+        .find(|event| {
+            event.kind == "tool_call_finished"
+                && event.assertion_name.as_deref() == Some("read-only stop_job guard")
+        })
+        .expect("session guard finished event");
+    assert_eq!(event.expected_failure, Some(true));
+    assert_eq!(
+        event.actual_failure_kind.as_deref(),
+        Some("session_guard_denied")
+    );
+    assert_eq!(
+        event.failure_expectation_result.as_deref(),
+        Some("matched_expected_failure")
+    );
+
+    let handoff = handoff_summary_only(&runtime, &guard_sid).await;
+    assert!(handoff.success, "{:?}", handoff.error);
+    assert_eq!(handoff.output["tool_failures"]["expected_count"], 1);
+    assert_eq!(handoff.output["tool_failures"]["unexpected_count"], 0);
+}
+
+#[tokio::test]
 async fn session_handoff_summary_only_is_compact() {
     let runtime = test_runtime();
     let session = runtime
@@ -1417,6 +1981,143 @@ async fn call_recorded_tool(
     })
 }
 
+async fn call_typed_tool_with_metadata(
+    runtime: &ToolRuntime,
+    tool_name: &str,
+    arguments: Value,
+    auth: Option<&AuthContext>,
+) -> ToolResult {
+    let (call, metadata) =
+        ToolCall::from_tool_name_with_recorder_metadata(tool_name, arguments).unwrap();
+    runtime
+        .dispatch_with_auth_transport_options_and_metadata(
+            call,
+            auth,
+            SessionTransport::Mcp,
+            true,
+            false,
+            metadata,
+        )
+        .await
+}
+
+async fn call_typed_tool_with_metadata_and_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    auth: Option<AuthContext>,
+) -> ToolResult {
+    let runtime_for_task = runtime.clone();
+    let tool_name = tool_name.to_string();
+    let task = tokio::spawn(async move {
+        call_typed_tool_with_metadata(&runtime_for_task, &tool_name, arguments, auth.as_ref()).await
+    });
+    complete_agent_shell_requests_until_finished(runtime, client_id, &task).await;
+    task.await.unwrap()
+}
+
+async fn call_kernel_tool(
+    runtime: &ToolRuntime,
+    tool_name: &str,
+    arguments: Value,
+    recording_session_id: Option<&str>,
+    auth: Option<&AuthContext>,
+) -> ToolResult {
+    let outcome = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: tool_name.to_string(),
+                arguments,
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: recording_session_id,
+                auth,
+                record_oauth_scope_denials: true,
+            },
+        )
+        .await;
+    outcome.result.unwrap_or_else(|| {
+        let detail = outcome.error_status.map(|status| format!("{status:?}"));
+        ToolResult::err(detail.unwrap_or_else(|| "tool returned no result".to_string()))
+    })
+}
+
+async fn call_kernel_tool_with_agent(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    tool_name: &str,
+    arguments: Value,
+    recording_session_id: Option<String>,
+    auth: Option<AuthContext>,
+) -> ToolResult {
+    let runtime_for_task = runtime.clone();
+    let tool_name = tool_name.to_string();
+    let task = tokio::spawn(async move {
+        call_kernel_tool(
+            &runtime_for_task,
+            &tool_name,
+            arguments,
+            recording_session_id.as_deref(),
+            auth.as_ref(),
+        )
+        .await
+    });
+    complete_agent_shell_requests_until_finished(runtime, client_id, &task).await;
+    task.await.unwrap()
+}
+
+async fn finish_coding_task_summary_only_no_hygiene(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    project: String,
+    session_id: &str,
+) -> ToolResult {
+    let runtime_for_task = runtime.clone();
+    let session_id = session_id.to_string();
+    let task = tokio::spawn(async move {
+        let auth = bootstrap_auth_context();
+        runtime_for_task
+            .dispatch_with_auth(
+                ToolCall::FinishCodingTask {
+                    project,
+                    session_id,
+                    summary_only: true,
+                    include_diff: Some(false),
+                    include_hygiene: Some(false),
+                    include_handoff: Some(false),
+                    include_validation_summary: Some(false),
+                },
+                Some(&auth),
+            )
+            .await
+    });
+    complete_agent_shell_requests_until_finished(runtime, client_id, &task).await;
+    task.await.unwrap()
+}
+
+async fn complete_agent_shell_requests_until_finished<T>(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    task: &tokio::task::JoinHandle<T>,
+) {
+    for _ in 0..200 {
+        if task.is_finished() {
+            return;
+        }
+        if let Some(req) = next_patch_agent_request(runtime, client_id).await {
+            complete_agent_request_by_running_locally(runtime, client_id, req).await;
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+    assert!(
+        task.is_finished(),
+        "tool did not finish after agent requests"
+    );
+}
+
 async fn handoff_summary(runtime: &ToolRuntime, session_id: &str) -> ToolResult {
     runtime
         .dispatch(
@@ -1426,6 +2127,23 @@ async fn handoff_summary(runtime: &ToolRuntime, session_id: &str) -> ToolResult 
                     "session_id": session_id,
                     "include_workspace": false,
                     "include_checkpoints": false
+                }),
+            )
+            .unwrap(),
+        )
+        .await
+}
+
+async fn handoff_summary_only(runtime: &ToolRuntime, session_id: &str) -> ToolResult {
+    runtime
+        .dispatch(
+            ToolCall::from_tool_name(
+                "session_handoff_summary",
+                json!({
+                    "session_id": session_id,
+                    "include_workspace": false,
+                    "include_checkpoints": false,
+                    "summary_only": true
                 }),
             )
             .unwrap(),

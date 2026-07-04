@@ -1,5 +1,6 @@
 use super::sessions::{
     copy_tool_call_expectation_metadata, strip_tool_call_expectation_metadata, SessionTransport,
+    ToolCallRecorderMetadata,
 };
 use super::types::{is_checkpoint_kind, is_checkpoint_validation_status};
 use super::{
@@ -100,8 +101,10 @@ impl ToolRuntime {
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
     ) -> ToolCallOutcome {
+        let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&request.arguments);
+        let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments.clone());
         let allow_cross_project_session =
-            extract_bool_arg(&request.arguments, "allow_cross_project_session");
+            extract_bool_arg(&concrete_arguments, "allow_cross_project_session");
         if let Some(session_id) = context.session_id {
             if !self.sessions.contains_session(session_id) {
                 return ToolCallOutcome {
@@ -117,7 +120,7 @@ impl ToolRuntime {
                 self.recording_session_project_mismatch(
                     session_id,
                     &request.tool_name,
-                    &request.arguments,
+                    &concrete_arguments,
                     context.auth,
                 )
                 .await
@@ -131,12 +134,13 @@ impl ToolRuntime {
             if !allow_cross_project_session
                 && session_context::session_project_mismatch_requires_escape(&request.tool_name)
             {
-                let session_event = self.sessions.record_tool_call_started_with_options(
+                let session_event = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
                     context.transport.into(),
                     &request.tool_name,
-                    &guard_denial_log_arguments(&request.tool_name, &request.arguments),
+                    &guard_denial_log_arguments(&request.tool_name, &concrete_arguments),
                     Some(mismatch.request_project.clone()),
+                    recorder_metadata.clone(),
                 );
                 let mut result = session_context::session_project_mismatch_result(
                     session_id,
@@ -167,11 +171,13 @@ impl ToolRuntime {
         if request.tool_name == "run_codex" {
             let mut result = run_codex_disabled_result();
             if let Some(session_id) = context.session_id {
-                let session_event = self.sessions.record_tool_call_started(
+                let session_event = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
                     context.transport.into(),
                     &request.tool_name,
-                    &guard_denial_log_arguments(&request.tool_name, &request.arguments),
+                    &guard_denial_log_arguments(&request.tool_name, &concrete_arguments),
+                    None,
+                    recorder_metadata.clone(),
                 );
                 let event_id = self.sessions.record_tool_call_finished(
                     session_event,
@@ -196,11 +202,13 @@ impl ToolRuntime {
         }
         if let Some(session_id) = context.session_id {
             if let Some(denial) = self.sessions.guard_denial(session_id, &request.tool_name) {
-                let session_event = self.sessions.record_tool_call_started(
+                let session_event = self.sessions.record_tool_call_started_with_metadata(
                     Some(session_id),
                     context.transport.into(),
                     &request.tool_name,
-                    &guard_denial_log_arguments(&request.tool_name, &request.arguments),
+                    &guard_denial_log_arguments(&request.tool_name, &concrete_arguments),
+                    None,
+                    recorder_metadata.clone(),
                 );
                 let mut result =
                     session_guard_denied_result(session_id, &request.tool_name, denial);
@@ -240,12 +248,14 @@ impl ToolRuntime {
         }
 
         let session_log_arguments =
-            guard_denial_log_arguments(&request.tool_name, &request.arguments);
-        let mut session_event = self.sessions.record_tool_call_started(
+            guard_denial_log_arguments(&request.tool_name, &concrete_arguments);
+        let mut session_event = self.sessions.record_tool_call_started_with_metadata(
             context.session_id,
             context.transport.into(),
             &request.tool_name,
             &session_log_arguments,
+            None,
+            recorder_metadata.clone(),
         );
 
         if context.record_oauth_scope_denials {
@@ -274,7 +284,6 @@ impl ToolRuntime {
             }
         }
 
-        let concrete_arguments = strip_tool_call_expectation_metadata(request.arguments);
         let call = match ToolCall::from_tool_name(&request.tool_name, concrete_arguments) {
             Ok(call) => call,
             Err(message) => {
@@ -298,12 +307,13 @@ impl ToolRuntime {
         let permission =
             super::permissions::permission_decision_for_tool(call.tool_name(), project.as_deref());
         let mut result = self
-            .dispatch_with_auth_transport_options(
+            .dispatch_with_auth_transport_options_and_metadata(
                 call,
                 context.auth,
                 context.transport.into(),
                 context.session_id.is_none(),
                 allow_cross_project_session,
+                recorder_metadata,
             )
             .await;
         let permission = permission.filter(|_| {

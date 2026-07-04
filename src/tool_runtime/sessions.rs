@@ -179,6 +179,19 @@ pub(crate) struct ToolCallExpectation {
     pub(crate) assertion_name: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub(crate) struct ToolCallRecorderMetadata {
+    pub(crate) expectation: ToolCallExpectation,
+}
+
+impl ToolCallRecorderMetadata {
+    pub(crate) fn from_arguments(arguments: &Value) -> Self {
+        Self {
+            expectation: tool_call_expectation_from_arguments(arguments),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 pub(crate) enum SessionTransport {
     Api,
@@ -624,6 +637,7 @@ impl SessionStore {
         None
     }
 
+    #[allow(dead_code)]
     pub(crate) fn record_tool_call_started(
         &self,
         session_id: Option<&str>,
@@ -636,6 +650,7 @@ impl SessionStore {
         )
     }
 
+    #[allow(dead_code)]
     pub(crate) fn record_tool_call_started_with_options(
         &self,
         session_id: Option<&str>,
@@ -643,6 +658,25 @@ impl SessionStore {
         tool_name: &str,
         arguments: &Value,
         resolved_project: Option<String>,
+    ) -> Option<ToolCallStart> {
+        self.record_tool_call_started_with_metadata(
+            session_id,
+            transport,
+            tool_name,
+            arguments,
+            resolved_project,
+            ToolCallRecorderMetadata::from_arguments(arguments),
+        )
+    }
+
+    pub(crate) fn record_tool_call_started_with_metadata(
+        &self,
+        session_id: Option<&str>,
+        transport: SessionTransport,
+        tool_name: &str,
+        arguments: &Value,
+        resolved_project: Option<String>,
+        metadata: ToolCallRecorderMetadata,
     ) -> Option<ToolCallStart> {
         let session_id = session_id?.trim();
         if !is_valid_session_id(session_id) || !self.contains_session(session_id) {
@@ -659,7 +693,7 @@ impl SessionStore {
         let change_summary_like = is_change_summary_like_tool(tool_name);
         let changed_paths = changed_paths_for_tool(tool_name, arguments);
         let input_summary = Some(redact_and_bound_value(arguments));
-        let expectation = tool_call_expectation_from_arguments(arguments);
+        let expectation = metadata.expectation;
         let start = ToolCallStart {
             event_id: event_id.clone(),
             session_id: session_id.to_string(),

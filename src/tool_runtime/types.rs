@@ -1,6 +1,6 @@
 use super::sessions::{
     strip_tool_call_expectation_metadata, SessionMessageKind, SessionMessagePriority,
-    SessionMessageStatus,
+    SessionMessageStatus, ToolCallRecorderMetadata,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -1075,6 +1075,13 @@ fn model_visible_tool_names_csv() -> String {
 
 impl ToolCall {
     pub fn from_tool_name(name: &str, arguments: Value) -> Result<Self, String> {
+        Self::from_tool_name_with_recorder_metadata(name, arguments).map(|(call, _)| call)
+    }
+
+    pub(crate) fn from_tool_name_with_recorder_metadata(
+        name: &str,
+        arguments: Value,
+    ) -> Result<(Self, ToolCallRecorderMetadata), String> {
         // Reject unknown tool names up front with a helpful message that lists
         // every accepted tool and points the caller at listRuntimeTools. This
         // avoids leaking a raw serde "unknown variant" error and gives custom
@@ -1088,6 +1095,7 @@ impl ToolCall {
                 model_visible_tool_names_csv()
             ));
         }
+        let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         let mut wrapped = serde_json::Map::new();
         wrapped.insert("tool".to_string(), Value::String(name.to_string()));
@@ -1123,8 +1131,9 @@ impl ToolCall {
             };
             wrapped.insert("params".to_string(), params);
         }
-        serde_json::from_value(Value::Object(wrapped))
-            .map_err(|e| format!("invalid arguments for tool '{}': {}", name, e))
+        let call = serde_json::from_value(Value::Object(wrapped))
+            .map_err(|e| format!("invalid arguments for tool '{}': {}", name, e))?;
+        Ok((call, recorder_metadata))
     }
 
     pub(crate) fn tool_name(&self) -> &'static str {

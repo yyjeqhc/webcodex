@@ -2,6 +2,7 @@ use serde_json::{json, Value};
 
 mod common;
 mod discovery;
+mod jobs;
 mod projects;
 
 use super::super::tool_inputs::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
@@ -14,163 +15,11 @@ pub(crate) use discovery::accepted_flattened_args_for_spec;
 pub(super) use discovery::{
     empty_input_schema, list_tools_input_schema, tool_manifest_input_schema,
 };
+pub(super) use jobs::{
+    job_log_input_schema, job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
+    run_codex_input_schema, run_job_input_schema, run_shell_input_schema, stop_job_input_schema,
+};
 pub(super) use projects::{create_project_input_schema, register_project_input_schema};
-
-pub(super) fn run_shell_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Configured project id.", true),
-        ("command", "string", "Shell command to run.", true),
-        (
-            "timeout_secs",
-            "integer",
-            "Command timeout in seconds.",
-            false,
-        ),
-        (
-            "cwd",
-            "string",
-            "Optional project-relative working directory.",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn run_job_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Configured project id.", true),
-        (
-            "command",
-            "string",
-            "Shell command to run asynchronously.",
-            true,
-        ),
-        (
-            "timeout_secs",
-            "integer",
-            "Maximum runtime in seconds.",
-            false,
-        ),
-        (
-            "cwd",
-            "string",
-            "Optional project-relative working directory.",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn stop_job_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        (
-            "project",
-            "string",
-            "Configured project id that must match the job project.",
-            true,
-        ),
-        ("job_id", "string", "Runtime job id returned by run_job.", true),
-        (
-            "confirm",
-            "boolean",
-            "Must be true to stop or no-op an already-finished job; false returns confirmation_required.",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn run_codex_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Configured project id.", true),
-        (
-            "prompt",
-            "string",
-            "Instruction prompt passed to Codex CLI.",
-            true,
-        ),
-        (
-            "approval_mode",
-            "string",
-            "Codex approval mode. Empty/none/off/disabled omit --approval-mode.",
-            false,
-        ),
-        (
-            "timeout_secs",
-            "integer",
-            "Maximum runtime in seconds.",
-            false,
-        ),
-        (
-            "cwd",
-            "string",
-            "Optional project-relative working directory.",
-            false,
-        ),
-        (
-            "extra_args",
-            "array",
-            "Optional extra Codex CLI arguments.",
-            false,
-        ),
-    ]))
-}
-
-pub(super) fn job_status_input_schema() -> Value {
-    object_schema(vec![
-        ("job_id", "string", "Job id.", true),
-        (
-            "include_command_preview",
-            "boolean",
-            "Optional debug flag. Defaults to false; when true, includes bounded command_preview metadata. stdout/stderr bodies are never included.",
-            false,
-        ),
-    ])
-}
-
-pub(super) fn job_log_input_schema() -> Value {
-    object_schema(vec![
-        ("job_id", "string", "Job id.", true),
-        (
-            "offset",
-            "integer",
-            "Optional 1-based stdout line cursor.",
-            false,
-        ),
-        (
-            "tail_lines",
-            "integer",
-            "Optional number of trailing stdout lines to return.",
-            false,
-        ),
-    ])
-}
-
-pub(super) fn list_jobs_input_schema() -> Value {
-    object_schema(vec![
-        (
-            "limit",
-            "integer",
-            "Maximum number of job summaries to return.",
-            false,
-        ),
-        (
-            "status",
-            "string",
-            "Optional status filter (e.g. running, completed, failed).",
-            false,
-        ),
-    ])
-}
-
-pub(super) fn job_tail_input_schema() -> Value {
-    object_schema(vec![
-        ("job_id", "string", "Job id.", true),
-        (
-            "tail_lines",
-            "integer",
-            "Optional number of trailing lines to return per stream.",
-            false,
-        ),
-    ])
-}
 
 pub(super) fn list_project_files_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![

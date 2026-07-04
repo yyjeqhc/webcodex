@@ -6,8 +6,9 @@ use super::super::ToolRuntime;
 use super::input_schemas::{
     apply_text_edits_input_schema, checkpoint_create_input_schema, checkpoint_delete_input_schema,
     checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,
-    current_session_input_schema, finish_coding_task_input_schema,
-    list_session_messages_input_schema, list_tools_input_schema, post_session_message_input_schema,
+    create_project_input_schema, current_session_input_schema, empty_input_schema,
+    finish_coding_task_input_schema, list_session_messages_input_schema, list_tools_input_schema,
+    post_session_message_input_schema, register_project_input_schema,
     resolve_session_message_input_schema, session_discussion_summary_input_schema,
     session_handoff_summary_input_schema, session_summary_input_schema,
     start_coding_task_input_schema, start_session_input_schema, tool_manifest_input_schema,
@@ -117,7 +118,7 @@ impl ToolRuntime {
             tool_spec(
                 "list_projects",
                 "List agent-registered runtime projects, execution mode, and smoke-selection capabilities such as git_available and recommended_for_smoke.",
-                object_schema(vec![]),
+                empty_input_schema(),
             ),
             tool_spec(
                 "register_project",
@@ -126,15 +127,7 @@ impl ToolRuntime {
                     + "Mutation with side effects; constrained by agent policy. The agent validates "
                     + "the path, writes projects_dir/<id>.toml atomically, and refreshes its "
                     + "project list. Requires Bearer auth.",
-                object_schema(vec![
-                    ("client_id", "string", "Registered agent client_id.", true),
-                    ("id", "string", "Project id (ASCII letters, digits, '-', '_'; no slash).", true),
-                    ("name", "string", "Human-readable project name.", true),
-                    ("path", "string", "Absolute directory path on the agent host.", true),
-                    ("description", "string", "Optional project description.", false),
-                    ("allow_patch", "boolean", "Allow patch operations on this project (default true).", false),
-                    ("overwrite", "boolean", "Overwrite an existing project config file (default false).", false),
-                ]),
+                register_project_input_schema(),
             ),
             tool_spec(
                 "create_project",
@@ -143,23 +136,12 @@ impl ToolRuntime {
                     + "project. Mutation with side effects; constrained by agent policy. Creates "
                     + "directory, optional template, optional git init, writes projects_dir/<id>.toml "
                     + "atomically. Requires Bearer auth.",
-                object_schema(vec![
-                    ("client_id", "string", "Registered agent client_id.", true),
-                    ("id", "string", "Project id (ASCII letters, digits, '-', '_'; no slash).", true),
-                    ("name", "string", "Human-readable project name.", true),
-                    ("path", "string", "Absolute directory path on the agent host.", true),
-                    ("description", "string", "Optional project description.", false),
-                    ("allow_patch", "boolean", "Allow patch operations on this project (default true).", false),
-                    ("template", "string", "Template: 'empty' (default) or 'basic'.", false),
-                    ("git_init", "boolean", "Initialize git in the new directory (default false).", false),
-                    ("allow_existing_empty", "boolean", "Allow registering an existing empty directory (default false).", false),
-                    ("overwrite", "boolean", "Overwrite an existing project config file (default false).", false),
-                ]),
+                create_project_input_schema(),
             ),
             tool_spec(
                 "list_agents",
                 "List connected local/remote execution agents.",
-                object_schema(vec![]),
+                empty_input_schema(),
             ),
             tool_spec(
                 "runtime_status",
@@ -167,7 +149,7 @@ impl ToolRuntime {
                     .to_string()
                     + "metadata, projects config status, agent client summaries, and job counts). "
                     + "Read-only; never exposes tokens, secrets, full env, or stdout/stderr.",
-                object_schema(vec![]),
+                empty_input_schema(),
             ),
             tool_spec(
                 "tool_manifest",

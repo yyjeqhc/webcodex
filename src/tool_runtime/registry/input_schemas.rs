@@ -6,6 +6,7 @@ mod common;
 mod discovery;
 mod files;
 mod git;
+mod hygiene;
 mod jobs;
 mod line_edits;
 mod patches;
@@ -38,6 +39,7 @@ pub(super) use git::{
     git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,
     git_log_input_schema, git_status_input_schema, show_changes_input_schema,
 };
+pub(super) use hygiene::workspace_hygiene_check_input_schema;
 pub(super) use jobs::{
     job_log_input_schema, job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
     run_codex_input_schema, run_job_input_schema, run_shell_input_schema, stop_job_input_schema,
@@ -64,34 +66,6 @@ pub(super) use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
     validate_patch_input_schema,
 };
-
-pub(super) fn workspace_hygiene_check_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "project": {
-                "type": "string",
-                "description": "Runtime project id."
-            },
-            "max_findings": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 200,
-                "description": "Maximum findings to return (default 50, clamped to 1..200)."
-            },
-            "include_tracked": {
-                "type": "boolean",
-                "description": "Also report tracked suspicious path names (default false). When false, only untracked entries and the dirty-worktree summary are reported. Never reads file contents."
-            },
-            "session_id": {
-                "type": "string",
-                "description": OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION
-            }
-        },
-        "required": ["project"],
-        "additionalProperties": false,
-    })
-}
 
 pub(super) fn start_coding_task_input_schema() -> Value {
     json!({

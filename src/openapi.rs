@@ -1217,6 +1217,10 @@ fn schemas() -> Value {
                     "type": "integer",
                     "description": "Flattened tool-specific argument. Used only when `params` and `arguments` are absent."
                 },
+                "skip": {
+                    "type": "integer",
+                    "description": "Flattened git_log commit offset. Used only when `params` and `arguments` are absent."
+                },
                 "category": {
                     "type": "string",
                     "description": "Flattened list_tools/tool_manifest category filter. Used only when `params` and `arguments` are absent."
@@ -1236,6 +1240,14 @@ fn schemas() -> Value {
                 "include_hygiene": {
                     "type": "boolean",
                     "description": "Flattened finish_coding_task flag. Defaults to true. Used only when `params` and `arguments` are absent."
+                },
+                "max_findings": {
+                    "type": "integer",
+                    "description": "Flattened workspace_hygiene_check maximum findings to return; clamped by the runtime to 1..200. Used only when `params` and `arguments` are absent."
+                },
+                "include_tracked": {
+                    "type": "boolean",
+                    "description": "Flattened workspace_hygiene_check flag. When true, also report tracked suspicious path names by path/name only; file contents are never read. Used only when `params` and `arguments` are absent."
                 },
                 "include_handoff": {
                     "type": "boolean",
@@ -3046,6 +3058,8 @@ mod tests {
             "new_text",
             "include_diff",
             "include_hygiene",
+            "max_findings",
+            "include_tracked",
             "include_handoff",
             "include_validation_summary",
             "include_validation",
@@ -3054,6 +3068,7 @@ mod tests {
             "summary_only",
             "include_recommended_flows",
             "include_risk_summary",
+            "skip",
             "context_before",
             "context_after",
             "with_line_numbers",

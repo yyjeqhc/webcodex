@@ -21,10 +21,9 @@ pub(crate) use super::tool_policy::{
     runtime_tool_category, runtime_tool_creates_or_binds_session,
     runtime_tool_is_change_summary_like, runtime_tool_is_current_session_control,
     runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
-    runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_oauth_scope,
-    runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
-    runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
-    runtime_tool_session_risk_class,
+    runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
+    runtime_tool_requires_explicit_business_session, runtime_tool_requires_permission,
+    runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
 };
 
 /// Capability an agent-backed tool requires before dispatch can reach an

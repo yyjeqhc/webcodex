@@ -110,7 +110,7 @@ fn tool_definitions_drive_metadata_visibility_and_categories() {
             definition.name
         );
         assert_eq!(
-            definition.oauth_scope(),
+            definition.metadata().oauth_scope,
             metadata.oauth_scope,
             "{} OAuth scope mirror must match definition ToolMetadata",
             definition.name

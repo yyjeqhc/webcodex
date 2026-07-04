@@ -10,10 +10,6 @@ impl ToolDefinition {
         self.metadata
     }
 
-    pub(crate) fn oauth_scope(self) -> Option<&'static str> {
-        self.metadata.oauth_scope
-    }
-
     pub(crate) fn session_risk_class(self) -> &'static str {
         self.metadata.risk.session_risk_class()
     }
@@ -126,10 +122,6 @@ pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefiniti
 /// HTTP/MCP adapters can decide whether to emit the rich "unknown tool" error.
 pub fn is_known_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some()
-}
-
-pub(crate) fn runtime_tool_oauth_scope(name: &str) -> Option<&'static str> {
-    lookup_tool_definition(name).and_then(|definition| definition.oauth_scope())
 }
 
 pub(crate) fn runtime_tool_metadata(name: &str) -> ToolMetadata {

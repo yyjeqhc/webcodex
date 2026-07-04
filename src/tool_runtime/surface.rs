@@ -7,7 +7,8 @@
 use super::metadata::ToolPathHint;
 use super::runtime::ToolRuntime;
 use super::tool_definition::{
-    runtime_tool_category, runtime_tool_metadata, TOOL_RECOMMENDED_FLOWS,
+    is_model_visible_tool_name, runtime_tool_category, runtime_tool_metadata,
+    TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
 };
 use super::tool_inputs::ListToolsOptions;
 use super::tool_result::ToolResult;
@@ -17,6 +18,32 @@ use std::collections::BTreeMap;
 
 impl ToolRuntime {
     pub(crate) const LIST_TOOLS_MAX_LIMIT: usize = 100;
+
+    /// Group every accepted tool name into coarse categories so a custom GPT
+    /// can pick the right tool family at a glance. A tool may appear in more
+    /// than one category. Returned as a JSON object keyed by category.
+    pub fn tool_categories(&self) -> Value {
+        let mut categories = serde_json::Map::new();
+        for group in TOOL_DISCOVERY_GROUPS {
+            let tools = group
+                .tools
+                .iter()
+                .filter(|name| is_model_visible_tool_name(name))
+                .map(|name| Value::String((*name).to_string()))
+                .collect::<Vec<_>>();
+            categories.insert(group.name.to_string(), Value::Array(tools));
+        }
+        Value::Object(categories)
+    }
+
+    /// Short, GPT-facing flow hints. Each entry is well under the 300-char
+    /// ToolSpec/operation description budget.
+    pub fn recommended_flows() -> Vec<&'static str> {
+        TOOL_RECOMMENDED_FLOWS
+            .iter()
+            .map(|flow| flow.summary)
+            .collect()
+    }
 
     pub(crate) fn list_tools_payload(&self, options: ListToolsOptions) -> Value {
         let specs = self.tool_specs();

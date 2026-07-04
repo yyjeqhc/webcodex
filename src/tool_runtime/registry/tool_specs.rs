@@ -1,9 +1,6 @@
 use serde_json::{json, Value};
 
-use super::super::tool_definition::{
-    is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
-    TOOL_DISCOVERY_GROUPS, TOOL_RECOMMENDED_FLOWS,
-};
+use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_definitions};
 use super::super::tool_spec::ToolSpec;
 use super::super::ToolRuntime;
 use super::input_schemas::{
@@ -860,32 +857,6 @@ impl ToolRuntime {
     pub fn tool_names(&self) -> Vec<String> {
         model_visible_tool_definitions()
             .map(|definition| definition.name.to_string())
-            .collect()
-    }
-
-    /// Group every accepted tool name into coarse categories so a custom GPT
-    /// can pick the right tool family at a glance. A tool may appear in more
-    /// than one category. Returned as a JSON object keyed by category.
-    pub fn tool_categories(&self) -> Value {
-        let mut categories = serde_json::Map::new();
-        for group in TOOL_DISCOVERY_GROUPS {
-            let tools = group
-                .tools
-                .iter()
-                .filter(|name| is_model_visible_tool_name(name))
-                .map(|name| Value::String((*name).to_string()))
-                .collect::<Vec<_>>();
-            categories.insert(group.name.to_string(), Value::Array(tools));
-        }
-        Value::Object(categories)
-    }
-
-    /// Short, GPT-facing flow hints. Each entry is well under the 300-char
-    /// ToolSpec/operation description budget.
-    pub fn recommended_flows() -> Vec<&'static str> {
-        TOOL_RECOMMENDED_FLOWS
-            .iter()
-            .map(|flow| flow.summary)
             .collect()
     }
 }

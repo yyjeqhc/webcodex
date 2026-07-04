@@ -55,6 +55,10 @@ pub(crate) use surface::tool_manifest_category;
 #[allow(unused_imports)]
 pub use tool_call::ToolCall;
 #[allow(unused_imports)]
+pub use tool_definition::is_known_tool_name;
+#[allow(unused_imports)]
+pub(crate) use tool_definition::is_model_hidden_tool_name;
+#[allow(unused_imports)]
 pub(crate) use tool_definition::AgentCapability;
 #[allow(unused_imports)]
 pub use tool_inputs::{
@@ -62,9 +66,7 @@ pub use tool_inputs::{
     ListToolsOptions, SessionMode,
 };
 #[allow(unused_imports)]
-pub(crate) use tool_names::is_model_hidden_tool_name;
-#[allow(unused_imports)]
-pub use tool_names::{is_known_tool_name, KNOWN_TOOL_NAMES, MODEL_HIDDEN_TOOL_NAMES};
+pub use tool_names::{KNOWN_TOOL_NAMES, MODEL_HIDDEN_TOOL_NAMES};
 #[allow(unused_imports)]
 pub use tool_result::ToolResult;
 #[allow(unused_imports)]

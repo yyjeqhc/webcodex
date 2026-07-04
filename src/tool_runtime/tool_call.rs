@@ -8,10 +8,10 @@ use super::sessions::{
     strip_tool_call_expectation_metadata, SessionMessageKind, SessionMessagePriority,
     SessionMessageStatus, ToolCallRecorderMetadata,
 };
+use super::tool_definition::{is_known_tool_name, model_visible_tool_names_csv};
 use super::tool_inputs::{
     default_true, ApplyTextEditInput, CheckpointValidationInput, SessionMode,
 };
-use super::tool_names::{is_known_tool_name, model_visible_tool_names_csv};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 

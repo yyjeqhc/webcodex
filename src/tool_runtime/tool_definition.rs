@@ -1321,6 +1321,12 @@ pub(crate) fn lookup_tool_definition(name: &str) -> Option<&'static ToolDefiniti
         .find(|definition| definition.name == name)
 }
 
+/// Returns `true` if `name` is a recognized runtime tool name. Public so the
+/// HTTP/MCP adapters can decide whether to emit the rich "unknown tool" error.
+pub fn is_known_tool_name(name: &str) -> bool {
+    lookup_tool_definition(name).is_some()
+}
+
 pub(crate) fn runtime_tool_oauth_scope(name: &str) -> Option<&'static str> {
     lookup_tool_definition(name).and_then(|definition| definition.oauth_scope())
 }
@@ -1437,10 +1443,21 @@ pub(crate) fn is_model_visible_tool_name(name: &str) -> bool {
     lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_visible())
 }
 
+pub(crate) fn is_model_hidden_tool_name(name: &str) -> bool {
+    lookup_tool_definition(name).is_some_and(|definition| definition.visibility.is_model_hidden())
+}
+
 pub(crate) fn model_visible_tool_definitions() -> impl Iterator<Item = &'static ToolDefinition> {
     TOOL_DEFINITIONS
         .iter()
         .filter(|definition| definition.visibility.is_model_visible())
+}
+
+pub(super) fn model_visible_tool_names_csv() -> String {
+    model_visible_tool_definitions()
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 fn tool_is_in_discovery_group(tool_name: &str, group_name: &str) -> bool {

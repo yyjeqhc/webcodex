@@ -4,22 +4,26 @@ use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_d
 use super::super::tool_spec::ToolSpec;
 use super::super::ToolRuntime;
 use super::input_schemas::{
-    apply_text_edits_input_schema, cargo_check_input_schema, cargo_fmt_input_schema,
-    cargo_test_input_schema, checkpoint_create_input_schema, checkpoint_delete_input_schema,
-    checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,
-    create_project_input_schema, current_session_input_schema, empty_input_schema,
-    finish_coding_task_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
-    git_diff_summary_input_schema, git_log_input_schema, git_status_input_schema,
-    job_log_input_schema, job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
+    apply_patch_checked_input_schema, apply_patch_input_schema, apply_text_edits_input_schema,
+    cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
+    checkpoint_create_input_schema, checkpoint_delete_input_schema, checkpoint_list_input_schema,
+    checkpoint_restore_input_schema, checkpoint_show_input_schema, create_project_input_schema,
+    current_session_input_schema, delete_project_files_input_schema,
+    discard_untracked_input_schema, empty_input_schema, finish_coding_task_input_schema,
+    git_diff_hunks_input_schema, git_diff_input_schema, git_diff_summary_input_schema,
+    git_log_input_schema, git_restore_paths_input_schema, git_status_input_schema,
+    insert_after_pattern_input_schema, insert_before_pattern_input_schema, job_log_input_schema,
+    job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
     list_project_files_input_schema, list_session_messages_input_schema, list_tools_input_schema,
     post_session_message_input_schema, read_file_input_schema, register_project_input_schema,
+    replace_exact_block_input_schema, replace_in_file_input_schema,
     resolve_session_message_input_schema, run_codex_input_schema, run_job_input_schema,
     run_shell_input_schema, search_project_text_input_schema,
     session_discussion_summary_input_schema, session_handoff_summary_input_schema,
     session_summary_input_schema, show_changes_input_schema, start_coding_task_input_schema,
     start_session_input_schema, stop_job_input_schema, tool_manifest_input_schema,
     validate_patch_input_schema, with_common_testing_metadata, with_optional_session_id,
-    workspace_hygiene_check_input_schema, PATCH_FIELD_DESCRIPTION,
+    workspace_hygiene_check_input_schema, write_project_file_input_schema,
 };
 use super::{object_schema, output_schema_for_tool, tool_annotations};
 
@@ -278,43 +282,27 @@ impl ToolRuntime {
             tool_spec(
                 "apply_patch",
                 "Apply a unified diff patch to an agent-registered project.".to_string(),
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Configured project id.", true),
-                    ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
-                ])),
+                apply_patch_input_schema(),
             ),
             tool_spec(
                 "apply_patch_checked",
                 "Validated unified-diff edit tool for broad or multi-file patches. Returns a diff summary; for local line edits prefer replace_line_range, insert_at_line, delete_line_range, or apply_text_edits.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
-                    ("deny_sensitive_paths", "boolean", "Block sensitive path warnings before applying.", false),
-                ])),
+                apply_patch_checked_input_schema(),
             ),
             tool_spec(
                 "delete_project_files",
                 "Delete selected project-relative files only; safer than arbitrary rm for cleanup.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("paths", "array", "Project-relative file paths to delete.", true),
-                ])),
+                delete_project_files_input_schema(),
             ),
             tool_spec(
                 "git_restore_paths",
                 "Restore selected tracked paths with git restore; does not remove untracked files.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("paths", "array", "Project-relative tracked paths to restore.", true),
-                ])),
+                git_restore_paths_input_schema(),
             ),
             tool_spec(
                 "discard_untracked",
                 "Discard selected untracked files with git clean -f -- <paths>.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("paths", "array", "Project-relative untracked paths to remove.", true),
-                ])),
+                discard_untracked_input_schema(),
             ),
             tool_spec(
                 "validate_patch",
@@ -324,82 +312,27 @@ impl ToolRuntime {
             tool_spec(
                 "replace_in_file",
                 "Literal pattern compatibility path for short exact replacements. Prefer replace_line_range, insert_at_line, or delete_line_range when line numbers are available; fails without writing when old text is missing or ambiguous.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative file path.", true),
-                    ("old", "string", "Non-empty substring to replace.", true),
-                    ("new", "string", "Replacement string.", true),
-                    (
-                        "expected_replacements",
-                        "integer",
-                        "Expected occurrence count (default 1).",
-                        false,
-                    ),
-                    (
-                        "allow_multiple",
-                        "boolean",
-                        "Allow replacing multiple occurrences (default false).",
-                        false,
-                    ),
-                ])),
+                replace_in_file_input_schema(),
             ),
             tool_spec(
                 "replace_exact_block",
                 "Replace literal UTF-8 text that matches exactly once; no regex or auto-format. Use line edit tools when line numbers are known.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative file path.", true),
-                    ("old_text", "string", "Non-empty literal block; must match exactly once.", true),
-                    ("new_text", "string", "Replacement text; may be empty to delete the block.", true),
-                    ("expected_old_sha256", "string", "Optional sha256 guard for current whole-file content.", false),
-                ])),
+                replace_exact_block_input_schema(),
             ),
             tool_spec(
                 "insert_before_pattern",
                 "Insert UTF-8 text before one literal pattern match; no regex, AST, auto-newline, or auto-format.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative file path.", true),
-                    ("pattern", "string", "Non-empty literal pattern; must match exactly once.", true),
-                    ("text", "string", "Non-empty text to insert, including intended newlines.", true),
-                ])),
+                insert_before_pattern_input_schema(),
             ),
             tool_spec(
                 "insert_after_pattern",
                 "Insert UTF-8 text after one literal pattern match; no regex, AST, auto-newline, or auto-format.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative file path.", true),
-                    ("pattern", "string", "Non-empty literal pattern; must match exactly once.", true),
-                    ("text", "string", "Non-empty text to insert, including intended newlines.", true),
-                ])),
+                insert_after_pattern_input_schema(),
             ),
             tool_spec(
                 "write_project_file",
                 "Whole-file write compatibility path for new files or deliberate small overwrites. Prefer structured line edits or apply_text_edits for source changes; requires overwrite/guards for existing files.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("path", "string", "Project-relative file path.", true),
-                    ("content", "string", "UTF-8 file content (no NUL).", true),
-                    (
-                        "overwrite",
-                        "boolean",
-                        "Allow overwriting an existing file (default false).",
-                        false,
-                    ),
-                    (
-                        "expected_sha256",
-                        "string",
-                        "Required sha256 of the current file when overwriting.",
-                        false,
-                    ),
-                    (
-                        "expected_content_prefix",
-                        "string",
-                        "Required prefix of the current file when overwriting.",
-                        false,
-                    ),
-                ])),
+                write_project_file_input_schema(),
             ),
             tool_spec(
                 "save_project_artifact",

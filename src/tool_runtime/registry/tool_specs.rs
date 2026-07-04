@@ -7,13 +7,15 @@ use super::input_schemas::{
     apply_text_edits_input_schema, checkpoint_create_input_schema, checkpoint_delete_input_schema,
     checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,
     create_project_input_schema, current_session_input_schema, empty_input_schema,
-    finish_coding_task_input_schema, list_session_messages_input_schema, list_tools_input_schema,
-    post_session_message_input_schema, register_project_input_schema,
-    resolve_session_message_input_schema, session_discussion_summary_input_schema,
+    finish_coding_task_input_schema, job_log_input_schema, job_status_input_schema,
+    job_tail_input_schema, list_jobs_input_schema, list_session_messages_input_schema,
+    list_tools_input_schema, post_session_message_input_schema, register_project_input_schema,
+    resolve_session_message_input_schema, run_codex_input_schema, run_job_input_schema,
+    run_shell_input_schema, session_discussion_summary_input_schema,
     session_handoff_summary_input_schema, session_summary_input_schema,
-    start_coding_task_input_schema, start_session_input_schema, tool_manifest_input_schema,
-    with_common_testing_metadata, with_optional_session_id, workspace_hygiene_check_input_schema,
-    PATCH_FIELD_DESCRIPTION,
+    start_coding_task_input_schema, start_session_input_schema, stop_job_input_schema,
+    tool_manifest_input_schema, with_common_testing_metadata, with_optional_session_id,
+    workspace_hygiene_check_input_schema, PATCH_FIELD_DESCRIPTION,
 };
 use super::{object_schema, output_schema_for_tool, tool_annotations};
 
@@ -162,130 +164,32 @@ impl ToolRuntime {
             tool_spec(
                 "run_shell",
                 "Bounded command escape hatch for validation, builds, tests, or diagnostics only. Do not use as the primary file editing path; prefer cargo_* / validate_patch for common checks and structured line edit tools for source edits.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Configured project id.", true),
-                    ("command", "string", "Shell command to run.", true),
-                    (
-                        "timeout_secs",
-                        "integer",
-                        "Command timeout in seconds.",
-                        false,
-                    ),
-                    (
-                        "cwd",
-                        "string",
-                        "Optional project-relative working directory.",
-                        false,
-                    ),
-                ])),
+                run_shell_input_schema(),
             ),
             tool_spec(
                 "run_job",
                 "Start an asynchronous shell job inside an agent-registered project.".to_string(),
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Configured project id.", true),
-                    (
-                        "command",
-                        "string",
-                        "Shell command to run asynchronously.",
-                        true,
-                    ),
-                    (
-                        "timeout_secs",
-                        "integer",
-                        "Maximum runtime in seconds.",
-                        false,
-                    ),
-                    (
-                        "cwd",
-                        "string",
-                        "Optional project-relative working directory.",
-                        false,
-                    ),
-                ])),
+                run_job_input_schema(),
             ),
             tool_spec(
                 "stop_job",
                 "Stop a bounded runtime job started through WebCodex. Requires confirm=true, obeys project/session ownership, never exposes stdout/stderr, and returns stop_effect/terminal lifecycle fields.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Configured project id that must match the job project.", true),
-                    ("job_id", "string", "Runtime job id returned by run_job.", true),
-                    (
-                        "confirm",
-                        "boolean",
-                        "Must be true to stop or no-op an already-finished job; false returns confirmation_required.",
-                        false,
-                    ),
-                ])),
+                stop_job_input_schema(),
             ),
             tool_spec(
                 "run_codex",
                 "Optional Codex CLI delegation as an async project job. Requires Codex CLI installed and configured on the owning agent. Use only when the user explicitly asks to delegate to Codex; otherwise use WebCodex file/git/shell/line-edit tools directly.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Configured project id.", true),
-                    (
-                        "prompt",
-                        "string",
-                        "Instruction prompt passed to Codex CLI.",
-                        true,
-                    ),
-                    (
-                        "approval_mode",
-                        "string",
-                        "Codex approval mode. Empty/none/off/disabled omit --approval-mode.",
-                        false,
-                    ),
-                    (
-                        "timeout_secs",
-                        "integer",
-                        "Maximum runtime in seconds.",
-                        false,
-                    ),
-                    (
-                        "cwd",
-                        "string",
-                        "Optional project-relative working directory.",
-                        false,
-                    ),
-                    (
-                        "extra_args",
-                        "array",
-                        "Optional extra Codex CLI arguments.",
-                        false,
-                    ),
-                ])),
+                run_codex_input_schema(),
             ),
             tool_spec(
                 "job_status",
                 "Get bounded lifecycle status for a runtime job. Omits command_preview by default and never returns stdout/stderr bodies.",
-                object_schema(vec![
-                    ("job_id", "string", "Job id.", true),
-                    (
-                        "include_command_preview",
-                        "boolean",
-                        "Optional debug flag. Defaults to false; when true, includes bounded command_preview metadata. stdout/stderr bodies are never included.",
-                        false,
-                    ),
-                ]),
+                job_status_input_schema(),
             ),
             tool_spec(
                 "job_log",
                 "Read stdout/stderr for a runtime job.",
-                object_schema(vec![
-                    ("job_id", "string", "Job id.", true),
-                    (
-                        "offset",
-                        "integer",
-                        "Optional 1-based stdout line cursor.",
-                        false,
-                    ),
-                    (
-                        "tail_lines",
-                        "integer",
-                        "Optional number of trailing stdout lines to return.",
-                        false,
-                    ),
-                ]),
+                job_log_input_schema(),
             ),
             tool_spec(
                 "list_project_files",
@@ -373,33 +277,12 @@ impl ToolRuntime {
                     .to_string()
                     + "Never returns stdout/stderr bodies — only metadata (job_id, kind, status, "
                     + "project, timestamps, exit_code).",
-                object_schema(vec![
-                    (
-                        "limit",
-                        "integer",
-                        "Maximum number of job summaries to return.",
-                        false,
-                    ),
-                    (
-                        "status",
-                        "string",
-                        "Optional status filter (e.g. running, completed, failed).",
-                        false,
-                    ),
-                ]),
+                list_jobs_input_schema(),
             ),
             tool_spec(
                 "job_tail",
                 "Return bounded stdout/stderr tails for a job.",
-                object_schema(vec![
-                    ("job_id", "string", "Job id.", true),
-                    (
-                        "tail_lines",
-                        "integer",
-                        "Optional number of trailing lines to return per stream.",
-                        false,
-                    ),
-                ]),
+                job_tail_input_schema(),
             ),
             tool_spec(
                 "read_file",

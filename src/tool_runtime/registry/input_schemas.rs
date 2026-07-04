@@ -3,6 +3,7 @@ use serde_json::{json, Value};
 use super::super::types::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
 
 const OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session ledger and wins over any current-session binding.";
+const ALLOW_CROSS_PROJECT_SESSION_DESCRIPTION: &str = "Advanced/debug escape hatch. When true, allow recording a project tool call into a session whose associated project differs from the request project; the runtime still emits session_project_mismatch warning metadata.";
 
 pub(crate) fn object_schema(fields: Vec<(&str, &str, &str, bool)>) -> Value {
     let mut properties = serde_json::Map::new();
@@ -40,6 +41,12 @@ pub(super) fn with_optional_session_id(
         "session_id",
         "string",
         OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION,
+        false,
+    ));
+    fields.push((
+        "allow_cross_project_session",
+        "boolean",
+        ALLOW_CROSS_PROJECT_SESSION_DESCRIPTION,
         false,
     ));
     fields
@@ -389,6 +396,15 @@ pub(super) fn start_coding_task_input_schema() -> Value {
             "include_tool_manifest": {
                 "type": "boolean",
                 "description": "Include compact tool_manifest output without full input/output schemas. Defaults to true."
+            },
+            "tool_manifest_categories": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "When include_tool_manifest=true, optionally return only compact manifest entries for these categories. For startup, prefer a bounded set such as workflow, session, git, edit, artifact, and cleanup instead of the full tool set."
+            },
+            "tool_manifest_limit": {
+                "type": "integer",
+                "description": "When include_tool_manifest=true, maximum compact manifest entries to return; clamped to 1..100."
             },
             "bind_current": {
                 "type": "boolean",

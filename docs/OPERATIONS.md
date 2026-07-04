@@ -376,6 +376,10 @@ Returns a `wc_sess_*` session id in `output.session.session_id`. Keep that id
 and pass it explicitly to subsequent project tools. By default,
 `start_coding_task` also returns compact `output.tool_manifest` without full
 input/output schemas; set `include_tool_manifest=false` to omit it.
+For bounded startup context, keep `include_tool_manifest=true` but pass
+`tool_manifest_categories` such as `["workflow","session","git","edit",
+"artifact","cleanup"]` and optionally `tool_manifest_limit`; the runtime clamps
+the limit to 1..100 and reports whether the compact manifest was truncated.
 
 ### 2. Discover and inspect
 

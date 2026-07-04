@@ -9,6 +9,9 @@ use serde_json::{json, Value};
 
 use super::project_instructions::{ProjectInstructionFile, ProjectInstructionsSnapshot};
 use super::project_resolution::ResolvedProject;
+use super::session_context::{
+    session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
+};
 use super::sessions::{self, SessionTransport};
 use super::types::{SessionMode, ToolResult};
 use super::validation_events::{skipped_validation_summary, validation_summary_for_session};
@@ -20,6 +23,7 @@ const RULES_MAX_HEADINGS: usize = 8;
 const RULES_MAX_FIRST_LINES: usize = 5;
 const RULES_MAX_LINE_CHARS: usize = 180;
 const FINISH_SESSION_EVENT_LIMIT: usize = 200;
+const START_TOOL_MANIFEST_LIMIT_MAX: usize = 100;
 
 impl ToolRuntime {
     #[allow(clippy::too_many_arguments)]
@@ -35,6 +39,8 @@ impl ToolRuntime {
         include_recent_commits: Option<bool>,
         include_rules: Option<bool>,
         include_tool_manifest: Option<bool>,
+        tool_manifest_categories: Option<Vec<String>>,
+        tool_manifest_limit: Option<usize>,
         bind_current: bool,
         auth: Option<&AuthContext>,
         transport: SessionTransport,
@@ -164,7 +170,10 @@ impl ToolRuntime {
             "warnings": warnings,
         });
         if include_tool_manifest {
-            output["tool_manifest"] = self.compact_tool_manifest_payload();
+            output["tool_manifest"] = self.compact_tool_manifest_payload_bounded(
+                tool_manifest_categories,
+                tool_manifest_limit.map(|limit| limit.clamp(1, START_TOOL_MANIFEST_LIMIT_MAX)),
+            );
         }
         ToolResult::ok(output)
     }
@@ -196,22 +205,20 @@ impl ToolRuntime {
             Some(summary) => summary,
             None => return unknown_session_result(&session_id),
         };
-        if let Some(session_project) = session_summary.project.as_deref() {
-            if session_project != resolved.resolved_id {
-                return ToolResult::err_with_output(
-                    "session_project_mismatch",
-                    json!({
-                        "error_kind": "session_project_mismatch",
-                        "session_id": session_id,
-                        "session_project": session_project,
-                        "project": project,
-                        "resolved_project": resolved.resolved_id.clone(),
-                    }),
-                );
-            }
-        }
-
         let mut final_warnings = Vec::new();
+        let session_project_mismatch =
+            session_summary
+                .project
+                .as_ref()
+                .and_then(|session_project| {
+                    (session_project != &resolved.resolved_id).then(|| SessionProjectMismatch {
+                        session_project: session_project.clone(),
+                        request_project: resolved.resolved_id.clone(),
+                    })
+                });
+        if let Some(mismatch) = session_project_mismatch.as_ref() {
+            final_warnings.push(session_project_mismatch_warning(mismatch, false));
+        }
         if session_summary.project.is_none() {
             final_warnings.push(json!({
                 "kind": "session_has_no_project",
@@ -287,7 +294,7 @@ impl ToolRuntime {
             Value::Null
         };
 
-        ToolResult::ok(json!({
+        let mut output = json!({
             "project": project,
             "resolved_project": resolved_project_payload(&resolved),
             "session_id": session_id,
@@ -305,7 +312,15 @@ impl ToolRuntime {
             "deterministic": true,
             "llm_summary": false,
             "final_warnings": final_warnings,
-        }))
+        });
+        if let Some(mismatch) = session_project_mismatch.as_ref() {
+            output["warning_kind"] = json!(SESSION_PROJECT_MISMATCH_KIND);
+            output["session_project"] = json!(mismatch.session_project);
+            output["request_project"] = json!(mismatch.request_project);
+            output["allow_cross_project_session_required"] = json!(true);
+            output["allow_cross_project_session"] = json!(false);
+        }
+        ToolResult::ok(output)
     }
 
     async fn start_coding_task_git_summary(

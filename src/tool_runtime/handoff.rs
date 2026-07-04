@@ -12,6 +12,9 @@
 
 use serde_json::{json, Value};
 
+use super::session_context::{
+    session_project_mismatch_warning, SessionProjectMismatch, SESSION_PROJECT_MISMATCH_KIND,
+};
 use super::sessions::{SessionDiscussionCounts, SessionDiscussionSummary, SessionMessage};
 use super::types::ToolResult;
 use super::validation_events::validation_summary_for_session;
@@ -119,6 +122,22 @@ impl ToolRuntime {
             "open_guidance": discussion.counts.guidance,
         });
 
+        let session_project_mismatch = match (summary.project.as_ref(), project.as_ref()) {
+            (Some(session_project), Some(request_project))
+                if !request_project.trim().is_empty() && session_project != request_project =>
+            {
+                Some(SessionProjectMismatch {
+                    session_project: session_project.clone(),
+                    request_project: request_project.trim().to_string(),
+                })
+            }
+            _ => None,
+        };
+        let mut warnings = Vec::new();
+        if let Some(mismatch) = session_project_mismatch.as_ref() {
+            warnings.push(session_project_mismatch_warning(mismatch, false));
+        }
+
         let mut output = json!({
             "session_id": summary.session_id,
             "project": summary.project,
@@ -135,7 +154,15 @@ impl ToolRuntime {
             "recent_progress": recent_progress,
             "recent_decisions": recent_decisions,
             "recent_failed_tools": recent_failed_tools,
+            "warnings": warnings,
         });
+        if let Some(mismatch) = session_project_mismatch.as_ref() {
+            output["warning_kind"] = json!(SESSION_PROJECT_MISMATCH_KIND);
+            output["session_project"] = json!(mismatch.session_project);
+            output["request_project"] = json!(mismatch.request_project);
+            output["allow_cross_project_session_required"] = json!(true);
+            output["allow_cross_project_session"] = json!(false);
+        }
 
         // --- optional workspace summary ---
         let has_project = project

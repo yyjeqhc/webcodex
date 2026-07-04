@@ -39,6 +39,14 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         .as_object()
         .unwrap()
         .contains_key("include_tool_manifest"));
+    assert!(start.input_schema["properties"]
+        .as_object()
+        .unwrap()
+        .contains_key("tool_manifest_categories"));
+    assert!(start.input_schema["properties"]
+        .as_object()
+        .unwrap()
+        .contains_key("tool_manifest_limit"));
     let finish = spec_named(&specs, "finish_coding_task");
     assert_eq!(required_fields(finish), vec!["project", "session_id"]);
 
@@ -56,6 +64,8 @@ fn coding_task_tools_are_registered_in_metadata_and_openapi() {
         "include_recent_commits",
         "include_rules",
         "include_tool_manifest",
+        "tool_manifest_categories",
+        "tool_manifest_limit",
         "bind_current",
         "include_hygiene",
         "include_handoff",
@@ -110,6 +120,8 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
                         include_recent_commits: Some(true),
                         include_rules: Some(true),
                         include_tool_manifest: Some(true),
+                        tool_manifest_categories: None,
+                        tool_manifest_limit: None,
                         bind_current: false,
                     },
                     Some(&auth),
@@ -207,6 +219,10 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
     assert_eq!(result.output["rules"]["sources"][0]["path"], "AGENTS.md");
     let manifest = &result.output["tool_manifest"];
     assert_eq!(manifest["schema_version"], 1);
+    assert_eq!(manifest["filtered"], false);
+    assert_eq!(manifest["categories_requested"], Value::Null);
+    assert_eq!(manifest["limit"], Value::Null);
+    assert_eq!(manifest["truncated"], false);
     assert!(manifest["count"].as_u64().unwrap() > 0);
     let start_tool = manifest["tools"]
         .as_array()
@@ -219,6 +235,16 @@ async fn start_coding_task_returns_session_and_does_not_bind_current_by_default(
         .unwrap()
         .iter()
         .any(|field| field == "include_tool_manifest"));
+    assert!(start_tool["accepted_flattened_args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "tool_manifest_categories"));
+    assert!(start_tool["accepted_flattened_args"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|field| field == "tool_manifest_limit"));
     assert!(start_tool.get("inputSchema").is_none());
     assert!(start_tool.get("outputSchema").is_none());
     assert_eq!(result.output["git"]["clean"], true);
@@ -253,6 +279,8 @@ async fn start_coding_task_can_omit_compact_tool_manifest() {
                 include_recent_commits: Some(false),
                 include_rules: Some(false),
                 include_tool_manifest: Some(false),
+                tool_manifest_categories: None,
+                tool_manifest_limit: None,
                 bind_current: false,
             },
             Some(&auth),
@@ -264,6 +292,100 @@ async fn start_coding_task_can_omit_compact_tool_manifest() {
         result.output.get("tool_manifest").is_none(),
         "include_tool_manifest=false should omit compact manifest"
     );
+}
+
+#[tokio::test]
+async fn start_coding_task_filters_compact_tool_manifest_by_categories() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-filter", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_coding_task",
+                json!({
+                    "project": project,
+                    "include_runtime_status": false,
+                    "include_git": false,
+                    "include_recent_commits": false,
+                    "include_rules": false,
+                    "include_tool_manifest": true,
+                    "tool_manifest_categories": ["workflow", "session"]
+                }),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let manifest = &result.output["tool_manifest"];
+    assert_eq!(manifest["filtered"], true);
+    assert_eq!(
+        manifest["categories_requested"],
+        json!(["workflow", "session"])
+    );
+    assert_eq!(manifest["limit"], Value::Null);
+    assert_eq!(manifest["truncated"], false);
+    let tools = manifest["tools"].as_array().unwrap();
+    assert!(tools.iter().any(|tool| tool["name"] == "start_coding_task"));
+    assert!(tools.iter().any(|tool| tool["name"] == "session_summary"));
+    assert!(tools
+        .iter()
+        .all(|tool| matches!(tool["category"].as_str(), Some("workflow" | "session"))));
+    assert!(tools
+        .iter()
+        .all(|tool| tool.get("inputSchema").is_none() && tool.get("outputSchema").is_none()));
+    assert!(tools
+        .iter()
+        .all(|tool| tool["accepted_flattened_args"].is_array()));
+}
+
+#[tokio::test]
+async fn start_coding_task_manifest_limit_truncates_filtered_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    let runtime = test_runtime();
+    let project =
+        register_agent_project_at_path(&runtime, "coding-limit", "demo", tmp.path()).await;
+    let auth = auth_context(None, true);
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "start_coding_task",
+                json!({
+                    "project": project,
+                    "include_runtime_status": false,
+                    "include_git": false,
+                    "include_recent_commits": false,
+                    "include_rules": false,
+                    "include_tool_manifest": true,
+                    "tool_manifest_categories": ["session"],
+                    "tool_manifest_limit": 2
+                }),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    let manifest = &result.output["tool_manifest"];
+    assert_eq!(manifest["filtered"], true);
+    assert_eq!(manifest["limit"], 2);
+    assert_eq!(manifest["truncated"], true);
+    assert_eq!(manifest["count"], 2);
+    assert!(manifest["filtered_count"].as_u64().unwrap() > 2);
+    assert!(manifest["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|tool| tool["category"] == "session"));
 }
 
 #[tokio::test]
@@ -292,6 +414,8 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
                 include_recent_commits: Some(false),
                 include_rules: Some(false),
                 include_tool_manifest: Some(false),
+                tool_manifest_categories: None,
+                tool_manifest_limit: None,
                 bind_current: false,
             },
             Some(&auth),

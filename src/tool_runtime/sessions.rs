@@ -201,6 +201,16 @@ pub(crate) struct SessionEvent {
     pub(crate) exit_code: Option<i64>,
     pub(crate) failure_kind: Option<String>,
     pub(crate) error_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) warning_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) session_project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) request_project: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) allow_cross_project_session_required: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) allow_cross_project_session: Option<bool>,
     pub(crate) error_message_summary: Option<String>,
     pub(crate) changed_paths: Vec<String>,
     pub(crate) job_id: Option<String>,
@@ -549,6 +559,14 @@ impl SessionStore {
         inner.sessions.contains_key(session_id)
     }
 
+    pub(crate) fn session_project(&self, session_id: &str) -> Option<Option<String>> {
+        let inner = self.inner.lock().expect("session store mutex poisoned");
+        inner
+            .sessions
+            .get(session_id)
+            .map(|record| record.project.clone())
+    }
+
     pub(crate) fn guard_state(&self, session_id: &str) -> Option<(SessionMode, SessionGuards)> {
         let inner = self.inner.lock().expect("session store mutex poisoned");
         inner
@@ -651,6 +669,11 @@ impl SessionStore {
             exit_code: None,
             failure_kind: None,
             error_kind: None,
+            warning_kind: None,
+            session_project: None,
+            request_project: None,
+            allow_cross_project_session_required: None,
+            allow_cross_project_session: None,
             error_message_summary: None,
             changed_paths,
             job_id: None,
@@ -685,6 +708,24 @@ impl SessionStore {
         let error_kind = error_kind
             .or_else(|| error.and_then(|_| output.get("failure_kind").and_then(Value::as_str)))
             .or_else(|| error.map(|_| "runtime_error"));
+        let warning_kind = output
+            .get("warning_kind")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let session_project = output
+            .get("session_project")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let request_project = output
+            .get("request_project")
+            .and_then(Value::as_str)
+            .map(str::to_string);
+        let allow_cross_project_session_required = output
+            .get("allow_cross_project_session_required")
+            .and_then(Value::as_bool);
+        let allow_cross_project_session = output
+            .get("allow_cross_project_session")
+            .and_then(Value::as_bool);
         let error_message_summary =
             error.map(|message| bound_event_error_summary(message, start.shell_like));
         let validation_output_summary =
@@ -711,6 +752,11 @@ impl SessionStore {
             exit_code: output.get("exit_code").and_then(Value::as_i64),
             failure_kind,
             error_kind: error.map(|_| error_kind.unwrap_or("runtime_error").to_string()),
+            warning_kind,
+            session_project,
+            request_project,
+            allow_cross_project_session_required,
+            allow_cross_project_session,
             error_message_summary,
             changed_paths: start.changed_paths,
             job_id: extract_job_id(output),
@@ -1165,6 +1211,15 @@ fn sanitize_persisted_event(mut event: SessionEvent, session_id: &str) -> Option
         .map(|value| bound_summary_string(value.trim()));
     event.error_kind = event
         .error_kind
+        .map(|value| bound_summary_string(value.trim()));
+    event.warning_kind = event
+        .warning_kind
+        .map(|value| bound_summary_string(value.trim()));
+    event.session_project = event
+        .session_project
+        .map(|value| bound_summary_string(value.trim()));
+    event.request_project = event
+        .request_project
         .map(|value| bound_summary_string(value.trim()));
     event.error_message_summary = event
         .error_message_summary

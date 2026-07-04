@@ -4,8 +4,32 @@ use super::super::types::*;
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;
+use crate::tool_runtime::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use serde_json::json;
 use std::fs;
+use std::path::Path;
+
+async fn runtime_with_two_agent_projects(
+    root_a: &Path,
+    root_b: &Path,
+) -> (ToolRuntime, String, String) {
+    let runtime = test_runtime();
+    let alpha = register_agent_project_at_path(&runtime, "alpha-client", "alpha", root_a).await;
+    let bravo = register_agent_project_at_path(&runtime, "bravo-client", "bravo", root_b).await;
+    (runtime, alpha, bravo)
+}
+
+fn latest_finished_event<'a>(
+    summary: &'a sessions::SessionSummary,
+    tool_name: &str,
+) -> &'a sessions::SessionEvent {
+    summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == tool_name)
+        .unwrap_or_else(|| panic!("missing finished event for {tool_name}"))
+}
 
 #[tokio::test]
 async fn unknown_session_id_fails_before_execution_or_mutation() {
@@ -47,6 +71,337 @@ async fn unknown_session_id_fails_before_execution_or_mutation() {
     assert!(!write.success);
     assert_eq!(write.output["error_kind"], "unknown_session_id");
     assert!(!root.join("should-not-exist.txt").exists());
+}
+
+#[tokio::test]
+async fn same_project_session_records_without_project_mismatch_warning() {
+    let tmp_a = tempfile::tempdir().unwrap();
+    let tmp_b = tempfile::tempdir().unwrap();
+    fs::write(tmp_a.path().join("README.md"), "alpha\n").unwrap();
+    fs::write(tmp_b.path().join("README.md"), "bravo\n").unwrap();
+    let (runtime, alpha, _bravo) =
+        runtime_with_two_agent_projects(tmp_a.path(), tmp_b.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(alpha.clone()), Some("same".to_string()));
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let alpha = alpha.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project: alpha,
+                        path: "README.md".to_string(),
+                        session_id: Some(session_id),
+                        start_line: None,
+                        limit: None,
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "alpha-client")
+        .await
+        .expect("read_file should enqueue an agent request");
+    complete_patch_agent_request(&runtime, "alpha-client", &req.request_id, 0, "alpha\n", "").await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert!(result.output.get("warning_kind").is_none());
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let event = latest_finished_event(&summary, "read_file");
+    assert!(event.warning_kind.is_none());
+}
+
+#[tokio::test]
+async fn read_only_cross_project_session_succeeds_with_structured_warning() {
+    let tmp_a = tempfile::tempdir().unwrap();
+    let tmp_b = tempfile::tempdir().unwrap();
+    fs::write(tmp_a.path().join("README.md"), "alpha\n").unwrap();
+    fs::write(tmp_b.path().join("README.md"), "bravo\n").unwrap();
+    let (runtime, alpha, bravo) = runtime_with_two_agent_projects(tmp_a.path(), tmp_b.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(alpha.clone()), Some("read mismatch".to_string()));
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let bravo = bravo.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project: bravo,
+                        path: "README.md".to_string(),
+                        session_id: Some(session_id),
+                        start_line: None,
+                        limit: None,
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "bravo-client")
+        .await
+        .expect("read_file should enqueue an agent request");
+    complete_patch_agent_request(&runtime, "bravo-client", &req.request_id, 0, "bravo\n", "").await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["warning_kind"], "session_project_mismatch");
+    assert_eq!(result.output["session_project"], alpha);
+    assert_eq!(result.output["request_project"], bravo);
+    assert_eq!(result.output["allow_cross_project_session_required"], true);
+    assert_eq!(result.output["allow_cross_project_session"], false);
+    let warning = result.output["warnings"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    assert_eq!(warning["warning_kind"], "session_project_mismatch");
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let event = latest_finished_event(&summary, "read_file");
+    assert_eq!(
+        event.warning_kind.as_deref(),
+        Some("session_project_mismatch")
+    );
+    assert_eq!(event.session_project.as_deref(), Some(alpha.as_str()));
+    assert_eq!(event.request_project.as_deref(), Some(bravo.as_str()));
+}
+
+#[tokio::test]
+async fn mutation_cross_project_session_fails_before_write() {
+    let tmp_a = tempfile::tempdir().unwrap();
+    let tmp_b = tempfile::tempdir().unwrap();
+    let (runtime, alpha, bravo) = runtime_with_two_agent_projects(tmp_a.path(), tmp_b.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(alpha.clone()), Some("write mismatch".to_string()));
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::WriteProjectFile {
+                project: bravo.clone(),
+                path: "blocked.txt".to_string(),
+                content: "nope\n".to_string(),
+                session_id: Some(session.session_id.clone()),
+                overwrite: None,
+                expected_sha256: None,
+                expected_content_prefix: None,
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["failure_kind"], "session_project_mismatch");
+    assert_eq!(result.output["session_project"], alpha);
+    assert_eq!(result.output["request_project"], bravo);
+    assert_eq!(result.output["allow_cross_project_session_required"], true);
+    assert!(!tmp_b.path().join("blocked.txt").exists());
+
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let event = latest_finished_event(&summary, "write_project_file");
+    assert_eq!(
+        event.failure_kind.as_deref(),
+        Some("session_project_mismatch")
+    );
+    assert_eq!(
+        event.error_kind.as_deref(),
+        Some("session_project_mismatch")
+    );
+}
+
+#[tokio::test]
+async fn allow_cross_project_session_allows_mutation_and_records_warning() {
+    let tmp_a = tempfile::tempdir().unwrap();
+    let tmp_b = tempfile::tempdir().unwrap();
+    let (runtime, alpha, bravo) = runtime_with_two_agent_projects(tmp_a.path(), tmp_b.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(alpha.clone()), Some("allow mismatch".to_string()));
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let bravo = bravo.clone();
+        let session_id = session.session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth_transport_options(
+                    ToolCall::WriteProjectFile {
+                        project: bravo,
+                        path: "allowed.txt".to_string(),
+                        content: "allowed\n".to_string(),
+                        session_id: Some(session_id),
+                        overwrite: None,
+                        expected_sha256: None,
+                        expected_content_prefix: None,
+                    },
+                    Some(&auth),
+                    sessions::SessionTransport::Api,
+                    true,
+                    true,
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "bravo-client")
+        .await
+        .expect("write_project_file should enqueue a native file-op request");
+    assert_eq!(req.kind, "file_write_project_file");
+    let payload: serde_json::Value =
+        serde_json::from_str(req.content.as_deref().expect("file-op payload")).unwrap();
+    assert_eq!(payload["path"], "allowed.txt");
+    assert_eq!(payload["content"], "allowed\n");
+    complete_patch_agent_request(
+        &runtime,
+        "bravo-client",
+        &req.request_id,
+        0,
+        r#"{"path":"allowed.txt","bytes_written":8,"sha256":"abc","changed":true}"#,
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["warning_kind"], "session_project_mismatch");
+    assert_eq!(result.output["allow_cross_project_session"], true);
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let event = latest_finished_event(&summary, "write_project_file");
+    assert_eq!(
+        event.warning_kind.as_deref(),
+        Some("session_project_mismatch")
+    );
+    assert_eq!(event.allow_cross_project_session, Some(true));
+}
+
+#[tokio::test]
+async fn recording_session_id_obeys_project_boundary() {
+    let tmp_a = tempfile::tempdir().unwrap();
+    let tmp_b = tempfile::tempdir().unwrap();
+    let (runtime, alpha, bravo) = runtime_with_two_agent_projects(tmp_a.path(), tmp_b.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(alpha.clone()), Some("record mismatch".to_string()));
+
+    let outcome = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "write_project_file".to_string(),
+                arguments: json!({
+                    "project": bravo.clone(),
+                    "path": "recording-blocked.txt",
+                    "content": "nope\n"
+                }),
+            },
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: Some(&session.session_id),
+                auth: Some(&auth),
+                record_oauth_scope_denials: true,
+            },
+        )
+        .await;
+
+    assert!(!outcome.success);
+    let result = outcome.result.unwrap();
+    assert_eq!(result.output["failure_kind"], "session_project_mismatch");
+    assert!(!tmp_b.path().join("recording-blocked.txt").exists());
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let event = latest_finished_event(&summary, "write_project_file");
+    assert_eq!(
+        event.failure_kind.as_deref(),
+        Some("session_project_mismatch")
+    );
+    assert_eq!(event.request_project.as_deref(), Some(bravo.as_str()));
+}
+
+#[tokio::test]
+async fn current_session_binding_cannot_cross_project_boundary() {
+    let tmp_a = tempfile::tempdir().unwrap();
+    let tmp_b = tempfile::tempdir().unwrap();
+    fs::write(tmp_b.path().join("README.md"), "bravo\n").unwrap();
+    let (runtime, alpha, bravo) = runtime_with_two_agent_projects(tmp_a.path(), tmp_b.path()).await;
+    let auth = auth_context(None, true);
+    let session = runtime
+        .sessions
+        .start_session(Some(alpha.clone()), Some("current mismatch".to_string()));
+
+    let bind = runtime
+        .dispatch_with_auth(
+            ToolCall::from_tool_name(
+                "bind_current_session",
+                json!({"project": bravo.clone(), "session_id": session.session_id}),
+            )
+            .unwrap(),
+            Some(&auth),
+        )
+        .await;
+    assert!(!bind.success);
+    assert_eq!(bind.output["failure_kind"], "session_project_mismatch");
+    assert_eq!(bind.output["session_project"], alpha);
+    assert_eq!(bind.output["request_project"], bravo);
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let bravo = bravo.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::ReadFile {
+                        project: bravo,
+                        path: "README.md".to_string(),
+                        session_id: None,
+                        start_line: None,
+                        limit: None,
+                        with_line_numbers: None,
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_patch_agent_request(&runtime, "bravo-client")
+        .await
+        .expect("read_file should enqueue an agent request");
+    complete_patch_agent_request(&runtime, "bravo-client", &req.request_id, 0, "bravo\n", "").await;
+    let read = task.await.unwrap();
+    assert!(read.success, "{:?}", read.error);
+    assert!(read.output.get("session_recorded").is_none());
 }
 
 #[tokio::test]
@@ -671,12 +1026,26 @@ fn project_tool_schemas_include_optional_session_id() {
             "{name} schema missing session_id"
         );
         assert!(
+            spec.input_schema["properties"]
+                .get("allow_cross_project_session")
+                .is_some(),
+            "{name} schema missing allow_cross_project_session"
+        );
+        assert!(
             !spec.input_schema["required"]
                 .as_array()
                 .unwrap()
                 .iter()
                 .any(|field| field == "session_id"),
             "{name} schema must not require session_id"
+        );
+        assert!(
+            !spec.input_schema["required"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|field| field == "allow_cross_project_session"),
+            "{name} schema must not require allow_cross_project_session"
         );
     }
     for name in ["read_file", "run_shell", "write_project_file"] {

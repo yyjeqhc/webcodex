@@ -157,7 +157,10 @@ calling `callRuntimeTool`.
 1. Call `callRuntimeTool` with `start_coding_task`, `project`, and a short
    `title`; keep the returned explicit `session_id`. It accepts flattened
    `include_tool_manifest`, `include_runtime_status`, `include_git`,
-   `include_recent_commits`, `include_rules`, and `bind_current`.
+   `include_recent_commits`, `include_rules`, `bind_current`,
+   `tool_manifest_categories`, and `tool_manifest_limit`. For startup, prefer
+   bounded manifest categories such as `workflow`, `session`, `git`, `edit`,
+   `artifact`, and `cleanup` instead of sending all tools into context.
 2. Inspect with `readProjectFile`, `searchProjectText`, and `callRuntimeTool`
    with `show_changes`.
 3. For scoped source edits with known line numbers, call `replace_line_range`,
@@ -220,8 +223,10 @@ calls as current. `start_coding_task` is the preferred coding-task entry point;
 it creates a session, returns an explicit `session_id`, gathers deterministic
 startup context, includes a compact `tool_manifest` by default, and defaults
 `bind_current=false`. Set flattened `include_tool_manifest=false` to omit that
-manifest. `finish_coding_task` requires an explicit `session_id`; it does not
-fall back to current-session binding.
+manifest, or pass flattened `tool_manifest_categories` and
+`tool_manifest_limit` to bound compact entries while keeping
+`accepted_flattened_args`. `finish_coding_task` requires an explicit
+`session_id`; it does not fall back to current-session binding.
 
 Start a session through the generic Action:
 

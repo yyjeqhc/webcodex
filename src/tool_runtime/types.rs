@@ -168,6 +168,10 @@ pub enum ToolCall {
         #[serde(default)]
         include_tool_manifest: Option<bool>,
         #[serde(default)]
+        tool_manifest_categories: Option<Vec<String>>,
+        #[serde(default)]
+        tool_manifest_limit: Option<usize>,
+        #[serde(default)]
         bind_current: bool,
     },
 
@@ -1878,6 +1882,8 @@ impl ToolCall {
                 include_recent_commits,
                 include_rules,
                 include_tool_manifest,
+                tool_manifest_categories,
+                tool_manifest_limit,
                 bind_current,
             } => serde_json::json!({
                 "project": project,
@@ -1890,6 +1896,8 @@ impl ToolCall {
                 "include_recent_commits": include_recent_commits,
                 "include_rules": include_rules,
                 "include_tool_manifest": include_tool_manifest,
+                "tool_manifest_categories": tool_manifest_categories,
+                "tool_manifest_limit": tool_manifest_limit,
                 "bind_current": bind_current,
             }),
             Self::FinishCodingTask {

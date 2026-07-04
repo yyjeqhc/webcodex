@@ -165,7 +165,10 @@ modify a workspace. `start_session` creates a session record but does not
 automatically bind future calls. `start_coding_task` defaults
 `bind_current=false` and includes a compact `tool_manifest` unless
 `include_tool_manifest=false`; subsequent MCP calls should pass the returned
-explicit `session_id`. When session persistence is configured, session records,
+explicit `session_id`. To keep startup context bounded, pass
+`tool_manifest_categories` such as `workflow`, `session`, `git`, `edit`,
+`artifact`, and `cleanup`, plus `tool_manifest_limit` when useful. When session
+persistence is configured, session records,
 events, and messages may be persisted and restored through the `sessions.json`
 ledger.
 The ledger is for task continuity and handoff metadata, not a complete audit

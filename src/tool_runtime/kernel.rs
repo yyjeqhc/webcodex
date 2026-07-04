@@ -1,8 +1,8 @@
 use super::sessions::SessionTransport;
 use super::types::{is_checkpoint_kind, is_checkpoint_validation_status};
 use super::{
-    run_codex_disabled_result, session_guard_denied_result, unknown_session_result, ToolCall,
-    ToolResult, ToolRuntime,
+    run_codex_disabled_result, session_context, session_guard_denied_result,
+    unknown_session_result, ToolCall, ToolResult, ToolRuntime,
 };
 use crate::auth::scopes::OAuthToolScopePolicy;
 use crate::auth::AuthContext;
@@ -98,11 +98,65 @@ impl ToolRuntime {
         request: ToolCallRequest,
         context: ToolCallContext<'_>,
     ) -> ToolCallOutcome {
+        let allow_cross_project_session =
+            extract_bool_arg(&request.arguments, "allow_cross_project_session");
         if let Some(session_id) = context.session_id {
             if !self.sessions.contains_session(session_id) {
                 return ToolCallOutcome {
                     success: false,
                     result: Some(unknown_session_result(session_id)),
+                    error_status: None,
+                    project: None,
+                };
+            }
+        }
+        let recording_session_project_mismatch = match context.session_id {
+            Some(session_id) => {
+                self.recording_session_project_mismatch(
+                    session_id,
+                    &request.tool_name,
+                    &request.arguments,
+                    context.auth,
+                )
+                .await
+            }
+            None => None,
+        };
+        if let (Some(session_id), Some(mismatch)) = (
+            context.session_id,
+            recording_session_project_mismatch.as_ref(),
+        ) {
+            if !allow_cross_project_session
+                && session_context::session_project_mismatch_requires_escape(&request.tool_name)
+            {
+                let session_event = self.sessions.record_tool_call_started_with_options(
+                    Some(session_id),
+                    context.transport.into(),
+                    &request.tool_name,
+                    &guard_denial_log_arguments(&request.tool_name, &request.arguments),
+                    Some(mismatch.request_project.clone()),
+                );
+                let mut result = session_context::session_project_mismatch_result(
+                    session_id,
+                    &request.tool_name,
+                    mismatch,
+                );
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_event,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some(session_context::SESSION_PROJECT_MISMATCH_KIND),
+                );
+                super::add_session_telemetry_hint(
+                    &mut result,
+                    &self.sessions,
+                    session_id,
+                    event_id,
+                );
+                return ToolCallOutcome {
+                    success: false,
+                    result: Some(result),
                     error_status: None,
                     project: None,
                 };
@@ -244,8 +298,16 @@ impl ToolRuntime {
                 context.auth,
                 context.transport.into(),
                 context.session_id.is_none(),
+                allow_cross_project_session,
             )
             .await;
+        if let Some(mismatch) = recording_session_project_mismatch.as_ref() {
+            session_context::add_session_project_mismatch_warning(
+                &mut result,
+                mismatch,
+                allow_cross_project_session,
+            );
+        }
         let outer_event_id = self.sessions.record_tool_call_finished(
             session_event,
             result.success,
@@ -274,6 +336,41 @@ impl ToolRuntime {
             project,
         }
     }
+
+    async fn recording_session_project_mismatch(
+        &self,
+        session_id: &str,
+        _tool_name: &str,
+        arguments: &Value,
+        auth: Option<&AuthContext>,
+    ) -> Option<session_context::SessionProjectMismatch> {
+        let session_project = self.sessions.session_project(session_id)??;
+        let request_project = arguments
+            .as_object()
+            .and_then(|obj| obj.get("project"))
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|project| !project.is_empty())?;
+        let resolved = self
+            .resolve_project_input_for_auth(request_project, auth)
+            .await
+            .ok()?;
+        if session_project == resolved.resolved_id {
+            return None;
+        }
+        Some(session_context::SessionProjectMismatch {
+            session_project,
+            request_project: resolved.resolved_id,
+        })
+    }
+}
+
+fn extract_bool_arg(arguments: &Value, key: &str) -> bool {
+    arguments
+        .as_object()
+        .and_then(|obj| obj.get(key))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn guard_denial_log_arguments(tool_name: &str, arguments: &Value) -> Value {

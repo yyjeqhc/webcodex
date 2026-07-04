@@ -1017,6 +1017,8 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
         "include_recent_commits",
         "include_rules",
         "include_tool_manifest",
+        "tool_manifest_categories",
+        "tool_manifest_limit",
         "session_id",
         "recording_session_id",
     ] {
@@ -1031,7 +1033,13 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
     ] {
         assert!(accepted("session_handoff_summary").contains(&field.to_string()));
     }
-    for field in ["project", "path", "allow_missing", "session_id"] {
+    for field in [
+        "project",
+        "path",
+        "allow_missing",
+        "session_id",
+        "allow_cross_project_session",
+    ] {
         assert!(accepted("read_project_artifact_metadata").contains(&field.to_string()));
     }
     for (tool, fields) in [

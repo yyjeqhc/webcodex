@@ -47,14 +47,16 @@ pub(crate) use crate::config::CodexConfig;
 use helpers::normalize_local_status;
 #[allow(unused_imports)]
 pub(crate) use project_resolution::{ProjectResolverError, ProjectResolverErrorKind};
+use session_context::{
+    add_session_project_mismatch_warning, current_session_key, current_session_unavailable_result,
+    is_current_session_eligible, session_message_error_result,
+    session_project_mismatch_requires_escape, session_project_mismatch_result,
+    SessionProjectMismatch,
+};
 #[allow(unused_imports)]
 pub(crate) use session_context::{
     add_session_telemetry_hint, current_session_principal, session_guard_denied_result,
     unknown_session_result,
-};
-use session_context::{
-    current_session_key, current_session_unavailable_result, is_current_session_eligible,
-    session_message_error_result,
 };
 #[allow(unused_imports)]
 pub(crate) use types::AgentCapability;
@@ -106,7 +108,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
     ) -> ToolResult {
-        self.dispatch_with_auth_transport_options(call, auth, transport, true)
+        self.dispatch_with_auth_transport_options(call, auth, transport, true, false)
             .await
     }
 
@@ -116,6 +118,7 @@ impl ToolRuntime {
         auth: Option<&AuthContext>,
         transport: sessions::SessionTransport,
         use_current_session: bool,
+        allow_cross_project_session: bool,
     ) -> ToolResult {
         let mut resolved_project = match call.project() {
             Some(project) => self
@@ -141,6 +144,48 @@ impl ToolRuntime {
         if let Some(session_id) = session_id.as_deref() {
             if !self.sessions.contains_session(session_id) {
                 return unknown_session_result(session_id);
+            }
+        }
+        let session_project_mismatch = session_id.as_deref().and_then(|session_id| {
+            match (
+                self.sessions.session_project(session_id),
+                resolved_project.as_ref(),
+            ) {
+                (Some(Some(session_project)), Some(resolved))
+                    if session_project != resolved.resolved_id =>
+                {
+                    Some(SessionProjectMismatch {
+                        session_project,
+                        request_project: resolved.resolved_id.clone(),
+                    })
+                }
+                _ => None,
+            }
+        });
+        if let (Some(session_id), Some(mismatch)) =
+            (session_id.as_deref(), session_project_mismatch.as_ref())
+        {
+            if !allow_cross_project_session
+                && session_project_mismatch_requires_escape(call.tool_name())
+            {
+                let session_start = self.sessions.record_tool_call_started_with_options(
+                    Some(session_id),
+                    transport,
+                    call.tool_name(),
+                    &call.session_log_arguments(),
+                    Some(mismatch.request_project.clone()),
+                );
+                let mut result =
+                    session_project_mismatch_result(session_id, call.tool_name(), mismatch);
+                let event_id = self.sessions.record_tool_call_finished(
+                    session_start,
+                    false,
+                    &result.output,
+                    result.error.as_deref(),
+                    Some(session_context::SESSION_PROJECT_MISMATCH_KIND),
+                );
+                add_session_telemetry_hint(&mut result, &self.sessions, session_id, event_id);
+                return result;
             }
         }
         if matches!(&call, ToolCall::RunCodex { .. }) {
@@ -211,6 +256,13 @@ impl ToolRuntime {
         }
         let mut result = self.dispatch_authorized_inner(call, auth, transport).await;
         if let Some(session_id) = session_id.as_deref() {
+            if let Some(mismatch) = session_project_mismatch.as_ref() {
+                add_session_project_mismatch_warning(
+                    &mut result,
+                    mismatch,
+                    allow_cross_project_session,
+                );
+            }
             let event_id = self.sessions.record_tool_call_finished(
                 session_start.flatten(),
                 result.success,
@@ -309,6 +361,8 @@ impl ToolRuntime {
                 include_recent_commits,
                 include_rules,
                 include_tool_manifest,
+                tool_manifest_categories,
+                tool_manifest_limit,
                 bind_current,
             } => {
                 self.start_coding_task(
@@ -322,6 +376,8 @@ impl ToolRuntime {
                     include_recent_commits,
                     include_rules,
                     include_tool_manifest,
+                    tool_manifest_categories,
+                    tool_manifest_limit,
                     bind_current,
                     auth,
                     transport,
@@ -475,10 +531,14 @@ impl ToolRuntime {
                         "session_project_mismatch",
                         json!({
                             "error_kind": "session_project_mismatch",
+                            "failure_kind": "session_project_mismatch",
                             "session_id": session_id,
                             "session_project": summary.project,
                             "project": project,
-                            "resolved_project": resolved.resolved_id,
+                            "resolved_project": resolved.resolved_id.clone(),
+                            "request_project": resolved.resolved_id,
+                            "allow_cross_project_session_required": true,
+                            "allow_cross_project_session": false,
                         }),
                     );
                 }
@@ -1530,14 +1590,44 @@ impl ToolRuntime {
         self.tool_manifest_payload(None, true, true)
     }
 
+    pub(crate) fn compact_tool_manifest_payload_bounded(
+        &self,
+        categories: Option<Vec<String>>,
+        limit: Option<usize>,
+    ) -> Value {
+        if categories.is_none() && limit.is_none() {
+            return self.compact_tool_manifest_payload();
+        }
+        self.tool_manifest_payload_for_categories(categories, limit, true, true)
+    }
+
     fn tool_manifest_payload(
         &self,
         category: Option<String>,
         include_recommended_flows: bool,
         include_risk_summary: bool,
     ) -> Value {
+        self.tool_manifest_payload_for_categories(
+            category.map(|category| vec![category]),
+            None,
+            include_recommended_flows,
+            include_risk_summary,
+        )
+    }
+
+    fn tool_manifest_payload_for_categories(
+        &self,
+        categories: Option<Vec<String>>,
+        limit: Option<usize>,
+        include_recommended_flows: bool,
+        include_risk_summary: bool,
+    ) -> Value {
         let specs = self.tool_specs();
         let tool_count = specs.len();
+        let categories_requested = normalize_tool_manifest_categories(categories);
+        let category = categories_requested
+            .as_ref()
+            .and_then(|categories| (categories.len() == 1).then(|| categories[0].clone()));
 
         // Build compact tool entries from metadata — no input/output schemas,
         // no long descriptions.
@@ -1567,25 +1657,39 @@ impl ToolRuntime {
         // always see valid categories even when filtering.
         let categories = build_manifest_categories(&all_tools);
 
-        // Apply the optional category filter.
-        let filtered_tools: Vec<Value> = match &category {
-            Some(cat) => all_tools
+        // Apply the optional category filter and startup limit.
+        let filtered_tools: Vec<Value> = match &categories_requested {
+            Some(requested) => all_tools
                 .iter()
-                .filter(|t| t["category"].as_str() == Some(cat.as_str()))
+                .filter(|t| {
+                    t["category"].as_str().is_some_and(|category| {
+                        requested.iter().any(|requested| requested == category)
+                    })
+                })
                 .cloned()
                 .collect(),
             None => all_tools,
         };
         let filtered_count = filtered_tools.len();
+        let limit = limit.map(|limit| limit.clamp(1, 100));
+        let truncated = limit.is_some_and(|limit| filtered_count > limit);
+        let tools: Vec<Value> = match limit {
+            Some(limit) => filtered_tools.into_iter().take(limit).collect(),
+            None => filtered_tools,
+        };
 
         let mut output = json!({
             "schema_version": 1,
             "tool_count": tool_count,
-            "count": filtered_count,
+            "count": tools.len(),
             "filtered_count": filtered_count,
             "category": category,
+            "filtered": categories_requested.is_some() || limit.is_some(),
+            "categories_requested": categories_requested,
+            "limit": limit,
+            "truncated": truncated,
             "categories": categories,
-            "tools": filtered_tools,
+            "tools": tools,
         });
 
         if include_risk_summary {
@@ -1622,6 +1726,18 @@ fn list_tools_filtered_indexes(specs: &[ToolSpec], options: &ListToolsOptions) -
         .collect()
 }
 
+fn normalize_tool_manifest_categories(categories: Option<Vec<String>>) -> Option<Vec<String>> {
+    let mut out = Vec::new();
+    for category in categories.unwrap_or_default() {
+        let category = category.trim();
+        if category.is_empty() || out.iter().any(|existing| existing == category) {
+            continue;
+        }
+        out.push(category.to_string());
+    }
+    (!out.is_empty()).then_some(out)
+}
+
 fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value> {
     specs
         .iter()
@@ -1653,6 +1769,8 @@ fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
         "include_recent_commits",
         "include_rules",
         "include_tool_manifest",
+        "tool_manifest_categories",
+        "tool_manifest_limit",
         "include_diff",
         "include_hygiene",
         "include_handoff",
@@ -1666,6 +1784,7 @@ fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
         "limit",
         "allow_missing",
         "upload_id",
+        "allow_cross_project_session",
         "offset",
         "content_base64",
         "expected_bytes",

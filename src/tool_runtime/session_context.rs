@@ -1,7 +1,15 @@
 use super::sessions;
-use super::{ToolCall, ToolResult};
+use super::{metadata, ToolCall, ToolResult};
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
+
+pub(crate) const SESSION_PROJECT_MISMATCH_KIND: &str = "session_project_mismatch";
+
+#[derive(Debug, Clone)]
+pub(crate) struct SessionProjectMismatch {
+    pub(crate) session_project: String,
+    pub(crate) request_project: String,
+}
 
 pub(crate) fn unknown_session_result(session_id: &str) -> ToolResult {
     ToolResult::err_with_output(
@@ -11,6 +19,93 @@ pub(crate) fn unknown_session_result(session_id: &str) -> ToolResult {
             "session_id": session_id,
         }),
     )
+}
+
+pub(crate) fn session_project_mismatch_result(
+    session_id: &str,
+    tool_name: &str,
+    mismatch: &SessionProjectMismatch,
+) -> ToolResult {
+    ToolResult::err_with_output(
+        format!(
+            "session_project_mismatch: session {} is scoped to project {} but {} requested project {}",
+            session_id, mismatch.session_project, tool_name, mismatch.request_project
+        ),
+        json!({
+            "error_kind": SESSION_PROJECT_MISMATCH_KIND,
+            "failure_kind": SESSION_PROJECT_MISMATCH_KIND,
+            "session_id": session_id,
+            "tool_name": tool_name,
+            "session_project": mismatch.session_project,
+            "request_project": mismatch.request_project,
+            "allow_cross_project_session_required": true,
+            "allow_cross_project_session": false,
+            "command_started": false,
+        }),
+    )
+}
+
+pub(crate) fn session_project_mismatch_warning(
+    mismatch: &SessionProjectMismatch,
+    allow_cross_project_session: bool,
+) -> Value {
+    json!({
+        "kind": SESSION_PROJECT_MISMATCH_KIND,
+        "warning_kind": SESSION_PROJECT_MISMATCH_KIND,
+        "session_project": mismatch.session_project,
+        "request_project": mismatch.request_project,
+        "allow_cross_project_session_required": true,
+        "allow_cross_project_session": allow_cross_project_session,
+    })
+}
+
+pub(crate) fn add_session_project_mismatch_warning(
+    result: &mut ToolResult,
+    mismatch: &SessionProjectMismatch,
+    allow_cross_project_session: bool,
+) {
+    let warning = session_project_mismatch_warning(mismatch, allow_cross_project_session);
+    let mut output = match std::mem::take(&mut result.output) {
+        Value::Object(map) => map,
+        other => {
+            let mut map = serde_json::Map::new();
+            map.insert("value".to_string(), other);
+            map
+        }
+    };
+
+    output.insert(
+        "warning_kind".to_string(),
+        Value::String(SESSION_PROJECT_MISMATCH_KIND.to_string()),
+    );
+    output.insert(
+        "session_project".to_string(),
+        Value::String(mismatch.session_project.clone()),
+    );
+    output.insert(
+        "request_project".to_string(),
+        Value::String(mismatch.request_project.clone()),
+    );
+    output.insert(
+        "allow_cross_project_session_required".to_string(),
+        Value::Bool(true),
+    );
+    output.insert(
+        "allow_cross_project_session".to_string(),
+        Value::Bool(allow_cross_project_session),
+    );
+    match output.get_mut("warnings") {
+        Some(Value::Array(warnings)) => warnings.push(warning),
+        _ => {
+            output.insert("warnings".to_string(), Value::Array(vec![warning]));
+        }
+    }
+    result.output = Value::Object(output);
+}
+
+pub(crate) fn session_project_mismatch_requires_escape(tool_name: &str) -> bool {
+    let metadata = metadata::tool_metadata(tool_name);
+    !metadata.read_only || metadata.destructive || metadata.shell_like
 }
 
 pub(crate) fn session_guard_denied_result(

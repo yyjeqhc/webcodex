@@ -453,6 +453,8 @@ async fn finish_coding_task_validation_available_when_ledger_has_validation_even
                 include_recent_commits: Some(false),
                 include_rules: Some(false),
                 include_tool_manifest: Some(false),
+                tool_manifest_categories: None,
+                tool_manifest_limit: None,
                 bind_current: false,
             },
             Some(&auth),

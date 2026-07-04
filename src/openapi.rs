@@ -970,6 +970,10 @@ fn schemas() -> Value {
                     "type": "string",
                     "description": "Optional recorder metadata for the generic wrapper call. Pass an explicit wc_sess_* id from start_session to record this call in the session ledger and enforce that recorder session's guards. This field is stripped before concrete tool dispatch. Use top-level session_id for ordinary tool input such as session_summary.session_id or post_session_message.session_id."
                 },
+                "allow_cross_project_session": {
+                    "type": "boolean",
+                    "description": "Advanced/debug escape hatch for callRuntimeTool. When true, allow recording a project tool call into a session whose associated project differs from the request project; session_project_mismatch warning metadata is still returned. Used only when `params` and `arguments` are absent, or inside params/arguments for non-Action clients."
+                },
                 "session_id": {
                     "type": "string",
                     "description": "Flattened tool-specific argument. For session_summary and message-board tools this is the required business session id to read or update in the session ledger; for project tools it is the explicit tool session that wins over current-session binding. Use recording_session_id to record the wrapper call itself."
@@ -1145,6 +1149,15 @@ fn schemas() -> Value {
                 "include_tool_manifest": {
                     "type": "boolean",
                     "description": "Flattened start_coding_task flag. Defaults to true and returns compact tool_manifest output without full schemas. Used only when `params` and `arguments` are absent."
+                },
+                "tool_manifest_categories": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "Flattened start_coding_task compact manifest category filter. When include_tool_manifest=true, prefer a bounded set such as workflow, session, git, edit, artifact, and cleanup instead of all tools. Used only when `params` and `arguments` are absent."
+                },
+                "tool_manifest_limit": {
+                    "type": "integer",
+                    "description": "Flattened start_coding_task compact manifest entry limit; clamped by the runtime to 1..100. Used only when `params` and `arguments` are absent."
                 },
                 "bind_current": {
                     "type": "boolean",
@@ -2988,6 +3001,7 @@ mod tests {
             "title",
             "session_id",
             "recording_session_id",
+            "allow_cross_project_session",
             "mode",
             "deny_write_tools",
             "deny_shell_tools",
@@ -2996,6 +3010,8 @@ mod tests {
             "include_recent_commits",
             "include_rules",
             "include_tool_manifest",
+            "tool_manifest_categories",
+            "tool_manifest_limit",
             "bind_current",
             "path",
             "start_line",
@@ -3044,6 +3060,7 @@ mod tests {
 
         assert!(properties.contains_key("params"));
         assert!(properties.contains_key("arguments"));
+        assert_eq!(properties["allow_cross_project_session"]["type"], "boolean");
         let required = tool_call["required"].as_array().unwrap();
         assert_eq!(required, &vec![json!("tool")]);
         assert_eq!(tool_call["additionalProperties"], false);
@@ -3066,6 +3083,8 @@ mod tests {
             "include_workspace",
             "include_checkpoints",
             "include_tool_manifest",
+            "tool_manifest_categories",
+            "tool_manifest_limit",
             "include_recommended_flows",
             "include_risk_summary",
         ] {
@@ -3079,6 +3098,8 @@ mod tests {
         assert_eq!(properties["include_workspace"]["type"], "boolean");
         assert_eq!(properties["include_checkpoints"]["type"], "boolean");
         assert_eq!(properties["include_tool_manifest"]["type"], "boolean");
+        assert_eq!(properties["tool_manifest_categories"]["type"], "array");
+        assert_eq!(properties["tool_manifest_limit"]["type"], "integer");
         assert_eq!(properties["include_recommended_flows"]["type"], "boolean");
         assert_eq!(properties["include_risk_summary"]["type"], "boolean");
         assert_eq!(

@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 
 mod common;
+mod discovery;
 
 use super::super::tool_inputs::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
 use super::super::tool_spec::ToolSpec;
@@ -8,58 +9,10 @@ use common::{
     object_schema, with_optional_session_id, OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION,
     PATCH_FIELD_DESCRIPTION,
 };
-
-pub(super) fn list_tools_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "category": {
-                "type": "string",
-                "description": "Optional tool_manifest category filter such as artifact, edit, session, git, or runtime."
-            },
-            "features": {
-                "type": "string",
-                "description": "Optional loose feature filter such as artifact_upload, upload, read, edit, session, git, or validation."
-            },
-            "summary_only": {
-                "type": "boolean",
-                "description": "When true, omit full input/output schemas and return compact tool summaries."
-            },
-            "limit": {
-                "type": "integer",
-                "description": "Maximum returned tools for focused discovery; capped at 100."
-            }
-        },
-        "required": [],
-        "additionalProperties": false,
-    })
-}
-
-pub(super) fn tool_manifest_input_schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "category": {
-                "type": "string",
-                "description": "Optional category filter (e.g. session, edit, git, checkpoint, runtime, job, validation)."
-            },
-            "include_recommended_flows": {
-                "type": "boolean",
-                "description": "Include recommended_flows in the output (default true)."
-            },
-            "include_risk_summary": {
-                "type": "boolean",
-                "description": "Include risk_summary in the output (default true)."
-            }
-        },
-        "required": [],
-        "additionalProperties": false,
-    })
-}
-
-pub(super) fn empty_input_schema() -> Value {
-    object_schema(vec![])
-}
+pub(crate) use discovery::accepted_flattened_args_for_spec;
+pub(super) use discovery::{
+    empty_input_schema, list_tools_input_schema, tool_manifest_input_schema,
+};
 
 pub(super) fn register_project_input_schema() -> Value {
     object_schema(vec![
@@ -1593,63 +1546,4 @@ pub(super) fn with_common_testing_metadata(mut spec: ToolSpec) -> ToolSpec {
         })
     });
     spec
-}
-
-pub(crate) fn accepted_flattened_args_for_spec(spec: &ToolSpec) -> Vec<String> {
-    const PREFERRED_ORDER: &[&str] = &[
-        "project",
-        "path",
-        "title",
-        "session_id",
-        "bind_current",
-        "include_runtime_status",
-        "include_git",
-        "include_recent_commits",
-        "include_rules",
-        "include_tool_manifest",
-        "tool_manifest_categories",
-        "tool_manifest_limit",
-        "include_diff",
-        "include_hygiene",
-        "include_handoff",
-        "include_validation_summary",
-        "include_validation",
-        "include_workspace",
-        "include_checkpoints",
-        "category",
-        "features",
-        "summary_only",
-        "limit",
-        "allow_missing",
-        "upload_id",
-        "allow_cross_project_session",
-        "offset",
-        "content_base64",
-        "expected_bytes",
-        "expected_sha256",
-        "mime_type",
-        "overwrite",
-    ];
-
-    let Some(properties) = spec.input_schema["properties"].as_object() else {
-        return vec!["recording_session_id".to_string()];
-    };
-    let mut names = Vec::new();
-    for field in PREFERRED_ORDER {
-        if properties.contains_key(*field) {
-            names.push((*field).to_string());
-        }
-    }
-    let mut remaining: Vec<&str> = properties
-        .keys()
-        .map(String::as_str)
-        .filter(|field| !PREFERRED_ORDER.contains(field))
-        .collect();
-    remaining.sort_unstable();
-    names.extend(remaining.into_iter().map(str::to_string));
-    if spec.name == "start_coding_task" && !names.iter().any(|field| field == "session_id") {
-        names.push("session_id".to_string());
-    }
-    names.push("recording_session_id".to_string());
-    names
 }

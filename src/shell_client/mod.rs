@@ -40,7 +40,7 @@ pub use handlers::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
 };
 pub(crate) use job_updates::ShellJobStartMetadata;
-pub(crate) use jobs::command_preview;
+pub(crate) use jobs::{command_preview, COMMAND_PREVIEW_MAX_CHARS};
 use state::ShellClientRegistryInner;
 use validation::sha256_hex;
 #[cfg(test)]

@@ -334,7 +334,7 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "stop_job".to_string(),
-                description: "Stop a bounded runtime job started through WebCodex. Requires confirm=true, obeys project/session ownership boundaries, and never exposes stdout/stderr bodies.".to_string(),
+                description: "Stop a bounded runtime job started through WebCodex. Requires confirm=true, obeys project/session ownership, never exposes stdout/stderr, and returns stop_effect/terminal lifecycle fields.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
                     ("project", "string", "Configured project id that must match the job project.", true),
                     ("job_id", "string", "Runtime job id returned by run_job.", true),
@@ -389,13 +389,13 @@ impl ToolRuntime {
             },
             ToolSpec {
                 name: "job_status".to_string(),
-                description: "Get status for a runtime job.".to_string(),
+                description: "Get bounded lifecycle status for a runtime job. Omits command_preview by default and never returns stdout/stderr bodies.".to_string(),
                 input_schema: object_schema(vec![
                     ("job_id", "string", "Job id.", true),
                     (
                         "include_command_preview",
                         "boolean",
-                        "Optional debug flag. Defaults to false; when true, agent-backed jobs include command_preview. stdout/stderr bodies are never included.",
+                        "Optional debug flag. Defaults to false; when true, includes bounded command_preview metadata. stdout/stderr bodies are never included.",
                         false,
                     ),
                 ]),

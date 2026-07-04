@@ -104,6 +104,9 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     assert!(handoff.success, "{:?}", handoff.error);
     assert_eq!(handoff.output["permissions"]["required_count"], 1);
     assert_eq!(handoff.output["permissions"]["auto_approved_count"], 1);
+    assert_eq!(handoff.output["permissions"]["manual_approved_count"], 0);
+    assert_eq!(handoff.output["permissions"]["approved_count"], 0);
+    assert_eq!(handoff.output["permissions"]["total_approved_count"], 1);
     assert_eq!(
         handoff.output["permissions"]["recent"][0]["tool_name"],
         "write_project_file"
@@ -147,6 +150,9 @@ async fn write_project_file_with_session_id_records_changed_path_without_content
     assert!(finish.success, "{:?}", finish.error);
     assert_eq!(finish.output["permissions"]["required_count"], 1);
     assert_eq!(finish.output["permissions"]["auto_approved_count"], 1);
+    assert_eq!(finish.output["permissions"]["manual_approved_count"], 0);
+    assert_eq!(finish.output["permissions"]["approved_count"], 0);
+    assert_eq!(finish.output["permissions"]["total_approved_count"], 1);
 }
 
 #[tokio::test]

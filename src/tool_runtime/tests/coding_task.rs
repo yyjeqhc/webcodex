@@ -497,6 +497,9 @@ async fn finish_coding_task_requires_explicit_session_and_returns_structured_fie
     assert_eq!(result.output["permissions"]["policy"], "dev_auto_approve");
     assert_eq!(result.output["permissions"]["required_count"], 0);
     assert_eq!(result.output["permissions"]["auto_approved_count"], 0);
+    assert_eq!(result.output["permissions"]["manual_approved_count"], 0);
+    assert_eq!(result.output["permissions"]["approved_count"], 0);
+    assert_eq!(result.output["permissions"]["total_approved_count"], 0);
     assert!(result.output["permissions"]["recent"]
         .as_array()
         .unwrap()
@@ -622,6 +625,11 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
 
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["jobs"]["active_count"], 1);
+    assert_eq!(result.output["jobs"]["running_count"], 1);
+    assert_eq!(result.output["jobs"]["stop_requested_count"], 0);
+    assert_eq!(result.output["jobs"]["terminal_pending_count"], 0);
+    assert_eq!(result.output["jobs"]["blocking_active_count"], 1);
+    assert_eq!(result.output["jobs"]["nonblocking_active_count"], 0);
     assert_eq!(
         result.output["jobs"]["recent"][0]["job_id"],
         run.output["job_id"]
@@ -630,10 +638,152 @@ async fn finish_coding_task_includes_active_jobs_warning_without_logs() {
         .as_array()
         .unwrap()
         .iter()
-        .any(|warning| warning["kind"] == "active_jobs_present"));
+        .any(|warning| warning["kind"] == "active_jobs_present" && warning["blocking"] == true));
     assert_no_raw_validation_output_fields(&result.output["jobs"], "finish jobs summary");
     let serialized = serde_json::to_string(&result.output["jobs"]).unwrap();
     assert!(!serialized.contains("secret-job-output"));
+}
+
+#[tokio::test]
+async fn finish_coding_task_treats_stop_requested_jobs_as_nonblocking() {
+    let tmp = tempfile::tempdir().unwrap();
+    init_git_repo(tmp.path());
+    commit_file(tmp.path(), "README.md", "hello\n", "add readme");
+    let runtime = test_runtime();
+    let mut caps = ShellClientCapabilities::default();
+    caps.shell = true;
+    caps.git = true;
+    caps.async_shell_jobs = true;
+    let project_path = tmp.path().to_string_lossy().to_string();
+    let auth = open_auth_context();
+    register_agent_projects_for_auth(
+        &runtime,
+        "coding-finish-stop-pending",
+        &auth,
+        caps,
+        vec![registered_project("demo", &project_path)],
+    )
+    .await;
+    let project = "agent:coding-finish-stop-pending:demo".to_string();
+    let start = runtime
+        .dispatch_with_auth(
+            ToolCall::StartCodingTask {
+                project: project.clone(),
+                title: Some("finish stop pending".to_string()),
+                mode: SessionMode::Normal,
+                deny_write_tools: false,
+                deny_shell_tools: false,
+                include_runtime_status: Some(false),
+                include_git: Some(false),
+                include_recent_commits: Some(false),
+                include_rules: Some(false),
+                include_tool_manifest: Some(false),
+                tool_manifest_categories: None,
+                tool_manifest_limit: None,
+                bind_current: false,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(start.success, "{:?}", start.error);
+    let session_id = start.output["session"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let run = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: project.clone(),
+                command: "printf stop-pending-secret-output".to_string(),
+                session_id: Some(session_id.clone()),
+                timeout_secs: None,
+                cwd: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(run.success, "{:?}", run.error);
+    let job_id = run.output["job_id"].as_str().unwrap().to_string();
+    let start_job = next_agent_request_for_client(&runtime, "coding-finish-stop-pending")
+        .await
+        .expect("run_job should enqueue a job request");
+    assert_eq!(start_job.kind, "start_job");
+
+    let stop = runtime
+        .dispatch_with_auth(
+            ToolCall::StopJob {
+                project: project.clone(),
+                job_id: job_id.clone(),
+                session_id: Some(session_id.clone()),
+                confirm: true,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(stop.success, "{:?}", stop.error);
+    assert_eq!(stop.output["status_after"], "stop_requested");
+    let stop_req = next_agent_request_for_client(&runtime, "coding-finish-stop-pending")
+        .await
+        .expect("stop_job should enqueue a stop request");
+    assert_eq!(stop_req.kind, "stop_job");
+
+    let task = tokio::spawn({
+        let runtime = runtime.clone();
+        let project = project.clone();
+        let session_id = session_id.clone();
+        let auth = auth.clone();
+        async move {
+            runtime
+                .dispatch_with_auth(
+                    ToolCall::FinishCodingTask {
+                        project,
+                        session_id,
+                        include_diff: Some(false),
+                        include_hygiene: Some(false),
+                        include_handoff: Some(false),
+                        include_validation_summary: Some(false),
+                    },
+                    Some(&auth),
+                )
+                .await
+        }
+    });
+    let req = next_agent_request_for_client(&runtime, "coding-finish-stop-pending")
+        .await
+        .expect("finish_coding_task should inspect changes through the agent");
+    assert!(req.command.contains("git status --porcelain=v1 -b"));
+    let show_changes_stdout = "## main\n@@WEBCODEX_SHOW_CHANGES_SEP@@\nabc123\0abc123\0add readme\n@@WEBCODEX_SHOW_CHANGES_SEP@@\n";
+    complete_patch_agent_request_for_instance(
+        &runtime,
+        "coding-finish-stop-pending",
+        "inst-coding-finish-stop-pending",
+        &req.request_id,
+        0,
+        show_changes_stdout,
+        "",
+    )
+    .await;
+    let result = task.await.unwrap();
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["jobs"]["active_count"], 1);
+    assert_eq!(result.output["jobs"]["running_count"], 0);
+    assert_eq!(result.output["jobs"]["stop_requested_count"], 1);
+    assert_eq!(result.output["jobs"]["terminal_pending_count"], 1);
+    assert_eq!(result.output["jobs"]["blocking_active_count"], 0);
+    assert_eq!(result.output["jobs"]["nonblocking_active_count"], 1);
+    assert_eq!(result.output["jobs"]["recent"][0]["job_id"], job_id);
+    let final_warnings = result.output["final_warnings"].as_array().unwrap();
+    assert!(final_warnings
+        .iter()
+        .all(|warning| warning["kind"] != "active_jobs_present"));
+    assert!(final_warnings.iter().any(|warning| {
+        warning["kind"] == "jobs_terminal_pending" && warning["blocking"] == false
+    }));
+    assert_no_raw_validation_output_fields(&result.output["jobs"], "finish jobs summary");
+    let serialized = serde_json::to_string(&result.output["jobs"]).unwrap();
+    assert!(!serialized.contains("stop-pending-secret-output"));
 }
 
 fn contains_string(values: &[Value], needle: &str) -> bool {

@@ -263,12 +263,17 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
         .await;
     assert!(active.success, "{:?}", active.error);
     assert_eq!(active.output["jobs"]["active_count"], 1);
+    assert_eq!(active.output["jobs"]["running_count"], 1);
+    assert_eq!(active.output["jobs"]["stop_requested_count"], 0);
+    assert_eq!(active.output["jobs"]["terminal_pending_count"], 0);
+    assert_eq!(active.output["jobs"]["blocking_active_count"], 1);
+    assert_eq!(active.output["jobs"]["nonblocking_active_count"], 0);
     assert_eq!(active.output["jobs"]["recent"][0]["job_id"], job_id);
     assert!(active.output["warnings"]
         .as_array()
         .unwrap()
         .iter()
-        .any(|warning| warning["kind"] == "active_jobs_present"));
+        .any(|warning| warning["kind"] == "active_jobs_present" && warning["blocking"] == true));
     assert_no_raw_validation_output_fields(&active.output["jobs"], "handoff jobs summary");
     let serialized = serde_json::to_string(&active.output["jobs"]).unwrap();
     assert!(!serialized.contains("handoff-secret-output"));
@@ -301,11 +306,99 @@ async fn session_handoff_summary_includes_active_jobs_and_clears_after_stop() {
         .await;
     assert!(stopped.success, "{:?}", stopped.error);
     assert_eq!(stopped.output["jobs"]["active_count"], 0);
+    assert_eq!(stopped.output["jobs"]["blocking_active_count"], 0);
+    assert_eq!(stopped.output["jobs"]["stop_requested_count"], 0);
     assert!(stopped.output["warnings"]
         .as_array()
         .unwrap()
         .iter()
         .all(|warning| warning["kind"] != "active_jobs_present"));
+}
+
+#[tokio::test]
+async fn session_handoff_summary_treats_stop_requested_as_nonblocking() {
+    let runtime = test_runtime();
+    let mut caps = ShellClientCapabilities::default();
+    caps.async_shell_jobs = true;
+    let auth = open_auth_context();
+    register_agent_projects_for_auth(
+        &runtime,
+        "handoff-stop-pending",
+        &auth,
+        caps,
+        vec![registered_project("demo", "/tmp/handoff-stop-pending-demo")],
+    )
+    .await;
+    let project = "agent:handoff-stop-pending:demo".to_string();
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("handoff stop pending".to_string()),
+    );
+    let sid = session.session_id.clone();
+    let run = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: project.clone(),
+                command: "printf handoff-stop-pending-secret".to_string(),
+                session_id: Some(sid.clone()),
+                timeout_secs: None,
+                cwd: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(run.success, "{:?}", run.error);
+    let job_id = run.output["job_id"].as_str().unwrap().to_string();
+    let start_req = next_agent_request_for_client(&runtime, "handoff-stop-pending")
+        .await
+        .expect("agent should receive start_job");
+    assert_eq!(start_req.kind, "start_job");
+
+    let stop = runtime
+        .dispatch_with_auth(
+            ToolCall::StopJob {
+                project: project.clone(),
+                job_id: job_id.clone(),
+                session_id: Some(sid.clone()),
+                confirm: true,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(stop.success, "{:?}", stop.error);
+    assert_eq!(stop.output["status_after"], "stop_requested");
+
+    let summary = runtime
+        .dispatch_with_auth(
+            ToolCall::SessionHandoffSummary {
+                session_id: sid,
+                project: Some(project),
+                include_workspace: Some(false),
+                include_checkpoints: Some(false),
+                include_validation: Some(false),
+                limit: Some(20),
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(summary.success, "{:?}", summary.error);
+    assert_eq!(summary.output["jobs"]["active_count"], 1);
+    assert_eq!(summary.output["jobs"]["running_count"], 0);
+    assert_eq!(summary.output["jobs"]["stop_requested_count"], 1);
+    assert_eq!(summary.output["jobs"]["terminal_pending_count"], 1);
+    assert_eq!(summary.output["jobs"]["blocking_active_count"], 0);
+    assert_eq!(summary.output["jobs"]["nonblocking_active_count"], 1);
+    assert_eq!(summary.output["jobs"]["recent"][0]["job_id"], job_id);
+    let warnings = summary.output["warnings"].as_array().unwrap();
+    assert!(warnings
+        .iter()
+        .all(|warning| warning["kind"] != "active_jobs_present"));
+    assert!(warnings.iter().any(|warning| {
+        warning["kind"] == "jobs_terminal_pending" && warning["blocking"] == false
+    }));
+    assert_no_raw_validation_output_fields(&summary.output["jobs"], "handoff jobs summary");
+    let serialized = serde_json::to_string(&summary.output["jobs"]).unwrap();
+    assert!(!serialized.contains("handoff-stop-pending-secret"));
 }
 
 // =========================================================================
@@ -362,6 +455,9 @@ async fn session_handoff_summary_read_only_session_allowed() {
     assert_eq!(result.output["mode"], "read_only");
     assert_eq!(result.output["permissions"]["required_count"], 0);
     assert_eq!(result.output["permissions"]["auto_approved_count"], 0);
+    assert_eq!(result.output["permissions"]["manual_approved_count"], 0);
+    assert_eq!(result.output["permissions"]["approved_count"], 0);
+    assert_eq!(result.output["permissions"]["total_approved_count"], 0);
     assert!(result.output["permissions"]["recent"]
         .as_array()
         .unwrap()

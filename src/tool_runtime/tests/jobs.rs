@@ -111,6 +111,9 @@ async fn run_shell_session_events_record_exit_without_stdio_bodies() {
     );
     assert_eq!(permission_summary["required_count"], 2);
     assert_eq!(permission_summary["auto_approved_count"], 2);
+    assert_eq!(permission_summary["manual_approved_count"], 0);
+    assert_eq!(permission_summary["approved_count"], 0);
+    assert_eq!(permission_summary["total_approved_count"], 2);
     let failed = summary
         .events
         .iter()
@@ -162,6 +165,12 @@ fn normalize_local_status_maps_known_and_unknown_values() {
     assert_eq!(normalize_local_status("failed"), "failed");
     assert_eq!(normalize_local_status("stopped"), "stopped");
     assert_eq!(normalize_local_status("queued"), "queued");
+    assert_eq!(normalize_local_status("started"), "started");
+    assert_eq!(normalize_local_status("stop_requested"), "stop_requested");
+    assert_eq!(normalize_local_status("lost"), "lost");
+    assert_eq!(normalize_local_status("timeout"), "timeout");
+    assert_eq!(normalize_local_status("timed_out"), "timed_out");
+    assert_eq!(normalize_local_status("cancelled"), "cancelled");
     assert_eq!(normalize_local_status("  failed  "), "failed");
     assert_eq!(normalize_local_status(""), "running");
     assert_eq!(normalize_local_status("weird-state"), "lost");
@@ -277,6 +286,52 @@ async fn recover_local_job_status_after_restart() {
     assert_eq!(debug_result.output["command_preview"], "echo test");
     // Recovered job is now cached in memory.
     assert!(runtime.local_jobs.lock().await.contains_key(job_id));
+}
+
+#[tokio::test]
+async fn job_status_reports_lifecycle_fields_and_bounded_preview_metadata() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let runtime = runtime_with_project(root, "demo");
+    let job_id = "12121212-3434-5656-7878-909090909090";
+    let now = chrono::Utc::now().timestamp();
+    write_fake_job(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        "stdout secret body\n",
+        "stderr secret body\n",
+        json!({ "started_at": now, "max_runtime_secs": 3600 }),
+    );
+
+    let result = runtime.job_status(job_id.to_string()).await;
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["status"], "running");
+    assert_eq!(result.output["active"], true);
+    assert_eq!(result.output["blocking_active"], true);
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["terminal_pending"], false);
+    assert_eq!(result.output["command_preview_included"], false);
+    assert!(result.output.get("command_preview").is_none());
+    assert!(result.output.get("stdout").is_none());
+    assert!(result.output.get("stderr").is_none());
+
+    let debug_result = runtime
+        .dispatch(ToolCall::JobStatus {
+            job_id: job_id.to_string(),
+            include_command_preview: true,
+        })
+        .await;
+    assert!(debug_result.success, "{:?}", debug_result.error);
+    assert_eq!(debug_result.output["command_preview_included"], true);
+    assert_eq!(debug_result.output["command_preview"], "echo test");
+    assert_eq!(debug_result.output["command_preview_truncated"], false);
+    assert!(debug_result.output["command_preview_max_chars"].is_number());
+    assert_eq!(debug_result.output["command_preview_bounded"], true);
+    assert!(debug_result.output.get("stdout").is_none());
+    assert!(debug_result.output.get("stderr").is_none());
 }
 
 #[tokio::test]
@@ -798,6 +853,8 @@ async fn model_facing_stop_job_requires_confirm_without_stopping_or_approving() 
     assert!(!result.success);
     assert_eq!(result.output["error_kind"], "confirmation_required");
     assert_eq!(result.output["failure_kind"], "confirmation_required");
+    assert_eq!(result.output["stop_effect"], "confirmation_required");
+    assert_eq!(result.output["stop_request_accepted"], false);
     assert_eq!(result.output["command_started"], false);
     assert!(result.output.get("permission").is_none());
     assert_eq!(read_trim(dir.join("status")).unwrap(), "running");
@@ -850,6 +907,13 @@ async fn model_facing_stop_job_stops_local_job_and_records_permission() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["stopped"], true);
     assert_eq!(result.output["already_finished"], false);
+    assert_eq!(result.output["already_stop_requested"], false);
+    assert_eq!(result.output["stop_request_accepted"], true);
+    assert_eq!(result.output["target_was_active_at_request"], true);
+    assert_eq!(result.output["terminal"], true);
+    assert_eq!(result.output["terminal_pending"], false);
+    assert_eq!(result.output["final_status"], "stopped");
+    assert_eq!(result.output["stop_effect"], "stopped");
     assert_eq!(result.output["status_before"], "running");
     assert_eq!(result.output["status_after"], "stopped");
     assert_eq!(result.output["ownership_basis"], "project_and_session");
@@ -897,6 +961,13 @@ async fn model_facing_stop_job_noops_already_finished_with_permission() {
     assert!(result.success, "{:?}", result.error);
     assert_eq!(result.output["stopped"], false);
     assert_eq!(result.output["already_finished"], true);
+    assert_eq!(result.output["already_stop_requested"], false);
+    assert_eq!(result.output["stop_request_accepted"], false);
+    assert_eq!(result.output["target_was_active_at_request"], false);
+    assert_eq!(result.output["terminal"], true);
+    assert_eq!(result.output["terminal_pending"], false);
+    assert_eq!(result.output["final_status"], "completed");
+    assert_eq!(result.output["stop_effect"], "already_finished");
     assert_eq!(result.output["status_before"], "completed");
     assert_eq!(result.output["status_after"], "completed");
     assert_eq!(result.output["permission"]["status"], "auto_approved");
@@ -1067,6 +1138,102 @@ async fn model_facing_stop_job_stops_agent_job_with_same_session() {
         .await;
     assert!(status.success, "{:?}", status.error);
     assert_eq!(status.output["status"], "stopped");
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_reports_requested_and_already_stop_requested() {
+    let runtime = test_runtime();
+    let auth = open_auth_context();
+    register_job_agent_for_auth(&runtime, "client-stop-pending", "proj-stop-pending", &auth).await;
+    let project = "agent:client-stop-pending:proj-stop-pending".to_string();
+    let session = runtime.sessions.start_session(
+        Some(project.clone()),
+        Some("agent stop pending".to_string()),
+    );
+    let run = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: project.clone(),
+                command: "echo stop-pending".to_string(),
+                session_id: Some(session.session_id.clone()),
+                timeout_secs: None,
+                cwd: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(run.success, "{:?}", run.error);
+    let job_id = run.output["job_id"].as_str().unwrap().to_string();
+    let start_req = next_agent_request_for_instance(&runtime, "client-stop-pending", "inst")
+        .await
+        .expect("agent should receive start_job");
+    assert_eq!(start_req.kind, "start_job");
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::StopJob {
+                project: project.clone(),
+                job_id: job_id.clone(),
+                session_id: Some(session.session_id.clone()),
+                confirm: true,
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stopped"], true);
+    assert_eq!(result.output["already_finished"], false);
+    assert_eq!(result.output["already_stop_requested"], false);
+    assert_eq!(result.output["status_before"], "agent_queued");
+    assert_eq!(result.output["status_after"], "stop_requested");
+    assert_eq!(result.output["stop_request_accepted"], true);
+    assert_eq!(result.output["target_was_active_at_request"], true);
+    assert_eq!(result.output["terminal"], false);
+    assert_eq!(result.output["terminal_pending"], true);
+    assert!(result.output["final_status"].is_null());
+    assert_eq!(result.output["stop_effect"], "requested");
+
+    let status = runtime
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id: job_id.clone(),
+                include_command_preview: false,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(status.success, "{:?}", status.error);
+    assert_eq!(status.output["status"], "stop_requested");
+    assert_eq!(status.output["active"], true);
+    assert_eq!(status.output["blocking_active"], false);
+    assert_eq!(status.output["terminal"], false);
+    assert_eq!(status.output["terminal_pending"], true);
+    assert_eq!(status.output["command_preview_included"], false);
+
+    let second = runtime
+        .dispatch_with_auth(
+            ToolCall::StopJob {
+                project,
+                job_id,
+                session_id: Some(session.session_id),
+                confirm: true,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(second.success, "{:?}", second.error);
+    assert_eq!(second.output["stopped"], true);
+    assert_eq!(second.output["already_finished"], false);
+    assert_eq!(second.output["already_stop_requested"], true);
+    assert_eq!(second.output["status_before"], "stop_requested");
+    assert_eq!(second.output["status_after"], "stop_requested");
+    assert_eq!(second.output["stop_request_accepted"], false);
+    assert_eq!(second.output["target_was_active_at_request"], true);
+    assert_eq!(second.output["terminal"], false);
+    assert_eq!(second.output["terminal_pending"], true);
+    assert!(second.output["final_status"].is_null());
+    assert_eq!(second.output["stop_effect"], "already_stop_requested");
 }
 
 #[tokio::test]

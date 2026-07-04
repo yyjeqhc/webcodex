@@ -1450,7 +1450,9 @@ impl ToolRuntime {
 
         // -- jobs summary -----------------------------------------------------
         // Agent-known jobs come from the registry; local jobs come from the
-        // in-memory map. Active = running/queued/agent_queued/stop_requested.
+        // in-memory map. Broad active includes running-like and
+        // stop-requested jobs; handoff/finish classify stop_requested as
+        // nonblocking terminal-pending state.
         let agent_jobs = self.shell_clients.list_jobs_for_auth(auth, None).await;
         let agent_known_count = agent_jobs.len();
         let local_job_dirs: Vec<PathBuf> = if Self::local_jobs_visible_to_auth(auth) {

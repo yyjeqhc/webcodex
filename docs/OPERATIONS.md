@@ -432,7 +432,8 @@ work, then supervise it with `job_status`, `job_tail`, or `list_jobs`. To stop a
 WebCodex-started job, call `stop_job` through `callRuntimeTool`/MCP with the
 same `project`, the returned `job_id`, the explicit `session_id` when available,
 and `confirm=true`. `stop_job` enforces job project/session ownership and never
-returns stdout/stderr.
+returns stdout/stderr. It keeps the compatibility `stopped` field, but models
+should prefer `stop_effect`, `terminal`, `terminal_pending`, and `final_status`.
 
 ### 5. Review and summarize
 
@@ -474,11 +475,16 @@ returns stdout/stderr.
 ```
 
 `finish_coding_task` and `session_handoff_summary` include a bounded `jobs`
-section. When active jobs remain, they return an `active_jobs_present` warning so
-the next step can inspect or stop those jobs before closing the loop. The jobs
-summary includes only metadata such as `job_id`, `kind`, `status`, `project`,
-and timestamps; it does not include raw stdout/stderr, tails, excerpts, or
-command text.
+section. `active_count` remains a compatibility broad active count. New fields
+split it into `blocking_active_count` and `nonblocking_active_count`, with
+`running_count`, `stop_requested_count`, and `terminal_pending_count` for model
+closeout decisions. `queued`, `running`, `started`, and `agent_queued` are
+blocking active states and produce `active_jobs_present`. `stop_requested` is
+nonblocking terminal-pending state and produces `jobs_terminal_pending` with
+`blocking=false`; it should not prompt "stop active jobs before proceeding" by
+itself. The jobs summary includes only metadata such as `job_id`, `kind`,
+`status`, `project`, and timestamps; it does not include raw stdout/stderr,
+tails, excerpts, or command text.
 
 For a read-only handoff without finish aggregation:
 
@@ -510,7 +516,9 @@ bypass auth, OAuth scopes, read-only sessions, explicit deny guards,
 cross-project session mismatch denial, path safety, sensitive path denial, or
 agent policy. The permission summaries are bounded metadata only and must not
 contain stdout/stderr, command bodies, patches, file contents, env, tokens,
-secrets, or excerpts.
+secrets, or excerpts. `approved_count` remains a compatibility manual approval
+count; use `manual_approved_count`, `auto_approved_count`, and
+`total_approved_count` for clear totals.
 
 ### Session id semantics
 

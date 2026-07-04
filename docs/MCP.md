@@ -113,7 +113,7 @@ Typical MCP tools include:
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
 - Bounded artifact transfer: `save_project_artifact`, `read_project_artifact_metadata`, `read_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`.
 - Project commands and jobs: `run_shell`, `run_job`, `stop_job`, `job_status`, `job_log`, `job_tail`.
-  `job_status` omits `command_preview` by default; pass `include_command_preview=true` only for focused debugging. It never returns stdout/stderr bodies.
+  `job_status` omits `command_preview` by default and returns `command_preview_included=false`; pass `include_command_preview=true` only for focused debugging, which adds bounded preview metadata. It never returns stdout/stderr bodies.
 - Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
 
 Codex delegation (`run_codex`) is currently hidden/disabled from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex. The legacy `/api/codex/run` endpoint is not mounted unless `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1`, and that opt-in preserves only the old endpoint shape; it does not re-enable `run_codex`.
@@ -128,8 +128,16 @@ Validate with `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
 `run_shell` and `run_job` as diagnostics/build/test fallbacks, not as the first
 source-editing path or the default validation source. Use `stop_job` only to
 stop bounded WebCodex jobs returned by `run_job`; it requires `confirm=true`,
-obeys project/session boundaries, and returns no stdout/stderr. Finish with
+obeys project/session boundaries, returns no stdout/stderr, and preserves the
+legacy `stopped` field while models should prefer `stop_effect`, `terminal`,
+and `terminal_pending`. Finish with
 `finish_coding_task`, or use `session_handoff_summary` for multi-step handoff.
+
+Job lifecycle summaries keep `active_count` for compatibility but split it into
+`blocking_active_count` and `nonblocking_active_count`. `queued`, `running`,
+`started`, and `agent_queued` are blocking active states. `stop_requested` is
+nonblocking terminal-pending state and may produce `jobs_terminal_pending`
+with `blocking=false`; it does not trigger `active_jobs_present`.
 
 Artifact transfer is a bounded project artifact transfer primitive for binary
 or external files associated with a project. It is not the source-editing path,
@@ -238,8 +246,11 @@ high-risk tools: `required=true`, policy, request id, `status=auto_approved`,
 reason, risk, tool name, and project id. Read-only tools do not create noisy
 permission events. `finish_coding_task.permissions` and
 `session_handoff_summary.permissions` return deterministic counts and a bounded
-recent list; they never include stdout/stderr, command bodies, patches, file
-contents, env, tokens, secrets, or excerpts.
+recent list. `approved_count` is retained as the manual approval compatibility
+count; use `manual_approved_count`, `auto_approved_count`, and
+`total_approved_count` for clear totals. Permission summaries never include
+stdout/stderr, command bodies, patches, file contents, env, tokens, secrets, or
+excerpts.
 
 `runtime_status.projects` separates `server_static`, `agent_registered`, and
 `effective`. A missing `projects.toml` should not be treated as an overall

@@ -3,13 +3,17 @@ use super::{now_ts, CLIENT_ONLINE_WINDOW_SECS, MAX_OUTPUT_BYTES, MAX_QUEUED_REQU
 use crate::shell_protocol::{ShellAgentJobResult, ShellAgentShellJobResult, ShellJobInfo};
 use std::collections::VecDeque;
 
+pub(crate) const COMMAND_PREVIEW_MAX_CHARS: usize = 120;
+
 pub(crate) fn command_preview(command: &str) -> String {
     let first_line = command.lines().next().unwrap_or_default().trim();
-    const MAX_PREVIEW: usize = 120;
-    if first_line.chars().count() <= MAX_PREVIEW {
+    if first_line.chars().count() <= COMMAND_PREVIEW_MAX_CHARS {
         first_line.to_string()
     } else {
-        let preview = first_line.chars().take(MAX_PREVIEW).collect::<String>();
+        let preview = first_line
+            .chars()
+            .take(COMMAND_PREVIEW_MAX_CHARS)
+            .collect::<String>();
         format!("{}…", preview)
     }
 }
@@ -134,7 +138,7 @@ pub(super) fn replace_limited(target: &mut Option<String>, value: Option<String>
 pub(super) fn is_final_job_status(status: &str) -> bool {
     matches!(
         status,
-        "completed" | "failed" | "stopped" | "timeout" | "lost"
+        "completed" | "failed" | "stopped" | "timeout" | "timed_out" | "lost" | "cancelled"
     )
 }
 

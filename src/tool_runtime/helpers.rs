@@ -258,7 +258,8 @@ pub(crate) fn is_safe_job_id(job_id: &str) -> bool {
 
 pub(crate) fn normalize_local_status(raw: &str) -> String {
     match raw.trim() {
-        "queued" | "running" | "completed" | "failed" | "stopped" => raw.trim().to_string(),
+        "queued" | "running" | "started" | "stop_requested" | "completed" | "failed"
+        | "stopped" | "lost" | "timeout" | "timed_out" | "cancelled" => raw.trim().to_string(),
         "" => "running".to_string(),
         _ => "lost".to_string(),
     }

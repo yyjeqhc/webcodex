@@ -1029,7 +1029,7 @@ fn schemas() -> Value {
                 },
                 "include_command_preview": {
                     "type": "boolean",
-                    "description": "Flattened job_status debug flag. Defaults to false; when true, agent-backed job_status includes command_preview. stdout/stderr bodies are never included. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened job_status debug flag. Defaults to false; when true, job_status includes bounded command_preview metadata. stdout/stderr bodies are never included. Used only when `params` and `arguments` are absent."
                 },
                 "include_diff_stat": {
                     "type": "boolean",

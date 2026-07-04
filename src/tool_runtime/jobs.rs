@@ -11,8 +11,47 @@ use super::types::{
 };
 use super::ToolRuntime;
 use crate::auth::AuthContext;
-use crate::shell_client::{command_preview, ShellJobStartMetadata};
+use crate::shell_client::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};
 use crate::shell_protocol::{ShellJobInfo, ShellJobOpRequest};
+
+pub(crate) fn is_blocking_active_job_status(status: &str) -> bool {
+    matches!(status, "queued" | "running" | "started" | "agent_queued")
+}
+
+pub(crate) fn is_stop_pending_job_status(status: &str) -> bool {
+    status == "stop_requested"
+}
+
+pub(crate) fn is_terminal_job_status(status: &str) -> bool {
+    matches!(
+        status,
+        "completed" | "failed" | "stopped" | "lost" | "timeout" | "timed_out" | "cancelled"
+    )
+}
+
+fn is_lifecycle_active_status(status: &str) -> bool {
+    is_blocking_active_job_status(status) || is_stop_pending_job_status(status)
+}
+
+fn add_job_lifecycle_fields(output: &mut Value, status: &str) {
+    let blocking_active = is_blocking_active_job_status(status);
+    let terminal_pending = is_stop_pending_job_status(status);
+    output["active"] = json!(blocking_active || terminal_pending);
+    output["blocking_active"] = json!(blocking_active);
+    output["terminal"] = json!(is_terminal_job_status(status));
+    output["terminal_pending"] = json!(terminal_pending);
+}
+
+fn command_preview_truncated(preview: &str) -> bool {
+    preview.chars().count() > COMMAND_PREVIEW_MAX_CHARS
+}
+
+fn add_command_preview_metadata(output: &mut Value, preview: String) {
+    output["command_preview_truncated"] = json!(command_preview_truncated(&preview));
+    output["command_preview_max_chars"] = json!(COMMAND_PREVIEW_MAX_CHARS);
+    output["command_preview_bounded"] = json!(true);
+    output["command_preview"] = Value::String(preview);
+}
 
 fn job_id_for_log(path: &Path) -> String {
     path.file_name()
@@ -119,13 +158,15 @@ pub(crate) fn local_job_status(
         "max_runtime_secs": max_runtime_secs,
         "executor": "local",
         "kind": meta.get("kind").cloned().unwrap_or_else(|| Value::String("shell".to_string())),
+        "command_preview_included": include_command_preview,
     });
+    add_job_lifecycle_fields(&mut output, &status);
     if let Some(note) = timeout_note {
         output["note"] = Value::String(note);
     }
     if include_command_preview {
         if let Some(command) = meta.get("command").and_then(Value::as_str) {
-            output["command_preview"] = Value::String(command_preview(command));
+            add_command_preview_metadata(&mut output, command_preview(command));
         }
     }
     ToolResult::ok(output)
@@ -346,6 +387,13 @@ fn confirmation_required_result(project: &str, job_id: &str) -> ToolResult {
             "job_id": job_id,
             "stopped": false,
             "already_finished": false,
+            "already_stop_requested": false,
+            "stop_request_accepted": false,
+            "target_was_active_at_request": false,
+            "terminal": false,
+            "terminal_pending": false,
+            "final_status": Value::Null,
+            "stop_effect": "confirmation_required",
             "command_started": false,
         }),
     )
@@ -361,6 +409,13 @@ fn job_not_found_result(project: &str, job_id: &str) -> ToolResult {
             "job_id": job_id,
             "stopped": false,
             "already_finished": false,
+            "already_stop_requested": false,
+            "stop_request_accepted": false,
+            "target_was_active_at_request": false,
+            "terminal": false,
+            "terminal_pending": false,
+            "final_status": Value::Null,
+            "stop_effect": "not_found",
             "command_started": false,
         }),
     )
@@ -384,6 +439,13 @@ fn job_project_mismatch_result(
             "job_id": job_id,
             "stopped": false,
             "already_finished": false,
+            "already_stop_requested": false,
+            "stop_request_accepted": false,
+            "target_was_active_at_request": false,
+            "terminal": false,
+            "terminal_pending": false,
+            "final_status": Value::Null,
+            "stop_effect": "forbidden",
             "command_started": false,
         }),
     )
@@ -409,6 +471,13 @@ fn job_stop_forbidden_result(
             "job_session_id": job_session_id,
             "stopped": false,
             "already_finished": false,
+            "already_stop_requested": false,
+            "stop_request_accepted": false,
+            "target_was_active_at_request": false,
+            "terminal": false,
+            "terminal_pending": false,
+            "final_status": Value::Null,
+            "stop_effect": "forbidden",
             "command_started": false,
         }),
     )
@@ -455,9 +524,31 @@ fn stop_job_output(
     ownership_basis: &str,
     warnings: Vec<Value>,
 ) -> Value {
+    let already_stop_requested = is_stop_pending_job_status(status_before) && !already_finished;
+    let terminal = is_terminal_job_status(status_after);
+    let terminal_pending = is_stop_pending_job_status(status_after);
+    let stop_request_accepted = !already_finished && !already_stop_requested && stopped;
+    let stop_effect = if already_finished {
+        "already_finished"
+    } else if already_stop_requested {
+        "already_stop_requested"
+    } else if terminal {
+        "stopped"
+    } else if terminal_pending || stopped {
+        "requested"
+    } else {
+        "requested"
+    };
     let mut output = json!({
         "stopped": stopped,
         "already_finished": already_finished,
+        "already_stop_requested": already_stop_requested,
+        "stop_request_accepted": stop_request_accepted,
+        "target_was_active_at_request": is_lifecycle_active_status(status_before),
+        "terminal": terminal,
+        "terminal_pending": terminal_pending,
+        "final_status": if terminal { json!(status_after) } else { Value::Null },
+        "stop_effect": stop_effect,
         "job_id": job_id,
         "project": project,
         "status_before": status_before,
@@ -695,6 +786,7 @@ impl ToolRuntime {
             Ok(job) => {
                 let mut output = json!({
                     "job_id": job.job_id,
+                    "project": job.project_id,
                     "status": job.status,
                     "exit_code": job.exit_code,
                     "started_at": job.started_at,
@@ -703,9 +795,12 @@ impl ToolRuntime {
                     "elapsed_secs": job.elapsed_secs,
                     "client_id": job.client_id,
                     "error": job.error,
+                    "command_preview_included": include_command_preview,
                 });
+                let status = output["status"].as_str().unwrap_or_default().to_string();
+                add_job_lifecycle_fields(&mut output, &status);
                 if include_command_preview {
-                    output["command_preview"] = Value::String(job.command_preview);
+                    add_command_preview_metadata(&mut output, job.command_preview);
                 }
                 ToolResult::ok(output)
             }
@@ -901,6 +996,18 @@ impl ToolRuntime {
                 Err(result) => return result,
             };
             let status_before = local_job_status_string(&record);
+            if is_stop_pending_job_status(&status_before) {
+                return ToolResult::ok(stop_job_output(
+                    &request_project,
+                    &job_id,
+                    &status_before,
+                    &status_before,
+                    true,
+                    false,
+                    ownership_basis,
+                    warnings,
+                ));
+            }
             if !ACTIVE_LOCAL_STATUSES.contains(&status_before.as_str()) {
                 return ToolResult::ok(stop_job_output(
                     &request_project,
@@ -970,6 +1077,18 @@ impl ToolRuntime {
             Err(result) => return result,
         };
         let status_before = job.status.clone();
+        if is_stop_pending_job_status(&status_before) {
+            return ToolResult::ok(stop_job_output(
+                &request_project,
+                &job_id,
+                &status_before,
+                &status_before,
+                true,
+                false,
+                ownership_basis,
+                warnings,
+            ));
+        }
         if !ACTIVE_JOB_STATUSES.contains(&status_before.as_str()) {
             return ToolResult::ok(stop_job_output(
                 &request_project,
@@ -1054,21 +1173,63 @@ impl ToolRuntime {
                 .unwrap_or(0)
                 .cmp(&a["created_at"].as_i64().unwrap_or(0))
         });
-        let active_count = active.len();
+        let running_count = active
+            .iter()
+            .filter(|summary| {
+                summary
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_blocking_active_job_status)
+            })
+            .count();
+        let stop_requested_count = active
+            .iter()
+            .filter(|summary| {
+                summary
+                    .get("status")
+                    .and_then(Value::as_str)
+                    .is_some_and(is_stop_pending_job_status)
+            })
+            .count();
+        let terminal_pending_count = stop_requested_count;
+        let blocking_active_count = running_count;
+        let nonblocking_active_count = terminal_pending_count;
+        let active_count = blocking_active_count + nonblocking_active_count;
         let recent: Vec<Value> = active.iter().take(max).map(active_job_brief).collect();
         let mut warnings = Vec::new();
-        if active_count > 0 {
+        if blocking_active_count > 0 {
             warnings.push(json!({
                 "kind": "active_jobs_present",
+                "blocking": true,
+                "active_count": active_count,
+                "blocking_active_count": blocking_active_count,
                 "message": format!(
-                    "{} active job{} still running",
-                    active_count,
-                    if active_count == 1 { "" } else { "s" }
+                    "{} blocking active job{} still running",
+                    blocking_active_count,
+                    if blocking_active_count == 1 { "" } else { "s" }
+                ),
+            }));
+        }
+        if terminal_pending_count > 0 {
+            warnings.push(json!({
+                "kind": "jobs_terminal_pending",
+                "blocking": false,
+                "stop_requested_count": stop_requested_count,
+                "terminal_pending_count": terminal_pending_count,
+                "message": format!(
+                    "{} job{} stop_requested and waiting for terminal status",
+                    terminal_pending_count,
+                    if terminal_pending_count == 1 { " is" } else { "s are" }
                 ),
             }));
         }
         json!({
             "active_count": active_count,
+            "running_count": running_count,
+            "stop_requested_count": stop_requested_count,
+            "terminal_pending_count": terminal_pending_count,
+            "blocking_active_count": blocking_active_count,
+            "nonblocking_active_count": nonblocking_active_count,
             "recent": recent,
             "recent_limit": max,
             "truncated": active_count > max,

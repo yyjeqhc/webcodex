@@ -139,11 +139,16 @@ pub(crate) fn permission_summary_from_events(events: &[SessionEvent], limit: usi
         }
     }
 
+    let manual_approved_count = approved_count;
+    let total_approved_count = manual_approved_count + auto_approved_count;
+
     json!({
         "policy": DEFAULT_PERMISSION_POLICY,
         "events_total": events_total,
         "required_count": required_count,
         "auto_approved_count": auto_approved_count,
+        "manual_approved_count": manual_approved_count,
+        "total_approved_count": total_approved_count,
         "approved_count": approved_count,
         "denied_count": denied_count,
         "pending_count": pending_count,

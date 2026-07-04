@@ -185,12 +185,20 @@ calling `callRuntimeTool`.
    `project`, the returned `job_id`, the explicit `session_id` when available,
    and `confirm=true`. `stop_job` is not a dedicated GPT Action operation; it
    obeys project/session job ownership boundaries and does not expose
-   stdout/stderr.
+   stdout/stderr. Treat `stopped` as a compatibility field; prefer
+   `stop_effect`, `terminal`, and `terminal_pending`.
 7. Review with `callRuntimeTool` using `show_changes`, `git_diff_hunks`, and
    `workspace_hygiene_check`.
 8. Finish with `callRuntimeTool` using `finish_coding_task`; for cross-client or
    multi-step handoff, call `session_handoff_summary` with the explicit
    `session_id`.
+
+`finish_coding_task` and `session_handoff_summary` keep `active_count` for
+compatibility and also return `blocking_active_count`,
+`nonblocking_active_count`, `running_count`, `stop_requested_count`, and
+`terminal_pending_count`. Only blocking active jobs produce
+`active_jobs_present`; stop-requested jobs produce nonblocking
+`jobs_terminal_pending`.
 
 For non-coding tracking, `start_session` remains available through
 `callRuntimeTool`. It creates a session record but does not automatically bind
@@ -322,8 +330,10 @@ checks pass. Under `dev_auto_approve`, those entries have
 and project id only. Read-only tools do not create permission events.
 `finish_coding_task.permissions` and `session_handoff_summary.permissions`
 summarize these events with deterministic counts and a bounded `recent` list,
-and never include stdout/stderr, environment, tokens, secrets, raw command text,
-patches, file contents, or excerpts.
+where `approved_count` is a compatibility alias for manual approvals and
+`total_approved_count` includes manual plus auto approvals. They never include
+stdout/stderr, environment, tokens, secrets, raw command text, patches, file
+contents, or excerpts.
 
 ## Validation summaries
 

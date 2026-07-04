@@ -73,7 +73,45 @@ fn permission_profile_schema(description: &str) -> Value {
 }
 
 fn permission_summary_schema(description: &str) -> Value {
-    open_object_schema(description)
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": true,
+        "properties": {
+            "policy": schema_type("string", "Effective permission policy."),
+            "events_total": schema_type("integer", "Permission-bearing ledger events counted."),
+            "required_count": schema_type("integer", "Permission decisions that required approval handling."),
+            "approved_count": schema_type("integer", "Compatibility alias for manual_approved_count."),
+            "manual_approved_count": schema_type("integer", "Manually approved decisions."),
+            "auto_approved_count": schema_type("integer", "Automatically approved decisions."),
+            "total_approved_count": schema_type("integer", "manual_approved_count plus auto_approved_count."),
+            "denied_count": schema_type("integer", "Denied or expired decisions."),
+            "pending_count": schema_type("integer", "Pending approval decisions."),
+            "hard_denied_count": schema_type("integer", "Hard-denied decisions after safety guards."),
+            "human_approval_required": schema_type("boolean", "Whether the active profile requires human approval."),
+            "recent": array_schema(open_object_schema("Bounded recent permission decision."), "Newest-first bounded permission decisions.")
+        }
+    })
+}
+
+fn job_lifecycle_summary_schema(description: &str) -> Value {
+    json!({
+        "type": "object",
+        "description": description,
+        "additionalProperties": true,
+        "properties": {
+            "active_count": schema_type("integer", "Compatibility broad active count: blocking active plus nonblocking terminal-pending jobs."),
+            "running_count": schema_type("integer", "Blocking running-like jobs: queued, running, started, or agent_queued."),
+            "stop_requested_count": schema_type("integer", "Jobs with status stop_requested."),
+            "terminal_pending_count": schema_type("integer", "Nonblocking active jobs waiting for terminal status."),
+            "blocking_active_count": schema_type("integer", "Jobs that should block finish/handoff closeout."),
+            "nonblocking_active_count": schema_type("integer", "Active but nonblocking jobs, currently stop_requested."),
+            "recent": array_schema(open_object_schema("Bounded recent job metadata; never stdout/stderr or command text."), "Bounded recent active job metadata."),
+            "recent_limit": schema_type("integer", "Maximum recent jobs returned."),
+            "truncated": schema_type("boolean", "True when more active jobs existed than recent_limit."),
+            "warnings": array_schema(open_object_schema("Job lifecycle warning; active_jobs_present has blocking=true and jobs_terminal_pending has blocking=false."), "Bounded lifecycle warnings.")
+        }
+    })
 }
 
 fn permission_decision_schema() -> Value {
@@ -291,11 +329,39 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
         "stop_job" => wrapped_output_schema(vec![
             (
                 "stopped",
-                schema_type("boolean", "True when a stop was requested or applied."),
+                schema_type("boolean", "Compatibility field; true when a stop was requested, already pending, or applied. Prefer stop_effect, terminal, and terminal_pending."),
             ),
             (
                 "already_finished",
                 schema_type("boolean", "True when the job was already terminal."),
+            ),
+            (
+                "already_stop_requested",
+                schema_type("boolean", "True when the job was already stop_requested before this call."),
+            ),
+            (
+                "stop_request_accepted",
+                schema_type("boolean", "True when this call requested or applied a stop."),
+            ),
+            (
+                "target_was_active_at_request",
+                schema_type("boolean", "True when status_before was running-like or stop_requested."),
+            ),
+            (
+                "terminal",
+                schema_type("boolean", "True when status_after is terminal."),
+            ),
+            (
+                "terminal_pending",
+                schema_type("boolean", "True when status_after is stop_requested and waiting for terminal status."),
+            ),
+            (
+                "final_status",
+                nullable_schema("string", "Terminal final status when terminal=true; null otherwise."),
+            ),
+            (
+                "stop_effect",
+                schema_type("string", "Precise stop outcome: requested, stopped, already_finished, already_stop_requested, not_found, forbidden, or confirmation_required."),
             ),
             ("job_id", schema_type("string", "Runtime job id.")),
             ("project", schema_type("string", "Project id.")),
@@ -334,11 +400,43 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 nullable_schema("string", "Job error message, when available."),
             ),
             (
+                "command_preview_included",
+                schema_type("boolean", "True only when include_command_preview=true was requested."),
+            ),
+            (
+                "active",
+                schema_type("boolean", "True for blocking active or terminal-pending jobs."),
+            ),
+            (
+                "blocking_active",
+                schema_type("boolean", "True for queued, running, started, or agent_queued jobs."),
+            ),
+            (
+                "terminal",
+                schema_type("boolean", "True when the job status is terminal."),
+            ),
+            (
+                "terminal_pending",
+                schema_type("boolean", "True when status is stop_requested."),
+            ),
+            (
                 "command_preview",
                 schema_type(
                     "string",
-                    "Command preview for agent-backed jobs only when include_command_preview=true.",
+                    "Bounded command preview only when include_command_preview=true.",
                 ),
+            ),
+            (
+                "command_preview_truncated",
+                schema_type("boolean", "True when command_preview was truncated to command_preview_max_chars."),
+            ),
+            (
+                "command_preview_max_chars",
+                schema_type("integer", "Maximum command preview character count before truncation."),
+            ),
+            (
+                "command_preview_bounded",
+                schema_type("boolean", "True when command_preview is bounded; this does not claim secret redaction."),
             ),
         ]),
         "job_log" => wrapped_output_schema(vec![
@@ -590,7 +688,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "jobs",
-                open_object_schema("Bounded active job summary: active_count, recent job metadata, warnings. Never includes stdout/stderr or command text."),
+                job_lifecycle_summary_schema("Bounded job lifecycle summary for finish. active_jobs_present is emitted only for blocking_active_count > 0; stop_requested-only jobs use nonblocking jobs_terminal_pending. Never includes stdout/stderr or command text."),
             ),
             (
                 "final_warnings",
@@ -777,7 +875,7 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "jobs",
-                open_object_schema("Bounded active job summary: active_count, recent job metadata, warnings. Never includes stdout/stderr or command text."),
+                job_lifecycle_summary_schema("Bounded job lifecycle summary for handoff. active_jobs_present is emitted only for blocking_active_count > 0; stop_requested-only jobs use nonblocking jobs_terminal_pending. Never includes stdout/stderr or command text."),
             ),
             (
                 "workspace",

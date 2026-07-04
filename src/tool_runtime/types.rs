@@ -2039,7 +2039,7 @@ pub(crate) struct LocalJobRecord {
 /// Local job statuses that are still active (not yet terminal). A stop/timeout
 /// only acts on these; terminal jobs (`completed`/`failed`/`stopped`/`lost`)
 /// are left untouched.
-pub(crate) const ACTIVE_LOCAL_STATUSES: &[&str] = &["running", "queued"];
+pub(crate) const ACTIVE_LOCAL_STATUSES: &[&str] = &["running", "queued", "started"];
 
 /// Outcome of attempting to terminate a local job's process group.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2229,8 +2229,13 @@ impl Default for RuntimeInfo {
     }
 }
 
-/// Statuses counted as "active" by the runtime_status observability summary.
-/// A job is active when it is still in flight: queued for an agent, running,
-/// or has been asked to stop but has not terminated yet.
-pub(crate) const ACTIVE_JOB_STATUSES: &[&str] =
-    &["running", "queued", "agent_queued", "stop_requested"];
+/// Statuses counted as broadly "active" by runtime observability and bounded
+/// summaries. `stop_requested` remains active for compatibility, but
+/// lifecycle summaries classify it as nonblocking terminal-pending state.
+pub(crate) const ACTIVE_JOB_STATUSES: &[&str] = &[
+    "running",
+    "queued",
+    "started",
+    "agent_queued",
+    "stop_requested",
+];

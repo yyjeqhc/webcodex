@@ -492,6 +492,13 @@ fn key_tool_output_schemas_include_expected_fields() {
     for field in [
         "stopped",
         "already_finished",
+        "already_stop_requested",
+        "stop_request_accepted",
+        "target_was_active_at_request",
+        "terminal",
+        "terminal_pending",
+        "final_status",
+        "stop_effect",
         "job_id",
         "project",
         "status_before",
@@ -512,6 +519,15 @@ fn key_tool_output_schemas_include_expected_fields() {
         "started_at",
         "ended_at",
         "error",
+        "command_preview_included",
+        "active",
+        "blocking_active",
+        "terminal",
+        "terminal_pending",
+        "command_preview",
+        "command_preview_truncated",
+        "command_preview_max_chars",
+        "command_preview_bounded",
     ] {
         assert!(
             has_output_field("job_status", field),
@@ -1186,13 +1202,15 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
 #[test]
 fn finish_coding_task_output_schema_describes_ledger_validation_summary() {
     let schema = crate::tool_runtime::registry::output_schema_for_tool("finish_coding_task");
+    let output_props = schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap();
     assert!(
-        schema["properties"]["output"]["properties"]
-            .as_object()
-            .unwrap()
-            .contains_key("permissions"),
+        output_props.contains_key("permissions"),
         "finish_coding_task output schema should include permissions"
     );
+    assert_permission_summary_schema_fields(&output_props["permissions"]);
+    assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);
     let description = schema["properties"]["output"]["properties"]["validation"]["description"]
         .as_str()
         .unwrap();
@@ -1237,6 +1255,8 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
         output_props.contains_key("permissions"),
         "session_handoff_summary output schema should include permissions"
     );
+    assert_permission_summary_schema_fields(&output_props["permissions"]);
+    assert_job_lifecycle_summary_schema_fields(&output_props["jobs"]);
     let description = output_props["validation"]["description"]
         .as_str()
         .unwrap()
@@ -1256,6 +1276,33 @@ fn session_handoff_summary_schema_exposes_ledger_validation_summary() {
             description.contains(phrase),
             "handoff validation output schema should mention {phrase}: {description}"
         );
+    }
+}
+
+fn assert_permission_summary_schema_fields(schema: &Value) {
+    let props = schema["properties"].as_object().unwrap();
+    for field in [
+        "approved_count",
+        "manual_approved_count",
+        "auto_approved_count",
+        "total_approved_count",
+    ] {
+        assert!(props.contains_key(field), "permissions missing {field}");
+    }
+}
+
+fn assert_job_lifecycle_summary_schema_fields(schema: &Value) {
+    let props = schema["properties"].as_object().unwrap();
+    for field in [
+        "active_count",
+        "running_count",
+        "stop_requested_count",
+        "terminal_pending_count",
+        "blocking_active_count",
+        "nonblocking_active_count",
+        "warnings",
+    ] {
+        assert!(props.contains_key(field), "jobs summary missing {field}");
     }
 }
 

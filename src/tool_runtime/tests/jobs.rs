@@ -577,7 +577,7 @@ async fn run_job_rejects_server_configured_project_without_local_spawn() {
     let root = tmp.path();
     let runtime = runtime_with_project(root, "demo");
     let result = runtime
-        .run_job("demo".to_string(), "true".to_string(), Some(10), None)
+        .run_job("demo".to_string(), "true".to_string(), None, Some(10), None)
         .await;
     assert!(!result.success);
     assert!(result.error.unwrap().contains("unknown_project"));
@@ -749,6 +749,337 @@ async fn stop_job_unknown_job_returns_error() {
         .await;
     assert!(!result.success);
     assert!(result.error.unwrap().contains("unknown job"));
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_requires_confirm_without_stopping_or_approving() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let session = runtime
+        .sessions
+        .start_session(Some("demo".to_string()), Some("stop confirm".to_string()));
+    let job_id = "18181818-9090-1111-2222-333333333333";
+    let now = chrono::Utc::now().timestamp();
+    let dir = write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        7777,
+        json!({
+            "started_at": now,
+            "max_runtime_secs": 3600,
+            "process_group_id": 7777,
+            "session_id": session.session_id,
+        }),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::StopJob {
+            project: "demo".to_string(),
+            job_id: job_id.to_string(),
+            session_id: Some(session.session_id.clone()),
+            confirm: false,
+        })
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "confirmation_required");
+    assert_eq!(result.output["failure_kind"], "confirmation_required");
+    assert_eq!(result.output["command_started"], false);
+    assert!(result.output.get("permission").is_none());
+    assert_eq!(read_trim(dir.join("status")).unwrap(), "running");
+    assert!(killer.calls().is_empty());
+    let summary = runtime
+        .sessions
+        .summary(&session.session_id, Some(20))
+        .unwrap();
+    let permissions = crate::tool_runtime::permissions::permission_summary_from_events(
+        &summary.events,
+        crate::tool_runtime::permissions::DEFAULT_PERMISSION_RECENT_LIMIT,
+    );
+    assert_eq!(permissions["auto_approved_count"], 0);
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_stops_local_job_and_records_permission() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let session = runtime
+        .sessions
+        .start_session(Some("demo".to_string()), Some("stop local".to_string()));
+    let job_id = "19191919-0000-1111-2222-333333333333";
+    let now = chrono::Utc::now().timestamp();
+    let dir = write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        8888,
+        json!({
+            "started_at": now,
+            "max_runtime_secs": 3600,
+            "process_group_id": 8888,
+            "session_id": session.session_id,
+        }),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::StopJob {
+            project: "demo".to_string(),
+            job_id: job_id.to_string(),
+            session_id: Some(session.session_id.clone()),
+            confirm: true,
+        })
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stopped"], true);
+    assert_eq!(result.output["already_finished"], false);
+    assert_eq!(result.output["status_before"], "running");
+    assert_eq!(result.output["status_after"], "stopped");
+    assert_eq!(result.output["ownership_basis"], "project_and_session");
+    assert_eq!(result.output["permission"]["status"], "auto_approved");
+    assert_eq!(result.output["permission"]["risk"], "job");
+    assert_eq!(result.output["permission"]["tool_name"], "stop_job");
+    assert_eq!(killer.calls(), vec![(8888, 8888)]);
+    assert_eq!(read_trim(dir.join("status")).unwrap(), "stopped");
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_noops_already_finished_with_permission() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let session = runtime
+        .sessions
+        .start_session(Some("demo".to_string()), Some("stop done".to_string()));
+    let job_id = "20202020-1111-2222-3333-444444444444";
+    let past = chrono::Utc::now().timestamp() - 100;
+    write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "completed",
+        9999,
+        json!({
+            "started_at": past,
+            "max_runtime_secs": 3600,
+            "process_group_id": 9999,
+            "session_id": session.session_id,
+        }),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::StopJob {
+            project: "demo".to_string(),
+            job_id: job_id.to_string(),
+            session_id: Some(session.session_id.clone()),
+            confirm: true,
+        })
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stopped"], false);
+    assert_eq!(result.output["already_finished"], true);
+    assert_eq!(result.output["status_before"], "completed");
+    assert_eq!(result.output["status_after"], "completed");
+    assert_eq!(result.output["permission"]["status"], "auto_approved");
+    assert_eq!(result.output["permission"]["risk"], "job");
+    assert!(killer.calls().is_empty());
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_allows_unknown_session_with_project_warning() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let job_id = "21212121-2222-3333-4444-555555555555";
+    let now = chrono::Utc::now().timestamp();
+    write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        1212,
+        json!({ "started_at": now, "max_runtime_secs": 3600, "process_group_id": 1212 }),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::StopJob {
+            project: "demo".to_string(),
+            job_id: job_id.to_string(),
+            session_id: None,
+            confirm: true,
+        })
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stopped"], true);
+    assert_eq!(
+        result.output["ownership_basis"],
+        "unknown_session_project_only"
+    );
+    assert_eq!(result.output["warning_kind"], "job_session_unknown");
+    assert_eq!(result.output["warnings"][0]["kind"], "job_session_unknown");
+    assert_eq!(killer.calls(), vec![(1212, 1212)]);
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_rejects_different_session_before_stop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let (runtime, killer) = runtime_with_fake_killer(root, "demo");
+    let owner_session = runtime
+        .sessions
+        .start_session(Some("demo".to_string()), Some("owner".to_string()));
+    let other_session = runtime
+        .sessions
+        .start_session(Some("demo".to_string()), Some("other".to_string()));
+    let job_id = "22222222-3333-4444-5555-666666666666";
+    let now = chrono::Utc::now().timestamp();
+    write_fake_job_with_pgid(
+        root,
+        job_id,
+        "demo",
+        &root.to_string_lossy(),
+        "running",
+        3434,
+        json!({
+            "started_at": now,
+            "max_runtime_secs": 3600,
+            "process_group_id": 3434,
+            "session_id": owner_session.session_id,
+        }),
+    );
+
+    let result = runtime
+        .dispatch(ToolCall::StopJob {
+            project: "demo".to_string(),
+            job_id: job_id.to_string(),
+            session_id: Some(other_session.session_id.clone()),
+            confirm: true,
+        })
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "job_stop_forbidden");
+    assert_eq!(result.output["failure_kind"], "job_stop_forbidden");
+    assert_eq!(result.output["command_started"], false);
+    assert!(result.output.get("permission").is_none());
+    assert!(killer.calls().is_empty());
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_rejects_agent_project_mismatch() {
+    let runtime = test_runtime();
+    let auth = open_auth_context();
+    register_job_agent_for_auth(&runtime, "client-alpha", "proj-alpha", &auth).await;
+    register_job_agent_for_auth(&runtime, "client-beta", "proj-beta", &auth).await;
+    let job_id = start_agent_runtime_job(&runtime, "client-alpha", "proj-alpha", &auth).await;
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::StopJob {
+                project: "agent:client-beta:proj-beta".to_string(),
+                job_id,
+                session_id: None,
+                confirm: true,
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "job_project_mismatch");
+    assert_eq!(result.output["failure_kind"], "job_project_mismatch");
+    assert_eq!(result.output["command_started"], false);
+    assert!(result.output.get("permission").is_none());
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_stops_agent_job_with_same_session() {
+    let runtime = test_runtime();
+    let auth = open_auth_context();
+    register_job_agent_for_auth(&runtime, "client-stop", "proj-stop", &auth).await;
+    let project = "agent:client-stop:proj-stop".to_string();
+    let session = runtime
+        .sessions
+        .start_session(Some(project.clone()), Some("agent stop".to_string()));
+    let run = runtime
+        .dispatch_with_auth(
+            ToolCall::RunJob {
+                project: project.clone(),
+                command: "echo queued".to_string(),
+                session_id: Some(session.session_id.clone()),
+                timeout_secs: None,
+                cwd: None,
+            },
+            Some(&auth),
+        )
+        .await;
+    assert!(run.success, "{:?}", run.error);
+    let job_id = run.output["job_id"].as_str().unwrap().to_string();
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::StopJob {
+                project,
+                job_id: job_id.clone(),
+                session_id: Some(session.session_id.clone()),
+                confirm: true,
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(result.success, "{:?}", result.error);
+    assert_eq!(result.output["stopped"], true);
+    assert_eq!(result.output["status_before"], "queued");
+    assert_eq!(result.output["status_after"], "stopped");
+    assert_eq!(result.output["ownership_basis"], "project_and_session");
+    assert_eq!(result.output["permission"]["status"], "auto_approved");
+    assert_eq!(result.output["permission"]["risk"], "job");
+    let status = runtime
+        .dispatch_with_auth(ToolCall::JobStatus { job_id }, Some(&auth))
+        .await;
+    assert!(status.success, "{:?}", status.error);
+    assert_eq!(status.output["status"], "stopped");
+}
+
+#[tokio::test]
+async fn model_facing_stop_job_session_project_mismatch_beats_auto_approve() {
+    let runtime = test_runtime();
+    let auth = open_auth_context();
+    register_job_agent_for_auth(&runtime, "client-one", "proj-one", &auth).await;
+    register_job_agent_for_auth(&runtime, "client-two", "proj-two", &auth).await;
+    let session = runtime.sessions.start_session(
+        Some("agent:client-one:proj-one".to_string()),
+        Some("mismatch".to_string()),
+    );
+
+    let result = runtime
+        .dispatch_with_auth(
+            ToolCall::StopJob {
+                project: "agent:client-two:proj-two".to_string(),
+                job_id: "wc_job_not_needed".to_string(),
+                session_id: Some(session.session_id),
+                confirm: true,
+            },
+            Some(&auth),
+        )
+        .await;
+
+    assert!(!result.success);
+    assert_eq!(result.output["error_kind"], "session_project_mismatch");
+    assert_eq!(result.output["command_started"], false);
+    assert!(result.output.get("permission").is_none());
 }
 
 #[tokio::test]

@@ -288,8 +288,37 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ("status", schema_type("string", "Initial job status.")),
             ("project", schema_type("string", "Project id.")),
         ]),
+        "stop_job" => wrapped_output_schema(vec![
+            (
+                "stopped",
+                schema_type("boolean", "True when a stop was requested or applied."),
+            ),
+            (
+                "already_finished",
+                schema_type("boolean", "True when the job was already terminal."),
+            ),
+            ("job_id", schema_type("string", "Runtime job id.")),
+            ("project", schema_type("string", "Project id.")),
+            (
+                "status_before",
+                schema_type("string", "Job status observed before stop."),
+            ),
+            (
+                "status_after",
+                schema_type("string", "Job status after stop/no-op."),
+            ),
+            (
+                "command_started",
+                schema_type("boolean", "Always false; stop_job does not start a shell command."),
+            ),
+            (
+                "ownership_basis",
+                schema_type("string", "Ownership basis: project_and_session or unknown_session_project_only."),
+            ),
+        ]),
         "job_status" => wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),
+            ("project", nullable_schema("string", "Project id, when known.")),
             ("status", schema_type("string", "Current job status.")),
             (
                 "exit_code",
@@ -297,9 +326,9 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             ),
             (
                 "started_at",
-                nullable_schema("string", "Job start timestamp."),
+                nullable_schema("integer", "Job start timestamp."),
             ),
-            ("ended_at", nullable_schema("string", "Job end timestamp.")),
+            ("ended_at", nullable_schema("integer", "Job end timestamp.")),
             (
                 "error",
                 nullable_schema("string", "Job error message, when available."),
@@ -316,16 +345,16 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 schema_type("string", "Captured stderr or selected stderr tail."),
             ),
             (
-                "offset",
-                schema_type("integer", "Requested stdout line offset."),
-            ),
-            (
-                "next_offset",
+                "next_stdout_line",
                 schema_type("integer", "Next stdout line offset."),
             ),
             (
-                "tail_lines",
-                schema_type("integer", "Requested tail line count."),
+                "next_stderr_line",
+                schema_type("integer", "Next stderr line offset."),
+            ),
+            (
+                "status",
+                schema_type("string", "Job status observed with the log."),
             ),
         ]),
         "runtime_status" => wrapped_output_schema(vec![
@@ -553,6 +582,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 nullable_schema("object", "session_handoff_summary output when requested; null otherwise."),
             ),
             (
+                "jobs",
+                open_object_schema("Bounded active job summary: active_count, recent job metadata, warnings. Never includes stdout/stderr or command text."),
+            ),
+            (
                 "final_warnings",
                 array_schema(open_object_schema("Finish warning."), "Bounded finish warnings."),
             ),
@@ -734,6 +767,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
             (
                 "permissions",
                 permission_summary_schema("Deterministic bounded permission decision summary from the session ledger. Counts high-risk auto-approved tools only; never includes stdout/stderr, env, tokens, secrets, or raw input content."),
+            ),
+            (
+                "jobs",
+                open_object_schema("Bounded active job summary: active_count, recent job metadata, warnings. Never includes stdout/stderr or command text."),
             ),
             (
                 "workspace",

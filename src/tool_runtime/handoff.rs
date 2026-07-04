@@ -20,6 +20,7 @@ use super::sessions::{SessionDiscussionCounts, SessionDiscussionSummary, Session
 use super::types::ToolResult;
 use super::validation_events::validation_summary_for_session;
 use super::ToolRuntime;
+use crate::auth::AuthContext;
 
 const DEFAULT_HANDOFF_LIMIT: usize = 20;
 const MAX_HANDOFF_LIMIT: usize = 100;
@@ -40,6 +41,7 @@ impl ToolRuntime {
         include_checkpoints: Option<bool>,
         include_validation: Option<bool>,
         limit: Option<usize>,
+        auth: Option<&AuthContext>,
     ) -> ToolResult {
         let limit = limit
             .filter(|n| *n > 0)
@@ -138,6 +140,25 @@ impl ToolRuntime {
         if let Some(mismatch) = session_project_mismatch.as_ref() {
             warnings.push(session_project_mismatch_warning(mismatch, false));
         }
+        let jobs_project = match project
+            .as_deref()
+            .map(str::trim)
+            .filter(|project| !project.is_empty())
+        {
+            Some(project) => self
+                .resolve_project_input_for_auth(project, auth)
+                .await
+                .map(|resolved| resolved.resolved_id)
+                .unwrap_or_else(|_| project.to_string()),
+            None => summary.project.clone().unwrap_or_default(),
+        };
+        let jobs_project = (!jobs_project.is_empty()).then_some(jobs_project);
+        let jobs = self
+            .active_jobs_summary(jobs_project.as_deref(), auth, 10)
+            .await;
+        if let Some(job_warnings) = jobs.get("warnings").and_then(Value::as_array) {
+            warnings.extend(job_warnings.iter().cloned());
+        }
 
         let mut output = json!({
             "session_id": summary.session_id,
@@ -156,6 +177,7 @@ impl ToolRuntime {
             "recent_progress": recent_progress,
             "recent_decisions": recent_decisions,
             "recent_failed_tools": recent_failed_tools,
+            "jobs": jobs,
             "warnings": warnings,
         });
         if let Some(mismatch) = session_project_mismatch.as_ref() {

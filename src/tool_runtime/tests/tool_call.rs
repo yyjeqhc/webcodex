@@ -210,6 +210,41 @@ fn from_tool_name_parses_job_status_and_job_log() {
 }
 
 #[test]
+fn from_tool_name_parses_stop_job_with_default_confirmation_false() {
+    let call =
+        ToolCall::from_tool_name("stop_job", json!({"project": "demo", "job_id": "abc"})).unwrap();
+    match call {
+        ToolCall::StopJob {
+            project,
+            job_id,
+            confirm,
+            session_id,
+        } => {
+            assert_eq!(project, "demo");
+            assert_eq!(job_id, "abc");
+            assert!(!confirm);
+            assert!(session_id.is_none());
+        }
+        other => panic!("expected StopJob, got {:?}", other),
+    }
+
+    let call = ToolCall::from_tool_name(
+        "stop_job",
+        json!({"project": "demo", "job_id": "abc", "session_id": "wc_sess_x", "confirm": true}),
+    )
+    .unwrap();
+    assert!(matches!(
+        call,
+        ToolCall::StopJob {
+            ref project,
+            ref job_id,
+            ref session_id,
+            confirm: true,
+        } if project == "demo" && job_id == "abc" && session_id.as_deref() == Some("wc_sess_x")
+    ));
+}
+
+#[test]
 fn from_tool_name_parses_read_file_and_git_tools() {
     let call =
         ToolCall::from_tool_name("read_file", json!({"project": "demo", "path": "README.md"}))

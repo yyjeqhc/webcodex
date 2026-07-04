@@ -716,6 +716,7 @@ mod tests {
                 OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE),
             ),
             ("run_shell", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
+            ("stop_job", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
             ("cargo_test", OAuthToolScopePolicy::Require(SCOPE_JOB_RUN)),
         ] {
             assert_eq!(oauth_scope_policy_for_runtime_tool(tool), policy, "{tool}");

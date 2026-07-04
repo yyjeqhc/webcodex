@@ -333,6 +333,22 @@ impl ToolRuntime {
                 annotations: tool_annotations("run_job"),
             },
             ToolSpec {
+                name: "stop_job".to_string(),
+                description: "Stop a bounded runtime job started through WebCodex. Requires confirm=true, obeys project/session ownership boundaries, and never exposes stdout/stderr bodies.".to_string(),
+                input_schema: object_schema(with_optional_session_id(vec![
+                    ("project", "string", "Configured project id that must match the job project.", true),
+                    ("job_id", "string", "Runtime job id returned by run_job.", true),
+                    (
+                        "confirm",
+                        "boolean",
+                        "Must be true to stop or no-op an already-finished job; false returns confirmation_required.",
+                        false,
+                    ),
+                ])),
+                output_schema: output_schema_for_tool("stop_job"),
+                annotations: tool_annotations("stop_job"),
+            },
+            ToolSpec {
                 name: "run_codex".to_string(),
                 description: "Optional Codex CLI delegation as an async project job. Requires Codex CLI installed and configured on the owning agent. Use only when the user explicitly asks to delegate to Codex; otherwise use WebCodex file/git/shell/line-edit tools directly.".to_string(),
                 input_schema: object_schema(with_optional_session_id(vec![
@@ -1006,7 +1022,7 @@ impl ToolRuntime {
             ]),
             "shell": pick(&["cargo_fmt", "cargo_check", "cargo_test", "run_shell", "run_job"]),
             "jobs": pick(&[
-                "run_job", "job_status", "job_log",
+                "run_job", "stop_job", "job_status", "job_log",
                 "list_jobs", "job_tail"
             ]),
             "runtime": pick(&[

@@ -6,10 +6,12 @@ use super::helpers::{
     read_trim, shell_escape_simple,
 };
 use super::types::{
-    LocalJobKiller, LocalJobRecord, TerminateOutcome, ToolResult, ACTIVE_LOCAL_STATUSES,
+    LocalJobKiller, LocalJobRecord, TerminateOutcome, ToolResult, ACTIVE_JOB_STATUSES,
+    ACTIVE_LOCAL_STATUSES,
 };
 use super::ToolRuntime;
 use crate::auth::AuthContext;
+use crate::shell_client::ShellJobStartMetadata;
 use crate::shell_protocol::{ShellJobInfo, ShellJobOpRequest};
 
 fn job_id_for_log(path: &Path) -> String {
@@ -314,6 +316,172 @@ pub(crate) fn stop_local_job(
     }))
 }
 
+fn local_job_status_string(record: &LocalJobRecord) -> String {
+    let raw_status = read_trim(record.dir.join("status")).unwrap_or_default();
+    normalize_local_status(&raw_status)
+}
+
+fn local_job_session_id(record: &LocalJobRecord) -> Option<String> {
+    read_json(record.dir.join("metadata.json"))
+        .get("session_id")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+}
+
+fn confirmation_required_result(project: &str, job_id: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        "confirmation_required: stop_job requires confirm=true".to_string(),
+        json!({
+            "error_kind": "confirmation_required",
+            "failure_kind": "confirmation_required",
+            "project": project,
+            "job_id": job_id,
+            "stopped": false,
+            "already_finished": false,
+            "command_started": false,
+        }),
+    )
+}
+
+fn job_not_found_result(project: &str, job_id: &str) -> ToolResult {
+    ToolResult::err_with_output(
+        format!("job_not_found: {}", job_id),
+        json!({
+            "error_kind": "job_not_found",
+            "failure_kind": "job_not_found",
+            "project": project,
+            "job_id": job_id,
+            "stopped": false,
+            "already_finished": false,
+            "command_started": false,
+        }),
+    )
+}
+
+fn job_project_mismatch_result(
+    request_project: &str,
+    job_project: &str,
+    job_id: &str,
+) -> ToolResult {
+    ToolResult::err_with_output(
+        format!(
+            "job_project_mismatch: job {} belongs to project {} but request used {}",
+            job_id, job_project, request_project
+        ),
+        json!({
+            "error_kind": "job_project_mismatch",
+            "failure_kind": "job_project_mismatch",
+            "project": request_project,
+            "job_project": job_project,
+            "job_id": job_id,
+            "stopped": false,
+            "already_finished": false,
+            "command_started": false,
+        }),
+    )
+}
+
+fn job_stop_forbidden_result(
+    request_project: &str,
+    job_id: &str,
+    request_session_id: Option<&str>,
+    job_session_id: Option<&str>,
+) -> ToolResult {
+    ToolResult::err_with_output(
+        format!(
+            "job_stop_forbidden: job {} is bound to a different session",
+            job_id
+        ),
+        json!({
+            "error_kind": "job_stop_forbidden",
+            "failure_kind": "job_stop_forbidden",
+            "project": request_project,
+            "job_id": job_id,
+            "request_session_id": request_session_id,
+            "job_session_id": job_session_id,
+            "stopped": false,
+            "already_finished": false,
+            "command_started": false,
+        }),
+    )
+}
+
+fn job_session_unknown_warning() -> Value {
+    json!({
+        "kind": "job_session_unknown",
+        "warning_kind": "job_session_unknown",
+        "message": "job has no recorded session_id; stop authorized by project boundary only",
+    })
+}
+
+fn ownership_basis_for_stop(
+    request_project: &str,
+    job_id: &str,
+    request_session_id: Option<&str>,
+    job_session_id: Option<&str>,
+) -> Result<(&'static str, Vec<Value>), ToolResult> {
+    match job_session_id {
+        Some(job_session_id) if Some(job_session_id) == request_session_id => {
+            Ok(("project_and_session", Vec::new()))
+        }
+        Some(job_session_id) => Err(job_stop_forbidden_result(
+            request_project,
+            job_id,
+            request_session_id,
+            Some(job_session_id),
+        )),
+        None => Ok((
+            "unknown_session_project_only",
+            vec![job_session_unknown_warning()],
+        )),
+    }
+}
+
+fn stop_job_output(
+    project: &str,
+    job_id: &str,
+    status_before: &str,
+    status_after: &str,
+    stopped: bool,
+    already_finished: bool,
+    ownership_basis: &str,
+    warnings: Vec<Value>,
+) -> Value {
+    let mut output = json!({
+        "stopped": stopped,
+        "already_finished": already_finished,
+        "job_id": job_id,
+        "project": project,
+        "status_before": status_before,
+        "status_after": status_after,
+        "command_started": false,
+        "ownership_basis": ownership_basis,
+    });
+    if !warnings.is_empty() {
+        output["warning_kind"] = warnings
+            .first()
+            .and_then(|warning| warning.get("warning_kind"))
+            .cloned()
+            .unwrap_or(Value::Null);
+        output["warnings"] = Value::Array(warnings);
+    }
+    output
+}
+
+fn active_job_brief(summary: &Value) -> Value {
+    json!({
+        "job_id": summary.get("job_id").cloned().unwrap_or(Value::Null),
+        "kind": summary.get("kind").cloned().unwrap_or_else(|| json!("shell")),
+        "status": summary.get("status").cloned().unwrap_or(Value::Null),
+        "project": summary.get("project").cloned().unwrap_or(Value::Null),
+        "started_at": summary.get("started_at").cloned().unwrap_or(Value::Null),
+        "created_at": summary.get("created_at").cloned().unwrap_or(Value::Null),
+        "executor": summary.get("executor").cloned().unwrap_or(Value::Null),
+    })
+}
+
 impl ToolRuntime {
     pub(crate) fn local_jobs_visible_to_auth(auth: Option<&AuthContext>) -> bool {
         !auth
@@ -325,16 +493,19 @@ impl ToolRuntime {
         &self,
         project: String,
         command: String,
+        session_id: Option<String>,
         timeout_secs: Option<i64>,
         cwd: Option<String>,
     ) -> ToolResult {
-        let proj = match self.resolve_project(&project).await {
-            Ok(p) => p,
+        let resolved = match self.resolve_project_input(&project).await {
+            Ok(resolved) => resolved,
             Err(e) => return ToolResult::err(command_rejected_message(
                 e.to_message(),
                 "verify the project id with list_projects, then retry with a registered project.",
             )),
         };
+        let project_id = resolved.resolved_id.clone();
+        let proj = resolved.config;
         let max_runtime = timeout_secs.unwrap_or(3600).clamp(1, 604800);
         if proj.is_agent() {
             let client_id = match proj.agent_client_id() {
@@ -348,7 +519,7 @@ impl ToolRuntime {
             };
             match self
                 .shell_clients
-                .start_job(
+                .start_job_with_metadata(
                     ShellJobOpRequest {
                         op: "start".to_string(),
                         client_id: Some(client_id),
@@ -363,10 +534,19 @@ impl ToolRuntime {
                         codex: None,
                     },
                     "tool_runtime".to_string(),
+                    ShellJobStartMetadata {
+                        project_id: Some(project_id.clone()),
+                        session_id: session_id.clone(),
+                    },
                 )
                 .await
             {
-                Ok(job) => ToolResult::ok(json!({ "job_id": job.job_id })),
+                Ok(job) => ToolResult::ok(json!({
+                    "job_id": job.job_id,
+                    "kind": job.kind,
+                    "status": job.status,
+                    "project": project_id,
+                })),
                 Err(e) => ToolResult::err(command_rejected_message(
                     e,
                     "confirm the agent is connected and async jobs are allowed, then retry or use run_shell for short commands.",
@@ -382,7 +562,7 @@ impl ToolRuntime {
             let now = chrono::Utc::now().timestamp();
             let mut meta = json!({
                 "job_id": job_id,
-                "project": project.clone(),
+                "project": project_id.clone(),
                 "command": command,
                 "status": "running",
                 "created_at": now,
@@ -392,6 +572,9 @@ impl ToolRuntime {
                 "path": proj.path.clone(),
                 "kind": "shell",
             });
+            if let Some(session_id) = session_id.as_ref() {
+                meta["session_id"] = json!(session_id);
+            }
             if let Err(e) = std::fs::write(
                 dir.join("metadata.json"),
                 serde_json::to_string_pretty(&meta).unwrap_or_default(),
@@ -448,11 +631,19 @@ impl ToolRuntime {
                             "failed to update local job metadata with process group"
                         );
                     }
-                    self.local_jobs
-                        .lock()
-                        .await
-                        .insert(job_id.clone(), LocalJobRecord { project, dir });
-                    ToolResult::ok(json!({ "job_id": job_id }))
+                    self.local_jobs.lock().await.insert(
+                        job_id.clone(),
+                        LocalJobRecord {
+                            project: project_id.clone(),
+                            dir,
+                        },
+                    );
+                    ToolResult::ok(json!({
+                        "job_id": job_id,
+                        "kind": "shell",
+                        "status": "running",
+                        "project": project_id,
+                    }))
                 }
                 Err(e) => ToolResult::err(format!("Failed to spawn job: {}", e)),
             }
@@ -649,6 +840,228 @@ impl ToolRuntime {
     ) -> ToolResult {
         let tail = tail_lines.unwrap_or(200).clamp(1, 500);
         self.job_log_for_auth(job_id, None, Some(tail), auth).await
+    }
+
+    /// Model-facing `stop_job`: requires confirm=true, verifies project/session
+    /// ownership, and never exposes stdout/stderr.
+    pub(crate) async fn stop_job_model_facing(
+        &self,
+        project: String,
+        job_id: String,
+        session_id: Option<String>,
+        confirm: bool,
+        auth: Option<&AuthContext>,
+    ) -> ToolResult {
+        if !confirm {
+            return confirmation_required_result(&project, &job_id);
+        }
+        if !is_safe_job_id(&job_id) {
+            return job_not_found_result(&project, &job_id);
+        }
+
+        let cached = {
+            let jobs = self.local_jobs.lock().await;
+            jobs.get(&job_id).cloned()
+        };
+        if let Some(record) = match cached {
+            Some(record) => Some(record),
+            None => self.recover_local_job(&job_id).await,
+        } {
+            if !Self::local_jobs_visible_to_auth(auth) {
+                return job_not_found_result(&project, &job_id);
+            }
+            let request_project = self
+                .resolve_project_input_for_auth(&project, auth)
+                .await
+                .map(|resolved| resolved.resolved_id)
+                .unwrap_or_else(|_| project.trim().to_string());
+            if record.project != request_project {
+                return job_project_mismatch_result(&request_project, &record.project, &job_id);
+            }
+            let job_session_id = local_job_session_id(&record);
+            let (ownership_basis, warnings) = match ownership_basis_for_stop(
+                &request_project,
+                &job_id,
+                session_id.as_deref(),
+                job_session_id.as_deref(),
+            ) {
+                Ok(value) => value,
+                Err(result) => return result,
+            };
+            let status_before = local_job_status_string(&record);
+            if !ACTIVE_LOCAL_STATUSES.contains(&status_before.as_str()) {
+                return ToolResult::ok(stop_job_output(
+                    &request_project,
+                    &job_id,
+                    &status_before,
+                    &status_before,
+                    false,
+                    true,
+                    ownership_basis,
+                    warnings,
+                ));
+            }
+            let stop_result = stop_local_job(&job_id, &record, self.job_killer.as_ref());
+            if !stop_result.success {
+                return stop_result;
+            }
+            let status_after = stop_result
+                .output
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or("stopped")
+                .to_string();
+            return ToolResult::ok(stop_job_output(
+                &request_project,
+                &job_id,
+                &status_before,
+                &status_after,
+                true,
+                false,
+                ownership_basis,
+                warnings,
+            ));
+        }
+
+        let resolved = match self.resolve_project_input_for_auth(&project, auth).await {
+            Ok(resolved) => resolved,
+            Err(err) => return err.into_tool_result(),
+        };
+        let request_project = resolved.resolved_id;
+        let job = match self.shell_clients.get_job_for_auth(auth, &job_id).await {
+            Ok(job) => job,
+            Err(_) => return job_not_found_result(&request_project, &job_id),
+        };
+        let Some(job_project) = job
+            .project_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|project| !project.is_empty())
+        else {
+            return job_stop_forbidden_result(
+                &request_project,
+                &job_id,
+                session_id.as_deref(),
+                job.session_id.as_deref(),
+            );
+        };
+        if job_project != request_project {
+            return job_project_mismatch_result(&request_project, job_project, &job_id);
+        }
+        let (ownership_basis, warnings) = match ownership_basis_for_stop(
+            &request_project,
+            &job_id,
+            session_id.as_deref(),
+            job.session_id.as_deref(),
+        ) {
+            Ok(value) => value,
+            Err(result) => return result,
+        };
+        let status_before = job.status.clone();
+        if !ACTIVE_JOB_STATUSES.contains(&status_before.as_str()) {
+            return ToolResult::ok(stop_job_output(
+                &request_project,
+                &job_id,
+                &status_before,
+                &status_before,
+                false,
+                true,
+                ownership_basis,
+                warnings,
+            ));
+        }
+        let stopped = match self
+            .shell_clients
+            .stop_job(&job_id, "tool_runtime".to_string())
+            .await
+        {
+            Ok(job) => job,
+            Err(_) => return job_not_found_result(&request_project, &job_id),
+        };
+        ToolResult::ok(stop_job_output(
+            &request_project,
+            &job_id,
+            &status_before,
+            &stopped.status,
+            true,
+            false,
+            ownership_basis,
+            warnings,
+        ))
+    }
+
+    /// Bounded active job summary for finish/handoff. Never returns stdout,
+    /// stderr, tails, command text, or command previews.
+    pub(crate) async fn active_jobs_summary(
+        &self,
+        project: Option<&str>,
+        auth: Option<&AuthContext>,
+        limit: usize,
+    ) -> Value {
+        let max = limit.clamp(1, 20);
+        let mut active = Vec::new();
+        for job in self.shell_clients.list_jobs_for_auth(auth, Some(100)).await {
+            if !ACTIVE_JOB_STATUSES.contains(&job.status.as_str()) {
+                continue;
+            }
+            if let Some(project) = project {
+                if job.project_id.as_deref() != Some(project) {
+                    continue;
+                }
+            }
+            active.push(agent_job_summary_value(&job));
+        }
+
+        if Self::local_jobs_visible_to_auth(auth) {
+            let local_records: Vec<(String, LocalJobRecord)> = {
+                let local_jobs_map = self.local_jobs.lock().await;
+                local_jobs_map
+                    .iter()
+                    .map(|(job_id, record)| (job_id.clone(), record.clone()))
+                    .collect()
+            };
+            for (job_id, record) in local_records {
+                if let Some(project) = project {
+                    if record.project != project {
+                        continue;
+                    }
+                }
+                let status = local_job_status_string(&record);
+                if !ACTIVE_JOB_STATUSES.contains(&status.as_str()) {
+                    continue;
+                }
+                if let Some(summary) = local_job_summary_value(&job_id, &record, &None) {
+                    active.push(summary);
+                }
+            }
+        }
+
+        active.sort_by(|a, b| {
+            b["created_at"]
+                .as_i64()
+                .unwrap_or(0)
+                .cmp(&a["created_at"].as_i64().unwrap_or(0))
+        });
+        let active_count = active.len();
+        let recent: Vec<Value> = active.iter().take(max).map(active_job_brief).collect();
+        let mut warnings = Vec::new();
+        if active_count > 0 {
+            warnings.push(json!({
+                "kind": "active_jobs_present",
+                "message": format!(
+                    "{} active job{} still running",
+                    active_count,
+                    if active_count == 1 { "" } else { "s" }
+                ),
+            }));
+        }
+        json!({
+            "active_count": active_count,
+            "recent": recent,
+            "recent_limit": max,
+            "truncated": active_count > max,
+            "warnings": warnings,
+        })
     }
 
     /// Stop a local job by terminating its process group and marking it

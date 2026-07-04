@@ -964,7 +964,7 @@ fn schemas() -> Value {
             "properties": {
                 "tool": {
                     "type": "string",
-                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits, replace_in_file, write_project_file. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging."
+                    "description": "Runtime tool name. Common values: list_tools, start_session, start_coding_task, finish_coding_task, session_summary, post_session_message, list_session_messages, resolve_session_message, session_discussion_summary, session_handoff_summary, bind_current_session, current_session, unbind_current_session, workspace_checkpoint_create, workspace_checkpoint_list, workspace_checkpoint_show, workspace_checkpoint_restore, workspace_checkpoint_delete, list_projects, register_project, create_project, runtime_status, tool_manifest, save_project_artifact, read_project_artifact_metadata, read_project_artifact, artifact_upload_begin, artifact_upload_chunk, artifact_upload_finish, artifact_upload_abort, read_file, git_status, git_diff, git_diff_summary, git_diff_hunks, git_log, show_changes, workspace_hygiene_check, cargo_fmt, cargo_check, cargo_test, validate_patch, apply_patch_checked, apply_patch, run_shell, run_job, stop_job, job_status, job_log, list_jobs, job_tail, replace_line_range, insert_at_line, delete_line_range, apply_text_edits, replace_in_file, write_project_file. Prefer tool_manifest for daily discovery; use listRuntimeTools for schema debugging."
                 },
                 "recording_session_id": {
                     "type": "string",
@@ -1025,7 +1025,7 @@ fn schemas() -> Value {
                 },
                 "confirm": {
                     "type": "boolean",
-                    "description": "Flattened workspace_checkpoint_restore/delete confirm flag; must be true to proceed. Used only when `params` and `arguments` are absent."
+                    "description": "Flattened confirmation flag for workspace_checkpoint_restore/delete and stop_job; must be true to proceed. Used only when `params` and `arguments` are absent."
                 },
                 "include_diff_stat": {
                     "type": "boolean",

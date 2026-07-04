@@ -76,6 +76,7 @@ impl ToolRuntime {
             | ToolCall::ToolManifest { .. }
             | ToolCall::JobStatus { .. }
             | ToolCall::JobLog { .. }
+            | ToolCall::StopJob { .. }
             | ToolCall::ListJobs { .. }
             | ToolCall::JobTail { .. } => None,
         }

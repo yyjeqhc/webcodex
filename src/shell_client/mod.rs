@@ -39,6 +39,7 @@ pub(crate) use auth::{
 pub use handlers::{
     shell_agent_job_update, shell_agent_poll, shell_agent_register, shell_agent_result,
 };
+pub(crate) use job_updates::ShellJobStartMetadata;
 use jobs::command_preview;
 use state::ShellClientRegistryInner;
 use validation::sha256_hex;

@@ -582,6 +582,16 @@ pub(crate) const TOOL_METADATA: &[ToolMetadata] = &[
         true,
     ),
     metadata(
+        "stop_job",
+        "native",
+        ToolRisk::JobRun,
+        Some(JOB_RUN),
+        true,
+        ToolPathHint::None,
+        true,
+        false,
+    ),
+    metadata(
         "run_codex",
         "agent",
         ToolRisk::JobRun,
@@ -914,6 +924,7 @@ mod tests {
         for name in [
             "run_shell",
             "run_job",
+            "stop_job",
             "run_codex",
             "cargo_fmt",
             "cargo_check",

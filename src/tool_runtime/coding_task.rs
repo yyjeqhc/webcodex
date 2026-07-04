@@ -278,6 +278,13 @@ impl ToolRuntime {
         };
         append_hygiene_warnings(&hygiene, &mut final_warnings);
 
+        let jobs = self
+            .active_jobs_summary(Some(&resolved.resolved_id), auth, 10)
+            .await;
+        if let Some(warnings) = jobs.get("warnings").and_then(Value::as_array) {
+            final_warnings.extend(warnings.iter().cloned());
+        }
+
         let handoff = if include_handoff {
             let result = self
                 .session_handoff_summary(
@@ -287,6 +294,7 @@ impl ToolRuntime {
                     Some(true),
                     Some(include_validation_summary),
                     Some(20),
+                    auth,
                 )
                 .await;
             if !result.success {
@@ -316,6 +324,7 @@ impl ToolRuntime {
             "permissions": permissions,
             "hygiene": hygiene,
             "handoff": handoff,
+            "jobs": jobs,
             "deterministic": true,
             "llm_summary": false,
             "final_warnings": final_warnings,

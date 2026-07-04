@@ -130,7 +130,7 @@ runtime calls before any mutation: `getRuntimeStatus`, `callRuntimeTool` with
 Actions; use it mainly for schema debugging. For focused discovery, call
 `listRuntimeTools` with `summary_only=true` plus `category`, `features`, or
 `limit`, or use `callRuntimeTool` with `tool_manifest`. The current runtime
-scale is roughly 65 tools; the size issue is full schema/metadata expansion,
+scale is roughly 66 tools; the size issue is full schema/metadata expansion,
 not tool system sprawl.
 
 `tool_manifest` is the recommended GPT Action discovery call for accepted
@@ -180,7 +180,12 @@ calling `callRuntimeTool`.
    `cargo_check`, or `cargo_test`, plus `validateProjectPatch` /
    `applyProjectPatchChecked` for patch workflows.
 6. Use `runProjectShellCommand` or `startProjectShellJob` only as bounded
-   diagnostics/build/test fallbacks in registered projects.
+   diagnostics/build/test fallbacks in registered projects. If an async job must
+   be stopped, call `callRuntimeTool` with `tool="stop_job"`, the same
+   `project`, the returned `job_id`, the explicit `session_id` when available,
+   and `confirm=true`. `stop_job` is not a dedicated GPT Action operation; it
+   obeys project/session job ownership boundaries and does not expose
+   stdout/stderr.
 7. Review with `callRuntimeTool` using `show_changes`, `git_diff_hunks`, and
    `workspace_hygiene_check`.
 8. Finish with `callRuntimeTool` using `finish_coding_task`; for cross-client or
@@ -234,7 +239,11 @@ startup context, includes a compact `tool_manifest` by default, and defaults
 manifest, or pass flattened `tool_manifest_categories` and
 `tool_manifest_limit` to bound compact entries while keeping
 `accepted_flattened_args`. `finish_coding_task` requires an explicit
-`session_id`; it does not fall back to current-session binding.
+`session_id`; it does not fall back to current-session binding. Both
+`finish_coding_task` and `session_handoff_summary` include a bounded `jobs`
+section with active job counts, recent metadata, and warnings. That section is
+for supervision only and never includes stdout/stderr, tails, excerpts, or
+command text.
 
 Start a session through the generic Action:
 

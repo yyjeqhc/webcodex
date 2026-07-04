@@ -16,11 +16,27 @@ use crate::shell_protocol::{
 };
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Default)]
+pub(crate) struct ShellJobStartMetadata {
+    pub(crate) project_id: Option<String>,
+    pub(crate) session_id: Option<String>,
+}
+
 impl ShellClientRegistry {
     pub async fn start_job(
         &self,
         body: ShellJobOpRequest,
         requested_by: String,
+    ) -> Result<ShellJobInfo, String> {
+        self.start_job_with_metadata(body, requested_by, ShellJobStartMetadata::default())
+            .await
+    }
+
+    pub(crate) async fn start_job_with_metadata(
+        &self,
+        body: ShellJobOpRequest,
+        requested_by: String,
+        metadata: ShellJobStartMetadata,
     ) -> Result<ShellJobInfo, String> {
         let client_id = body
             .client_id
@@ -88,7 +104,8 @@ impl ShellClientRegistry {
             request_id: Some(request_id.clone()),
             client_id: client_id.clone(),
             kind: "shell".to_string(),
-            project_id: None,
+            project_id: metadata.project_id,
+            session_id: metadata.session_id,
             cwd: run.cwd.clone(),
             command_preview: command_preview(&run.command),
             status: "queued".to_string(),

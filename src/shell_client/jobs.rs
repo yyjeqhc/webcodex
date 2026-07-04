@@ -59,6 +59,7 @@ pub(super) fn job_view(job: &ShellJobRecord) -> ShellJobInfo {
         client_id: job.client_id.clone(),
         kind: job.kind.clone(),
         project_id: job.project_id.clone(),
+        session_id: job.session_id.clone(),
         cwd: job.cwd.clone(),
         command_preview: job.command_preview.clone(),
         status: job.status.clone(),

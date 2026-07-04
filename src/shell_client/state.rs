@@ -47,6 +47,7 @@ pub(super) struct ShellJobRecord {
     pub(super) client_id: String,
     pub(super) kind: String,
     pub(super) project_id: Option<String>,
+    pub(super) session_id: Option<String>,
     pub(super) cwd: Option<String>,
     pub(super) command_preview: String,
     pub(super) status: String,

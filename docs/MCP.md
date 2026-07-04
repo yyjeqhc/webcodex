@@ -86,7 +86,7 @@ called.
 MCP `tools/list` remains the full schema-oriented discovery surface. In GPT
 Actions, full `listRuntimeTools` can be too large because schemas, metadata,
 and descriptions expand the response; this is not a sign that the roughly
-65-tool runtime surface has become unbounded. GPT Actions should prefer
+66-tool runtime surface has become unbounded. GPT Actions should prefer
 `callRuntimeTool` with `tool_manifest` for daily discovery, or pass
 `summary_only=true` with `category`, `features`, or `limit` to
 `listRuntimeTools` for focused discovery. Use full `listRuntimeTools` only when
@@ -112,7 +112,7 @@ Typical MCP tools include:
 - Preferred structured edits: `replace_line_range`, `insert_at_line`, `delete_line_range`, `apply_text_edits`.
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
 - Bounded artifact transfer: `save_project_artifact`, `read_project_artifact_metadata`, `read_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`.
-- Project commands and jobs: `run_shell`, `run_job`, `job_status`, `job_log`, `job_tail`.
+- Project commands and jobs: `run_shell`, `run_job`, `stop_job`, `job_status`, `job_log`, `job_tail`.
 - Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
 
 Codex delegation (`run_codex`) is currently hidden/disabled from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex. The legacy `/api/codex/run` endpoint is not mounted unless `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1`, and that opt-in preserves only the old endpoint shape; it does not re-enable `run_codex`.
@@ -125,7 +125,9 @@ structured line edit tools when you already know the target line range, and
 Validate with `cargo_fmt`, `cargo_check`, `cargo_test`, `validate_patch`, and
 `apply_patch_checked` before falling back to bounded command/job tools. Treat
 `run_shell` and `run_job` as diagnostics/build/test fallbacks, not as the first
-source-editing path or the default validation source. Finish with
+source-editing path or the default validation source. Use `stop_job` only to
+stop bounded WebCodex jobs returned by `run_job`; it requires `confirm=true`,
+obeys project/session boundaries, and returns no stdout/stderr. Finish with
 `finish_coding_task`, or use `session_handoff_summary` for multi-step handoff.
 
 Artifact transfer is a bounded project artifact transfer primitive for binary
@@ -218,7 +220,9 @@ For `show_changes`, distinguish two session fields:
 They can be the same id or different ids.
 
 `session_handoff_summary` requires explicit `arguments.session_id`; it does not
-implicitly use the current-session binding. Its `validation` section is
+implicitly use the current-session binding. Its `jobs` section reports bounded
+active job counts, recent metadata, and warnings without stdout/stderr, tails,
+excerpts, or command text. Its `validation` section is
 ledger-derived from validation-like tools (`cargo_fmt`, `cargo_check`,
 `cargo_test`, `validate_patch`, and `apply_patch_checked`). It does not expose
 raw stdout/stderr, excerpt fields, or `validation_output_summary`, and the

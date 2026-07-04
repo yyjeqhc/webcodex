@@ -355,6 +355,33 @@ pub(in crate::tool_runtime::tests) async fn register_agent_projects(
         .unwrap();
 }
 
+pub(in crate::tool_runtime::tests) async fn register_agent_projects_for_auth(
+    runtime: &ToolRuntime,
+    client_id: &str,
+    auth: &crate::auth::AuthContext,
+    caps: ShellClientCapabilities,
+    projects: Vec<ShellAgentProjectSummary>,
+) {
+    runtime
+        .shell_clients
+        .register_with_auth(
+            ShellClientRegisterRequest {
+                client_id: client_id.to_string(),
+                agent_instance_id: format!("inst-{}", client_id),
+                display_name: None,
+                owner: None,
+                hostname: None,
+                capabilities: Some(caps),
+                projects: Some(projects),
+                agent_protocol_version: Some("polling-v1".to_string()),
+                policy: None,
+            },
+            Some(auth),
+        )
+        .await
+        .unwrap();
+}
+
 pub(in crate::tool_runtime::tests) async fn next_agent_request_for_client(
     runtime: &ToolRuntime,
     client_id: &str,

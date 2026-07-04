@@ -427,7 +427,12 @@ whole-file writes only for new files or deliberate small overwrites.
 
 Use `run_shell` only when structured Cargo helpers, `validate_patch`, and
 `apply_patch_checked` are insufficient. `run_shell` is not classified as
-validation by default.
+validation by default. Use `run_job` for bounded async diagnostics/build/test
+work, then supervise it with `job_status`, `job_tail`, or `list_jobs`. To stop a
+WebCodex-started job, call `stop_job` through `callRuntimeTool`/MCP with the
+same `project`, the returned `job_id`, the explicit `session_id` when available,
+and `confirm=true`. `stop_job` enforces job project/session ownership and never
+returns stdout/stderr.
 
 ### 5. Review and summarize
 
@@ -467,6 +472,13 @@ validation by default.
   }
 }
 ```
+
+`finish_coding_task` and `session_handoff_summary` include a bounded `jobs`
+section. When active jobs remain, they return an `active_jobs_present` warning so
+the next step can inspect or stop those jobs before closing the loop. The jobs
+summary includes only metadata such as `job_id`, `kind`, `status`, `project`,
+and timestamps; it does not include raw stdout/stderr, tails, excerpts, or
+command text.
 
 For a read-only handoff without finish aggregation:
 
@@ -645,7 +657,8 @@ PY
 ```
 
 The current recommended GPT Action operation count is 25, and it must remain at
-or below 30.
+or below 30. Runtime/MCP tools such as `stop_job` remain available through the
+generic `callRuntimeTool` surface and do not add dedicated GPT Action operations.
 
 6. Run deployment smoke checks:
 

@@ -106,6 +106,7 @@ impl ToolRuntime {
             .run_job(
                 project,
                 command,
+                None,
                 timeout_secs.or(Some(self.codex.default_timeout_secs)),
                 cwd,
             )

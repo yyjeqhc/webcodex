@@ -528,6 +528,16 @@ pub enum ToolCall {
         cwd: Option<String>,
     },
 
+    /// Stop a bounded runtime job after explicit confirmation.
+    StopJob {
+        project: String,
+        job_id: String,
+        #[serde(default)]
+        session_id: Option<String>,
+        #[serde(default)]
+        confirm: bool,
+    },
+
     /// Start Codex CLI as an async background job.
     RunCodex {
         project: String,
@@ -1010,6 +1020,7 @@ pub const KNOWN_TOOL_NAMES: &[&str] = &[
     "cargo_test",
     "read_file",
     "run_job",
+    "stop_job",
     "run_codex",
     "job_status",
     "job_log",
@@ -1140,6 +1151,7 @@ impl ToolCall {
             Self::CargoTest { .. } => "cargo_test",
             Self::ReadFile { .. } => "read_file",
             Self::RunJob { .. } => "run_job",
+            Self::StopJob { .. } => "stop_job",
             Self::RunCodex { .. } => "run_codex",
             Self::JobStatus { .. } => "job_status",
             Self::JobLog { .. } => "job_log",
@@ -1193,6 +1205,7 @@ impl ToolCall {
             | Self::CargoTest { session_id, .. }
             | Self::ReadFile { session_id, .. }
             | Self::RunJob { session_id, .. }
+            | Self::StopJob { session_id, .. }
             | Self::RunCodex { session_id, .. }
             | Self::ListProjectFiles { session_id, .. }
             | Self::SearchProjectText { session_id, .. }
@@ -1242,6 +1255,7 @@ impl ToolCall {
             | Self::CargoTest { session_id, .. }
             | Self::ReadFile { session_id, .. }
             | Self::RunJob { session_id, .. }
+            | Self::StopJob { session_id, .. }
             | Self::RunCodex { session_id, .. }
             | Self::ListProjectFiles { session_id, .. }
             | Self::SearchProjectText { session_id, .. }
@@ -1296,6 +1310,7 @@ impl ToolCall {
             | Self::CargoTest { project, .. }
             | Self::ReadFile { project, .. }
             | Self::RunJob { project, .. }
+            | Self::StopJob { project, .. }
             | Self::RunCodex { project, .. }
             | Self::ListProjectFiles { project, .. }
             | Self::SearchProjectText { project, .. }
@@ -1357,6 +1372,16 @@ impl ToolCall {
                 "command_present": true,
                 "timeout_secs": timeout_secs,
                 "cwd": cwd,
+            }),
+            Self::StopJob {
+                project,
+                job_id,
+                confirm,
+                ..
+            } => serde_json::json!({
+                "project": project,
+                "job_id": job_id,
+                "confirm": confirm,
             }),
             Self::RunCodex {
                 project,

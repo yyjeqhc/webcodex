@@ -490,7 +490,23 @@ fn key_tool_output_schemas_include_expected_fields() {
         );
     }
     for field in [
+        "stopped",
+        "already_finished",
         "job_id",
+        "project",
+        "status_before",
+        "status_after",
+        "command_started",
+        "ownership_basis",
+    ] {
+        assert!(
+            has_output_field("stop_job", field),
+            "stop_job missing {field}"
+        );
+    }
+    for field in [
+        "job_id",
+        "project",
         "status",
         "exit_code",
         "started_at",
@@ -506,9 +522,9 @@ fn key_tool_output_schemas_include_expected_fields() {
         "job_id",
         "stdout",
         "stderr",
-        "offset",
-        "next_offset",
-        "tail_lines",
+        "next_stdout_line",
+        "next_stderr_line",
+        "status",
     ] {
         assert!(
             has_output_field("job_log", field),
@@ -772,6 +788,11 @@ fn tool_specs_covers_expected_tool_set() {
         .iter()
         .map(|s| s.name.clone())
         .collect();
+    assert_eq!(
+        names.len(),
+        66,
+        "model-facing runtime/MCP tool count should be 66 after exposing stop_job"
+    );
     for expected in [
         "list_tools",
         "list_projects",
@@ -779,6 +800,7 @@ fn tool_specs_covers_expected_tool_set() {
         "runtime_status",
         "run_shell",
         "run_job",
+        "stop_job",
         "job_status",
         "job_log",
         "read_file",
@@ -1008,6 +1030,11 @@ fn tool_specs_schema_spot_checks_extended() {
             vec!["with_line_numbers"],
         ),
         ("list_jobs", vec![], vec![]),
+        (
+            "stop_job",
+            vec!["project", "job_id"],
+            vec!["confirm", "session_id"],
+        ),
         ("job_tail", vec!["job_id"], vec!["tail_lines"]),
     ];
     let runtime = test_runtime();

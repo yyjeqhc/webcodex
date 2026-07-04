@@ -72,6 +72,10 @@ pub(crate) fn is_hard_denied_output(output: &Value, error: Option<&str>) -> bool
         "policy_rejected",
         "session_guard_denied",
         "unknown_session_id",
+        "confirmation_required",
+        "job_not_found",
+        "job_project_mismatch",
+        "job_stop_forbidden",
     ];
     for key in ["error_kind", "failure_kind"] {
         if output
@@ -165,7 +169,7 @@ fn permission_risk(tool_name: &str) -> String {
     if matches!(tool_name, "cargo_fmt" | "cargo_check" | "cargo_test") {
         return "validation".to_string();
     }
-    if matches!(tool_name, "run_job" | "run_codex") {
+    if matches!(tool_name, "run_job" | "stop_job" | "run_codex") {
         return "job".to_string();
     }
     if metadata.shell_like {

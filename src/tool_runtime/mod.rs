@@ -524,6 +524,7 @@ impl ToolRuntime {
                     include_checkpoints,
                     include_validation,
                     limit,
+                    auth,
                 )
                 .await
             }
@@ -896,10 +897,23 @@ impl ToolRuntime {
             ToolCall::RunJob {
                 project,
                 command,
-                session_id: _,
+                session_id,
                 timeout_secs,
                 cwd,
-            } => self.run_job(project, command, timeout_secs, cwd).await,
+            } => {
+                self.run_job(project, command, session_id, timeout_secs, cwd)
+                    .await
+            }
+
+            ToolCall::StopJob {
+                project,
+                job_id,
+                session_id,
+                confirm,
+            } => {
+                self.stop_job_model_facing(project, job_id, session_id, confirm, auth)
+                    .await
+            }
 
             ToolCall::RunCodex {
                 project: _,
@@ -1914,7 +1928,8 @@ fn tool_manifest_category(name: &str) -> &'static str {
         // Validation
         "cargo_fmt" | "cargo_check" | "cargo_test" => "validation",
         // Shell / job execution
-        "run_shell" | "run_job" | "job_status" | "job_log" | "list_jobs" | "job_tail" => "job",
+        "run_shell" | "run_job" | "stop_job" | "job_status" | "job_log" | "list_jobs"
+        | "job_tail" => "job",
         // Project management
         "list_projects" | "register_project" | "create_project" => "project",
         // Artifacts

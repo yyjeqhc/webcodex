@@ -1,5 +1,6 @@
 use serde_json::{json, Value};
 
+mod cleanup;
 mod common;
 mod discovery;
 mod files;
@@ -11,6 +12,10 @@ mod validation;
 
 use super::super::tool_inputs::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
 use super::super::tool_spec::ToolSpec;
+pub(super) use cleanup::{
+    delete_project_files_input_schema, discard_untracked_input_schema,
+    git_restore_paths_input_schema,
+};
 use common::{object_schema, with_optional_session_id, OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION};
 pub(crate) use discovery::accepted_flattened_args_for_spec;
 pub(super) use discovery::{
@@ -33,42 +38,6 @@ pub(super) use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
     validate_patch_input_schema,
 };
-
-pub(super) fn delete_project_files_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        (
-            "paths",
-            "array",
-            "Project-relative file paths to delete.",
-            true,
-        ),
-    ]))
-}
-
-pub(super) fn git_restore_paths_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        (
-            "paths",
-            "array",
-            "Project-relative tracked paths to restore.",
-            true,
-        ),
-    ]))
-}
-
-pub(super) fn discard_untracked_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        (
-            "paths",
-            "array",
-            "Project-relative untracked paths to remove.",
-            true,
-        ),
-    ]))
-}
 
 pub(super) fn replace_in_file_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![

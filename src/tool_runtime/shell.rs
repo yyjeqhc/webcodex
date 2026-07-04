@@ -5,7 +5,7 @@ use super::helpers::{
     bounded_tail, command_failed_message, command_rejected_message, command_timeout_message,
     looks_like_command_timeout, resolve_local_cwd, run_command_sync, COMMAND_STDIO_TAIL_CHARS,
 };
-use super::types::ToolResult;
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::shell_protocol::ShellRunRequest;
 

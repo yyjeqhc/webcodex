@@ -1,6 +1,5 @@
 //! Session guard tests: read-only sessions, guard denial, deny_write/deny_shell.
 
-use super::super::types::*;
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;

@@ -3,7 +3,7 @@ use serde_json::json;
 use super::helpers::{
     bounded_tail, command_rejected_message, shell_escape_simple, validate_project_relative_path,
 };
-use super::types::ToolResult;
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 
 const CARGO_STDIO_TAIL_CHARS: usize = 12_000;

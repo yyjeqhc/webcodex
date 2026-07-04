@@ -12,7 +12,7 @@ use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
 
 use super::helpers::{shell_escape_simple, validate_project_relative_path};
-use super::types::ToolResult;
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 
 const DEFAULT_MAX_FINDINGS: usize = 50;

@@ -5,9 +5,10 @@ use std::fs;
 use std::path::Path;
 use std::path::PathBuf;
 
-use super::types::{
-    is_checkpoint_kind, is_checkpoint_validation_status, CheckpointValidationInput, ToolResult,
+use super::tool_inputs::{
+    is_checkpoint_kind, is_checkpoint_validation_status, CheckpointValidationInput,
 };
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::action_sessions::secret_like_value;
 use crate::projects::ProjectConfig;

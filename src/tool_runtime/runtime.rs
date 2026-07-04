@@ -1,6 +1,7 @@
 use super::checkpoint;
+use super::local_jobs::{LocalJobKiller, LocalJobRecord, SystemJobKiller};
+use super::runtime_info::RuntimeInfo;
 use super::sessions;
-use super::types::{LocalJobKiller, LocalJobRecord, RuntimeInfo, SystemJobKiller};
 use crate::config::CodexConfig;
 use crate::projects::ProjectsState;
 use crate::shell_client::ShellClientRegistry;

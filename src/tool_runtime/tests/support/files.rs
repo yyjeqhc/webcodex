@@ -4,8 +4,8 @@ use crate::tool_runtime::git::{
     parse_show_changes_output, show_changes_command, split_show_changes_stdout,
 };
 use crate::tool_runtime::helpers::{run_command_sync, shell_escape_simple};
-use crate::tool_runtime::types::{LocalJobKiller, TerminateOutcome};
 use crate::tool_runtime::{ApplyTextEditInput, ApplyTextEditKind, ToolRuntime};
+use crate::tool_runtime::{LocalJobKiller, TerminateOutcome};
 use serde_json::{json, Value};
 use std::fs;
 use std::path::{Path, PathBuf};

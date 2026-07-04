@@ -1,6 +1,6 @@
 use serde_json::{json, Value};
 
-use super::super::types::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
+use super::super::tool_inputs::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
 
 const OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION: &str = "Optional explicit wc_sess_* id returned by start_session. When provided, this tool call is recorded in that session ledger and wins over any current-session binding.";
 const ALLOW_CROSS_PROJECT_SESSION_DESCRIPTION: &str = "Advanced/debug escape hatch. When true, allow recording a project tool call into a session whose associated project differs from the request project; the runtime still emits session_project_mismatch warning metadata.";

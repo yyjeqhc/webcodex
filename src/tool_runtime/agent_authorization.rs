@@ -1,4 +1,4 @@
-use super::types::AgentCapability;
+use super::tool_definition::{lookup_tool_definition, AgentCapability};
 use super::{ProjectResolverError, ToolCall, ToolResult, ToolRuntime};
 use crate::auth::AuthContext;
 
@@ -6,80 +6,9 @@ impl ToolRuntime {
     /// The capability an agent-backed tool variant requires from the agent
     /// client. Non-agent tools (and tools without a project) require nothing.
     pub(crate) fn required_agent_capability(call: &ToolCall) -> Option<AgentCapability> {
-        match call {
-            ToolCall::RunShell { .. }
-            | ToolCall::ApplyPatch { .. }
-            | ToolCall::ApplyPatchChecked { .. }
-            | ToolCall::DeleteProjectFiles { .. }
-            | ToolCall::GitRestorePaths { .. }
-            | ToolCall::DiscardUntracked { .. } => Some(AgentCapability::Shell),
-            // validate_patch runs read-only `git apply --check`/`--stat` via
-            // the agent shell path; it requires the same shell capability as
-            // apply_patch but never mutates the worktree.
-            ToolCall::ValidatePatch { .. } => Some(AgentCapability::Shell),
-            ToolCall::SaveProjectArtifact { .. }
-            | ToolCall::ArtifactUploadBegin { .. }
-            | ToolCall::ArtifactUploadChunk { .. }
-            | ToolCall::ArtifactUploadFinish { .. }
-            | ToolCall::ArtifactUploadAbort { .. } => Some(AgentCapability::FileWrite),
-            ToolCall::ReadProjectArtifactMetadata { .. } | ToolCall::ReadProjectArtifact { .. } => {
-                Some(AgentCapability::FileRead)
-            }
-            ToolCall::ReplaceInFile { .. }
-            | ToolCall::WriteProjectFile { .. }
-            | ToolCall::ReplaceLineRange { .. }
-            | ToolCall::InsertAtLine { .. }
-            | ToolCall::DeleteLineRange { .. }
-            | ToolCall::ApplyTextEdits { .. }
-            | ToolCall::ReplaceExactBlock { .. }
-            | ToolCall::InsertBeforePattern { .. }
-            | ToolCall::InsertAfterPattern { .. } => Some(AgentCapability::FileWrite),
-            ToolCall::ReadFile { .. } | ToolCall::ListProjectFiles { .. } => {
-                Some(AgentCapability::FileRead)
-            }
-            // Search runs a bounded `grep` via the agent shell path.
-            ToolCall::SearchProjectText { .. } => Some(AgentCapability::Shell),
-            ToolCall::GitStatus { .. }
-            | ToolCall::GitDiff { .. }
-            | ToolCall::GitDiffHunks { .. }
-            | ToolCall::GitLog { .. }
-            | ToolCall::GitDiffSummary { .. }
-            | ToolCall::ShowChanges { .. }
-            | ToolCall::WorkspaceHygieneCheck { .. }
-            | ToolCall::StartCodingTask { .. }
-            | ToolCall::FinishCodingTask { .. } => Some(AgentCapability::GitOrShell),
-            ToolCall::WorkspaceCheckpointCreate { .. } => Some(AgentCapability::FileRead),
-            ToolCall::WorkspaceCheckpointRestore { .. } => Some(AgentCapability::FileWrite),
-            ToolCall::WorkspaceCheckpointList { .. }
-            | ToolCall::WorkspaceCheckpointShow { .. }
-            | ToolCall::WorkspaceCheckpointDelete { .. } => Some(AgentCapability::OwnerOnly),
-            ToolCall::CargoFmt { .. }
-            | ToolCall::CargoCheck { .. }
-            | ToolCall::CargoTest { .. } => Some(AgentCapability::Shell),
-            ToolCall::RunJob { .. } | ToolCall::RunCodex { .. } => Some(AgentCapability::AsyncJobs),
-            ToolCall::ListTools { .. }
-            | ToolCall::StartSession { .. }
-            | ToolCall::SessionSummary { .. }
-            | ToolCall::PostSessionMessage { .. }
-            | ToolCall::ListSessionMessages { .. }
-            | ToolCall::ResolveSessionMessage { .. }
-            | ToolCall::SessionDiscussionSummary { .. }
-            | ToolCall::SessionHandoffSummary { .. }
-            | ToolCall::BindCurrentSession { .. }
-            | ToolCall::CurrentSession { .. }
-            | ToolCall::UnbindCurrentSession { .. }
-            | ToolCall::ListProjects
-            | ToolCall::RegisterProject { .. }
-            | ToolCall::CreateProject { .. }
-            | ToolCall::ListAgents
-            | ToolCall::RuntimeStatus
-            | ToolCall::ToolManifest { .. }
-            | ToolCall::JobStatus { .. }
-            | ToolCall::JobLog { .. }
-            | ToolCall::StopJob { .. }
-            | ToolCall::ListJobs { .. }
-            | ToolCall::JobTail { .. } => None,
-        }
+        lookup_tool_definition(call.tool_name())
+            .unwrap_or_else(|| panic!("missing ToolDefinition for {}", call.tool_name()))
+            .agent_capability
     }
 
     /// Enforce the owner boundary and capability requirements for agent-backed

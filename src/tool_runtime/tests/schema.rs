@@ -1,10 +1,515 @@
 //! Schema tests for tool_runtime.
 
-use super::super::types::*;
 use super::super::*;
 use super::support::*;
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
+
+#[test]
+fn tool_definitions_cover_known_names_and_public_specs() {
+    use crate::tool_runtime::tool_definition::{
+        lookup_tool_definition, model_visible_tool_definitions, TOOL_DEFINITIONS,
+    };
+
+    let definition_names = TOOL_DEFINITIONS
+        .iter()
+        .map(|definition| definition.name)
+        .collect::<BTreeSet<_>>();
+    let definition_order = TOOL_DEFINITIONS
+        .iter()
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    let known_names = KNOWN_TOOL_NAMES.iter().copied().collect::<BTreeSet<_>>();
+    let hidden_names = MODEL_HIDDEN_TOOL_NAMES
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let definition_hidden_names = TOOL_DEFINITIONS
+        .iter()
+        .filter(|definition| definition.visibility.is_model_hidden())
+        .map(|definition| definition.name)
+        .collect::<BTreeSet<_>>();
+    for name in KNOWN_TOOL_NAMES {
+        assert!(
+            lookup_tool_definition(name).is_some(),
+            "{name} missing ToolDefinition lookup"
+        );
+    }
+    assert_eq!(
+        definition_names, known_names,
+        "ToolDefinition mirror must cover every ToolCall name exactly"
+    );
+    assert_eq!(
+        definition_order,
+        KNOWN_TOOL_NAMES.to_vec(),
+        "known-tool compatibility list must mirror canonical ToolDefinition order"
+    );
+    assert_eq!(
+        hidden_names, definition_hidden_names,
+        "compatibility hidden-name list must match ToolDefinition visibility"
+    );
+
+    let runtime = test_runtime();
+    let specs = runtime.tool_specs();
+    let spec_names = specs
+        .iter()
+        .map(|spec| spec.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let visible_definition_names = model_visible_tool_definitions()
+        .map(|definition| definition.name)
+        .collect::<BTreeSet<_>>();
+    let spec_order = specs
+        .iter()
+        .map(|spec| spec.name.clone())
+        .collect::<Vec<_>>();
+    let visible_definition_order = model_visible_tool_definitions()
+        .map(|definition| definition.name.to_string())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        spec_names, visible_definition_names,
+        "model-visible ToolDefinitions must match public ToolSpecs"
+    );
+
+    assert_eq!(
+        visible_definition_order, spec_order,
+        "canonical ToolDefinition order must preserve public ToolSpec order"
+    );
+    assert_eq!(
+        runtime.tool_names(),
+        visible_definition_order,
+        "public tool_names must derive from canonical model-visible ToolDefinition order"
+    );
+}
+
+#[test]
+fn tool_definitions_drive_metadata_visibility_and_categories() {
+    use crate::tool_runtime::metadata::lookup_tool_metadata;
+    use crate::tool_runtime::tool_definition::TOOL_DEFINITIONS;
+
+    for definition in TOOL_DEFINITIONS {
+        let metadata = definition.metadata();
+        let facade_metadata = lookup_tool_metadata(definition.name)
+            .copied()
+            .unwrap_or_else(|| panic!("{} missing metadata facade entry", definition.name));
+        assert_eq!(
+            metadata, facade_metadata,
+            "{} metadata facade must return ToolDefinition metadata",
+            definition.name
+        );
+        assert_eq!(metadata.name, definition.name);
+        assert_eq!(
+            definition.visibility.is_model_hidden(),
+            is_model_hidden_tool_name(definition.name),
+            "{} visibility mirror must match model-hidden filter",
+            definition.name
+        );
+        assert_eq!(
+            definition.category,
+            tool_manifest_category(definition.name),
+            "{} category mirror must match tool_manifest",
+            definition.name
+        );
+        assert_eq!(
+            definition.oauth_scope(),
+            metadata.oauth_scope,
+            "{} OAuth scope mirror must match definition ToolMetadata",
+            definition.name
+        );
+    }
+}
+
+#[test]
+fn tool_definitions_drive_session_and_permission_policy() {
+    use crate::tool_runtime::metadata::ToolRisk;
+    use crate::tool_runtime::tool_definition::{
+        runtime_tool_allows_current_session_fallback, runtime_tool_captures_validation_output,
+        runtime_tool_creates_or_binds_session, runtime_tool_is_change_summary_like,
+        runtime_tool_is_current_session_control, runtime_tool_is_git_like,
+        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
+        runtime_tool_permission_risk, runtime_tool_requires_explicit_business_session,
+        runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
+        runtime_tool_session_risk_class, TOOL_DEFINITIONS, TOOL_DISCOVERY_GROUPS,
+    };
+
+    let git_group = TOOL_DISCOVERY_GROUPS
+        .iter()
+        .find(|group| group.name == "git")
+        .expect("git discovery group")
+        .tools
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+
+    for definition in TOOL_DEFINITIONS {
+        let metadata = definition.metadata();
+        assert_eq!(
+            definition.session_risk_class(),
+            metadata.risk.session_risk_class(),
+            "{} session risk class must derive from metadata risk",
+            definition.name
+        );
+        assert_eq!(
+            definition.is_read_like(),
+            metadata.read_only,
+            "{} read-like policy must derive from metadata",
+            definition.name
+        );
+        assert_eq!(
+            definition.is_write_like(),
+            metadata.risk == ToolRisk::ProjectWrite,
+            "{} write-like policy must derive from metadata",
+            definition.name
+        );
+        assert_eq!(
+            definition.is_shell_like(),
+            metadata.shell_like || metadata.risk == ToolRisk::JobRun,
+            "{} shell-like guard policy must include job-run tools",
+            definition.name
+        );
+        assert_eq!(
+            definition.is_git_like(),
+            git_group.contains(definition.name),
+            "{} git-like ledger policy must mirror the git discovery group",
+            definition.name
+        );
+        assert_eq!(
+            definition.requires_session_project_escape(),
+            !metadata.read_only || metadata.destructive || metadata.shell_like,
+            "{} cross-project session policy must derive from metadata risk flags",
+            definition.name
+        );
+        assert_eq!(
+            definition.requires_permission(),
+            !metadata.read_only || metadata.destructive || metadata.shell_like,
+            "{} permission requirement must derive from metadata risk flags",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_session_risk_class(definition.name),
+            definition.session_risk_class(),
+            "{} session risk facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_read_like(definition.name),
+            definition.is_read_like(),
+            "{} read-like facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_write_like(definition.name),
+            definition.is_write_like(),
+            "{} write-like facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_shell_like(definition.name),
+            definition.is_shell_like(),
+            "{} shell-like facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_git_like(definition.name),
+            definition.is_git_like(),
+            "{} git-like facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_change_summary_like(definition.name),
+            definition.is_change_summary_like(),
+            "{} change-summary facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_captures_validation_output(definition.name),
+            definition.captures_validation_output(),
+            "{} validation-output facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_current_session_control(definition.name),
+            definition.is_current_session_control(),
+            "{} current-session control facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_requires_explicit_business_session(definition.name),
+            definition.requires_explicit_business_session(),
+            "{} business-session facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_creates_or_binds_session(definition.name),
+            definition.creates_or_binds_session(),
+            "{} session creation/bind facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_allows_current_session_fallback(definition.name),
+            definition.allows_current_session_fallback(),
+            "{} current-session fallback facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_requires_session_project_escape(definition.name),
+            definition.requires_session_project_escape(),
+            "{} session-project escape facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_requires_permission(definition.name),
+            definition.requires_permission(),
+            "{} permission facade must use ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_permission_risk(definition.name),
+            definition.permission_risk(),
+            "{} permission risk facade must use ToolDefinition",
+            definition.name
+        );
+    }
+
+    let change_summary_tools = TOOL_DEFINITIONS
+        .iter()
+        .filter(|definition| definition.is_change_summary_like())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        change_summary_tools,
+        vec!["git_diff_summary", "show_changes", "git_diff_hunks"]
+    );
+
+    let validation_output_tools = TOOL_DEFINITIONS
+        .iter()
+        .filter(|definition| definition.captures_validation_output())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        validation_output_tools,
+        vec!["cargo_fmt", "cargo_check", "cargo_test"]
+    );
+
+    let current_session_control_tools = TOOL_DEFINITIONS
+        .iter()
+        .filter(|definition| definition.is_current_session_control())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        current_session_control_tools,
+        vec![
+            "bind_current_session",
+            "current_session",
+            "unbind_current_session"
+        ]
+    );
+
+    let explicit_business_session_tools = TOOL_DEFINITIONS
+        .iter()
+        .filter(|definition| definition.requires_explicit_business_session())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        explicit_business_session_tools,
+        vec![
+            "finish_coding_task",
+            "session_summary",
+            "post_session_message",
+            "list_session_messages",
+            "resolve_session_message",
+            "session_discussion_summary",
+            "session_handoff_summary"
+        ]
+    );
+
+    let creates_or_binds_session_tools = TOOL_DEFINITIONS
+        .iter()
+        .filter(|definition| definition.creates_or_binds_session())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        creates_or_binds_session_tools,
+        vec!["start_session", "start_coding_task", "bind_current_session"]
+    );
+
+    let current_session_fallback_tools = TOOL_DEFINITIONS
+        .iter()
+        .filter(|definition| definition.allows_current_session_fallback())
+        .map(|definition| definition.name)
+        .collect::<BTreeSet<_>>();
+    assert!(current_session_fallback_tools.contains("read_file"));
+    assert!(current_session_fallback_tools.contains("run_shell"));
+    assert!(current_session_fallback_tools.contains("workspace_hygiene_check"));
+    for name in [
+        "start_session",
+        "start_coding_task",
+        "finish_coding_task",
+        "session_summary",
+        "session_handoff_summary",
+        "bind_current_session",
+        "current_session",
+        "unbind_current_session",
+    ] {
+        assert!(
+            !current_session_fallback_tools.contains(name),
+            "{name} must not implicitly use the current-session binding"
+        );
+    }
+
+    for (tool, risk) in [
+        ("cargo_check", "validation"),
+        ("run_shell", "shell"),
+        ("run_job", "job"),
+        ("stop_job", "job"),
+        ("run_codex", "job"),
+        ("delete_project_files", "destructive"),
+        ("save_project_artifact", "artifact_write"),
+        ("apply_patch", "patch"),
+        ("write_project_file", "write"),
+    ] {
+        assert_eq!(runtime_tool_permission_risk(tool), risk, "{tool}");
+    }
+
+    assert_eq!(
+        runtime_tool_session_risk_class("__unknown__"),
+        ToolRisk::Unknown.session_risk_class()
+    );
+    assert!(!runtime_tool_is_write_like("__unknown__"));
+    assert!(!runtime_tool_is_shell_like("__unknown__"));
+    assert!(!runtime_tool_allows_current_session_fallback("__unknown__"));
+    assert!(runtime_tool_requires_permission("__unknown__"));
+    assert!(runtime_tool_requires_session_project_escape("__unknown__"));
+    assert_eq!(runtime_tool_permission_risk("__unknown__"), "write");
+    assert_eq!(
+        runtime_tool_permission_risk("compat_patch_like"),
+        "patch",
+        "unknown compatibility names keep the legacy path/name fallback"
+    );
+    assert_ne!(
+        runtime_tool_permission_risk("compat_patch_like"),
+        runtime_tool_permission_risk("unknown_artifact"),
+        "name-based patch fallback must not classify unrelated unknown names"
+    );
+}
+
+#[test]
+fn tool_definitions_match_agent_capability_dispatch_helper() {
+    use crate::tool_runtime::tool_definition::TOOL_DEFINITIONS;
+
+    for definition in TOOL_DEFINITIONS {
+        let args = if definition.name == "run_codex" {
+            json!({
+                "project": SAMPLE_PROJECT,
+                "prompt": "summarize",
+            })
+        } else {
+            sample_tool_args(definition.name)
+        };
+        let call = ToolCall::from_tool_name(definition.name, args)
+            .unwrap_or_else(|e| panic!("{} should deserialize: {e}", definition.name));
+        assert_eq!(
+            ToolRuntime::required_agent_capability(&call),
+            definition.agent_capability,
+            "{} agent capability mirror must match dispatch helper",
+            definition.name
+        );
+        assert_eq!(
+            call.project().is_some(),
+            definition.metadata().requires_project,
+            "{} project accessor must match metadata.requires_project",
+            definition.name
+        );
+    }
+}
+
+#[test]
+fn tool_discovery_groups_drive_tool_categories() {
+    use crate::tool_runtime::tool_definition::{
+        is_model_visible_tool_name, lookup_tool_definition, TOOL_DISCOVERY_GROUPS,
+    };
+
+    let runtime = test_runtime();
+    let categories = runtime.tool_categories();
+    let category_map = categories.as_object().expect("categories object");
+
+    for group in TOOL_DISCOVERY_GROUPS {
+        let tools = group
+            .tools
+            .iter()
+            .map(|name| {
+                let definition = lookup_tool_definition(name)
+                    .unwrap_or_else(|| panic!("{name} discovery group entry missing definition"));
+                assert!(
+                    definition.visibility.is_model_visible(),
+                    "{name} discovery group entry must be model-visible"
+                );
+                assert!(
+                    is_model_visible_tool_name(name),
+                    "{name} discovery group entry must pass visibility facade"
+                );
+                Value::String((*name).to_string())
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            category_map.get(group.name),
+            Some(&Value::Array(tools)),
+            "{} category must derive from ToolDefinition discovery groups",
+            group.name
+        );
+    }
+}
+
+#[test]
+fn tool_recommended_flows_reference_visible_defined_tools() {
+    use crate::tool_runtime::tool_definition::{
+        is_model_visible_tool_name, lookup_tool_definition, TOOL_RECOMMENDED_FLOWS,
+    };
+
+    let expected_summaries = TOOL_RECOMMENDED_FLOWS
+        .iter()
+        .map(|flow| {
+            assert!(
+                !flow.name.trim().is_empty(),
+                "recommended flow name must be present"
+            );
+            assert!(
+                !flow.manifest_purpose.trim().is_empty(),
+                "{} recommended flow purpose must be present",
+                flow.name
+            );
+            assert!(
+                flow.summary.chars().count() <= 300,
+                "{} recommended flow summary is too long",
+                flow.name
+            );
+            assert!(
+                !flow.tools.is_empty(),
+                "{} recommended flow must list tools",
+                flow.name
+            );
+            for tool in flow.tools {
+                let definition = lookup_tool_definition(tool).unwrap_or_else(|| {
+                    panic!(
+                        "{} recommended flow references unknown tool {tool}",
+                        flow.name
+                    )
+                });
+                assert!(
+                    definition.visibility.is_model_visible(),
+                    "{} recommended flow references hidden tool {tool}",
+                    flow.name
+                );
+                assert!(
+                    is_model_visible_tool_name(tool),
+                    "{} recommended flow references non-visible tool {tool}",
+                    flow.name
+                );
+            }
+            flow.summary
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(ToolRuntime::recommended_flows(), expected_summaries);
+}
 
 #[test]
 fn tool_specs_and_metadata_are_synchronized() {
@@ -23,7 +528,7 @@ fn tool_specs_and_metadata_are_synchronized() {
         );
     }
 
-    for metadata in crate::tool_runtime::metadata::TOOL_METADATA {
+    for metadata in crate::tool_runtime::metadata::iter_tool_metadata() {
         if metadata.name == "delete_files" {
             // Legacy dedicated HTTP route metadata; not a public runtime
             // ToolSpec name and intentionally not accepted by ToolCall.
@@ -279,6 +784,25 @@ fn tool_specs_names_are_snake_case() {
                 .chars()
                 .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'),
             "tool name '{}' should be snake_case",
+            spec.name
+        );
+    }
+}
+
+#[test]
+fn tool_specs_derive_contract_fields_from_name() {
+    let runtime = test_runtime();
+    for spec in runtime.tool_specs() {
+        assert_eq!(
+            spec.output_schema,
+            crate::tool_runtime::registry::output_schema_for_tool(&spec.name),
+            "{} output schema must derive from ToolSpec.name",
+            spec.name
+        );
+        assert_eq!(
+            spec.annotations,
+            crate::tool_runtime::registry::tool_annotations(&spec.name),
+            "{} MCP annotations must derive from ToolSpec.name",
             spec.name
         );
     }

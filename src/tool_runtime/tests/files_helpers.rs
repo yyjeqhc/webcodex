@@ -1,7 +1,7 @@
 //! Agent-native artifact file-op routing tests.
 
 use super::super::files::*;
-use super::super::types::ToolCall;
+use super::super::ToolCall;
 use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;
 use serde_json::json;

@@ -3,7 +3,7 @@
 use serde_json::Value;
 
 use super::helpers::{read_json, shell_escape_simple};
-use super::types::ToolResult;
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::config::CodexConfig;
 

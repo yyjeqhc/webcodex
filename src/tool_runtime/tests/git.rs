@@ -2,7 +2,7 @@
 
 use super::super::git::*;
 use super::super::helpers::*;
-use super::super::types::*;
+use super::super::*;
 use super::support::*;
 use crate::shell_protocol::{ShellAgentResultRequest, ShellClientCapabilities};
 use crate::tool_runtime::ToolRuntime;

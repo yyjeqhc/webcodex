@@ -5,10 +5,10 @@ use super::helpers::{
     command_rejected_message, is_safe_job_id, normalize_local_status, read_json, read_lines_from,
     read_trim, shell_escape_simple,
 };
-use super::types::{
-    LocalJobKiller, LocalJobRecord, TerminateOutcome, ToolResult, ACTIVE_JOB_STATUSES,
-    ACTIVE_LOCAL_STATUSES,
+use super::local_jobs::{
+    LocalJobKiller, LocalJobRecord, TerminateOutcome, ACTIVE_JOB_STATUSES, ACTIVE_LOCAL_STATUSES,
 };
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::auth::AuthContext;
 use crate::shell_client::{command_preview, ShellJobStartMetadata, COMMAND_PREVIEW_MAX_CHARS};

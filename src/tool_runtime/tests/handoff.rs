@@ -1,6 +1,5 @@
 //! Tests for `session_handoff_summary` — read-only structured handoff tool.
 
-use super::super::types::*;
 use super::super::*;
 use super::support::*;
 use crate::auth::AuthContext;

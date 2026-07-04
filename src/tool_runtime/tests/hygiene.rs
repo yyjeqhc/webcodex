@@ -1,6 +1,5 @@
 //! Tests for the `workspace_hygiene_check` read-only runtime tool.
 
-use super::super::types::*;
 use super::super::*;
 use super::support::*;
 use serde_json::json;

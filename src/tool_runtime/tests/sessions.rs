@@ -1,7 +1,7 @@
 //! Core session lifecycle and summary tests.
 
 use super::super::sessions::{SessionMessageKind, SessionMessagePriority};
-use super::super::types::*;
+use super::super::*;
 use super::super::{ToolCall, ToolResult, ToolRuntime};
 use super::support::*;
 use crate::shell_protocol::ShellClientCapabilities;

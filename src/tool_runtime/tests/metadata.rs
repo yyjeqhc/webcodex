@@ -1,6 +1,5 @@
 //! Metadata tests for tool_runtime.
 
-use super::super::types::*;
 use super::super::*;
 use super::support::*;
 use crate::projects::ProjectsState;
@@ -1112,6 +1111,43 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
             assert!(
                 accepted.contains(&field.to_string()),
                 "{tool} missing accepted flattened arg {field}: {accepted:?}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn tool_manifest_flattened_args_are_declared_in_action_schema() {
+    let runtime = test_runtime();
+    let result = runtime
+        .dispatch(ToolCall::ToolManifest {
+            category: None,
+            include_recommended_flows: false,
+            include_risk_summary: false,
+        })
+        .await;
+    assert!(result.success, "{:?}", result.error);
+
+    let openapi = crate::openapi::build_openapi_spec();
+    let properties = openapi["components"]["schemas"]["ToolCallRequest"]["properties"]
+        .as_object()
+        .expect("ToolCallRequest properties");
+    let tools = result.output["tools"]
+        .as_array()
+        .expect("tool_manifest tools");
+
+    for tool in tools {
+        let tool_name = tool["name"].as_str().expect("tool name");
+        let accepted = tool["accepted_flattened_args"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{tool_name} accepted_flattened_args"));
+        for field in accepted {
+            let field = field
+                .as_str()
+                .unwrap_or_else(|| panic!("{tool_name} accepted field"));
+            assert!(
+                properties.contains_key(field),
+                "{tool_name} advertises flattened arg {field}, but ToolCallRequest.properties does not declare it"
             );
         }
     }

@@ -17,7 +17,7 @@
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::types::ToolResult;
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::auth::AuthContext;
 use crate::shell_protocol::ShellAgentProjectSummary;
@@ -28,6 +28,62 @@ use crate::shell_protocol::ShellAgentProjectSummary;
 const PROJECT_OP_WAIT_SECS: u64 = 32;
 
 impl ToolRuntime {
+    pub(crate) async fn list_projects(&self, auth: Option<&AuthContext>) -> ToolResult {
+        let mut list: Vec<Value> = Vec::new();
+        for client in self.shell_clients.list_clients_for_auth(auth).await {
+            // Sanitized shell-profiles summary for this agent (carried inside
+            // the registration policy). Used to resolve which profile a project
+            // actually uses and whether that profile is configured. `None` for
+            // older agents that did not report one.
+            let shell_profiles = client
+                .policy
+                .as_ref()
+                .and_then(|p| p.shell_profiles.as_ref());
+            for project in client.projects.iter().filter(|p| !p.disabled) {
+                let (resolved_shell_profile, shell_profile_status) =
+                    resolve_project_shell_profile(project.shell_profile.as_deref(), shell_profiles);
+                let capabilities = smoke_project_capabilities(&client, project);
+                list.push(json!({
+                    "id": Self::agent_project_runtime_id(&client.client_id, &project.id),
+                    "agent_project_id": project.id,
+                    "name": project.name,
+                    "path": project.path,
+                    "executor": "agent",
+                    "client_id": client.client_id,
+                    "allow_patch": project.allow_patch,
+                    "source": "agent_registered",
+                    "agent_status": client.status,
+                    "connected": client.connected,
+                    "last_seen": client.last_seen,
+                    "shell_profile": project.shell_profile,
+                    "resolved_shell_profile": resolved_shell_profile,
+                    "shell_profile_status": shell_profile_status,
+                    "capabilities": capabilities,
+                }));
+            }
+        }
+        list.sort_by(|a, b| {
+            a["id"]
+                .as_str()
+                .unwrap_or_default()
+                .cmp(b["id"].as_str().unwrap_or_default())
+        });
+        let recommended_for_smoke: Vec<Value> = list
+            .iter()
+            .filter(|project| {
+                project["capabilities"]["recommended_for_smoke"]
+                    .as_bool()
+                    .unwrap_or(false)
+            })
+            .filter_map(|project| project["id"].as_str().map(|id| json!(id)))
+            .collect();
+        ToolResult::ok(json!({
+            "count": list.len(),
+            "projects": list,
+            "recommended_for_smoke": recommended_for_smoke,
+        }))
+    }
+
     /// Register an existing directory as a WebCodex project on the selected
     /// agent. See the `ToolCall::RegisterProject` doc comment for the full
     /// contract. The server validates the owner boundary, builds a JSON
@@ -244,6 +300,90 @@ impl ToolRuntime {
         }
 
         ToolResult::ok(result)
+    }
+}
+
+fn agent_protocol_reports_project_git(protocol: &str) -> bool {
+    matches!(
+        protocol,
+        crate::shell_protocol::AGENT_PROTOCOL_VERSION_POLLING_V1
+            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_WEBSOCKET_V1
+            | crate::shell_protocol::AGENT_PROTOCOL_VERSION_QUIC_V1
+    )
+}
+
+fn project_git_available(
+    client: &crate::shell_protocol::ShellClientView,
+    project: &crate::shell_protocol::ShellAgentProjectSummary,
+) -> Option<bool> {
+    if project.git_branch.is_some() || project.git_head.is_some() || project.git_dirty.is_some() {
+        Some(true)
+    } else if agent_protocol_reports_project_git(&client.agent_protocol_version) {
+        Some(false)
+    } else {
+        None
+    }
+}
+
+fn smoke_marker_present(project: &crate::shell_protocol::ShellAgentProjectSummary) -> bool {
+    let name = project.name.as_deref().unwrap_or_default();
+    [project.id.as_str(), name, project.path.as_str()]
+        .iter()
+        .map(|value| value.to_ascii_lowercase())
+        .any(|value| value.contains("smoke") || value.contains("test") || value.contains("sandbox"))
+}
+
+fn smoke_project_capabilities(
+    client: &crate::shell_protocol::ShellClientView,
+    project: &crate::shell_protocol::ShellAgentProjectSummary,
+) -> Value {
+    let git_available = project_git_available(client, project);
+    let safe_smoke_project =
+        project.allow_patch && client.connected && smoke_marker_present(project);
+    let supports_artifact_smoke = client.capabilities.file_read && client.capabilities.file_write;
+    let supports_cleanup_verification =
+        supports_artifact_smoke || git_available.is_some_and(|available| available);
+    let recommended_for_smoke = safe_smoke_project
+        && git_available.is_some_and(|available| available)
+        && supports_cleanup_verification;
+
+    json!({
+        "git_available": git_available,
+        "safe_smoke_project": safe_smoke_project,
+        "supports_artifact_smoke": supports_artifact_smoke,
+        "supports_cleanup_verification": supports_cleanup_verification,
+        "recommended_for_smoke": recommended_for_smoke,
+    })
+}
+
+/// Resolve which shell profile a project uses and whether it is configured.
+/// Returns `(resolved_name, status)` where:
+/// - `resolved_name` = `project_shell_profile` (if set) else the agent's
+///   `default_profile` (if any) else `None`.
+/// - `status` = `"configured"` if the resolved name exists in the agent's
+///   configured profiles; `"missing"` if a name resolved but is not
+///   configured; `"not_configured"` if no profile resolves at all; and
+///   `"unknown"` if the agent did not report a shell-profiles summary so the
+///   configured set cannot be checked.
+fn resolve_project_shell_profile(
+    project_shell_profile: Option<&str>,
+    summary: Option<&crate::shell_protocol::ShellProfilesSummary>,
+) -> (Option<String>, &'static str) {
+    let resolved = project_shell_profile
+        .map(str::to_string)
+        .or_else(|| summary.and_then(|s| s.default_profile.clone()));
+    match resolved {
+        None => (None, "not_configured"),
+        Some(name) => match summary {
+            None => (Some(name), "unknown"),
+            Some(s) => {
+                if s.profiles.iter().any(|p| p.name == name) {
+                    (Some(name), "configured")
+                } else {
+                    (Some(name), "missing")
+                }
+            }
+        },
     }
 }
 

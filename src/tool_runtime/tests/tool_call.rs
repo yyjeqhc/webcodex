@@ -1,6 +1,6 @@
 //! Tool Call tests for tool_runtime.
 
-use super::super::types::*;
+use super::super::*;
 use super::support::*;
 use serde_json::{json, Value};
 

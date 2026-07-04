@@ -3,7 +3,7 @@
 use super::super::files::*;
 use super::super::helpers::*;
 use super::super::patch::*;
-use super::super::types::*;
+use super::super::*;
 use super::support::*;
 use crate::shell_protocol::{
     ShellAgentPollRequest, ShellAgentResultRequest, ShellClientCapabilities,

@@ -1,7 +1,7 @@
 use serde_json::{json, Value};
 use std::time::Duration;
 
-use super::types::ToolResult;
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::shell_protocol::ShellRunRequest;
 
@@ -450,7 +450,7 @@ impl ToolRuntime {
 
 #[cfg(test)]
 mod tests {
-    use super::super::types::{RuntimeInfo, ToolResult};
+    use super::super::{RuntimeInfo, ToolResult};
     use super::*;
     use crate::config::CodexConfig;
     use crate::projects::{Executor, ProjectConfig, ProjectsConfig, ProjectsState};

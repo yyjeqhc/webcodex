@@ -9,7 +9,8 @@ use super::helpers::{
     run_command_sync, shell_escape_simple, shell_join_paths, validate_limited_cleanup_paths,
     validate_project_relative_path,
 };
-use super::types::ToolResult;
+use super::tool_inputs::{ApplyTextEditInput, ApplyTextEditKind};
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::artifact_policy::{
     has_safe_octet_stream_artifact_extension, octet_stream_safe_extension_error,
@@ -1150,11 +1151,10 @@ pub(crate) fn apply_line_edit_content(
 pub(crate) fn apply_text_edits_to_string(
     original: &str,
     path: &str,
-    edits: &[super::types::ApplyTextEditInput],
+    edits: &[ApplyTextEditInput],
     expected_file_sha256: Option<&str>,
     dry_run: bool,
 ) -> Result<(String, Value), String> {
-    use super::types::ApplyTextEditKind;
     if edits.is_empty() {
         return Err("edits must contain at least one edit".to_string());
     }
@@ -1315,7 +1315,7 @@ pub(crate) fn apply_text_edits_to_string(
 }
 
 #[cfg(test)]
-fn edit_field_error(index: usize, kind: super::types::ApplyTextEditKind, msg: &str) -> String {
+fn edit_field_error(index: usize, kind: ApplyTextEditKind, msg: &str) -> String {
     format!(
         "Rejected before write: edit {} ({}): {}.\nNo files were modified.\nRetry guidance: read the file again to refresh context, then retry with corrected edit fields.",
         index,
@@ -1325,7 +1325,7 @@ fn edit_field_error(index: usize, kind: super::types::ApplyTextEditKind, msg: &s
 }
 
 #[cfg(test)]
-fn edit_match_error(index: usize, kind: super::types::ApplyTextEditKind, msg: &str) -> String {
+fn edit_match_error(index: usize, kind: ApplyTextEditKind, msg: &str) -> String {
     format!(
         "Rejected before write: edit {} ({}): {}.\nNo files were modified.\nRetry guidance: read the file again to refresh context, then retry with a more exact match text.",
         index,
@@ -2476,11 +2476,10 @@ impl ToolRuntime {
         &self,
         project: String,
         path: String,
-        edits: Vec<super::types::ApplyTextEditInput>,
+        edits: Vec<ApplyTextEditInput>,
         dry_run: Option<bool>,
         expected_file_sha256: Option<String>,
     ) -> ToolResult {
-        use super::types::ApplyTextEditKind;
         if let Err(e) = validate_edit_file_path(&path) {
             return super::permissions::edit_path_policy_rejected_result(&path, e);
         }

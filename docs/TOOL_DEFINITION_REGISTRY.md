@@ -2,22 +2,60 @@
 
 This document is a developer architecture note for moving WebCodex runtime tool
 declarations toward a registry-driven `ToolDefinition` model over several
-phases. It documents the intended direction only. It does not claim that schema,
-metadata, OpenAPI, MCP, OAuth, or policy generation is implemented today.
+phases. It records the implemented migration state and the intended direction;
+it does not claim that every target schema, OpenAPI, MCP, OAuth, or policy
+generation path is complete today.
 
 ## Current state
 
-The runtime registry has already been mechanically split into smaller modules:
+The runtime registry and runtime surface have already been mechanically split
+into smaller modules:
 
 - `src/tool_runtime/registry/mod.rs`
 - `src/tool_runtime/registry/input_schemas.rs`
 - `src/tool_runtime/registry/output_schemas.rs`
 - `src/tool_runtime/registry/annotations.rs`
 - `src/tool_runtime/registry/tool_specs.rs`
+- `src/tool_runtime/tool_call.rs`
+- `src/tool_runtime/tool_definition.rs`
+- `src/tool_runtime/tool_names.rs`
+- `src/tool_runtime/tool_inputs.rs`
+- `src/tool_runtime/tool_result.rs`
+- `src/tool_runtime/tool_spec.rs`
+- `src/tool_runtime/surface.rs`
+- `src/tool_runtime/dispatch.rs`
 
-That split reduces file size and localizes schema/spec helpers, but it does not
-make one declaration the source of truth. Runtime tool facts are still maintained
-across multiple hand-written structures and kept aligned by contract tests.
+That split reduces file size and localizes schema/spec/surface/dispatch helpers.
+`tool_definition.rs` now declares known runtime tool names, model-facing
+visibility, manifest category, runtime metadata, and agent capability.
+Agent capability lookup, model-facing hidden checks, manifest category lookup,
+runtime OAuth tool scope lookup, MCP annotations, manifest summaries,
+permission/session policy, and session ledger classification are now
+definition-backed. `metadata.rs` now holds the `ToolMetadata` value type,
+unknown-tool fallback, and explicit compatibility metadata for non-runtime route
+names such as `delete_files`; runtime tool metadata is declared on
+`ToolDefinition`. Missing capability definitions fail closed. Schemas, output
+contracts, OpenAPI operation shapes, and parts of discovery are still maintained
+across hand-written structures and kept aligned by contract tests.
+Public `ToolSpec` rows are still hand-written for descriptions and input
+schemas, but a shared constructor now derives each row's `output_schema` and MCP
+`annotations` fields from the canonical spec name. `ToolDefinition` order is
+canonical for known-tool and model-facing discovery order; `tool_specs()` emits
+model-visible specs by iterating that canonical definition order and looking up
+the hand-written description/input-schema declaration.
+The full-schema `list_tools` category map now formats model-visible discovery
+groups declared beside `ToolDefinition`, so registry code no longer owns a
+separate category membership table or needs the full `ToolSpec` list to build
+categories.
+Recommended-flow entries are also definition-backed and rendered into both the
+short `list_tools` hints and the structured `tool_manifest` flow list.
+Session ledger classification, session guard checks, cross-project session
+escape checks, validation-output capture classification, and dev permission
+risk labels now route through `ToolDefinition` semantic helpers/facades instead
+of local tool-name matches at each call site. Current-session fallback
+eligibility is also definition-backed: control tools, tools with required
+business `session_id`, and tools that create/bind sessions do not implicitly use
+the caller's current-session binding.
 
 ## Current problems
 
@@ -48,8 +86,9 @@ while declarations are centralized:
 - `ToolRuntime` and `ToolKernel` remain the unified dispatch path. The kernel
   continues to handle metadata-backed OAuth checks, session recording, parsing,
   and dispatch to existing runtime handlers.
-- `ToolMetadata` remains the risk, scope, and policy foundation until a
-  `ToolDefinition` mirror is complete and tested.
+- `ToolMetadata` remains the risk, scope, and policy value type. Runtime tool
+  metadata is now declared on `ToolDefinition`; `metadata.rs` keeps only the
+  compatibility facade and non-runtime route fallback entries.
 - Existing contract tests must stay in place. A registry-driven model should add
   stronger invariants before deleting older drift tests.
 
@@ -122,19 +161,60 @@ make every declaration site explicit so reviewers can catch omissions.
 
 ### Phase 2: central ToolDefinition metadata mirror
 
-Introduce a `ToolDefinition` mirror that records the same facts currently spread
-across `ToolMetadata`, tool specs, tool manifest categories, visibility filters,
-and policy matches. At this stage it should validate consistency with existing
-hand-written structures rather than drive behavior.
+Introduce a `ToolDefinition` declaration that records the same facts previously
+spread across `ToolMetadata`, tool specs, tool manifest categories, visibility
+filters, and policy matches. Keep parity tests against existing hand-written
+structures while routing low-risk runtime behavior through the definitions.
+
+Started: `src/tool_runtime/tool_definition.rs` contains the first explicit
+declaration for known tool names, model-facing visibility, manifest category,
+runtime metadata, and agent capability. Agent capability lookup,
+model-facing hidden checks, manifest category lookup, and known-tool OAuth
+scope lookup now read from the declaration/facade. MCP annotations, permission
+decisions, session guard classification, and session ledger classification also
+read metadata through that facade. The old runtime metadata table has been
+removed; `lookup_tool_metadata()` now returns definition metadata for runtime
+tools and falls back only for non-runtime route metadata. The current tests
+verify parity with `KNOWN_TOOL_NAMES`, public `ToolSpec` exposure, metadata
+facade behavior, compatibility hidden-tool constants, OAuth scope policy, and
+the expected capability policy. `tool_specs()` also builds each public spec
+through a shared constructor that derives output schema and MCP annotations from
+the canonical tool name, then emits public specs in model-visible
+`ToolDefinition` order to avoid local string/order drift while the hand-written
+spec table is reduced.
+`tool_categories()` also reads definition-layer discovery groups and visibility
+directly, then only formats the JSON response. Recommended-flow summaries and
+structured manifest flows now share a definition-layer declaration. Public
+`tool_names()` derives from model-visible `ToolDefinition` order, and contract
+tests verify that the compatibility known-name list and public `ToolSpec` order
+match the canonical definition order. Session guard, ledger classification,
+validation-output capture, cross-project session escape, and permission-risk
+decisions now also read definition-layer semantic helpers/facades, with
+contract tests covering the metadata-derived rules and the remaining explicit
+semantic groups. Current-session fallback eligibility now uses the same
+definition-layer semantic facade.
 
 Expected checks:
 
 - every public `ToolSpec` has a definition;
 - every known `ToolCall` name has a definition, including hidden implemented
   tools such as `run_codex`;
-- definition risk/scope/project/session flags match `ToolMetadata` and existing
-  helper behavior;
+- definition risk/scope/project/session flags drive `ToolMetadata` facade
+  behavior and existing helper behavior;
+- `KNOWN_TOOL_NAMES`, public `ToolSpec` order, and public `tool_names()` mirror
+  canonical `ToolDefinition` order;
+- public `ToolSpec` output schemas and MCP annotations derive from the
+  canonical spec name;
+- `list_tools` category groups derive from definition-layer discovery groups;
+- `list_tools` and `tool_manifest` recommended flows derive from one
+  definition-layer declaration and reference only model-visible tools;
 - hidden tools remain hidden from model-facing discovery.
+- session/permission semantic helpers preserve read-like, write-like,
+  shell-like, git-like, change-summary, validation-output, cross-project
+  escape, and permission-risk behavior.
+- current-session fallback eligibility is explicit and keeps control tools,
+  session-creation tools, and required-business-session tools out of implicit
+  fallback.
 
 ### Phase 3: generate discovery mirrors from definitions
 
@@ -169,13 +249,24 @@ OAuth scope, visibility, destructive behavior, redaction, or OpenAPI exposure.
 
 When adding a runtime tool today, expect to update or verify:
 
-- `src/tool_runtime/types.rs`: add the `ToolCall` variant, parser handling,
-  `KNOWN_TOOL_NAMES`, `tool_name()`, `session_id()`, and `project()` behavior.
+- `src/tool_runtime/tool_call.rs`: add the `ToolCall` variant, parser handling,
+  `tool_name()`, `session_id()`, and `project()` behavior.
+- `src/tool_runtime/tool_names.rs`: update `KNOWN_TOOL_NAMES` and any explicit
+  model-facing hidden-tool behavior.
 - `src/tool_runtime/mod.rs` or a domain module under `src/tool_runtime/`: add
   runtime handler logic and any `tool_manifest` category/recommended-flow
   changes.
-- `src/tool_runtime/metadata.rs`: add `ToolMetadata` risk, OAuth scope, project
-  requirement, path hint, read-only/destructive/shell-like classification.
+- `src/tool_runtime/dispatch.rs`: wire the `ToolCall` variant to the runtime
+  handler while preserving session recording, current-session fallback, guard
+  denial, permission, and authorization behavior.
+- `src/tool_runtime/surface.rs`: update recommended-flow, bounded `list_tools`,
+  and flattened-argument discovery behavior when applicable.
+- `src/tool_runtime/tool_definition.rs`: add `ToolMetadata` risk, OAuth scope,
+  project requirement, path hint, read-only/destructive/shell-like
+  classification, manifest category, list-tools discovery group membership,
+  visibility, and agent capability.
+- `src/tool_runtime/metadata.rs`: update only for non-runtime compatibility
+  route metadata such as legacy dedicated HTTP routes.
 - `src/tool_runtime/registry/input_schemas.rs`: add or extend input schema
   helpers.
 - `src/tool_runtime/registry/output_schemas.rs`: add output schema if the tool
@@ -185,7 +276,7 @@ When adding a runtime tool today, expect to update or verify:
 - `src/tool_runtime/registry/tool_specs.rs`: add or intentionally hide the
   `ToolSpec`; keep `run_codex`-style hidden behavior explicit.
 - `src/auth/scopes.rs`: verify OAuth runtime tool policy still resolves from
-  metadata and fails closed for unknown tools.
+  `ToolDefinition` metadata and fails closed for unknown tools.
 - `src/openapi.rs`: update dedicated GPT Action operations or
   `ToolCallRequest` accepted-name/flattened-field descriptions when applicable.
 - `src/mcp.rs`: verify `tools/list` and `tools/call` behavior needs no protocol

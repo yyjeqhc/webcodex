@@ -1,9 +1,14 @@
-use super::metadata::{tool_metadata, ToolPathHint, ToolRisk};
+use super::metadata::{ToolPathHint, ToolRisk};
 use super::permissions::PermissionDecision;
 use super::project_instructions::{
     ProjectInstructionsSnapshot, ProjectInstructionsSummarySnapshot,
 };
-use super::types::SessionMode;
+use super::tool_definition::{
+    runtime_tool_captures_validation_output, runtime_tool_is_change_summary_like,
+    runtime_tool_is_git_like, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+    runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_session_risk_class,
+};
+use super::tool_inputs::SessionMode;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, VecDeque};
@@ -1666,22 +1671,6 @@ pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
     Value::Object(obj)
 }
 
-pub(crate) fn copy_tool_call_expectation_metadata(
-    source: &serde_json::Map<String, Value>,
-    target: &mut serde_json::Map<String, Value>,
-) {
-    for key in [
-        "expected_failure",
-        "expected_failure_kind",
-        "test_expect_failure_kind",
-        "assertion_name",
-    ] {
-        if let Some(value) = source.get(key).cloned() {
-            target.insert(key.to_string(), value);
-        }
-    }
-}
-
 pub(crate) fn tool_failure_summary_from_events(events: &[SessionEvent], limit: usize) -> Value {
     let limit = limit.min(20);
     let mut expected_count = 0usize;
@@ -1846,47 +1835,31 @@ fn tool_failure_event_summary(event: &SessionEvent) -> Value {
 }
 
 pub(crate) fn risk_class_for_tool(tool_name: &str) -> &'static str {
-    tool_metadata(tool_name).risk.session_risk_class()
+    runtime_tool_session_risk_class(tool_name)
 }
 
 fn is_read_like_tool(tool_name: &str) -> bool {
-    tool_metadata(tool_name).read_only
+    runtime_tool_is_read_like(tool_name)
 }
 
 fn is_write_like_tool(tool_name: &str) -> bool {
-    tool_metadata(tool_name).risk == ToolRisk::ProjectWrite
+    runtime_tool_is_write_like(tool_name)
 }
 
 fn is_shell_like_tool(tool_name: &str) -> bool {
-    let metadata = tool_metadata(tool_name);
-    metadata.shell_like || metadata.risk == ToolRisk::JobRun
+    runtime_tool_is_shell_like(tool_name)
 }
 
 fn is_git_like_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "git_status"
-            | "git_diff"
-            | "git_diff_hunks"
-            | "git_diff_summary"
-            | "git_log"
-            | "show_changes"
-            | "git_restore_paths"
-            | "discard_untracked"
-            | "workspace_checkpoint_create"
-            | "workspace_checkpoint_restore"
-    )
+    runtime_tool_is_git_like(tool_name)
 }
 
 fn is_change_summary_like_tool(tool_name: &str) -> bool {
-    matches!(
-        tool_name,
-        "show_changes" | "git_diff_summary" | "git_diff_hunks"
-    )
+    runtime_tool_is_change_summary_like(tool_name)
 }
 
 pub(crate) fn changed_paths_for_tool(tool_name: &str, arguments: &Value) -> Vec<String> {
-    let metadata = tool_metadata(tool_name);
+    let metadata = runtime_tool_metadata(tool_name);
     if metadata.risk != ToolRisk::ProjectWrite {
         return Vec::new();
     }
@@ -2090,7 +2063,7 @@ fn sanitize_persisted_validation_output_summary(tool_name: &str, value: &Value) 
 }
 
 fn is_cargo_validation_tool(tool_name: &str) -> bool {
-    matches!(tool_name, "cargo_fmt" | "cargo_check" | "cargo_test")
+    runtime_tool_captures_validation_output(tool_name)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

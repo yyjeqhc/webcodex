@@ -4,7 +4,6 @@ use super::super::cargo::*;
 use super::super::codex::*;
 use super::super::helpers::*;
 use super::super::patch::*;
-use super::super::types::*;
 use super::super::*;
 use super::support::*;
 use crate::shell_protocol::{

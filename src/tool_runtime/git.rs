@@ -7,7 +7,7 @@ use super::helpers::{
     run_command_sync, shell_escape_simple, shell_join_paths, validate_limited_cleanup_paths,
     validate_project_relative_path,
 };
-use super::types::ToolResult;
+use super::tool_result::ToolResult;
 use super::ToolRuntime;
 use crate::shell_protocol::ShellRunRequest;
 use crate::tool_runtime::sessions::{SessionEvent, SessionSummary};

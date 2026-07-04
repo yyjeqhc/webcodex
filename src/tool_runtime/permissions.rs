@@ -1,9 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use super::metadata::{self, ToolPathHint, ToolRisk};
 use super::sessions::SessionEvent;
-use super::types::ToolResult;
+use super::tool_definition::{runtime_tool_permission_risk, runtime_tool_requires_permission};
+use super::tool_result::ToolResult;
 
 pub(crate) const DEFAULT_PERMISSION_POLICY: &str = "dev_auto_approve";
 pub(crate) const RELEASE_RECOMMENDED_PERMISSION_POLICY: &str = "require_approval";
@@ -34,9 +34,7 @@ pub(crate) fn permission_decision_for_tool(
     tool_name: &str,
     project: Option<&str>,
 ) -> Option<PermissionDecision> {
-    let metadata = metadata::tool_metadata(tool_name);
-    let required = !metadata.read_only || metadata.destructive || metadata.shell_like;
-    if !required {
+    if !runtime_tool_requires_permission(tool_name) {
         return None;
     }
     Some(PermissionDecision {
@@ -45,7 +43,7 @@ pub(crate) fn permission_decision_for_tool(
         request_id: format!("wc_perm_{}", uuid::Uuid::new_v4().simple()),
         status: "auto_approved".to_string(),
         reason: DEFAULT_PERMISSION_POLICY.to_string(),
-        risk: permission_risk(tool_name),
+        risk: runtime_tool_permission_risk(tool_name).to_string(),
         tool_name: tool_name.to_string(),
         project: project.map(str::to_string),
     })
@@ -168,33 +166,4 @@ pub(crate) fn edit_path_policy_rejected_result(path: &str, message: String) -> T
             "error_kind": "policy_rejected",
         }),
     )
-}
-
-fn permission_risk(tool_name: &str) -> String {
-    let metadata = metadata::tool_metadata(tool_name);
-    if matches!(tool_name, "cargo_fmt" | "cargo_check" | "cargo_test") {
-        return "validation".to_string();
-    }
-    if matches!(tool_name, "run_job" | "stop_job" | "run_codex") {
-        return "job".to_string();
-    }
-    if metadata.shell_like {
-        return "shell".to_string();
-    }
-    if metadata.destructive {
-        return "destructive".to_string();
-    }
-    if metadata.path_hint == ToolPathHint::Artifact {
-        return "artifact_write".to_string();
-    }
-    if metadata.path_hint == ToolPathHint::Patch || tool_name.contains("patch") {
-        return "patch".to_string();
-    }
-    if matches!(
-        metadata.risk,
-        ToolRisk::ProjectWrite | ToolRisk::AccountManage
-    ) {
-        return "write".to_string();
-    }
-    "write".to_string()
 }

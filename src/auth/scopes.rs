@@ -9,6 +9,7 @@ use std::collections::HashSet;
 use super::principal::AuthContext;
 use crate::config::legacy_codex_run_enabled;
 use crate::tool_runtime::metadata::lookup_tool_metadata;
+use crate::tool_runtime::tool_definition::runtime_tool_oauth_scope;
 
 // ---------------------------------------------------------------------------
 // Scope constants
@@ -282,8 +283,8 @@ pub(crate) fn oauth_route_scope_policy_for_path_method(
 }
 
 pub(crate) fn oauth_scope_policy_for_runtime_tool(tool_name: &str) -> OAuthToolScopePolicy {
-    lookup_tool_metadata(tool_name)
-        .and_then(|metadata| metadata.oauth_scope)
+    runtime_tool_oauth_scope(tool_name)
+        .or_else(|| lookup_tool_metadata(tool_name).and_then(|metadata| metadata.oauth_scope))
         .map(OAuthToolScopePolicy::Require)
         .unwrap_or(OAuthToolScopePolicy::Unknown)
 }
@@ -768,6 +769,15 @@ mod tests {
                 "{tool}"
             );
         }
+    }
+
+    #[test]
+    fn oauth_route_policy_preserves_legacy_non_runtime_metadata_scope() {
+        assert!(!KNOWN_TOOL_NAMES.contains(&"delete_files"));
+        assert_eq!(
+            oauth_scope_policy_for_runtime_tool("delete_files"),
+            OAuthToolScopePolicy::Require(SCOPE_PROJECT_WRITE)
+        );
     }
 
     #[test]

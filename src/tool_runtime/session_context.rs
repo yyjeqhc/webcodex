@@ -1,5 +1,8 @@
 use super::sessions;
-use super::{metadata, ToolCall, ToolResult};
+use super::tool_definition::{
+    runtime_tool_allows_current_session_fallback, runtime_tool_requires_session_project_escape,
+};
+use super::{ToolCall, ToolResult};
 use crate::auth::AuthContext;
 use serde_json::{json, Value};
 
@@ -104,8 +107,7 @@ pub(crate) fn add_session_project_mismatch_warning(
 }
 
 pub(crate) fn session_project_mismatch_requires_escape(tool_name: &str) -> bool {
-    let metadata = metadata::tool_metadata(tool_name);
-    !metadata.read_only || metadata.destructive || metadata.shell_like
+    runtime_tool_requires_session_project_escape(tool_name)
 }
 
 pub(crate) fn session_guard_denied_result(
@@ -211,29 +213,8 @@ pub(crate) fn add_session_telemetry_hint(
     result.output = Value::Object(output);
 }
 
-fn is_current_session_control_tool(call: &ToolCall) -> bool {
-    matches!(
-        call,
-        ToolCall::BindCurrentSession { .. }
-            | ToolCall::CurrentSession { .. }
-            | ToolCall::UnbindCurrentSession { .. }
-    )
-}
-
 pub(crate) fn is_current_session_eligible(call: &ToolCall) -> bool {
-    // `session_handoff_summary` carries an optional project for workspace/
-    // checkpoint enrichment, but its `session_id` is required business input
-    // (the session to summarize), not a recorder session. It must never fall
-    // back to the current-session binding.
-    if matches!(
-        call,
-        ToolCall::SessionHandoffSummary { .. }
-            | ToolCall::StartCodingTask { .. }
-            | ToolCall::FinishCodingTask { .. }
-    ) {
-        return false;
-    }
-    call.project().is_some() && !is_current_session_control_tool(call)
+    call.project().is_some() && runtime_tool_allows_current_session_fallback(call.tool_name())
 }
 
 pub(crate) fn current_session_key(

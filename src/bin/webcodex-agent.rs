@@ -6,6 +6,7 @@ use std::process::{Child, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
+use tracing_subscriber::EnvFilter;
 
 #[allow(dead_code)]
 #[path = "../shell_protocol.rs"]
@@ -1085,6 +1086,11 @@ fn handle_one_poll(
 
 fn main() {
     let _ = rustls::crypto::aws_lc_rs::default_provider().install_default();
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .try_init();
 
     let action = match parse_args() {
         Ok(v) => v,

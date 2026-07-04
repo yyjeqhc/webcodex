@@ -90,8 +90,11 @@ fn agent_install_service_generates_expected_unit_without_tokens() {
         "ExecStart=/opt/webcodex/bin/webcodex-agent --config {}\n",
         config.display()
     )));
-    assert!(unit.contains("Restart=on-failure\n"));
-    assert!(unit.contains("RestartSec=3\n"));
+    assert!(unit.contains("Restart=always\n"));
+    assert!(unit.contains("RestartSec=5s\n"));
+    assert!(unit.contains("StandardOutput=journal\n"));
+    assert!(unit.contains("StandardError=journal\n"));
+    assert!(unit.contains("Environment=RUST_LOG=info\n"));
     assert!(unit.contains("WorkingDirectory=/root\n"));
     assert!(unit.contains("User=webcodex\n"));
     assert!(unit.contains("Group=webcodex\n"));

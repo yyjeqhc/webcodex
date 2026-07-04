@@ -161,7 +161,7 @@ Strict transport values mean exactly one transport:
 - `transport = "websocket"`: WebSocket only.
 - `transport = "polling"`: polling only.
 
-`transport = "auto"` is the recommended production setting when QUIC is configured. It tries QUIC first, then WebSocket, then polling. If `[quic]` is missing, it starts at WebSocket.
+`transport = "auto"` is the recommended production setting when QUIC is configured. It tries QUIC first, then WebSocket, then polling. If `[quic]` is missing, it starts at WebSocket. After a WebSocket connection has been established, ordinary socket close/EOF/read errors are treated as transport disconnects and the agent reconnects instead of exiting.
 
 Auto startup logs show the decision path, for example:
 
@@ -170,6 +170,8 @@ webcodex-agent transport auto: trying quic
 webcodex-agent transport auto: quic failed: <reason>; trying websocket
 webcodex-agent transport auto: websocket failed: <reason>; falling back to polling
 webcodex-agent registered client_id=... server=... preferred_transport=auto actual_transport=websocket transport=websocket
+webcodex-agent websocket connection closed; reconnecting
+webcodex-agent reconnect attempt scheduled transport=websocket delay=1s
 ```
 
 `runtime_status` and `listAgents` show the actual connected transport label, not merely the preferred setting.

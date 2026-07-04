@@ -158,7 +158,7 @@ Strict transport values 表示只使用一个 transport：
 - `transport = "websocket"`：只使用 WebSocket。
 - `transport = "polling"`：只使用 polling。
 
-配置了 QUIC 时，`transport = "auto"` 是推荐生产设置。它先尝试 QUIC，再 WebSocket，再 polling。如果缺少 `[quic]`，会从 WebSocket 开始。
+配置了 QUIC 时，`transport = "auto"` 是推荐生产设置。它先尝试 QUIC，再 WebSocket，再 polling。如果缺少 `[quic]`，会从 WebSocket 开始。WebSocket 已经建立后，普通 socket close、EOF、read error 会被当作 transport disconnect，agent 会重连而不是退出进程。
 
 Auto startup logs 会显示决策路径，例如：
 
@@ -167,6 +167,8 @@ webcodex-agent transport auto: trying quic
 webcodex-agent transport auto: quic failed: <reason>; trying websocket
 webcodex-agent transport auto: websocket failed: <reason>; falling back to polling
 webcodex-agent registered client_id=... server=... preferred_transport=auto actual_transport=websocket transport=websocket
+webcodex-agent websocket connection closed; reconnecting
+webcodex-agent reconnect attempt scheduled transport=websocket delay=1s
 ```
 
 `runtime_status` 和 `listAgents` 显示实际连接的 transport label，而不只是 preferred setting。

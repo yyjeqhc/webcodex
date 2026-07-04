@@ -21,8 +21,11 @@ pub(crate) fn render_agent_systemd_unit(opts: &AgentInstallServiceOptions) -> St
         opts.bin.display(),
         opts.config.display()
     ));
-    unit.push_str("Restart=on-failure\n");
-    unit.push_str("RestartSec=3\n");
+    unit.push_str("Restart=always\n");
+    unit.push_str("RestartSec=5s\n");
+    unit.push_str("StandardOutput=journal\n");
+    unit.push_str("StandardError=journal\n");
+    unit.push_str("Environment=RUST_LOG=info\n");
     unit.push_str(&format!(
         "WorkingDirectory={}\n",
         opts.working_directory.display()

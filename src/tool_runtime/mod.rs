@@ -32,6 +32,7 @@ mod shell;
 mod surface;
 mod tool_audit;
 mod tool_call;
+mod tool_catalog;
 pub(crate) mod tool_definition;
 mod tool_inputs;
 mod tool_names;

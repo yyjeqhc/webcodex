@@ -5,15 +5,13 @@ mod discovery;
 mod files;
 mod git;
 mod jobs;
+mod patches;
 mod projects;
 mod validation;
 
 use super::super::tool_inputs::{CHECKPOINT_KIND_VALUES, CHECKPOINT_VALIDATION_STATUS_VALUES};
 use super::super::tool_spec::ToolSpec;
-use common::{
-    object_schema, with_optional_session_id, OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION,
-    PATCH_FIELD_DESCRIPTION,
-};
+use common::{object_schema, with_optional_session_id, OPTIONAL_EXPLICIT_SESSION_ID_DESCRIPTION};
 pub(crate) use discovery::accepted_flattened_args_for_spec;
 pub(super) use discovery::{
     empty_input_schema, list_tools_input_schema, tool_manifest_input_schema,
@@ -29,31 +27,12 @@ pub(super) use jobs::{
     job_log_input_schema, job_status_input_schema, job_tail_input_schema, list_jobs_input_schema,
     run_codex_input_schema, run_job_input_schema, run_shell_input_schema, stop_job_input_schema,
 };
+pub(super) use patches::{apply_patch_checked_input_schema, apply_patch_input_schema};
 pub(super) use projects::{create_project_input_schema, register_project_input_schema};
 pub(super) use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
     validate_patch_input_schema,
 };
-
-pub(super) fn apply_patch_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Configured project id.", true),
-        ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
-    ]))
-}
-
-pub(super) fn apply_patch_checked_input_schema() -> Value {
-    object_schema(with_optional_session_id(vec![
-        ("project", "string", "Agent-registered project id.", true),
-        ("patch", "string", PATCH_FIELD_DESCRIPTION, true),
-        (
-            "deny_sensitive_paths",
-            "boolean",
-            "Block sensitive path warnings before applying.",
-            false,
-        ),
-    ]))
-}
 
 pub(super) fn delete_project_files_input_schema() -> Value {
     object_schema(with_optional_session_id(vec![

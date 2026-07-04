@@ -1,5 +1,3 @@
-use serde_json::{json, Value};
-
 mod artifacts;
 mod checkpoints;
 mod cleanup;
@@ -14,10 +12,10 @@ mod line_edits;
 mod patches;
 mod projects;
 mod sessions;
+mod testing;
 mod text_edits;
 mod validation;
 
-use super::super::tool_spec::ToolSpec;
 pub(super) use artifacts::{
     artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
     artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
@@ -63,6 +61,7 @@ pub(super) use sessions::{
     session_handoff_summary_input_schema, session_mode_schema, session_summary_input_schema,
     start_session_input_schema,
 };
+pub(super) use testing::with_common_testing_metadata;
 pub(super) use text_edits::{
     insert_after_pattern_input_schema, insert_before_pattern_input_schema,
     replace_exact_block_input_schema, replace_in_file_input_schema,
@@ -72,42 +71,3 @@ pub(super) use validation::{
     cargo_check_input_schema, cargo_fmt_input_schema, cargo_test_input_schema,
     validate_patch_input_schema,
 };
-
-pub(super) fn with_common_testing_metadata(mut spec: ToolSpec) -> ToolSpec {
-    let Some(properties) = spec
-        .input_schema
-        .get_mut("properties")
-        .and_then(Value::as_object_mut)
-    else {
-        return spec;
-    };
-    properties.entry("expected_failure".to_string()).or_insert_with(|| {
-        json!({
-            "type": "boolean",
-            "description": "Optional testing/smoke metadata only. When true, a failed call is classified as an expected failure in session handoff/finish summaries. Does not change authorization, permission, execution, hard guards, command_started, or the immediate success/error result."
-        })
-    });
-    properties
-        .entry("expected_failure_kind".to_string())
-        .or_insert_with(|| {
-            json!({
-                "type": "string",
-                "description": "Optional testing/smoke metadata only. Expected structured failure_kind or error_kind for an expected failure. Does not change tool behavior or safety decisions."
-            })
-        });
-    properties
-        .entry("test_expect_failure_kind".to_string())
-        .or_insert_with(|| {
-            json!({
-                "type": "string",
-                "description": "Alias for expected_failure_kind for testing/smoke callers. Matches structured failure_kind or error_kind and does not change tool behavior."
-            })
-        });
-    properties.entry("assertion_name".to_string()).or_insert_with(|| {
-        json!({
-            "type": "string",
-            "description": "Optional testing/smoke assertion label recorded in the session ledger. Does not change authorization, permission, execution, or immediate tool output."
-        })
-    });
-    spec
-}

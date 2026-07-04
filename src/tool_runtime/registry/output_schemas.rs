@@ -333,6 +333,13 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 "error",
                 nullable_schema("string", "Job error message, when available."),
             ),
+            (
+                "command_preview",
+                schema_type(
+                    "string",
+                    "Command preview for agent-backed jobs only when include_command_preview=true.",
+                ),
+            ),
         ]),
         "job_log" => wrapped_output_schema(vec![
             ("job_id", schema_type("string", "Runtime job id.")),

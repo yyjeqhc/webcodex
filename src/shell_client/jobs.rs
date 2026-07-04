@@ -3,7 +3,7 @@ use super::{now_ts, CLIENT_ONLINE_WINDOW_SECS, MAX_OUTPUT_BYTES, MAX_QUEUED_REQU
 use crate::shell_protocol::{ShellAgentJobResult, ShellAgentShellJobResult, ShellJobInfo};
 use std::collections::VecDeque;
 
-pub(super) fn command_preview(command: &str) -> String {
+pub(crate) fn command_preview(command: &str) -> String {
     let first_line = command.lines().next().unwrap_or_default().trim();
     const MAX_PREVIEW: usize = 120;
     if first_line.chars().count() <= MAX_PREVIEW {

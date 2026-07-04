@@ -1027,6 +1027,10 @@ fn schemas() -> Value {
                     "type": "boolean",
                     "description": "Flattened confirmation flag for workspace_checkpoint_restore/delete and stop_job; must be true to proceed. Used only when `params` and `arguments` are absent."
                 },
+                "include_command_preview": {
+                    "type": "boolean",
+                    "description": "Flattened job_status debug flag. Defaults to false; when true, agent-backed job_status includes command_preview. stdout/stderr bodies are never included. Used only when `params` and `arguments` are absent."
+                },
                 "include_diff_stat": {
                     "type": "boolean",
                     "description": "Flattened workspace_checkpoint_show flag to include tracked/staged diff stat strings (default false). Used only when `params` and `arguments` are absent."
@@ -3046,6 +3050,7 @@ mod tests {
             "include_untracked",
             "checkpoint_id",
             "confirm",
+            "include_command_preview",
             "include_diff_stat",
             "edits",
             "dry_run",

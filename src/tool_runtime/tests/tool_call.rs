@@ -192,7 +192,26 @@ fn from_tool_name_parses_run_codex_with_all_fields() {
 #[test]
 fn from_tool_name_parses_job_status_and_job_log() {
     let call = ToolCall::from_tool_name("job_status", json!({"job_id": "abc"})).unwrap();
-    assert!(matches!(call, ToolCall::JobStatus { ref job_id } if job_id == "abc"));
+    assert!(matches!(
+        call,
+        ToolCall::JobStatus {
+            ref job_id,
+            include_command_preview: false,
+        } if job_id == "abc"
+    ));
+
+    let call = ToolCall::from_tool_name(
+        "job_status",
+        json!({"job_id": "abc", "include_command_preview": true}),
+    )
+    .unwrap();
+    assert!(matches!(
+        call,
+        ToolCall::JobStatus {
+            ref job_id,
+            include_command_preview: true,
+        } if job_id == "abc"
+    ));
 
     let call = ToolCall::from_tool_name("job_log", json!({"job_id": "abc", "offset": 10})).unwrap();
     match call {

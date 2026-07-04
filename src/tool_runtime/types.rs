@@ -555,7 +555,11 @@ pub enum ToolCall {
     },
 
     /// Query the status of a running/finished job.
-    JobStatus { job_id: String },
+    JobStatus {
+        job_id: String,
+        #[serde(default)]
+        include_command_preview: bool,
+    },
 
     /// Retrieve stdout/stderr log of a job.
     JobLog {

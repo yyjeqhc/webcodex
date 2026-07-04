@@ -113,6 +113,7 @@ Typical MCP tools include:
 - Patch workflows: `validate_patch`, `apply_patch_checked`.
 - Bounded artifact transfer: `save_project_artifact`, `read_project_artifact_metadata`, `read_project_artifact`, `artifact_upload_begin`, `artifact_upload_chunk`, `artifact_upload_finish`, `artifact_upload_abort`.
 - Project commands and jobs: `run_shell`, `run_job`, `stop_job`, `job_status`, `job_log`, `job_tail`.
+  `job_status` omits `command_preview` by default; pass `include_command_preview=true` only for focused debugging. It never returns stdout/stderr bodies.
 - Structured Cargo helpers: `cargo_fmt`, `cargo_check`, `cargo_test`.
 
 Codex delegation (`run_codex`) is currently hidden/disabled from MCP `tools/list` and model-facing runtime discovery. Run Codex outside WebCodex. The legacy `/api/codex/run` endpoint is not mounted unless `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1`, and that opt-in preserves only the old endpoint shape; it does not re-enable `run_codex`.

@@ -925,7 +925,13 @@ impl ToolRuntime {
                 extra_args: _,
             } => run_codex_disabled_result(),
 
-            ToolCall::JobStatus { job_id } => self.job_status_for_auth(job_id, auth).await,
+            ToolCall::JobStatus {
+                job_id,
+                include_command_preview,
+            } => {
+                self.job_status_for_auth(job_id, include_command_preview, auth)
+                    .await
+            }
 
             ToolCall::JobLog {
                 job_id,

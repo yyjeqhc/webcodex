@@ -64,6 +64,7 @@ MCP 和 GPT Actions 共享同一个 `ToolRuntime`。通过 MCP 发起的 tool ca
 - 推荐结构化编辑：`replace_line_range`、`insert_at_line`、`delete_line_range`。
 - Patch workflows：`validate_patch`、`apply_patch_checked`。
 - 项目命令与 jobs：`run_shell`、`run_job`、`job_status`、`job_log`、`job_tail`。
+  `job_status` 默认不返回 `command_preview`；仅在定向调试时传 `include_command_preview=true`。它不会返回 stdout/stderr body。
 - Structured Cargo helpers：`cargo_fmt`、`cargo_check`、`cargo_test`。
 
 Codex delegation（`run_codex`）当前已从 MCP `tools/list` 和模型可见 runtime discovery 隐藏/禁用。需要 Codex 时请在 WebCodex 外部运行。legacy `/api/codex/run` endpoint 默认不挂载；只有设置 `WEBCODEX_ENABLE_LEGACY_CODEX_RUN=1` 才恢复旧 endpoint 形状，但不会重新启用 `run_codex`。

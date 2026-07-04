@@ -1074,6 +1074,7 @@ async fn tool_manifest_reports_accepted_flattened_args_without_schemas() {
             "artifact_upload_abort",
             vec!["project", "path", "upload_id", "session_id"],
         ),
+        ("job_status", vec!["job_id", "include_command_preview"]),
     ] {
         let accepted = accepted(tool);
         for field in fields {

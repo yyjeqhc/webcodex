@@ -390,7 +390,15 @@ impl ToolRuntime {
             ToolSpec {
                 name: "job_status".to_string(),
                 description: "Get status for a runtime job.".to_string(),
-                input_schema: object_schema(vec![("job_id", "string", "Job id.", true)]),
+                input_schema: object_schema(vec![
+                    ("job_id", "string", "Job id.", true),
+                    (
+                        "include_command_preview",
+                        "boolean",
+                        "Optional debug flag. Defaults to false; when true, agent-backed jobs include command_preview. stdout/stderr bodies are never included.",
+                        false,
+                    ),
+                ]),
                 output_schema: output_schema_for_tool("job_status"),
                 annotations: tool_annotations("job_status"),
             },

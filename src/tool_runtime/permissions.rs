@@ -72,6 +72,7 @@ pub(crate) fn is_hard_denied_output(output: &Value, error: Option<&str>) -> bool
         "policy_rejected",
         "session_guard_denied",
         "unknown_session_id",
+        "session_project_mismatch",
         "confirmation_required",
         "job_not_found",
         "job_project_mismatch",

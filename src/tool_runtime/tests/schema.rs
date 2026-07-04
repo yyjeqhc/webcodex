@@ -1035,6 +1035,11 @@ fn tool_specs_schema_spot_checks_extended() {
             vec!["project", "job_id"],
             vec!["confirm", "session_id"],
         ),
+        (
+            "job_status",
+            vec!["job_id"],
+            vec!["include_command_preview"],
+        ),
         ("job_tail", vec!["job_id"], vec!["tail_lines"]),
     ];
     let runtime = test_runtime();
@@ -1068,6 +1073,10 @@ fn tool_specs_schema_spot_checks_extended() {
     let props = spec.input_schema["properties"].as_object().unwrap();
     assert!(props.contains_key("context_before"));
     assert!(props.contains_key("context_after"));
+
+    let spec = spec_named(&specs, "job_status");
+    let props = spec.input_schema["properties"].as_object().unwrap();
+    assert!(props.contains_key("include_command_preview"));
 
     let spec = spec_named(&specs, "read_file");
     let props = spec.input_schema["properties"].as_object().unwrap();

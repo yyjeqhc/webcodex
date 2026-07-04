@@ -1,6 +1,7 @@
 //! Jobs tests for tool_runtime.
 
 use super::super::helpers::*;
+use super::super::kernel::{ToolCallContext, ToolCallRequest, ToolTransport};
 use super::super::types::*;
 use super::super::ToolRuntime;
 use super::support::*;
@@ -265,6 +266,15 @@ async fn recover_local_job_status_after_restart() {
     assert_eq!(result.output["project"], project_id);
     assert_eq!(result.output["executor"], "local");
     assert_eq!(result.output["kind"], "shell");
+    assert!(result.output.get("command_preview").is_none());
+    let debug_result = runtime
+        .dispatch(ToolCall::JobStatus {
+            job_id: job_id.to_string(),
+            include_command_preview: true,
+        })
+        .await;
+    assert!(debug_result.success, "{:?}", debug_result.error);
+    assert_eq!(debug_result.output["command_preview"], "echo test");
     // Recovered job is now cached in memory.
     assert!(runtime.local_jobs.lock().await.contains_key(job_id));
 }
@@ -1047,7 +1057,13 @@ async fn model_facing_stop_job_stops_agent_job_with_same_session() {
     assert_eq!(result.output["permission"]["status"], "auto_approved");
     assert_eq!(result.output["permission"]["risk"], "job");
     let status = runtime
-        .dispatch_with_auth(ToolCall::JobStatus { job_id }, Some(&auth))
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id,
+                include_command_preview: false,
+            },
+            Some(&auth),
+        )
         .await;
     assert!(status.success, "{:?}", status.error);
     assert_eq!(status.output["status"], "stopped");
@@ -1064,22 +1080,47 @@ async fn model_facing_stop_job_session_project_mismatch_beats_auto_approve() {
         Some("mismatch".to_string()),
     );
 
-    let result = runtime
-        .dispatch_with_auth(
-            ToolCall::StopJob {
-                project: "agent:client-two:proj-two".to_string(),
-                job_id: "wc_job_not_needed".to_string(),
-                session_id: Some(session.session_id),
-                confirm: true,
+    let outcome = runtime
+        .call_tool_with_context(
+            ToolCallRequest {
+                tool_name: "stop_job".to_string(),
+                arguments: json!({
+                    "project": "agent:client-two:proj-two",
+                    "job_id": "wc_job_not_needed",
+                    "session_id": session.session_id,
+                    "confirm": true,
+                }),
             },
-            Some(&auth),
+            ToolCallContext {
+                transport: ToolTransport::Api,
+                session_id: None,
+                auth: Some(&auth),
+                record_oauth_scope_denials: true,
+            },
         )
         .await;
+    let result = outcome.result.expect("tool result");
 
     assert!(!result.success);
     assert_eq!(result.output["error_kind"], "session_project_mismatch");
+    assert_eq!(result.output["failure_kind"], "session_project_mismatch");
     assert_eq!(result.output["command_started"], false);
     assert!(result.output.get("permission").is_none());
+    let summary = runtime
+        .sessions
+        .summary(result.output["session_id"].as_str().unwrap(), Some(20))
+        .unwrap();
+    let event = summary
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "tool_call_finished" && event.tool_name == "stop_job")
+        .expect("stop_job finished event");
+    assert_eq!(
+        event.error_kind.as_deref(),
+        Some("session_project_mismatch")
+    );
+    assert!(event.permission.is_none());
 }
 
 #[tokio::test]
@@ -1305,6 +1346,7 @@ async fn runtime_job_tools_filter_agent_jobs_by_auth_group() {
             .dispatch_with_auth(
                 ToolCall::JobStatus {
                     job_id: job_b.clone(),
+                    include_command_preview: false,
                 },
                 Some(&shared_a),
             )
@@ -1315,6 +1357,7 @@ async fn runtime_job_tools_filter_agent_jobs_by_auth_group() {
             .dispatch_with_auth(
                 ToolCall::JobStatus {
                     job_id: job_a.clone(),
+                    include_command_preview: false,
                 },
                 Some(&bridge_b),
             )
@@ -1325,6 +1368,7 @@ async fn runtime_job_tools_filter_agent_jobs_by_auth_group() {
             .dispatch_with_auth(
                 ToolCall::JobStatus {
                     job_id: job_b.clone(),
+                    include_command_preview: false,
                 },
                 Some(&bridge_a),
             )
@@ -1358,12 +1402,29 @@ async fn runtime_job_tools_filter_agent_jobs_by_auth_group() {
         .dispatch_with_auth(
             ToolCall::JobStatus {
                 job_id: job_b.clone(),
+                include_command_preview: false,
             },
             Some(&shared_b),
         )
         .await;
     assert!(status_b.success, "{:?}", status_b.error);
     assert_eq!(status_b.output["job_id"], job_b);
+    assert!(status_b.output.get("command_preview").is_none());
+
+    let status_b_debug = runtime
+        .dispatch_with_auth(
+            ToolCall::JobStatus {
+                job_id: job_b.clone(),
+                include_command_preview: true,
+            },
+            Some(&shared_b),
+        )
+        .await;
+    assert!(status_b_debug.success, "{:?}", status_b_debug.error);
+    assert!(status_b_debug.output["command_preview"]
+        .as_str()
+        .unwrap()
+        .contains("echo client-b"));
 
     let log_b = runtime
         .dispatch_with_auth(
@@ -1435,6 +1496,7 @@ async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
                 .dispatch_with_auth(
                     ToolCall::JobStatus {
                         job_id: "job-local".to_string(),
+                        include_command_preview: false,
                     },
                     Some(auth),
                 )
@@ -1456,6 +1518,7 @@ async fn lightweight_auth_cannot_enumerate_unrelated_local_jobs() {
         .dispatch_with_auth(
             ToolCall::JobStatus {
                 job_id: "job-local".to_string(),
+                include_command_preview: false,
             },
             Some(&managed_oauth),
         )

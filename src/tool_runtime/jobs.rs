@@ -11,7 +11,7 @@ use super::types::{
 };
 use super::ToolRuntime;
 use crate::auth::AuthContext;
-use crate::shell_client::ShellJobStartMetadata;
+use crate::shell_client::{command_preview, ShellJobStartMetadata};
 use crate::shell_protocol::{ShellJobInfo, ShellJobOpRequest};
 
 fn job_id_for_log(path: &Path) -> String {
@@ -85,6 +85,7 @@ pub(crate) fn local_job_status(
     job_id: &str,
     record: &LocalJobRecord,
     killer: &dyn LocalJobKiller,
+    include_command_preview: bool,
 ) -> ToolResult {
     // Reclaim overtime jobs before reading status: this persists a terminal
     // `lost` status (and terminates the process group) so callers see a
@@ -121,6 +122,11 @@ pub(crate) fn local_job_status(
     });
     if let Some(note) = timeout_note {
         output["note"] = Value::String(note);
+    }
+    if include_command_preview {
+        if let Some(command) = meta.get("command").and_then(Value::as_str) {
+            output["command_preview"] = Value::String(command_preview(command));
+        }
     }
     ToolResult::ok(output)
 }
@@ -652,12 +658,13 @@ impl ToolRuntime {
 
     #[allow(dead_code)]
     pub(crate) async fn job_status(&self, job_id: String) -> ToolResult {
-        self.job_status_for_auth(job_id, None).await
+        self.job_status_for_auth(job_id, false, None).await
     }
 
     pub(crate) async fn job_status_for_auth(
         &self,
         job_id: String,
+        include_command_preview: bool,
         auth: Option<&AuthContext>,
     ) -> ToolResult {
         let killer = self.job_killer.as_ref();
@@ -665,7 +672,7 @@ impl ToolRuntime {
             if !Self::local_jobs_visible_to_auth(auth) {
                 return ToolResult::err(format!("unknown job: {}", job_id));
             }
-            return local_job_status(&job_id, &record, killer);
+            return local_job_status(&job_id, &record, killer, include_command_preview);
         }
         // Fall through to agent-backed jobs. If the agent registry does not
         // know this job either, attempt local recovery from on-disk metadata
@@ -680,23 +687,28 @@ impl ToolRuntime {
                 if !Self::local_jobs_visible_to_auth(auth) {
                     return ToolResult::err(format!("unknown job: {}", job_id));
                 }
-                return local_job_status(&job_id, &record, killer);
+                return local_job_status(&job_id, &record, killer, include_command_preview);
             }
             return ToolResult::err(format!("unknown job: {}", job_id));
         }
         match self.shell_clients.get_job_for_auth(auth, &job_id).await {
-            Ok(job) => ToolResult::ok(json!({
-                "job_id": job.job_id,
-                "status": job.status,
-                "exit_code": job.exit_code,
-                "started_at": job.started_at,
-                "ended_at": job.ended_at,
-                "duration_ms": job.duration_ms,
-                "elapsed_secs": job.elapsed_secs,
-                "client_id": job.client_id,
-                "command_preview": job.command_preview,
-                "error": job.error,
-            })),
+            Ok(job) => {
+                let mut output = json!({
+                    "job_id": job.job_id,
+                    "status": job.status,
+                    "exit_code": job.exit_code,
+                    "started_at": job.started_at,
+                    "ended_at": job.ended_at,
+                    "duration_ms": job.duration_ms,
+                    "elapsed_secs": job.elapsed_secs,
+                    "client_id": job.client_id,
+                    "error": job.error,
+                });
+                if include_command_preview {
+                    output["command_preview"] = Value::String(job.command_preview);
+                }
+                ToolResult::ok(output)
+            }
             Err(_) => ToolResult::err(format!("unknown job: {}", job_id)),
         }
     }

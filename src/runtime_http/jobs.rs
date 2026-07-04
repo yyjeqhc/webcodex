@@ -152,6 +152,7 @@ pub async fn job_status(req: &mut Request, depot: &mut Depot, res: &mut Response
         .dispatch_with_auth(
             ToolCall::JobStatus {
                 job_id: body.job_id,
+                include_command_preview: false,
             },
             auth.as_ref(),
         )

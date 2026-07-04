@@ -8,10 +8,11 @@ use super::input_schemas::{
     checkpoint_list_input_schema, checkpoint_restore_input_schema, checkpoint_show_input_schema,
     create_project_input_schema, current_session_input_schema, empty_input_schema,
     finish_coding_task_input_schema, job_log_input_schema, job_status_input_schema,
-    job_tail_input_schema, list_jobs_input_schema, list_session_messages_input_schema,
-    list_tools_input_schema, post_session_message_input_schema, register_project_input_schema,
-    resolve_session_message_input_schema, run_codex_input_schema, run_job_input_schema,
-    run_shell_input_schema, session_discussion_summary_input_schema,
+    job_tail_input_schema, list_jobs_input_schema, list_project_files_input_schema,
+    list_session_messages_input_schema, list_tools_input_schema, post_session_message_input_schema,
+    read_file_input_schema, register_project_input_schema, resolve_session_message_input_schema,
+    run_codex_input_schema, run_job_input_schema, run_shell_input_schema,
+    search_project_text_input_schema, session_discussion_summary_input_schema,
     session_handoff_summary_input_schema, session_summary_input_schema,
     start_coding_task_input_schema, start_session_input_schema, stop_job_input_schema,
     tool_manifest_input_schema, with_common_testing_metadata, with_optional_session_id,
@@ -198,53 +199,12 @@ impl ToolRuntime {
                     + "read-only). Returns project-relative paths plus a file/dir kind. Routed "
                     + "to the owning registered agent; the server never reads the agent project "
                     + "path directly.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    (
-                        "path",
-                        "string",
-                        "Optional project-relative directory to list (default: project root).",
-                        false,
-                    ),
-                    (
-                        "limit",
-                        "integer",
-                        "Maximum number of entries to return.",
-                        false,
-                    ),
-                ])),
+                list_project_files_input_schema(),
             ),
             tool_spec(
                 "search_project_text",
                 "Default inspect/search tool for project text (rg-first with grep fallback). Returns structured output: matches with path, 1-based line, preview/context, plus backend, truncated, count, context_before, and context_after.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Agent-registered project id.", true),
-                    ("pattern", "string", "Text pattern to search for.", true),
-                    (
-                        "path",
-                        "string",
-                        "Optional project-relative directory to scope the search (default: project root).",
-                        false,
-                    ),
-                    (
-                        "limit",
-                        "integer",
-                        "Maximum number of matches to return.",
-                        false,
-                    ),
-                    (
-                        "context_before",
-                        "integer",
-                        "Optional number of context lines before each match (clamped to 20).",
-                        false,
-                    ),
-                    (
-                        "context_after",
-                        "integer",
-                        "Optional number of context lines after each match (clamped to 20).",
-                        false,
-                    ),
-                ])),
+                search_project_text_input_schema(),
             ),
             tool_spec(
                 "git_diff_summary",
@@ -287,18 +247,7 @@ impl ToolRuntime {
             tool_spec(
                 "read_file",
                 "Default inspect tool for targeted source reading. Reads bounded UTF-8 file ranges from an agent-registered project, optionally with 1-based line numbers for structured line edits.",
-                object_schema(with_optional_session_id(vec![
-                    ("project", "string", "Configured project id.", true),
-                    ("path", "string", "Project-relative file path.", true),
-                    ("start_line", "integer", "1-based line offset.", false),
-                    ("limit", "integer", "Maximum line count.", false),
-                    (
-                        "with_line_numbers",
-                        "boolean",
-                        "When true, include numbered_text and lines with 1-based line numbers.",
-                        false,
-                    ),
-                ])),
+                read_file_input_schema(),
             ),
             tool_spec(
                 "git_status",

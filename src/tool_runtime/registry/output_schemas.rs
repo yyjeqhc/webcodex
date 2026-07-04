@@ -7,6 +7,7 @@ mod common;
 mod discovery;
 mod edits;
 mod git;
+mod hygiene;
 mod jobs;
 mod sessions;
 
@@ -40,60 +41,11 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
     if let Some(schema) = sessions::output_schema_for_tool(name) {
         return schema;
     }
+    if let Some(schema) = hygiene::output_schema_for_tool(name) {
+        return schema;
+    }
 
     match name {
-        "workspace_hygiene_check" => wrapped_output_schema(vec![
-            ("project", schema_type("string", "Project input from the request.")),
-            (
-                "resolved_project",
-                nullable_schema("string", "Canonical runtime project id, when resolved."),
-            ),
-            ("git_available", schema_type("boolean", "True when the project is a git repository.")),
-            ("clean", schema_type("boolean", "True when git is available and no findings were reported.")),
-            (
-                "counts",
-                open_object_schema("Bounded finding counts: findings, critical, high, medium, low, untracked, tracked, large_files, secret_like_paths, cache_paths."),
-            ),
-            (
-                "findings",
-                array_schema(
-                    open_object_schema("Hygiene finding: path, kind, severity, tracked_status, reason, recommendation. Never includes file contents."),
-                    "Bounded hygiene findings. Path is project-relative. Secret-like files are identified by name only.",
-                ),
-            ),
-            ("truncated", schema_type("boolean", "True when findings were truncated to max_findings.")),
-            (
-                "warnings",
-                array_schema(schema_type("string", "Warning code."), "Warning codes such as non_git_project."),
-            ),
-            (
-                "suggested_next_actions",
-                array_schema(schema_type("string", "Short suggested action."), "Bounded suggested next actions."),
-            ),
-        ]),
-        "delete_project_files" => wrapped_output_schema(vec![
-            ("ok", schema_type("boolean", "True when the delete command completed successfully.")),
-            (
-                "deleted_paths",
-                array_schema(schema_type("string", "Deleted project-relative path."), "Requested paths removed with rm -f."),
-            ),
-            (
-                "missing_paths",
-                array_schema(schema_type("string", "Missing project-relative path."), "Reserved for future missing-path detail; currently empty for rm -f success."),
-            ),
-            (
-                "refused_paths",
-                array_schema(schema_type("string", "Refused project-relative path."), "Reserved for future refused-path detail; cleanup path validation failures still return a failed tool result."),
-            ),
-            (
-                "stdout_present",
-                schema_type("boolean", "Whether the underlying command produced stdout. Raw stdout is not exposed by default."),
-            ),
-            (
-                "stderr_present",
-                schema_type("boolean", "Whether the underlying command produced stderr. Raw stderr is not exposed by default."),
-            ),
-        ]),
         "read_file" => wrapped_output_schema(vec![
             ("content", schema_type("string", "File content.")),
             ("path", schema_type("string", "Project-relative path.")),
@@ -101,7 +53,10 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
                 "start_line",
                 schema_type("integer", "1-based starting line."),
             ),
-            ("limit", schema_type("integer", "Maximum requested line count.")),
+            (
+                "limit",
+                schema_type("integer", "Maximum requested line count."),
+            ),
             (
                 "total_lines",
                 schema_type("integer", "Total line count, when available."),
@@ -124,17 +79,17 @@ pub(crate) fn output_schema_for_tool(name: &str) -> Value {
         "search_project_text" => wrapped_output_schema(vec![
             ("project", schema_type("string", "Resolved project id.")),
             ("pattern", schema_type("string", "Search pattern.")),
-            ("path", schema_type("string", "Project-relative search root.")),
+            (
+                "path",
+                schema_type("string", "Project-relative search root."),
+            ),
             (
                 "backend",
                 schema_type("string", "Search backend used: rg, grep, or native."),
             ),
             (
                 "matches",
-                array_schema(
-                    search_match_schema(),
-                    "Bounded search matches.",
-                ),
+                array_schema(search_match_schema(), "Bounded search matches."),
             ),
             ("count", schema_type("integer", "Returned match count.")),
             (

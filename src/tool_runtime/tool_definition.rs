@@ -33,6 +33,34 @@ pub(crate) enum AgentCapability {
     AsyncJobs,
 }
 
+impl AgentCapability {
+    pub(crate) fn label(self) -> &'static str {
+        match self {
+            Self::OwnerOnly => "owner boundary",
+            Self::Shell => "shell",
+            Self::FileRead => "file_read",
+            Self::FileWrite => "file_write",
+            Self::GitOrShell => "shell or git",
+            Self::AsyncJobs => "async shell jobs",
+        }
+    }
+
+    pub(crate) fn registry_capabilities(self) -> &'static [&'static str] {
+        match self {
+            Self::OwnerOnly => &[],
+            Self::Shell => &["shell"],
+            Self::FileRead => &["file_read"],
+            Self::FileWrite => &["file_write"],
+            Self::GitOrShell => &["shell", "git"],
+            Self::AsyncJobs => &["async_jobs", "async_shell_jobs"],
+        }
+    }
+
+    pub(crate) fn is_owner_only(self) -> bool {
+        matches!(self, Self::OwnerOnly)
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ToolVisibility {
     ModelVisible,

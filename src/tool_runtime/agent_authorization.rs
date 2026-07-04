@@ -55,63 +55,28 @@ impl ToolRuntime {
             .assert_client_access(auth, &client_id)
             .await
             .map_err(ToolResult::err)?;
-        if matches!(required, AgentCapability::OwnerOnly) {
+        if required.is_owner_only() {
             return Ok(());
         }
         // Capability check via the registry helper so the requirement is
         // expressed as a named capability, not a raw struct field access.
-        let supported = match required {
-            AgentCapability::OwnerOnly => true,
-            AgentCapability::Shell => self
+        let mut supported = false;
+        for capability in required.registry_capabilities() {
+            if self
                 .shell_clients
-                .client_supports(&client_id, "shell")
+                .client_supports(&client_id, capability)
                 .await
-                .map_err(ToolResult::err)?,
-            AgentCapability::FileRead => self
-                .shell_clients
-                .client_supports(&client_id, "file_read")
-                .await
-                .map_err(ToolResult::err)?,
-            AgentCapability::FileWrite => self
-                .shell_clients
-                .client_supports(&client_id, "file_write")
-                .await
-                .map_err(ToolResult::err)?,
-            AgentCapability::GitOrShell => {
-                self.shell_clients
-                    .client_supports(&client_id, "shell")
-                    .await
-                    .map_err(ToolResult::err)?
-                    || self
-                        .shell_clients
-                        .client_supports(&client_id, "git")
-                        .await
-                        .map_err(ToolResult::err)?
+                .map_err(ToolResult::err)?
+            {
+                supported = true;
+                break;
             }
-            AgentCapability::AsyncJobs => {
-                self.shell_clients
-                    .client_supports(&client_id, "async_jobs")
-                    .await
-                    .map_err(ToolResult::err)?
-                    || self
-                        .shell_clients
-                        .client_supports(&client_id, "async_shell_jobs")
-                        .await
-                        .map_err(ToolResult::err)?
-            }
-        };
+        }
         if !supported {
-            let label = match required {
-                AgentCapability::OwnerOnly => "owner boundary",
-                AgentCapability::Shell => "shell",
-                AgentCapability::FileRead => "file_read",
-                AgentCapability::FileWrite => "file_write",
-                AgentCapability::GitOrShell => "shell or git",
-                AgentCapability::AsyncJobs => "async shell jobs",
-            };
             return Err(ToolResult::err(format!(
                 "agent client {} does not support {}",
-                client_id, label
+                client_id,
+                required.label()
             )));
         }
         Ok(())

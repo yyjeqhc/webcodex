@@ -331,6 +331,19 @@ fn tool_definitions_drive_session_and_permission_policy() {
         vec!["list_projects", "list_agents", "runtime_status"]
     );
 
+    let artifact_upload_path_binding_tools = tool_definitions()
+        .filter(|definition| definition.requires_artifact_upload_path_binding())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        artifact_upload_path_binding_tools,
+        vec![
+            "artifact_upload_chunk",
+            "artifact_upload_finish",
+            "artifact_upload_abort"
+        ]
+    );
+
     let current_session_fallback_tools = tool_definitions()
         .filter(|definition| definition.allows_current_session_fallback())
         .map(|definition| definition.name)

@@ -54,6 +54,10 @@ impl ToolDefinition {
         self.policy.unit_arguments
     }
 
+    pub(crate) fn requires_artifact_upload_path_binding(self) -> bool {
+        self.policy.requires_artifact_upload_path_binding
+    }
+
     pub(crate) fn allows_current_session_fallback(self) -> bool {
         self.metadata.requires_project
             && !self.is_current_session_control()

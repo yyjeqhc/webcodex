@@ -901,10 +901,7 @@ impl ToolCall {
         let arguments = strip_tool_call_expectation_metadata(arguments);
         let mut wrapped = serde_json::Map::new();
         wrapped.insert("tool".to_string(), Value::String(name.to_string()));
-        if matches!(
-            name,
-            "artifact_upload_chunk" | "artifact_upload_finish" | "artifact_upload_abort"
-        ) {
+        if definition.requires_artifact_upload_path_binding() {
             let missing_path = arguments
                 .as_object()
                 .and_then(|obj| obj.get("path"))

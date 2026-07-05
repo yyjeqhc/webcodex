@@ -1,6 +1,6 @@
 use super::AgentCapability::{FileRead, FileWrite};
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition};
+use super::{def, requires_artifact_upload_path_binding, ToolDefinition};
 use crate::tool_runtime::metadata::{
     ToolPathHint::Artifact,
     ToolRisk::{ProjectWrite, ReadOnly},
@@ -60,7 +60,7 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         false,
         false,
     ),
-    def(
+    requires_artifact_upload_path_binding(def(
         "artifact_upload_chunk",
         ModelVisible,
         "artifact",
@@ -72,8 +72,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         Artifact,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_artifact_upload_path_binding(def(
         "artifact_upload_finish",
         ModelVisible,
         "artifact",
@@ -85,8 +85,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         Artifact,
         false,
         false,
-    ),
-    def(
+    )),
+    requires_artifact_upload_path_binding(def(
         "artifact_upload_abort",
         ModelVisible,
         "artifact",
@@ -98,5 +98,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         Artifact,
         false,
         false,
-    ),
+    )),
 ];

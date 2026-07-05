@@ -12,7 +12,9 @@ mod jobs;
 mod sessions;
 mod testing;
 
-use super::super::tool_definition::{lookup_tool_definition, model_visible_tool_definitions};
+use super::super::tool_definition::{
+    is_model_visible_tool_name, lookup_tool_definition, model_visible_tool_definitions,
+};
 use super::super::tool_spec::ToolSpec;
 use super::super::ToolRuntime;
 use super::input_schemas::with_common_testing_metadata;
@@ -21,18 +23,8 @@ use std::collections::BTreeMap;
 
 impl ToolRuntime {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
-        let declarations = tool_spec_declarations();
-        debug_assert!(
-            declarations
-                .iter()
-                .all(|spec| super::super::tool_definition::is_model_visible_tool_name(&spec.name)),
-            "ToolSpec declarations must only include model-visible tools"
-        );
-        let mut declarations_by_name = declarations
-            .into_iter()
-            .map(|spec| (spec.name.clone(), spec))
-            .collect::<BTreeMap<_, _>>();
-        model_visible_tool_definitions()
+        let mut declarations_by_name = tool_spec_declarations_by_name();
+        let specs = model_visible_tool_definitions()
             .map(|definition| {
                 declarations_by_name
                     .remove(definition.name)
@@ -44,7 +36,11 @@ impl ToolRuntime {
                     })
             })
             .map(with_common_testing_metadata)
-            .collect()
+            .collect::<Vec<_>>();
+        if let Some(extra_name) = declarations_by_name.keys().next() {
+            panic!("{extra_name} ToolSpec declaration has no model-visible ToolDefinition");
+        }
+        specs
     }
 
     /// The sorted list of accepted runtime tool names (mirrors `tool_specs`).
@@ -69,6 +65,20 @@ fn tool_spec_declarations() -> Vec<ToolSpec> {
     declarations.extend(artifacts::tool_specs());
     declarations.extend(edits::tool_specs());
     declarations
+}
+
+fn tool_spec_declarations_by_name() -> BTreeMap<String, ToolSpec> {
+    let mut declarations_by_name = BTreeMap::new();
+    for spec in tool_spec_declarations() {
+        if !is_model_visible_tool_name(&spec.name) {
+            panic!("{} ToolSpec declaration must be model-visible", spec.name);
+        }
+        let name = spec.name.clone();
+        if declarations_by_name.insert(name.clone(), spec).is_some() {
+            panic!("{name} ToolSpec declaration is duplicated");
+        }
+    }
+    declarations_by_name
 }
 
 pub(super) fn tool_spec(

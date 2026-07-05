@@ -851,17 +851,14 @@ fn tool_specs_input_schemas_are_objects() {
 
 #[test]
 fn tool_specs_expose_common_testing_metadata() {
+    use crate::tool_runtime::sessions::TOOL_CALL_EXPECTATION_METADATA_FIELDS;
+
     let runtime = test_runtime();
     for spec in runtime.tool_specs() {
         let props = spec.input_schema["properties"]
             .as_object()
             .unwrap_or_else(|| panic!("{} input schema properties", spec.name));
-        for field in [
-            "expected_failure",
-            "expected_failure_kind",
-            "test_expect_failure_kind",
-            "assertion_name",
-        ] {
+        for &field in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
             assert!(
                 props.contains_key(field),
                 "{} input schema should expose common testing metadata field {field}",

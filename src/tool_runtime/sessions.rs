@@ -45,6 +45,16 @@ pub(crate) const TOOL_EXPECTATION_RESULT_MATCHED: &str = "matched_expected_failu
 pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_FAILURE: &str = "unexpected_failure";
 pub(crate) const TOOL_EXPECTATION_RESULT_MISMATCH: &str = "expectation_mismatch";
 pub(crate) const TOOL_EXPECTATION_RESULT_UNEXPECTED_SUCCESS: &str = "unexpected_success";
+pub(crate) const TOOL_EXPECTED_FAILURE_FIELD: &str = "expected_failure";
+pub(crate) const TOOL_EXPECTED_FAILURE_KIND_FIELD: &str = "expected_failure_kind";
+pub(crate) const TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD: &str = "test_expect_failure_kind";
+pub(crate) const TOOL_ASSERTION_NAME_FIELD: &str = "assertion_name";
+pub(crate) const TOOL_CALL_EXPECTATION_METADATA_FIELDS: &[&str] = &[
+    TOOL_EXPECTED_FAILURE_FIELD,
+    TOOL_EXPECTED_FAILURE_KIND_FIELD,
+    TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD,
+    TOOL_ASSERTION_NAME_FIELD,
+];
 
 #[derive(Debug, Clone)]
 pub(crate) struct SessionStore {
@@ -1629,18 +1639,18 @@ pub(crate) fn tool_call_expectation_from_arguments(arguments: &Value) -> ToolCal
         return ToolCallExpectation::default();
     };
     let expected_failure = obj
-        .get("expected_failure")
+        .get(TOOL_EXPECTED_FAILURE_FIELD)
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let expected_failure_kind = obj
-        .get("expected_failure_kind")
-        .or_else(|| obj.get("test_expect_failure_kind"))
+        .get(TOOL_EXPECTED_FAILURE_KIND_FIELD)
+        .or_else(|| obj.get(TOOL_EXPECT_FAILURE_KIND_ALIAS_FIELD))
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(bound_summary_string);
     let assertion_name = obj
-        .get("assertion_name")
+        .get(TOOL_ASSERTION_NAME_FIELD)
         .and_then(Value::as_str)
         .map(str::trim)
         .filter(|value| !value.is_empty())
@@ -1657,12 +1667,7 @@ pub(crate) fn strip_tool_call_expectation_metadata(arguments: Value) -> Value {
     let Value::Object(mut obj) = arguments else {
         return arguments;
     };
-    for key in [
-        "expected_failure",
-        "expected_failure_kind",
-        "test_expect_failure_kind",
-        "assertion_name",
-    ] {
+    for &key in TOOL_CALL_EXPECTATION_METADATA_FIELDS {
         obj.remove(key);
     }
     Value::Object(obj)

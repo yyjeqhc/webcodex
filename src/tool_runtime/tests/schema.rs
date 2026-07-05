@@ -1051,6 +1051,58 @@ fn tool_manifest_schema_exposes_compact_discovery_fields() {
 }
 
 #[test]
+fn discovery_output_schemas_cover_runtime_payload_keys() {
+    use crate::tool_runtime::tool_definition::TOOL_CATEGORY_GIT;
+
+    let runtime = test_runtime();
+    let specs = runtime.tool_specs();
+
+    let list_tools_spec = spec_named(&specs, "list_tools");
+    let list_tools_payload = runtime.list_tools_payload(ListToolsOptions {
+        category: Some(TOOL_CATEGORY_GIT.to_string()),
+        features: Some("read".to_string()),
+        summary_only: true,
+        limit: Some(3),
+    });
+    assert_payload_keys_declared(
+        "list_tools",
+        &list_tools_payload,
+        output_schema_properties(list_tools_spec),
+    );
+
+    let tool_manifest_spec = spec_named(&specs, "tool_manifest");
+    let tool_manifest_payload = runtime
+        .compact_tool_manifest_payload_bounded(Some(vec![TOOL_CATEGORY_GIT.to_string()]), Some(2));
+    assert_payload_keys_declared(
+        "tool_manifest",
+        &tool_manifest_payload,
+        output_schema_properties(tool_manifest_spec),
+    );
+}
+
+fn output_schema_properties(spec: &ToolSpec) -> &serde_json::Map<String, Value> {
+    spec.output_schema["properties"]["output"]["properties"]
+        .as_object()
+        .unwrap_or_else(|| panic!("{} output schema properties", spec.name))
+}
+
+fn assert_payload_keys_declared(
+    tool_name: &str,
+    payload: &Value,
+    output_schema_properties: &serde_json::Map<String, Value>,
+) {
+    let payload = payload
+        .as_object()
+        .unwrap_or_else(|| panic!("{tool_name} payload object"));
+    for key in payload.keys() {
+        assert!(
+            output_schema_properties.contains_key(key),
+            "{tool_name} runtime output key {key} is missing from output_schema properties"
+        );
+    }
+}
+
+#[test]
 fn read_project_artifact_metadata_schema_exposes_allow_missing() {
     let runtime = test_runtime();
     let specs = runtime.tool_specs();

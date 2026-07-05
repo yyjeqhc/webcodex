@@ -426,21 +426,9 @@ impl ToolRuntime {
                 cwd,
             } => self.run_shell(project, command, timeout_secs, cwd).await,
 
-            ToolCall::ApplyPatch {
-                project,
-                patch,
-                session_id: _,
-            } => self.apply_patch(project, patch).await,
-
-            ToolCall::ApplyPatchChecked {
-                project,
-                patch,
-                session_id: _,
-                deny_sensitive_paths,
-            } => {
-                self.apply_patch_checked(project, patch, deny_sensitive_paths)
-                    .await
-            }
+            call @ (ToolCall::ApplyPatch { .. }
+            | ToolCall::ApplyPatchChecked { .. }
+            | ToolCall::ValidatePatch { .. }) => self.dispatch_patch_tool(call).await,
 
             call @ (ToolCall::DeleteProjectFiles { .. }
             | ToolCall::ReadFile { .. }
@@ -471,16 +459,6 @@ impl ToolRuntime {
             | ToolCall::GitLog { .. }
             | ToolCall::GitDiffSummary { .. }
             | ToolCall::ShowChanges { .. }) => self.dispatch_git_tool(call).await,
-
-            ToolCall::ValidatePatch {
-                project,
-                patch,
-                session_id: _,
-                deny_sensitive_paths,
-            } => {
-                self.validate_patch(project, patch, deny_sensitive_paths)
-                    .await
-            }
 
             call @ (ToolCall::CargoFmt { .. }
             | ToolCall::CargoCheck { .. }

@@ -24,6 +24,7 @@ pub(crate) mod kernel;
 mod local_jobs;
 pub(crate) mod metadata;
 mod patch;
+mod patch_tools;
 mod permissions;
 pub(crate) mod project_instructions;
 mod project_resolution;

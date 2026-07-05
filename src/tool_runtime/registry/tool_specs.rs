@@ -1,5 +1,6 @@
 use serde_json::Value;
 
+mod artifacts;
 mod checkpoints;
 mod coding_tasks;
 mod discovery;
@@ -15,14 +16,10 @@ use super::super::tool_spec::ToolSpec;
 use super::super::ToolRuntime;
 use super::input_schemas::{
     apply_patch_checked_input_schema, apply_patch_input_schema, apply_text_edits_input_schema,
-    artifact_upload_abort_input_schema, artifact_upload_begin_input_schema,
-    artifact_upload_chunk_input_schema, artifact_upload_finish_input_schema,
     delete_line_range_input_schema, insert_after_pattern_input_schema, insert_at_line_input_schema,
-    insert_before_pattern_input_schema, read_project_artifact_input_schema,
-    read_project_artifact_metadata_input_schema, replace_exact_block_input_schema,
-    replace_in_file_input_schema, replace_line_range_input_schema,
-    save_project_artifact_input_schema, validate_patch_input_schema, with_common_testing_metadata,
-    write_project_file_input_schema,
+    insert_before_pattern_input_schema, replace_exact_block_input_schema,
+    replace_in_file_input_schema, replace_line_range_input_schema, validate_patch_input_schema,
+    with_common_testing_metadata, write_project_file_input_schema,
 };
 use super::{output_schema_for_tool, tool_annotations};
 
@@ -37,6 +34,7 @@ impl ToolRuntime {
         declarations.extend(files::tool_specs());
         declarations.extend(git::tool_specs());
         declarations.extend(testing::tool_specs());
+        declarations.extend(artifacts::tool_specs());
         declarations.extend(vec![
             tool_spec(
                 "apply_patch",
@@ -77,41 +75,6 @@ impl ToolRuntime {
                 "write_project_file",
                 "Whole-file write compatibility path for new files or deliberate small overwrites. Prefer structured line edits or apply_text_edits for source changes; requires overwrite/guards for existing files.",
                 write_project_file_input_schema(),
-            ),
-            tool_spec(
-                "save_project_artifact",
-                "Write a bounded binary project artifact from base64. Use for imported session files, generated images, PDFs, and zip files; not for UTF-8 source edits.",
-                save_project_artifact_input_schema(),
-            ),
-            tool_spec(
-                "read_project_artifact_metadata",
-                "Read bounded metadata for a binary artifact; images include dimensions and zip archives are counted but never extracted. Set allow_missing=true to make a missing artifact a successful exists=false negative assertion.",
-                read_project_artifact_metadata_input_schema(),
-            ),
-            tool_spec(
-                "read_project_artifact",
-                "Chunked content read for a project artifact. Returns base64 for one small segment plus full-file sha256/MIME metadata; not a large-file transfer tool.",
-                read_project_artifact_input_schema(),
-            ),
-            tool_spec(
-                "artifact_upload_begin",
-                "Begin a bounded chunked binary artifact upload. Creates a project-local temporary upload session; finish commits atomically to the target path. For smoke octet-stream uploads, use artifacts/smoke/<name>.artifact or omit mime_type when appropriate.",
-                artifact_upload_begin_input_schema(),
-            ),
-            tool_spec(
-                "artifact_upload_chunk",
-                "Append one base64 chunk to an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id to the target path.",
-                artifact_upload_chunk_input_schema(),
-            ),
-            tool_spec(
-                "artifact_upload_finish",
-                "Finish an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before atomic commit.",
-                artifact_upload_finish_input_schema(),
-            ),
-            tool_spec(
-                "artifact_upload_abort",
-                "Abort an active artifact upload. path is required and must exactly match artifact_upload_begin; this binds upload_id before cleanup and reports final_file_exists without touching the final target.",
-                artifact_upload_abort_input_schema(),
             ),
             tool_spec(
                 "replace_line_range",

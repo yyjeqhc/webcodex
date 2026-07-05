@@ -43,7 +43,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent_project_at_path(
         })
         .await
         .unwrap();
-    ToolRuntime::agent_project_runtime_id(client_id, project_id)
+    crate::tool_runtime::agent_project_runtime_id(client_id, project_id)
 }
 
 pub(in crate::tool_runtime::tests) fn run_agent_shell_request_locally(
@@ -248,7 +248,7 @@ pub(in crate::tool_runtime::tests) async fn register_agent(
 }
 
 pub(in crate::tool_runtime::tests) fn agent_test_project_id(client_id: &str) -> String {
-    ToolRuntime::agent_project_runtime_id(client_id, "agent-proj")
+    crate::tool_runtime::agent_project_runtime_id(client_id, "agent-proj")
 }
 
 /// Build a ToolRuntime backed by a single server-configured (local) project

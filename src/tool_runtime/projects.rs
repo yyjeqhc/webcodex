@@ -18,7 +18,7 @@ use serde_json::{json, Value};
 use std::time::Duration;
 
 use super::tool_result::ToolResult;
-use super::ToolRuntime;
+use super::{agent_project_runtime_id, ToolRuntime};
 use crate::auth::AuthContext;
 use crate::shell_protocol::ShellAgentProjectSummary;
 
@@ -44,7 +44,7 @@ impl ToolRuntime {
                     resolve_project_shell_profile(project.shell_profile.as_deref(), shell_profiles);
                 let capabilities = smoke_project_capabilities(&client, project);
                 list.push(json!({
-                    "id": Self::agent_project_runtime_id(&client.client_id, &project.id),
+                    "id": agent_project_runtime_id(&client.client_id, &project.id),
                     "agent_project_id": project.id,
                     "name": project.name,
                     "path": project.path,

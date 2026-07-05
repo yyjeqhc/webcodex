@@ -84,7 +84,9 @@ use serde_json::json;
 #[allow(unused_imports)]
 pub(crate) use crate::config::CodexConfig;
 #[allow(unused_imports)]
-pub(crate) use project_resolution::{ProjectResolverError, ProjectResolverErrorKind};
+pub(crate) use project_resolution::{
+    agent_project_runtime_id, ProjectResolverError, ProjectResolverErrorKind,
+};
 pub(crate) use registry::registered_tool_specs;
 #[allow(unused_imports)]
 pub(crate) use session_context::{

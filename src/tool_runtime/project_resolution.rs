@@ -120,17 +120,17 @@ impl From<ProjectResolverError> for String {
     }
 }
 
-impl ToolRuntime {
-    pub(crate) fn agent_project_runtime_id(client_id: &str, project_id: &str) -> String {
-        format!("agent:{}:{}", client_id, project_id)
-    }
+pub(crate) fn agent_project_runtime_id(client_id: &str, project_id: &str) -> String {
+    format!("agent:{}:{}", client_id, project_id)
+}
 
+impl ToolRuntime {
     fn project_candidate_from_view(
         client: &ShellClientView,
         project: &ShellAgentProjectSummary,
     ) -> ProjectResolverCandidate {
         ProjectResolverCandidate {
-            id: Self::agent_project_runtime_id(&client.client_id, &project.id),
+            id: agent_project_runtime_id(&client.client_id, &project.id),
             client_id: client.client_id.clone(),
             agent_project_id: project.id.clone(),
             name: project.name.clone(),

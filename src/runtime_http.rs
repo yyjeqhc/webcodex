@@ -579,14 +579,8 @@ mod tests {
             })
             .await
             .unwrap();
-        let runtime = Arc::new(ToolRuntime::new(
-            Arc::new(ProjectsState::failed(
-                "server projects disabled in import tests".to_string(),
-                "test".to_string(),
-            )),
+        let runtime = Arc::new(ToolRuntime::new_for_tests_with_shell_clients(
             registry.clone(),
-            Arc::new(CodexConfig::default()),
-            Arc::new(crate::tool_runtime::RuntimeInfo::default()),
         ));
         (runtime, registry)
     }

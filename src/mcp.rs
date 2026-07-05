@@ -324,22 +324,9 @@ fn rpc_error(id: Option<Value>, code: i64, message: impl Into<String>) -> Value 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::projects::ProjectsState;
-    use crate::shell_client::ShellClientRegistry;
-    use std::sync::Arc;
 
     fn test_runtime() -> ToolRuntime {
-        let projects = Arc::new(ProjectsState::failed(
-            "projects not configured for test".to_string(),
-            "test".to_string(),
-        ));
-        let shell_clients = Arc::new(ShellClientRegistry::default());
-        ToolRuntime::new(
-            projects,
-            shell_clients,
-            Arc::new(crate::config::CodexConfig::default()),
-            Arc::new(crate::tool_runtime::RuntimeInfo::default()),
-        )
+        ToolRuntime::new_for_tests()
     }
 
     fn rpc(method: &str, id: Option<Value>, params: Value) -> JsonRpcRequest {

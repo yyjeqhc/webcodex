@@ -102,24 +102,11 @@ pub(super) fn tool_spec(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::CodexConfig;
-    use crate::projects::ProjectsState;
-    use crate::shell_client::ShellClientRegistry;
     use crate::tool_runtime::tool_definition::is_model_visible_tool_name;
-    use crate::tool_runtime::RuntimeInfo;
     use std::collections::BTreeSet;
-    use std::sync::Arc;
 
     fn test_runtime() -> ToolRuntime {
-        ToolRuntime::new(
-            Arc::new(ProjectsState::failed(
-                "projects not configured for test".to_string(),
-                "test".to_string(),
-            )),
-            Arc::new(ShellClientRegistry::default()),
-            Arc::new(CodexConfig::default()),
-            Arc::new(RuntimeInfo::default()),
-        )
+        ToolRuntime::new_for_tests()
     }
 
     #[test]

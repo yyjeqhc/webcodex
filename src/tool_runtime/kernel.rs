@@ -413,24 +413,10 @@ fn tool_project(call: &ToolCall) -> Option<String> {
 mod tests {
     use super::*;
     use crate::auth::{AuthContext, AuthKind};
-    use crate::config::CodexConfig;
-    use crate::projects::ProjectsState;
-    use crate::shell_client::ShellClientRegistry;
-    use crate::tool_runtime::RuntimeInfo;
     use serde_json::json;
-    use std::sync::Arc;
 
     fn test_runtime() -> ToolRuntime {
-        let projects = Arc::new(ProjectsState::failed(
-            "projects not configured for test".to_string(),
-            "test".to_string(),
-        ));
-        ToolRuntime::new(
-            projects,
-            Arc::new(ShellClientRegistry::default()),
-            Arc::new(CodexConfig::default()),
-            Arc::new(RuntimeInfo::default()),
-        )
+        ToolRuntime::new_for_tests()
     }
 
     fn oauth(scopes: &[&str]) -> AuthContext {

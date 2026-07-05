@@ -42,6 +42,26 @@ impl ToolRuntime {
         }
     }
 
+    #[cfg(test)]
+    pub(crate) fn new_for_tests() -> Self {
+        Self::new_for_tests_with_shell_clients(Arc::new(ShellClientRegistry::default()))
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests_with_shell_clients(
+        shell_clients: Arc<ShellClientRegistry>,
+    ) -> Self {
+        Self::new(
+            Arc::new(ProjectsState::failed(
+                "projects not configured for test".to_string(),
+                "test".to_string(),
+            )),
+            shell_clients,
+            Arc::new(CodexConfig::default()),
+            Arc::new(RuntimeInfo::default()),
+        )
+    }
+
     pub fn with_session_ledger(mut self, path: impl Into<PathBuf>) -> Self {
         self.sessions = sessions::SessionStore::with_persistence(
             path,

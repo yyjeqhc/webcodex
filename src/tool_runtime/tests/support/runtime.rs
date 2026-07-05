@@ -16,17 +16,7 @@ pub(in crate::tool_runtime::tests) const UNIT_TOOL_FIXTURES: &[&str] = &[
 ];
 
 pub(in crate::tool_runtime::tests) fn test_runtime() -> ToolRuntime {
-    let projects = Arc::new(ProjectsState::failed(
-        "projects not configured for test".to_string(),
-        "test".to_string(),
-    ));
-    let shell_clients = Arc::new(ShellClientRegistry::default());
-    ToolRuntime::new(
-        projects,
-        shell_clients,
-        Arc::new(CodexConfig::default()),
-        Arc::new(RuntimeInfo::default()),
-    )
+    ToolRuntime::new_for_tests()
 }
 
 pub(in crate::tool_runtime::tests) fn sample_tool_args(name: &str) -> Value {

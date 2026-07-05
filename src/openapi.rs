@@ -2008,15 +2008,7 @@ mod tests {
     use crate::tool_runtime::TOOL_CALL_WRAPPER_FIELDS;
 
     fn test_tool_runtime() -> crate::tool_runtime::ToolRuntime {
-        crate::tool_runtime::ToolRuntime::new(
-            std::sync::Arc::new(crate::projects::ProjectsState::failed(
-                "projects not configured for openapi schema test".to_string(),
-                "test".to_string(),
-            )),
-            std::sync::Arc::new(crate::shell_client::ShellClientRegistry::default()),
-            std::sync::Arc::new(crate::config::CodexConfig::default()),
-            std::sync::Arc::new(crate::tool_runtime::RuntimeInfo::default()),
-        )
+        crate::tool_runtime::ToolRuntime::new_for_tests()
     }
 
     fn runtime_accepted_flattened_action_fields() -> std::collections::BTreeSet<String> {

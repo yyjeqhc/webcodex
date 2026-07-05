@@ -3,6 +3,7 @@ use serde_json::Value;
 mod checkpoints;
 mod coding_tasks;
 mod discovery;
+mod files;
 mod hygiene;
 mod jobs;
 mod sessions;
@@ -18,11 +19,10 @@ use super::input_schemas::{
     delete_line_range_input_schema, git_diff_hunks_input_schema, git_diff_input_schema,
     git_diff_summary_input_schema, git_log_input_schema, git_status_input_schema,
     insert_after_pattern_input_schema, insert_at_line_input_schema,
-    insert_before_pattern_input_schema, list_project_files_input_schema, read_file_input_schema,
-    read_project_artifact_input_schema, read_project_artifact_metadata_input_schema,
-    replace_exact_block_input_schema, replace_in_file_input_schema,
-    replace_line_range_input_schema, save_project_artifact_input_schema,
-    search_project_text_input_schema, show_changes_input_schema, validate_patch_input_schema,
+    insert_before_pattern_input_schema, read_project_artifact_input_schema,
+    read_project_artifact_metadata_input_schema, replace_exact_block_input_schema,
+    replace_in_file_input_schema, replace_line_range_input_schema,
+    save_project_artifact_input_schema, show_changes_input_schema, validate_patch_input_schema,
     with_common_testing_metadata, write_project_file_input_schema,
 };
 use super::{output_schema_for_tool, tool_annotations};
@@ -35,21 +35,8 @@ impl ToolRuntime {
         declarations.extend(checkpoints::tool_specs());
         declarations.extend(coding_tasks::tool_specs());
         declarations.extend(hygiene::tool_specs());
+        declarations.extend(files::tool_specs());
         declarations.extend(vec![
-            tool_spec(
-                "list_project_files",
-                "List files in an agent-registered project directory (bounded, "
-                    .to_string()
-                    + "read-only). Returns project-relative paths plus a file/dir kind. Routed "
-                    + "to the owning registered agent; the server never reads the agent project "
-                    + "path directly.",
-                list_project_files_input_schema(),
-            ),
-            tool_spec(
-                "search_project_text",
-                "Default inspect/search tool for project text (rg-first with grep fallback). Returns structured output: matches with path, 1-based line, preview/context, plus backend, truncated, count, context_before, and context_after.",
-                search_project_text_input_schema(),
-            ),
             tool_spec(
                 "git_diff_summary",
                 "Read-only git diff summary for a project: `git status --porcelain`, "
@@ -62,11 +49,6 @@ impl ToolRuntime {
                 "show_changes",
                 "Default inspect/review tool before final response. Read-only worktree plus optional session summary; reports status, warnings, next actions, and bounded hunks without modifying files.",
                 show_changes_input_schema(),
-            ),
-            tool_spec(
-                "read_file",
-                "Default inspect tool for targeted source reading. Reads bounded UTF-8 file ranges from an agent-registered project, optionally with 1-based line numbers for structured line edits.",
-                read_file_input_schema(),
             ),
             tool_spec(
                 "git_status",

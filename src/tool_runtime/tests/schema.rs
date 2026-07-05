@@ -184,12 +184,12 @@ fn tool_definitions_drive_session_and_permission_policy() {
         runtime_tool_session_risk_class, tool_definitions, PERMISSION_RISK_ARTIFACT_WRITE,
         PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_JOB, PERMISSION_RISK_PATCH,
         PERMISSION_RISK_SHELL, PERMISSION_RISK_VALIDATION, PERMISSION_RISK_WRITE,
-        TOOL_DISCOVERY_GROUPS,
+        TOOL_DISCOVERY_GROUPS, TOOL_DISCOVERY_GROUP_GIT,
     };
 
     let git_group = TOOL_DISCOVERY_GROUPS
         .iter()
-        .find(|group| group.name == "git")
+        .find(|group| group.name == TOOL_DISCOVERY_GROUP_GIT)
         .expect("git discovery group")
         .tools
         .iter()
@@ -1772,6 +1772,13 @@ fn tool_specs_schema_spot_checks_extended() {
 
 #[test]
 fn tool_categories_and_recommended_flows_are_well_formed() {
+    use crate::tool_runtime::tool_definition::{
+        TOOL_DISCOVERY_GROUP_CHECKPOINT, TOOL_DISCOVERY_GROUP_CLEANUP, TOOL_DISCOVERY_GROUP_EDIT,
+        TOOL_DISCOVERY_GROUP_GIT, TOOL_DISCOVERY_GROUP_INSPECT, TOOL_DISCOVERY_GROUP_JOBS,
+        TOOL_DISCOVERY_GROUP_PATCH, TOOL_DISCOVERY_GROUP_REVIEW, TOOL_DISCOVERY_GROUP_RUNTIME,
+        TOOL_DISCOVERY_GROUP_SHELL, TOOL_DISCOVERY_GROUP_VALIDATION,
+    };
+
     let runtime = test_runtime();
     let categories = runtime.tool_categories();
     // Every declared category is a non-empty array of known tool names.
@@ -1791,15 +1798,16 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     }
     // Each expected category is present.
     for cat in [
-        "inspect",
-        "git",
-        "review",
-        "validation",
-        "patch",
-        "shell",
-        "jobs",
-        "runtime",
-        "cleanup",
+        TOOL_DISCOVERY_GROUP_INSPECT,
+        TOOL_DISCOVERY_GROUP_GIT,
+        TOOL_DISCOVERY_GROUP_REVIEW,
+        TOOL_DISCOVERY_GROUP_VALIDATION,
+        TOOL_DISCOVERY_GROUP_PATCH,
+        TOOL_DISCOVERY_GROUP_SHELL,
+        TOOL_DISCOVERY_GROUP_JOBS,
+        TOOL_DISCOVERY_GROUP_RUNTIME,
+        TOOL_DISCOVERY_GROUP_CLEANUP,
+        TOOL_DISCOVERY_GROUP_CHECKPOINT,
     ] {
         assert!(
             categories.as_object().unwrap().contains_key(cat),
@@ -1807,7 +1815,9 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
             cat
         );
     }
-    let validation = categories["validation"].as_array().unwrap();
+    let validation = categories[TOOL_DISCOVERY_GROUP_VALIDATION]
+        .as_array()
+        .unwrap();
     for name in [
         "cargo_fmt",
         "cargo_check",
@@ -1817,18 +1827,18 @@ fn tool_categories_and_recommended_flows_are_well_formed() {
     ] {
         assert!(validation.iter().any(|v| v == name));
     }
-    let review = categories["review"].as_array().unwrap();
+    let review = categories[TOOL_DISCOVERY_GROUP_REVIEW].as_array().unwrap();
     assert!(review.iter().any(|v| v == "git_diff_hunks"));
     assert!(review.iter().any(|v| v == "workspace_hygiene_check"));
     assert!(review.iter().any(|v| v == "git_log"));
-    let inspect = categories["inspect"].as_array().unwrap();
+    let inspect = categories[TOOL_DISCOVERY_GROUP_INSPECT].as_array().unwrap();
     for name in ["read_file", "search_project_text", "show_changes"] {
         assert!(
             inspect.iter().any(|v| v == name),
             "inspect category should include default inspect tool {name}"
         );
     }
-    let edit = categories["edit"].as_array().unwrap();
+    let edit = categories[TOOL_DISCOVERY_GROUP_EDIT].as_array().unwrap();
     let edit_prefix: Vec<&str> = edit
         .iter()
         .take(5)
@@ -2327,9 +2337,13 @@ fn tool_specs_include_anchor_edit_tools() {
 
 #[test]
 fn tool_categories_include_edit_group() {
+    use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_EDIT;
+
     let runtime = test_runtime();
     let cats = runtime.tool_categories();
-    let edit = cats["edit"].as_array().expect("edit category present");
+    let edit = cats[TOOL_DISCOVERY_GROUP_EDIT]
+        .as_array()
+        .expect("edit category present");
     assert!(edit.iter().any(|v| v == "replace_in_file"));
     assert!(edit.iter().any(|v| v == "write_project_file"));
     assert!(edit.iter().any(|v| v == "replace_line_range"));
@@ -2340,9 +2354,11 @@ fn tool_categories_include_edit_group() {
 
 #[test]
 fn tool_categories_include_projects_with_management_tools() {
+    use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_PROJECTS;
+
     let runtime = test_runtime();
     let cats = runtime.tool_categories();
-    let projects = cats["projects"]
+    let projects = cats[TOOL_DISCOVERY_GROUP_PROJECTS]
         .as_array()
         .expect("projects category present");
     assert!(
@@ -2357,6 +2373,8 @@ fn tool_categories_include_projects_with_management_tools() {
 
 #[test]
 fn apply_text_edits_metadata_mcp_openapi_consistency() {
+    use crate::tool_runtime::tool_definition::TOOL_DISCOVERY_GROUP_EDIT;
+
     let runtime = test_runtime();
     // Known name + spec + metadata coverage. tool_specs() backs both the
     // list_tools runtime tool and MCP tools/list (parity is enforced by
@@ -2382,7 +2400,9 @@ fn apply_text_edits_metadata_mcp_openapi_consistency() {
     assert!(crate::tool_runtime::metadata::lookup_tool_metadata("apply_text_edits").is_some());
     // The edit category includes the new tool.
     let cats = runtime.tool_categories();
-    let edit = cats["edit"].as_array().expect("edit category present");
+    let edit = cats[TOOL_DISCOVERY_GROUP_EDIT]
+        .as_array()
+        .expect("edit category present");
     assert!(edit.iter().any(|v| v == "apply_text_edits"));
     // OpenAPI ToolCallRequest description lists the name; operation count
     // stays 27 while Codex delegation is hidden (no dedicated op added).

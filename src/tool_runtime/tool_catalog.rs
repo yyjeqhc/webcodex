@@ -2,9 +2,22 @@
 
 use super::tool_definition::{ToolDiscoveryGroup, ToolRecommendedFlow};
 
+pub(crate) const TOOL_DISCOVERY_GROUP_CHECKPOINT: &str = "checkpoint";
+pub(crate) const TOOL_DISCOVERY_GROUP_CLEANUP: &str = "cleanup";
+pub(crate) const TOOL_DISCOVERY_GROUP_EDIT: &str = "edit";
+pub(crate) const TOOL_DISCOVERY_GROUP_GIT: &str = "git";
+pub(crate) const TOOL_DISCOVERY_GROUP_INSPECT: &str = "inspect";
+pub(crate) const TOOL_DISCOVERY_GROUP_JOBS: &str = "jobs";
+pub(crate) const TOOL_DISCOVERY_GROUP_PATCH: &str = "patch";
+pub(crate) const TOOL_DISCOVERY_GROUP_PROJECTS: &str = "projects";
+pub(crate) const TOOL_DISCOVERY_GROUP_REVIEW: &str = "review";
+pub(crate) const TOOL_DISCOVERY_GROUP_RUNTIME: &str = "runtime";
+pub(crate) const TOOL_DISCOVERY_GROUP_SHELL: &str = "shell";
+pub(crate) const TOOL_DISCOVERY_GROUP_VALIDATION: &str = "validation";
+
 pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
     ToolDiscoveryGroup {
-        name: "inspect",
+        name: TOOL_DISCOVERY_GROUP_INSPECT,
         tools: &[
             "list_tools",
             "list_projects",
@@ -25,11 +38,11 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "projects",
+        name: TOOL_DISCOVERY_GROUP_PROJECTS,
         tools: &["list_projects", "register_project", "create_project"],
     },
     ToolDiscoveryGroup {
-        name: "git",
+        name: TOOL_DISCOVERY_GROUP_GIT,
         tools: &[
             "git_status",
             "git_diff",
@@ -44,7 +57,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "review",
+        name: TOOL_DISCOVERY_GROUP_REVIEW,
         tools: &[
             "finish_coding_task",
             "show_changes",
@@ -59,7 +72,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "validation",
+        name: TOOL_DISCOVERY_GROUP_VALIDATION,
         tools: &[
             "cargo_fmt",
             "cargo_check",
@@ -69,11 +82,11 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "patch",
+        name: TOOL_DISCOVERY_GROUP_PATCH,
         tools: &["apply_patch", "apply_patch_checked", "validate_patch"],
     },
     ToolDiscoveryGroup {
-        name: "edit",
+        name: TOOL_DISCOVERY_GROUP_EDIT,
         tools: &[
             "replace_line_range",
             "insert_at_line",
@@ -95,7 +108,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "shell",
+        name: TOOL_DISCOVERY_GROUP_SHELL,
         tools: &[
             "cargo_fmt",
             "cargo_check",
@@ -105,7 +118,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "jobs",
+        name: TOOL_DISCOVERY_GROUP_JOBS,
         tools: &[
             "run_job",
             "stop_job",
@@ -116,7 +129,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "runtime",
+        name: TOOL_DISCOVERY_GROUP_RUNTIME,
         tools: &[
             "list_tools",
             "start_session",
@@ -143,7 +156,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "cleanup",
+        name: TOOL_DISCOVERY_GROUP_CLEANUP,
         tools: &[
             "delete_project_files",
             "git_restore_paths",
@@ -152,7 +165,7 @@ pub(crate) const TOOL_DISCOVERY_GROUPS: &[ToolDiscoveryGroup] = &[
         ],
     },
     ToolDiscoveryGroup {
-        name: "checkpoint",
+        name: TOOL_DISCOVERY_GROUP_CHECKPOINT,
         tools: &[
             "workspace_checkpoint_create",
             "workspace_checkpoint_list",

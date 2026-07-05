@@ -119,11 +119,13 @@ pub(crate) struct ToolDefinition {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct ToolDefinitionPolicy {
     pub(crate) captures_validation_output: bool,
+    pub(crate) current_session_control: bool,
 }
 
 impl ToolDefinitionPolicy {
     const DEFAULT: Self = Self {
         captures_validation_output: false,
+        current_session_control: false,
     };
 }
 
@@ -177,6 +179,16 @@ const fn captures_validation_output(definition: ToolDefinition) -> ToolDefinitio
     ToolDefinition {
         policy: ToolDefinitionPolicy {
             captures_validation_output: true,
+            ..definition.policy
+        },
+        ..definition
+    }
+}
+
+const fn current_session_control(definition: ToolDefinition) -> ToolDefinition {
+    ToolDefinition {
+        policy: ToolDefinitionPolicy {
+            current_session_control: true,
             ..definition.policy
         },
         ..definition

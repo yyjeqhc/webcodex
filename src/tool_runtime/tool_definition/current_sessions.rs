@@ -1,11 +1,11 @@
 use super::ToolVisibility::ModelVisible;
-use super::{def, ToolDefinition};
+use super::{current_session_control, def, ToolDefinition};
 use crate::tool_runtime::metadata::{
     ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[
-    def(
+    current_session_control(def(
         "bind_current_session",
         ModelVisible,
         "session",
@@ -17,8 +17,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    current_session_control(def(
         "current_session",
         ModelVisible,
         "session",
@@ -30,8 +30,8 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
-    def(
+    )),
+    current_session_control(def(
         "unbind_current_session",
         ModelVisible,
         "session",
@@ -43,5 +43,5 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[
         NoPath,
         false,
         false,
-    ),
+    )),
 ];

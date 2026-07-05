@@ -44,10 +44,7 @@ impl ToolDefinition {
     }
 
     pub(crate) fn is_current_session_control(self) -> bool {
-        matches!(
-            self.name,
-            "bind_current_session" | "current_session" | "unbind_current_session"
-        )
+        self.policy.current_session_control
     }
 
     pub(crate) fn requires_explicit_business_session(self) -> bool {

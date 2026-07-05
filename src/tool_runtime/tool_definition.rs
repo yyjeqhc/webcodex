@@ -125,6 +125,7 @@ pub(crate) struct ToolDefinitionPolicy {
     pub(crate) git_like: bool,
     pub(crate) permission_risk: Option<&'static str>,
     pub(crate) requires_explicit_business_session: bool,
+    pub(crate) unit_arguments: bool,
 }
 
 impl ToolDefinitionPolicy {
@@ -136,6 +137,7 @@ impl ToolDefinitionPolicy {
         git_like: false,
         permission_risk: None,
         requires_explicit_business_session: false,
+        unit_arguments: false,
     };
 }
 
@@ -242,6 +244,16 @@ const fn permission_risk(
     ToolDefinition {
         policy: ToolDefinitionPolicy {
             permission_risk: Some(permission_risk),
+            ..definition.policy
+        },
+        ..definition
+    }
+}
+
+const fn unit_arguments(definition: ToolDefinition) -> ToolDefinition {
+    ToolDefinition {
+        policy: ToolDefinitionPolicy {
+            unit_arguments: true,
             ..definition.policy
         },
         ..definition

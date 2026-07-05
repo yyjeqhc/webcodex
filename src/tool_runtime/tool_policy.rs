@@ -50,6 +50,10 @@ impl ToolDefinition {
         self.policy.creates_or_binds_session
     }
 
+    pub(crate) fn uses_unit_arguments(self) -> bool {
+        self.policy.unit_arguments
+    }
+
     pub(crate) fn allows_current_session_fallback(self) -> bool {
         self.metadata.requires_project
             && !self.is_current_session_control()

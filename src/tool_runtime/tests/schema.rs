@@ -322,6 +322,15 @@ fn tool_definitions_drive_session_and_permission_policy() {
         vec!["start_session", "start_coding_task", "bind_current_session"]
     );
 
+    let unit_argument_tools = tool_definitions()
+        .filter(|definition| definition.uses_unit_arguments())
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        unit_argument_tools,
+        vec!["list_projects", "list_agents", "runtime_status"]
+    );
+
     let current_session_fallback_tools = tool_definitions()
         .filter(|definition| definition.allows_current_session_fallback())
         .map(|definition| definition.name)

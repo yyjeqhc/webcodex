@@ -8,7 +8,7 @@ use super::sessions::{
     strip_tool_call_expectation_metadata, SessionMessageKind, SessionMessagePriority,
     SessionMessageStatus, ToolCallRecorderMetadata,
 };
-use super::tool_definition::{is_known_tool_name, model_visible_tool_names_csv};
+use super::tool_definition::{lookup_tool_definition, model_visible_tool_names_csv};
 use super::tool_inputs::{
     default_true, ApplyTextEditInput, CheckpointValidationInput, SessionMode,
 };
@@ -888,15 +888,15 @@ impl ToolCall {
         // every accepted tool and points the caller at listRuntimeTools. This
         // avoids leaking a raw serde "unknown variant" error and gives custom
         // GPTs an actionable discovery hint.
-        if !is_known_tool_name(name) {
-            return Err(format!(
+        let definition = lookup_tool_definition(name).ok_or_else(|| {
+            format!(
                 "unknown tool '{}'. Available tools: {}. Call listRuntimeTools \
                  (POST /api/tools/list) or the list_tools runtime tool to \
                  discover accepted tool names.",
                 name,
                 model_visible_tool_names_csv()
-            ));
-        }
+            )
+        })?;
         let recorder_metadata = ToolCallRecorderMetadata::from_arguments(&arguments);
         let arguments = strip_tool_call_expectation_metadata(arguments);
         let mut wrapped = serde_json::Map::new();
@@ -919,8 +919,7 @@ impl ToolCall {
                 ));
             }
         }
-        let unit_tool = matches!(name, "list_projects" | "list_agents" | "runtime_status");
-        if !unit_tool {
+        if !definition.uses_unit_arguments() {
             // Non-unit tools always carry a `params` object so variants whose
             // fields are all optional (e.g. `list_jobs`) still deserialize when
             // a caller passes `null` arguments. A null argument is normalized

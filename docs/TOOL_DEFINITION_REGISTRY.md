@@ -270,6 +270,8 @@ Expected checks:
   `tool_names()` mirror canonical `ToolDefinition` order;
 - public `ToolSpec` output schemas and MCP annotations derive from the
   canonical spec name;
+- model-visible tools either have explicit output schema fields or appear in a
+  temporary default-output-schema gap list with a reason and removal condition;
 - `list_tools` category groups derive from definition-layer discovery groups;
 - `list_tools` and `tool_manifest` recommended flows derive from one
   definition-layer declaration and reference only model-visible tools;

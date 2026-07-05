@@ -1,49 +1,59 @@
 use super::*;
 
-struct DefaultOutputSchemaAllowance {
+struct TemporaryDefaultOnlyOutputSchemaGap {
     name: &'static str,
     reason: &'static str,
+    exit_condition: &'static str,
 }
 
 // TODO(tool-definition): remove entries as these tools gain explicit output
 // schema fields, or move the allowlist to a generated definition-backed
 // declaration once output_schema is part of ToolDefinition.
-const MODEL_VISIBLE_TOOLS_ALLOWED_TO_USE_DEFAULT_OUTPUT_SCHEMA: &[DefaultOutputSchemaAllowance] = &[
-    DefaultOutputSchemaAllowance {
+const TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS: &[TemporaryDefaultOnlyOutputSchemaGap] = &[
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "register_project",
         reason: "project onboarding response still uses the generic wrapper while schema coverage converges",
+        exit_condition: "replace with explicit project registration output fields",
     },
-    DefaultOutputSchemaAllowance {
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "create_project",
         reason: "project onboarding response still uses the generic wrapper while schema coverage converges",
+        exit_condition: "replace with explicit project creation output fields",
     },
-    DefaultOutputSchemaAllowance {
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "list_project_files",
         reason: "bounded file-list payload is covered by behavior tests while output schema is pending",
+        exit_condition: "replace with explicit file listing output fields",
     },
-    DefaultOutputSchemaAllowance {
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "list_jobs",
         reason: "bounded job summary payload is covered by behavior tests while output schema is pending",
+        exit_condition: "replace with explicit job list output fields",
     },
-    DefaultOutputSchemaAllowance {
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "job_tail",
         reason: "bounded log-tail payload is covered by behavior tests while output schema is pending",
+        exit_condition: "replace with explicit bounded tail output fields",
     },
-    DefaultOutputSchemaAllowance {
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "git_restore_paths",
         reason: "cleanup write result is covered by behavior tests while output schema is pending",
+        exit_condition: "replace with explicit restored path output fields",
     },
-    DefaultOutputSchemaAllowance {
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "discard_untracked",
         reason: "cleanup write result is covered by behavior tests while output schema is pending",
+        exit_condition: "replace with explicit discarded path output fields",
     },
-    DefaultOutputSchemaAllowance {
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "replace_in_file",
         reason: "compatibility edit result is covered by behavior tests while output schema is pending",
+        exit_condition: "replace with explicit compatibility edit output fields",
     },
-    DefaultOutputSchemaAllowance {
+    TemporaryDefaultOnlyOutputSchemaGap {
         name: "write_project_file",
         reason: "compatibility whole-file write result is covered by behavior tests while output schema is pending",
+        exit_condition: "replace with explicit whole-file write output fields",
     },
 ];
 
@@ -56,15 +66,25 @@ fn model_visible_tool_definitions_have_output_schema_coverage_or_allowance() {
         .filter(|spec| output_schema_field_names(spec) == default_fields)
         .map(|spec| spec.name.as_str())
         .collect::<Vec<_>>();
-    let allowed_names = MODEL_VISIBLE_TOOLS_ALLOWED_TO_USE_DEFAULT_OUTPUT_SCHEMA
+    let allowed_names = TEMPORARY_MODEL_VISIBLE_TOOLS_WITH_DEFAULT_ONLY_OUTPUT_SCHEMA_GAPS
         .iter()
-        .map(|allowance| {
+        .map(|gap| {
             assert!(
-                !allowance.reason.trim().is_empty(),
-                "{} default output schema allowance must explain the drift risk",
-                allowance.name
+                specs.iter().any(|spec| spec.name == gap.name),
+                "{} default output schema gap must refer to a public ToolSpec",
+                gap.name
             );
-            allowance.name
+            assert!(
+                !gap.reason.trim().is_empty(),
+                "{} default output schema allowance must explain the drift risk",
+                gap.name
+            );
+            assert!(
+                !gap.exit_condition.trim().is_empty(),
+                "{} default output schema allowance must explain how to remove it",
+                gap.name
+            );
+            gap.name
         })
         .collect::<Vec<_>>();
 

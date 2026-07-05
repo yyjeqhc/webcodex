@@ -149,6 +149,7 @@ async fn mint_user_token(service: &salvo::Service, username: &str, scopes: Vec<S
 
 #[tokio::test]
 async fn http_agent_tokens_create_requires_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let service = Service::new(build_router(config, db));
@@ -952,6 +953,7 @@ async fn http_agent_token_cannot_call_management_endpoints() {
 
 #[tokio::test]
 async fn http_agent_tokens_unauthorized_responses_are_json() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let service = Service::new(build_router(config, db));

@@ -100,6 +100,90 @@ pub(crate) use tokens::{
     authenticate, is_oauth2_access_token, OAuth2Verifier, PatVerifier, TokenVerifier,
 };
 
+#[cfg(test)]
+pub(crate) struct AuthEnvGuard {
+    _env_lock: std::sync::MutexGuard<'static, ()>,
+    shared_key_enabled: Option<std::ffi::OsString>,
+    allow_anonymous: Option<std::ffi::OsString>,
+    oauth2_shared_key_bridge: Option<std::ffi::OsString>,
+    legacy_codex_run: Option<std::ffi::OsString>,
+}
+
+#[cfg(test)]
+impl AuthEnvGuard {
+    pub(crate) fn new() -> Self {
+        let env_lock = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        Self {
+            _env_lock: env_lock,
+            shared_key_enabled: std::env::var_os("WEBCODEX_SHARED_KEY_ENABLED"),
+            allow_anonymous: std::env::var_os("WEBCODEX_ALLOW_ANONYMOUS"),
+            oauth2_shared_key_bridge: std::env::var_os("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE"),
+            legacy_codex_run: std::env::var_os("WEBCODEX_ENABLE_LEGACY_CODEX_RUN"),
+        }
+    }
+
+    pub(crate) fn auth_required() -> Self {
+        let guard = Self::new();
+        guard.disable_direct_shared_key();
+        guard.disable_open_anonymous();
+        guard.disable_oauth2_shared_key_bridge();
+        guard
+    }
+
+    pub(crate) fn enable_direct_shared_key(&self) {
+        std::env::set_var("WEBCODEX_SHARED_KEY_ENABLED", "true");
+    }
+
+    pub(crate) fn disable_direct_shared_key(&self) {
+        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
+    }
+
+    pub(crate) fn enable_open_anonymous(&self) {
+        std::env::set_var("WEBCODEX_ALLOW_ANONYMOUS", "true");
+    }
+
+    pub(crate) fn disable_open_anonymous(&self) {
+        std::env::remove_var("WEBCODEX_ALLOW_ANONYMOUS");
+    }
+
+    pub(crate) fn enable_oauth2_shared_key_bridge(&self) {
+        std::env::set_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE", "true");
+    }
+
+    pub(crate) fn disable_oauth2_shared_key_bridge(&self) {
+        std::env::remove_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
+    }
+
+    pub(crate) fn enable_legacy_codex_run(&self) {
+        std::env::set_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN", "1");
+    }
+
+    pub(crate) fn disable_legacy_codex_run(&self) {
+        std::env::remove_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN");
+    }
+}
+
+#[cfg(test)]
+impl Drop for AuthEnvGuard {
+    fn drop(&mut self) {
+        restore_test_env("WEBCODEX_SHARED_KEY_ENABLED", &self.shared_key_enabled);
+        restore_test_env("WEBCODEX_ALLOW_ANONYMOUS", &self.allow_anonymous);
+        restore_test_env(
+            "WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE",
+            &self.oauth2_shared_key_bridge,
+        );
+        restore_test_env("WEBCODEX_ENABLE_LEGACY_CODEX_RUN", &self.legacy_codex_run);
+    }
+}
+
+#[cfg(test)]
+fn restore_test_env(name: &str, value: &Option<std::ffi::OsString>) {
+    match value {
+        Some(value) => std::env::set_var(name, value),
+        None => std::env::remove_var(name),
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Standalone authentication function (used by QUIC agent transport)
 // ---------------------------------------------------------------------------
@@ -849,6 +933,7 @@ mod tests {
 
     #[tokio::test]
     async fn query_token_is_rejected_on_runtime_status() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let config = gate_test_config(Some("secret"));
         let (_tmp, db) = gate_test_db();
         let service = Service::new(gate_router(config, db));
@@ -926,6 +1011,7 @@ mod tests {
 
     #[tokio::test]
     async fn gate_unauthorized_response_is_json_not_html() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let config = gate_test_config(Some("secret"));
         let (_tmp, db) = gate_test_db();
         let service = Service::new(gate_router(config, db));
@@ -1677,7 +1763,7 @@ mod tests {
 
     #[tokio::test]
     async fn shared_key_fallback_gated_by_env_and_prefix() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let env = crate::auth::AuthEnvGuard::auth_required();
         let config = crate::Config {
             addr: "0.0.0.0:8080".to_string(),
             data_dir: PathBuf::from("./data"),
@@ -1689,7 +1775,6 @@ mod tests {
         };
 
         // Shared-key disabled (default): unknown non-wc token → None (reject).
-        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
         let r = authenticate_bearer(&config, None, Some("my-key")).await;
         assert!(
             r.is_none(),
@@ -1697,7 +1782,7 @@ mod tests {
         );
 
         // Shared-key enabled: unknown non-wc token → Some (shared-key context).
-        std::env::set_var("WEBCODEX_SHARED_KEY_ENABLED", "true");
+        env.enable_direct_shared_key();
         let r = authenticate_bearer(&config, None, Some("my-key")).await;
         assert!(r.is_some(), "non-wc token should be accepted as shared-key");
         let ctx = r.unwrap();
@@ -1714,8 +1799,37 @@ mod tests {
         assert!(r.is_none(), "empty token must be rejected");
         let r = authenticate_bearer(&config, None, Some("   \t")).await;
         assert!(r.is_none(), "whitespace token must be rejected");
+    }
 
-        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
+    #[tokio::test]
+    async fn shared_key_fallback_and_oauth_bridge_flags_are_independent() {
+        let env = crate::auth::AuthEnvGuard::auth_required();
+        let config = crate::Config {
+            addr: "0.0.0.0:8080".to_string(),
+            data_dir: PathBuf::from("./data"),
+            token: Some("secret".to_string()),
+            max_text_size: 2 * 1024 * 1024,
+            max_file_size: 100 * 1024 * 1024,
+            codex: crate::CodexConfig::default(),
+            oauth2: crate::OAuth2Config::from_env(),
+        };
+
+        env.enable_oauth2_shared_key_bridge();
+        assert!(crate::OAuth2Config::from_env().shared_key_bridge_enabled);
+        let r = authenticate_bearer(&config, None, Some("my-key")).await;
+        assert!(
+            r.is_none(),
+            "OAuth bridge flag must not enable direct Bearer shared-key fallback"
+        );
+
+        env.disable_oauth2_shared_key_bridge();
+        env.enable_direct_shared_key();
+        assert!(!crate::OAuth2Config::from_env().shared_key_bridge_enabled);
+        let r = authenticate_bearer(&config, None, Some("my-key")).await;
+        assert!(
+            r.is_some_and(|ctx| ctx.is_shared_key()),
+            "direct shared-key fallback must not require OAuth bridge"
+        );
     }
 
     #[test]
@@ -2324,6 +2438,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_middleware_unauthorized_includes_resource_metadata() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let mut config = gate_test_config_oauth2(Some("test-token"));
         Arc::get_mut(&mut config).unwrap().oauth2.issuer =
             Some("https://codex.example.com".to_string());
@@ -2358,6 +2473,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_middleware_unauthorized_includes_resource_metadata_with_issuer() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let mut config_inner = gate_test_config_oauth2(Some("test-token"));
         // Set a specific issuer
         Arc::get_mut(&mut config_inner).unwrap().oauth2.issuer =
@@ -2382,19 +2498,31 @@ mod tests {
 
     #[tokio::test]
     async fn auth_middleware_lightweight_empty_and_open_paths() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let env = crate::auth::AuthEnvGuard::auth_required();
         let config = gate_test_config(Some("secret"));
         let (_tmp, db) = gate_test_db();
         let service = salvo::Service::new(gate_router(config.clone(), db.clone()));
 
-        std::env::set_var("WEBCODEX_SHARED_KEY_ENABLED", "true");
-        std::env::remove_var("WEBCODEX_ALLOW_ANONYMOUS");
+        env.enable_direct_shared_key();
+        env.disable_open_anonymous();
+
+        let (status, body) = gate_send(&service, "/api/runtime/status", Some("my-key")).await;
+        assert_eq!(status, StatusCode::OK, "body: {:?}", body);
 
         let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
             .add_header("authorization", "Bearer ", true)
             .send(&service)
             .await;
         assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
+
+        let (status, body) =
+            gate_send(&service, "/api/runtime/status", Some("wc_pat_invalid")).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "invalid managed-prefix token must not fall back to shared-key: {:?}",
+            body
+        );
 
         let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
             .add_header("authorization", "Bearer    ", true)
@@ -2407,14 +2535,40 @@ mod tests {
             .await;
         assert_eq!(resp.status_code, Some(StatusCode::UNAUTHORIZED));
 
-        std::env::set_var("WEBCODEX_ALLOW_ANONYMOUS", "true");
+        env.enable_open_anonymous();
         let resp = salvo::test::TestClient::post("http://localhost/api/runtime/status")
             .send(&service)
             .await;
         assert_eq!(resp.status_code, Some(StatusCode::OK));
+    }
 
-        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
-        std::env::remove_var("WEBCODEX_ALLOW_ANONYMOUS");
+    #[tokio::test]
+    async fn auth_middleware_direct_shared_key_and_oauth_bridge_flags_are_independent() {
+        let env = crate::auth::AuthEnvGuard::auth_required();
+        let config = gate_test_config(Some("secret"));
+        let (_tmp, db) = gate_test_db();
+        let service = salvo::Service::new(gate_router(config, db));
+
+        env.enable_oauth2_shared_key_bridge();
+        assert!(crate::OAuth2Config::from_env().shared_key_bridge_enabled);
+        let (status, body) = gate_send(&service, "/api/runtime/status", Some("my-key")).await;
+        assert_eq!(
+            status,
+            StatusCode::UNAUTHORIZED,
+            "OAuth bridge flag must not enable direct Bearer shared-key fallback: {:?}",
+            body
+        );
+
+        env.disable_oauth2_shared_key_bridge();
+        env.enable_direct_shared_key();
+        assert!(!crate::OAuth2Config::from_env().shared_key_bridge_enabled);
+        let (status, body) = gate_send(&service, "/api/runtime/status", Some("my-key")).await;
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "direct shared-key fallback should not require OAuth bridge: {:?}",
+            body
+        );
     }
 
     #[tokio::test]
@@ -2451,6 +2605,7 @@ mod tests {
 
     #[tokio::test]
     async fn auth_middleware_no_challenge_when_oauth2_disabled() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let config = gate_test_config(Some("test-token"));
         let (_tmp, db) = gate_test_db();
         let service = salvo::Service::new(gate_router(config, db));

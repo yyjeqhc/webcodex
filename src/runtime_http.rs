@@ -633,6 +633,7 @@ mod tests {
 
     #[tokio::test]
     async fn all_project_endpoints_require_bearer_auth() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let tmp_proj = tempfile::tempdir().unwrap();
@@ -686,6 +687,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_runtime_status_rejects_wrong_bearer() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let tmp_proj = tempfile::tempdir().unwrap();

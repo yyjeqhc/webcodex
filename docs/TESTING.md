@@ -30,6 +30,19 @@ tests with different cost profiles sharing the same default lane.
 - Tests that mutate process environment must acquire `TEST_ENV_LOCK` or an
   equivalent shared guard, save the previous value, and restore or remove it at
   the end. Do not print token values while diagnosing these tests.
+- Tests that touch HTTP/auth behavior must use `AuthEnvGuard` or an equivalent
+  `TEST_ENV_LOCK` guard for auth mode env, especially
+  `WEBCODEX_SHARED_KEY_ENABLED`, `WEBCODEX_ALLOW_ANONYMOUS`,
+  `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE`, and
+  `WEBCODEX_ENABLE_LEGACY_CODEX_RUN`. Managed-token rejection tests should
+  explicitly disable direct shared-key fallback and open anonymous mode before
+  asserting that an unknown or wrong bearer returns 401.
+- Keep the auth-mode semantics separate in tests:
+  `WEBCODEX_SHARED_KEY_ENABLED` is direct Bearer shared-key fallback, while
+  `WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE` is only the OAuth authorize bridge.
+  Quick-start shared-key mode intentionally accepts an unknown non-`wc_` Bearer
+  as a lightweight shared-key principal, but invalid `wc_` managed-token
+  prefixes and empty or whitespace Bearer values must still be rejected.
 - Sleep, timeout, and polling tests must have bounded timeouts. Prefer channels,
   notifications, direct state inspection, or bounded retry loops over raw sleeps.
 - Ignored tests are not dead tests. Each ignored test should have a reason and a

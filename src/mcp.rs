@@ -1263,6 +1263,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_mcp_without_bearer_is_unauthorized() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let runtime = Arc::new(test_runtime());
@@ -1281,6 +1282,7 @@ mod tests {
 
     #[tokio::test]
     async fn http_mcp_with_wrong_bearer_is_unauthorized() {
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         let config = test_config(Some("secret"));
         let (_tmp, db) = test_db();
         let runtime = Arc::new(test_runtime());

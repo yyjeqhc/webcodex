@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn http_projects_run_shell_requires_bearer_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let (_tmp, service) = super::phase2_service();
     let resp = TestClient::post("http://localhost/api/projects/run_shell")
         .json(&json!({"project": "demo", "command": "echo hi"}))
@@ -97,6 +98,7 @@ async fn dedicated_run_shell_with_session_id_records_event() {
 
 #[tokio::test]
 async fn http_projects_run_job_requires_bearer_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let (_tmp, service) = super::phase2_service();
     let resp = TestClient::post("http://localhost/api/projects/run_job")
         .json(&json!({"project": "demo", "command": "echo hi"}))
@@ -134,6 +136,7 @@ async fn http_projects_run_job_dispatches_to_runtime() {
 
 #[tokio::test]
 async fn http_jobs_routes_require_bearer_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let (_tmp, service) = super::phase2_service();
 
     for (path, body) in [

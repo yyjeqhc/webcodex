@@ -5,9 +5,8 @@ use salvo::prelude::{affix_state, Response, Router, StatusCode};
 use salvo::test::{ResponseExt, TestClient};
 use salvo::Service;
 use serde_json::{json, Value};
-use std::ffi::OsString;
 use std::path::PathBuf;
-use std::sync::{Arc, MutexGuard};
+use std::sync::Arc;
 
 fn test_config(token: Option<&str>) -> Arc<crate::Config> {
     Arc::new(crate::Config {
@@ -42,42 +41,6 @@ fn build_audit_router(config: Arc<crate::Config>, db: Arc<Database>) -> Router {
 
 fn effective_status(resp: &Response) -> StatusCode {
     resp.status_code.unwrap_or(StatusCode::OK)
-}
-
-struct AuthRequiredEnvGuard {
-    _env_lock: MutexGuard<'static, ()>,
-    allow_anonymous: Option<OsString>,
-    shared_key_enabled: Option<OsString>,
-}
-
-impl AuthRequiredEnvGuard {
-    fn new() -> Self {
-        let env_lock = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        let allow_anonymous = std::env::var_os("WEBCODEX_ALLOW_ANONYMOUS");
-        let shared_key_enabled = std::env::var_os("WEBCODEX_SHARED_KEY_ENABLED");
-        std::env::remove_var("WEBCODEX_ALLOW_ANONYMOUS");
-        std::env::remove_var("WEBCODEX_SHARED_KEY_ENABLED");
-
-        Self {
-            _env_lock: env_lock,
-            allow_anonymous,
-            shared_key_enabled,
-        }
-    }
-}
-
-impl Drop for AuthRequiredEnvGuard {
-    fn drop(&mut self) {
-        restore_env("WEBCODEX_ALLOW_ANONYMOUS", &self.allow_anonymous);
-        restore_env("WEBCODEX_SHARED_KEY_ENABLED", &self.shared_key_enabled);
-    }
-}
-
-fn restore_env(name: &str, value: &Option<OsString>) {
-    match value {
-        Some(value) => std::env::set_var(name, value),
-        None => std::env::remove_var(name),
-    }
 }
 
 fn seed_event(
@@ -119,7 +82,7 @@ fn seed_event(
 
 #[tokio::test]
 async fn http_audit_sessions_requires_bearer_auth() {
-    let _env = AuthRequiredEnvGuard::new();
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let service = Service::new(build_audit_router(config, db));
@@ -133,7 +96,7 @@ async fn http_audit_sessions_requires_bearer_auth() {
 
 #[tokio::test]
 async fn http_audit_sessions_rejects_wrong_bearer() {
-    let _env = AuthRequiredEnvGuard::new();
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let service = Service::new(build_audit_router(config, db));
@@ -271,7 +234,7 @@ async fn http_audit_sessions_status_filter() {
 
 #[tokio::test]
 async fn http_audit_session_requires_bearer_auth() {
-    let _env = AuthRequiredEnvGuard::new();
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let service = Service::new(build_audit_router(config, db));
@@ -331,7 +294,7 @@ async fn http_audit_session_happy_path_returns_session_and_events() {
 
 #[tokio::test]
 async fn http_audit_stats_requires_bearer_auth() {
-    let _env = AuthRequiredEnvGuard::new();
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let service = Service::new(build_audit_router(config, db));

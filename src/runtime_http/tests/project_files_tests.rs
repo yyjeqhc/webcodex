@@ -224,6 +224,7 @@ async fn http_projects_apply_patch_rejects_server_configured_project() {
 
 #[tokio::test]
 async fn http_console_routes_require_bearer_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();
@@ -343,6 +344,7 @@ async fn http_projects_validate_patch_rejects_empty_patch_via_runtime() {
 
 #[tokio::test]
 async fn http_phase3_mutation_actions_require_bearer_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let (_tmp, service) = super::phase2_service();
     for (path, body) in [
         (
@@ -429,6 +431,7 @@ async fn http_phase3_mutation_actions_dispatch_to_runtime() {
 
 #[tokio::test]
 async fn http_phase4_edit_endpoints_require_bearer_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let (_tmp, service) = super::phase2_service();
     for (path, body) in [
         (
@@ -501,6 +504,7 @@ async fn http_phase4_edit_endpoints_dispatch_to_runtime() {
 
 #[tokio::test]
 async fn http_compat_write_file_requires_bearer_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let (_tmp, service) = super::phase2_service();
     let resp = TestClient::post("http://localhost/api/projects/write_file")
         .json(&json!({"project": "demo", "path": "x.txt", "content": "a"}))

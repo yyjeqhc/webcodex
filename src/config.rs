@@ -699,7 +699,7 @@ mod tests {
 
     #[test]
     fn oauth2_config_defaults_to_disabled() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let _env = crate::auth::AuthEnvGuard::auth_required();
         std::env::remove_var("WEBCODEX_OAUTH2_ENABLED");
         std::env::remove_var("WEBCODEX_PUBLIC_URL");
         std::env::remove_var("WEBCODEX_OAUTH2_ISSUER");
@@ -721,14 +721,14 @@ mod tests {
 
     #[test]
     fn oauth2_config_from_env_parses_overrides() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
+        let env = crate::auth::AuthEnvGuard::new();
         std::env::set_var("WEBCODEX_OAUTH2_ENABLED", "true");
         std::env::set_var("WEBCODEX_OAUTH2_ISSUER", "https://example.com");
         std::env::set_var("WEBCODEX_OAUTH2_ACCESS_TOKEN_TTL_SECS", "1800");
         std::env::set_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS", "86400");
         std::env::set_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS", "600");
         std::env::set_var("WEBCODEX_OAUTH2_REQUIRE_PKCE", "false");
-        std::env::set_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE", "true");
+        env.enable_oauth2_shared_key_bridge();
 
         let cfg = OAuth2Config::from_env();
         assert!(cfg.enabled);
@@ -745,7 +745,6 @@ mod tests {
         std::env::remove_var("WEBCODEX_OAUTH2_REFRESH_TOKEN_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_AUTH_CODE_TTL_SECS");
         std::env::remove_var("WEBCODEX_OAUTH2_REQUIRE_PKCE");
-        std::env::remove_var("WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE");
     }
 
     #[test]

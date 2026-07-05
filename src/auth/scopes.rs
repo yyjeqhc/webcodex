@@ -527,19 +527,18 @@ mod tests {
 
     #[test]
     fn oauth_route_policy_legacy_codex_run_is_flag_gated() {
-        let _guard = crate::admin_cli::TEST_ENV_LOCK.lock().unwrap();
-        std::env::remove_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN");
+        let env = crate::auth::AuthEnvGuard::auth_required();
+        env.disable_legacy_codex_run();
         assert_eq!(
             oauth_route_scope_policy_for_path_method("POST", "/api/codex/run"),
             OAuthRouteScopePolicy::Unknown
         );
 
-        std::env::set_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN", "1");
+        env.enable_legacy_codex_run();
         assert_eq!(
             oauth_route_scope_policy_for_path_method("POST", "/api/codex/run"),
             OAuthRouteScopePolicy::Require(SCOPE_JOB_RUN)
         );
-        std::env::remove_var("WEBCODEX_ENABLE_LEGACY_CODEX_RUN");
     }
 
     #[test]

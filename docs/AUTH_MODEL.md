@@ -32,6 +32,20 @@ The server groups shared-key callers by `shared_key_hash`. A shared key is not a
 
 Static bearer/API-key host auth can be used with either a shared key for quick start or a `wc_pat_xxx` token for managed mode. OAuth is a separate flow; blank OAuth client fields do not become no-auth or static bearer.
 
+Direct Bearer shared-key fallback is controlled by
+`WEBCODEX_SHARED_KEY_ENABLED`. In that quick-start mode, an unknown non-`wc_`
+Bearer value is not treated as a traditional wrong managed token; it becomes a
+lightweight `shared_key` principal grouped by `shared_key_hash`. Bearer values
+with a WebCodex managed prefix (`wc_`) that fail validation are rejected and
+must not fall back to shared-key mode. Empty or whitespace Bearer values are
+also rejected.
+
+`WEBCODEX_OAUTH2_SHARED_KEY_BRIDGE` is separate from
+`WEBCODEX_SHARED_KEY_ENABLED`. The bridge flag enables shared-key entry on the
+OAuth authorization page for OAuth-only hosts; it does not enable direct Bearer
+shared-key fallback. Enabling direct Bearer shared-key fallback does not enable
+the OAuth bridge.
+
 ## `wc_acct_xxx`
 
 `wc_acct_xxx` is an account credential issued once when an administrator creates a user with `--issue-credential`.

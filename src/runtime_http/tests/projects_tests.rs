@@ -10,6 +10,7 @@ use std::sync::Arc;
 
 #[tokio::test]
 async fn http_projects_list_rejects_wrong_bearer() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = super::test_config(Some("secret"));
     let (_tmp, db) = super::test_db();
     let tmp_proj = tempfile::tempdir().unwrap();

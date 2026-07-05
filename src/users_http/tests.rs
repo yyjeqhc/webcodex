@@ -77,6 +77,7 @@ fn seed_user(db: &crate::Database, username: &str, role: &str) -> UserRecord {
 
 #[tokio::test]
 async fn http_users_create_requires_auth() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let service = Service::new(build_router(config, db.clone()));
@@ -369,6 +370,7 @@ async fn http_tokens_create_returns_plaintext_once_and_authenticates() {
 
 #[tokio::test]
 async fn http_tokens_create_rejects_wrong_token() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -704,6 +706,7 @@ async fn http_tokens_list_never_returns_hash_or_plaintext() {
 
 #[tokio::test]
 async fn http_tokens_revoke_works_and_token_no_longer_authenticates() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     seed_user(&db, "alice", "user");
@@ -800,6 +803,7 @@ async fn http_tokens_revoke_user_cannot_revoke_others_token() {
 
 #[tokio::test]
 async fn http_unauthorized_responses_are_json() {
+    let _env = crate::auth::AuthEnvGuard::auth_required();
     let config = test_config(Some("secret"));
     let (_tmp, db) = test_db();
     let service = Service::new(build_router(config, db));

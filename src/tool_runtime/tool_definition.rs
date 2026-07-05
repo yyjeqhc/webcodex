@@ -14,6 +14,7 @@ mod files;
 mod git;
 mod hygiene;
 mod jobs;
+mod patches;
 mod sessions;
 mod testing;
 
@@ -158,8 +159,8 @@ const fn def(
     }
 }
 
-use AgentCapability::{FileRead, FileWrite, Shell};
-use ToolPathHint::{Artifact, None as NoPath, Patch, PathList, SinglePath};
+use AgentCapability::{FileRead, FileWrite};
+use ToolPathHint::{Artifact, None as NoPath, SinglePath};
 use ToolRisk::{ProjectWrite, ReadOnly};
 use ToolVisibility::ModelVisible;
 
@@ -183,6 +184,9 @@ const TOOL_DEFINITION_GROUPS: &[&[ToolDefinition]] = &[
     files::READ_DEFINITIONS,
     git::DETAIL_DEFINITIONS,
     testing::DEFINITIONS,
+    patches::APPLY_DEFINITIONS,
+    hygiene::CLEANUP_DEFINITIONS,
+    patches::VALIDATION_DEFINITIONS,
     TOOL_DEFINITION_TAIL,
 ];
 
@@ -201,84 +205,6 @@ const TOOL_DEFINITION_HEAD: &[ToolDefinition] = &[def(
 )];
 
 const TOOL_DEFINITION_TAIL: &[ToolDefinition] = &[
-    def(
-        "apply_patch",
-        ModelVisible,
-        "patch",
-        Some(Shell),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        Patch,
-        false,
-        false,
-    ),
-    def(
-        "apply_patch_checked",
-        ModelVisible,
-        "patch",
-        Some(Shell),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        Patch,
-        false,
-        false,
-    ),
-    def(
-        "delete_project_files",
-        ModelVisible,
-        "cleanup",
-        Some(Shell),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        PathList,
-        true,
-        false,
-    ),
-    def(
-        "git_restore_paths",
-        ModelVisible,
-        "cleanup",
-        Some(Shell),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        PathList,
-        true,
-        false,
-    ),
-    def(
-        "discard_untracked",
-        ModelVisible,
-        "cleanup",
-        Some(Shell),
-        "agent",
-        ProjectWrite,
-        Some(PROJECT_WRITE),
-        true,
-        PathList,
-        true,
-        false,
-    ),
-    def(
-        "validate_patch",
-        ModelVisible,
-        "patch",
-        Some(Shell),
-        "agent",
-        ReadOnly,
-        Some(PROJECT_READ),
-        true,
-        Patch,
-        false,
-        false,
-    ),
     def(
         "replace_in_file",
         ModelVisible,

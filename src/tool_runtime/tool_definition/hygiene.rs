@@ -1,8 +1,10 @@
-use super::AgentCapability::GitOrShell;
+use super::AgentCapability::{GitOrShell, Shell};
 use super::ToolVisibility::ModelVisible;
 use super::{def, ToolDefinition};
 use crate::tool_runtime::metadata::{
-    ToolPathHint::None as NoPath, ToolRisk::ReadOnly, PROJECT_READ,
+    ToolPathHint::{None as NoPath, PathList},
+    ToolRisk::{ProjectWrite, ReadOnly},
+    PROJECT_READ, PROJECT_WRITE,
 };
 
 pub(super) const DEFINITIONS: &[ToolDefinition] = &[def(
@@ -18,3 +20,45 @@ pub(super) const DEFINITIONS: &[ToolDefinition] = &[def(
     false,
     false,
 )];
+
+pub(super) const CLEANUP_DEFINITIONS: &[ToolDefinition] = &[
+    def(
+        "delete_project_files",
+        ModelVisible,
+        "cleanup",
+        Some(Shell),
+        "agent",
+        ProjectWrite,
+        Some(PROJECT_WRITE),
+        true,
+        PathList,
+        true,
+        false,
+    ),
+    def(
+        "git_restore_paths",
+        ModelVisible,
+        "cleanup",
+        Some(Shell),
+        "agent",
+        ProjectWrite,
+        Some(PROJECT_WRITE),
+        true,
+        PathList,
+        true,
+        false,
+    ),
+    def(
+        "discard_untracked",
+        ModelVisible,
+        "cleanup",
+        Some(Shell),
+        "agent",
+        ProjectWrite,
+        Some(PROJECT_WRITE),
+        true,
+        PathList,
+        true,
+        false,
+    ),
+];

@@ -91,6 +91,22 @@ explicit non-runtime `delete_files` compatibility metadata. These fallbacks are 
 migration bridge, not the long-term design. Runtime tool metadata should be added
 to `ToolDefinition`, not to `metadata.rs`.
 
+Current fallback contract:
+
+- `delete_files` is legacy dedicated HTTP route metadata. It is not a runtime
+  `ToolCall` name, not a public `ToolSpec`, and not a way to add runtime
+  behavior through metadata.
+- Unknown-name fallback is a safe metadata facade for policy/reporting callers.
+  It returns provider `unknown` and risk `unknown`; it is not runtime call
+  acceptance, and `ToolCall` must continue rejecting unknown names.
+- New runtime tools must not be introduced through metadata fallback. Add or
+  update a `ToolDefinition` and the synchronized parser/spec/OpenAPI/MCP tests
+  instead.
+- The next fallback-convergence step is to keep policy helpers on
+  `ToolDefinition` for known runtime names and concentrate metadata fallback
+  behind a small number of named helper functions, rather than scattering
+  fallback calls through each policy helper.
+
 The former module-wide `#![allow(dead_code)]` on `tool_definition.rs` has been
 removed. Inventory-only helper facades are now kept behind `#[cfg(test)]`, and
 any future dead-code allowance in this layer should be item-scoped with a
@@ -108,6 +124,9 @@ migration reason.
 - Legacy metadata fallback remains as an explicit migration bridge for
   non-runtime route metadata and unknown-name safety. New runtime tools should
   not extend that fallback.
+- Fallback calls are still visible in policy helper code while the migration is
+  converging; the intended shape is a named metadata-facade boundary for legacy
+  and unknown names only.
 - Dead-code residue may still exist in other runtime migration modules, but the
   ToolDefinition layer should not reintroduce a module-wide allowance. New
   residue should be item-scoped and documented.

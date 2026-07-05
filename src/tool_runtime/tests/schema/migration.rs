@@ -1,6 +1,8 @@
 use super::*;
 
-use crate::tool_runtime::metadata::{ToolRisk, TOOL_PROVIDER_UNKNOWN};
+use crate::tool_runtime::metadata::{
+    ToolPathHint, ToolRisk, PROJECT_WRITE, TOOL_PROVIDER_AGENT, TOOL_PROVIDER_UNKNOWN,
+};
 use crate::tool_runtime::tool_definition::AgentCapability;
 
 struct LegacyMetadataFallback {
@@ -963,6 +965,67 @@ fn tool_definition_explains_all_tool_call_runtime_names() {
 }
 
 #[test]
+fn tool_policy_helpers_match_tool_definitions_for_known_runtime_names() {
+    use crate::tool_runtime::tool_definition::{
+        runtime_tool_is_read_like, runtime_tool_is_shell_like, runtime_tool_is_write_like,
+        runtime_tool_metadata, runtime_tool_permission_risk, runtime_tool_requires_permission,
+        runtime_tool_requires_session_project_escape, runtime_tool_session_risk_class,
+        tool_definitions,
+    };
+
+    for definition in tool_definitions() {
+        assert_eq!(
+            runtime_tool_metadata(definition.name),
+            definition.metadata(),
+            "{} metadata policy helper must read the ToolDefinition metadata",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_session_risk_class(definition.name),
+            definition.session_risk_class(),
+            "{} session risk helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_read_like(definition.name),
+            definition.is_read_like(),
+            "{} read-like helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_write_like(definition.name),
+            definition.is_write_like(),
+            "{} write-like helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_is_shell_like(definition.name),
+            definition.is_shell_like(),
+            "{} shell-like helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_requires_permission(definition.name),
+            definition.requires_permission(),
+            "{} permission helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_requires_session_project_escape(definition.name),
+            definition.requires_session_project_escape(),
+            "{} session-project escape helper must match ToolDefinition",
+            definition.name
+        );
+        assert_eq!(
+            runtime_tool_permission_risk(definition.name),
+            definition.permission_risk(),
+            "{} permission risk helper must match ToolDefinition",
+            definition.name
+        );
+    }
+}
+
+#[test]
 fn tool_definition_strict_agent_capability_lookup_has_no_metadata_fallback() {
     use crate::tool_runtime::tool_definition::runtime_tool_agent_capability;
 
@@ -981,6 +1044,87 @@ fn tool_definition_strict_agent_capability_lookup_has_no_metadata_fallback() {
         );
     }
     std::panic::set_hook(previous_hook);
+}
+
+#[test]
+fn tool_definition_metadata_fallback_facade_is_legacy_or_unknown_only() {
+    use crate::tool_runtime::metadata::{lookup_tool_metadata, tool_metadata};
+    use crate::tool_runtime::tool_definition::{
+        lookup_tool_definition, runtime_tool_is_read_like, runtime_tool_is_shell_like,
+        runtime_tool_is_write_like, runtime_tool_metadata, runtime_tool_permission_risk,
+        runtime_tool_requires_permission, runtime_tool_requires_session_project_escape,
+        runtime_tool_session_risk_class, PERMISSION_RISK_DESTRUCTIVE, PERMISSION_RISK_WRITE,
+    };
+
+    let delete_files = lookup_tool_metadata("delete_files")
+        .copied()
+        .expect("delete_files legacy route metadata");
+    assert_eq!(delete_files.name, "delete_files");
+    assert_eq!(delete_files.provider_id, TOOL_PROVIDER_AGENT);
+    assert_eq!(delete_files.risk, ToolRisk::ProjectWrite);
+    assert_eq!(delete_files.oauth_scope, Some(PROJECT_WRITE));
+    assert!(delete_files.requires_project);
+    assert_eq!(delete_files.path_hint, ToolPathHint::PathList);
+    assert!(!delete_files.read_only);
+    assert!(delete_files.destructive);
+    assert!(!delete_files.shell_like);
+    assert!(
+        lookup_tool_definition("delete_files").is_none(),
+        "delete_files must remain metadata-only legacy route metadata"
+    );
+    assert!(!is_known_tool_name("delete_files"));
+    assert!(
+        ToolCall::from_tool_name(
+            "delete_files",
+            json!({"project": SAMPLE_PROJECT, "paths": ["old.txt"]})
+        )
+        .is_err(),
+        "delete_files metadata fallback must not make it ToolCall-parseable"
+    );
+    assert_eq!(runtime_tool_metadata("delete_files"), delete_files);
+    assert_eq!(
+        runtime_tool_session_risk_class("delete_files"),
+        ToolRisk::ProjectWrite.session_risk_class()
+    );
+    assert!(!runtime_tool_is_read_like("delete_files"));
+    assert!(runtime_tool_is_write_like("delete_files"));
+    assert!(!runtime_tool_is_shell_like("delete_files"));
+    assert!(runtime_tool_requires_permission("delete_files"));
+    assert!(runtime_tool_requires_session_project_escape("delete_files"));
+    assert_eq!(
+        runtime_tool_permission_risk("delete_files"),
+        PERMISSION_RISK_DESTRUCTIVE
+    );
+
+    let unknown = tool_metadata("__unknown_non_runtime__");
+    assert!(lookup_tool_metadata("__unknown_non_runtime__").is_none());
+    assert_eq!(unknown.name, "<unknown>");
+    assert_eq!(unknown.provider_id, TOOL_PROVIDER_UNKNOWN);
+    assert_eq!(unknown.risk, ToolRisk::Unknown);
+    assert_eq!(unknown.oauth_scope, None);
+    assert!(!unknown.requires_project);
+    assert_eq!(unknown.path_hint, ToolPathHint::None);
+    assert!(!unknown.read_only);
+    assert!(!unknown.destructive);
+    assert!(!unknown.shell_like);
+    assert_eq!(runtime_tool_metadata("__unknown_non_runtime__"), unknown);
+    assert_eq!(
+        runtime_tool_session_risk_class("__unknown_non_runtime__"),
+        ToolRisk::Unknown.session_risk_class()
+    );
+    assert!(!runtime_tool_is_read_like("__unknown_non_runtime__"));
+    assert!(!runtime_tool_is_write_like("__unknown_non_runtime__"));
+    assert!(!runtime_tool_is_shell_like("__unknown_non_runtime__"));
+    assert!(runtime_tool_requires_permission("__unknown_non_runtime__"));
+    assert!(runtime_tool_requires_session_project_escape(
+        "__unknown_non_runtime__"
+    ));
+    assert_eq!(
+        runtime_tool_permission_risk("__unknown_non_runtime__"),
+        PERMISSION_RISK_WRITE
+    );
+    assert!(!is_known_tool_name("__unknown_non_runtime__"));
+    assert!(ToolCall::from_tool_name("__unknown_non_runtime__", json!({})).is_err());
 }
 
 #[test]
@@ -1027,6 +1171,10 @@ fn tool_definition_legacy_metadata_fallbacks_are_explicit_and_reasoned() {
 
 #[test]
 fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
+    use crate::tool_runtime::tool_definition::{
+        lookup_tool_definition, model_hidden_tool_names, tool_definitions,
+    };
+
     let openapi = crate::openapi::build_openapi_spec();
     let openapi_operation_count: usize = openapi["paths"]
         .as_object()
@@ -1087,6 +1235,19 @@ fn tool_definition_surface_counts_stay_fixed_during_fallback_migration() {
     );
 
     let model_facing_names = registered_tool_names();
+    let definition_names = tool_definitions()
+        .map(|definition| definition.name)
+        .collect::<Vec<_>>();
+    assert_eq!(definition_names.len(), 67, "ToolDefinition count");
+    assert!(
+        lookup_tool_definition("run_codex").is_some(),
+        "hidden run_codex must keep an explicit ToolDefinition"
+    );
+    assert_eq!(
+        model_hidden_tool_names().collect::<Vec<_>>(),
+        vec!["run_codex"],
+        "run_codex must remain the only hidden ToolDefinition"
+    );
     assert_eq!(
         model_facing_names.len(),
         66,

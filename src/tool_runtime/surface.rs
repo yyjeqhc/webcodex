@@ -179,27 +179,7 @@ impl ToolRuntime {
 
         // Build compact tool entries from metadata without long schemas or
         // descriptions. This keeps GPT Action discovery payloads bounded.
-        let all_tools: Vec<Value> = specs
-            .iter()
-            .map(|spec| {
-                let name = spec.name.as_str();
-                let m = runtime_tool_metadata(name);
-                json!({
-                    "name": name,
-                    "category": runtime_tool_category(name),
-                    "accepted_flattened_args": accepted_flattened_args_for_spec(spec),
-                    "deprecated_or_unsupported_args": [],
-                    "provider": m.provider_id,
-                    "risk": m.risk.session_risk_class(),
-                    "read_only": m.read_only,
-                    "requires_project": m.requires_project,
-                    "path_hint": path_hint_str(m.path_hint),
-                    "destructive": m.destructive,
-                    "shell_like": m.shell_like,
-                    "oauth_scope": m.oauth_scope,
-                })
-            })
-            .collect();
+        let all_tools: Vec<Value> = specs.iter().map(compact_manifest_tool_entry).collect();
 
         // Build the categories map from the full tool set so the caller can
         // always see valid categories even when filtering.
@@ -225,6 +205,7 @@ impl ToolRuntime {
             Some(limit) => filtered_tools.into_iter().take(limit).collect(),
             None => filtered_tools,
         };
+        let risk_summary = include_risk_summary.then(|| build_risk_summary(&tools));
 
         let mut output = json!({
             "schema_version": 1,
@@ -240,9 +221,8 @@ impl ToolRuntime {
             "tools": tools,
         });
 
-        if include_risk_summary {
-            output["risk_summary"] =
-                build_risk_summary(output["tools"].as_array().unwrap_or(&Vec::new()));
+        if let Some(risk_summary) = risk_summary {
+            output["risk_summary"] = risk_summary;
         }
 
         if include_recommended_flows {
@@ -308,6 +288,25 @@ pub(super) fn build_list_tools_summary_entries(specs: &[ToolSpec]) -> Vec<Value>
             })
         })
         .collect()
+}
+
+pub(super) fn compact_manifest_tool_entry(spec: &ToolSpec) -> Value {
+    let name = spec.name.as_str();
+    let m = runtime_tool_metadata(name);
+    json!({
+        "name": name,
+        "category": runtime_tool_category(name),
+        "accepted_flattened_args": accepted_flattened_args_for_spec(spec),
+        "deprecated_or_unsupported_args": [],
+        "provider": m.provider_id,
+        "risk": m.risk.session_risk_class(),
+        "read_only": m.read_only,
+        "requires_project": m.requires_project,
+        "path_hint": path_hint_str(m.path_hint),
+        "destructive": m.destructive,
+        "shell_like": m.shell_like,
+        "oauth_scope": m.oauth_scope,
+    })
 }
 
 fn list_tool_matches_features(name: &str, features: &str) -> bool {

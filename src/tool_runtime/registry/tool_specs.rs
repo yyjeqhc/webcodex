@@ -20,17 +20,7 @@ use super::{output_schema_for_tool, tool_annotations};
 
 impl ToolRuntime {
     pub fn tool_specs(&self) -> Vec<ToolSpec> {
-        let mut declarations = discovery::tool_specs();
-        declarations.extend(sessions::tool_specs());
-        declarations.extend(jobs::tool_specs());
-        declarations.extend(checkpoints::tool_specs());
-        declarations.extend(coding_tasks::tool_specs());
-        declarations.extend(hygiene::tool_specs());
-        declarations.extend(files::tool_specs());
-        declarations.extend(git::tool_specs());
-        declarations.extend(testing::tool_specs());
-        declarations.extend(artifacts::tool_specs());
-        declarations.extend(edits::tool_specs());
+        let declarations = tool_spec_declarations();
         debug_assert!(
             declarations
                 .iter()
@@ -63,6 +53,21 @@ impl ToolRuntime {
     }
 }
 
+fn tool_spec_declarations() -> Vec<ToolSpec> {
+    let mut declarations = discovery::tool_specs();
+    declarations.extend(sessions::tool_specs());
+    declarations.extend(jobs::tool_specs());
+    declarations.extend(checkpoints::tool_specs());
+    declarations.extend(coding_tasks::tool_specs());
+    declarations.extend(hygiene::tool_specs());
+    declarations.extend(files::tool_specs());
+    declarations.extend(git::tool_specs());
+    declarations.extend(testing::tool_specs());
+    declarations.extend(artifacts::tool_specs());
+    declarations.extend(edits::tool_specs());
+    declarations
+}
+
 pub(super) fn tool_spec(
     name: &'static str,
     description: impl Into<String>,
@@ -87,7 +92,9 @@ mod tests {
     use crate::config::CodexConfig;
     use crate::projects::ProjectsState;
     use crate::shell_client::ShellClientRegistry;
+    use crate::tool_runtime::tool_definition::is_model_visible_tool_name;
     use crate::tool_runtime::RuntimeInfo;
+    use std::collections::BTreeSet;
     use std::sync::Arc;
 
     fn test_runtime() -> ToolRuntime {
@@ -100,6 +107,24 @@ mod tests {
             Arc::new(CodexConfig::default()),
             Arc::new(RuntimeInfo::default()),
         )
+    }
+
+    #[test]
+    fn tool_spec_declarations_are_unique_and_model_visible() {
+        let declarations = tool_spec_declarations();
+        let mut names = BTreeSet::new();
+        for spec in declarations {
+            assert!(
+                is_model_visible_tool_name(&spec.name),
+                "{} ToolSpec declaration must be model-visible",
+                spec.name
+            );
+            assert!(
+                names.insert(spec.name.clone()),
+                "{} ToolSpec declaration is duplicated",
+                spec.name
+            );
+        }
     }
 
     #[test]

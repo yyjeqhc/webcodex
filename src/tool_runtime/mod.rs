@@ -15,6 +15,7 @@ mod git;
 mod handoff;
 mod helpers;
 mod hygiene;
+mod job_tools;
 mod jobs;
 pub(crate) mod kernel;
 mod local_jobs;

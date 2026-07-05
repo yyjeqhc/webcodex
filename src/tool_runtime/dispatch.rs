@@ -644,26 +644,12 @@ impl ToolRuntime {
                 .await
             }
 
-            ToolCall::RunJob {
-                project,
-                command,
-                session_id,
-                timeout_secs,
-                cwd,
-            } => {
-                self.run_job(project, command, session_id, timeout_secs, cwd)
-                    .await
-            }
-
-            ToolCall::StopJob {
-                project,
-                job_id,
-                session_id,
-                confirm,
-            } => {
-                self.stop_job_model_facing(project, job_id, session_id, confirm, auth)
-                    .await
-            }
+            call @ (ToolCall::RunJob { .. }
+            | ToolCall::StopJob { .. }
+            | ToolCall::JobStatus { .. }
+            | ToolCall::JobLog { .. }
+            | ToolCall::ListJobs { .. }
+            | ToolCall::JobTail { .. }) => self.dispatch_job_tool(call, auth).await,
 
             ToolCall::RunCodex {
                 project: _,
@@ -675,23 +661,6 @@ impl ToolRuntime {
                 extra_args: _,
             } => tool_disabled_result_from_definition("run_codex")
                 .expect("run_codex must be disabled by ToolDefinition policy"),
-
-            ToolCall::JobStatus {
-                job_id,
-                include_command_preview,
-            } => {
-                self.job_status_for_auth(job_id, include_command_preview, auth)
-                    .await
-            }
-
-            ToolCall::JobLog {
-                job_id,
-                offset,
-                tail_lines,
-            } => {
-                self.job_log_for_auth(job_id, offset, tail_lines, auth)
-                    .await
-            }
 
             ToolCall::GitDiffSummary {
                 project,
@@ -725,14 +694,6 @@ impl ToolRuntime {
             } => {
                 self.workspace_hygiene_check(project, max_findings, include_tracked, session_id)
                     .await
-            }
-
-            ToolCall::ListJobs { limit, status } => {
-                self.list_jobs_for_auth(limit, status, auth).await
-            }
-
-            ToolCall::JobTail { job_id, tail_lines } => {
-                self.job_tail_for_auth(job_id, tail_lines, auth).await
             }
         }
     }

@@ -9,6 +9,7 @@ mod cargo_tools;
 mod checkpoint;
 mod codex;
 mod coding_task;
+mod coding_task_tools;
 mod discovery_tools;
 mod dispatch;
 mod file_tools;
